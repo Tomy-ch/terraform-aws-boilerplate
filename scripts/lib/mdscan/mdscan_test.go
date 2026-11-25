@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// linearBound は、手間を数えるテストが許す、入力の1文字あたりの読んだ文字の数です。
+const linearBound = 4
 
 // unclosedRuns は、長さの違う閉じないバッククォートの並びを count 個並べた行です。
 func unclosedRuns(count int) string {
@@ -255,15 +257,16 @@ func TestBlocks_Next(t *testing.T) {
 		})
 	}
 
-	t.Run("1行に2万個並ぶ印も、行の長さに比例する手間ですべて項目として開く", func(t *testing.T) {
+	t.Run("1行に並ぶ印を、行の長さに比例する手間ですべて項目として開く", func(t *testing.T) {
 		t.Parallel()
-		var b Blocks
-		start := time.Now()
-		in := b.Next(strings.Repeat("- ", 20000) + "x")
-		assert.Less(t, time.Since(start), time.Second)
+		const n = 2000
+		line := strings.Repeat("- ", n) + "x"
+		b := Blocks{m: &meter{}}
+		in := b.Next(line)
 		assert.False(t, in)
-		assert.Len(t, b.items, 20000)
+		assert.Len(t, b.items, n)
 		assert.True(t, b.paragraph)
+		assert.LessOrEqual(t, b.m.n, linearBound*len(line))
 	})
 
 	for _, depth := range []int{33, 100} {
@@ -694,7 +697,7 @@ func Test_stripComments(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			got, stillOpen := stripComments(c.text, c.open)
+			got, stillOpen := stripComments(c.text, c.open, nil)
 			assert.Equal(t, c.want, got)
 			assert.Equal(t, c.stillOpen, stillOpen)
 		})
@@ -702,12 +705,12 @@ func Test_stripComments(t *testing.T) {
 
 	t.Run("長さの違う閉じない並びが多い行も、行の長さに比例する手間で読む", func(t *testing.T) {
 		t.Parallel()
-		line := unclosedRuns(4000)
-		start := time.Now()
-		got, stillOpen := stripComments(line, false)
-		assert.Less(t, time.Since(start), time.Second)
+		line := unclosedRuns(400)
+		var m meter
+		got, stillOpen := stripComments(line, false, &m)
 		assert.Equal(t, line, got)
 		assert.False(t, stillOpen)
+		assert.LessOrEqual(t, m.n, linearBound*len(line))
 	})
 }
 
@@ -761,23 +764,43 @@ func TestInlineCodes(t *testing.T) {
 			})
 		}
 	})
+}
 
-	t.Run("長さの違う閉じない並びが多い行も、行の長さに比例する手間で読む", func(t *testing.T) {
+func Test_inlineCodes(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		line string
+		want int
+	}{
+		"長さの違う閉じない並びが多い行も、行の長さに比例する手間で読む": {unclosedRuns(400), 0},
+		"閉じた span が多い行も、行の長さに比例する手間で読む":   {strings.Repeat("`a` ", 2000), 2000},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var m meter
+			got := inlineCodes(c.line, &m)
+			assert.Len(t, got, c.want)
+			assert.LessOrEqual(t, m.n, linearBound*len(c.line))
+		})
+	}
+}
+
+func Test_meter_add(t *testing.T) {
+	t.Parallel()
+
+	t.Run("足した数を数える", func(t *testing.T) {
 		t.Parallel()
-		line := unclosedRuns(4000)
-		start := time.Now()
-		got := InlineCodes(line)
-		assert.Less(t, time.Since(start), time.Second)
-		assert.Empty(t, got)
+		var m meter
+		m.add(2)
+		m.add(3)
+		assert.Equal(t, 5, m.n)
 	})
 
-	t.Run("閉じた span が多い行も、行の長さに比例する手間で読む", func(t *testing.T) {
+	t.Run("nil では数えない", func(t *testing.T) {
 		t.Parallel()
-		const n = 120000
-		start := time.Now()
-		got := InlineCodes(strings.Repeat("`a` ", n))
-		assert.Less(t, time.Since(start), time.Second)
-		assert.Len(t, got, n)
+		var m *meter
+		assert.NotPanics(t, func() { m.add(1) })
 	})
 }
 
@@ -793,7 +816,7 @@ func Test_newBacktickRuns(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, c.want, newBacktickRuns(c.line).starts)
+			assert.Equal(t, c.want, newBacktickRuns(c.line, nil).starts)
 		})
 	}
 }
@@ -821,7 +844,7 @@ func Test_backtickRuns_closeAt(t *testing.T) {
 		for name, tt := range tests {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
-				got, ok := newBacktickRuns(tt.line).closeAt(tt.from, tt.wantWant)
+				got, ok := newBacktickRuns(tt.line, nil).closeAt(tt.from, tt.wantWant)
 				assert.Equal(t, tt.wantOK, ok)
 				if tt.wantOK {
 					assert.Equal(t, tt.want, got)
@@ -832,7 +855,7 @@ func Test_backtickRuns_closeAt(t *testing.T) {
 
 	t.Run("探す位置を進めれば、手前の並びを返さない", func(t *testing.T) {
 		t.Parallel()
-		r := newBacktickRuns("`a`b`c")
+		r := newBacktickRuns("`a`b`c", nil)
 		first, ok := r.closeAt(1, 1)
 		require.True(t, ok)
 		second, ok := r.closeAt(first+1, 1)
@@ -858,7 +881,7 @@ func Test_backtickRuns_span(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			n, closed := newBacktickRuns(c.s).span(0)
+			n, closed := newBacktickRuns(c.s, nil).span(0)
 			assert.Equal(t, c.n, n)
 			assert.Equal(t, c.closed, closed)
 		})
@@ -866,7 +889,7 @@ func Test_backtickRuns_span(t *testing.T) {
 
 	t.Run("途中の位置から開く", func(t *testing.T) {
 		t.Parallel()
-		n, closed := newBacktickRuns("a\\``b` c").span(3)
+		n, closed := newBacktickRuns("a\\``b` c", nil).span(3)
 		assert.Equal(t, 3, n)
 		assert.True(t, closed)
 	})

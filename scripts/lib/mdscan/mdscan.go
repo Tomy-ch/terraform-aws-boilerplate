@@ -56,6 +56,16 @@ type Blocks struct {
 	fence     string
 	fenceBase int
 	paragraph bool
+	m         *meter
+}
+
+// meter は、テストが手間を数えるための読んだ文字の数です。nil なら数えません。
+type meter struct{ n int }
+
+func (m *meter) add(k int) {
+	if m != nil {
+		m.n += k
+	}
 }
 
 // listItem は開いている一覧の項目です。col は中身の桁、empty は項目が印だけの行で開き、まだ中身の行が無いかです。
@@ -99,10 +109,11 @@ func (b *Blocks) Next(text string) bool {
 	if matched > 0 {
 		base = b.items[matched-1].col
 	}
-	v := lineView{line: line}
+	v := lineView{line: line, m: b.m}
 	for {
 		rest := line[base:]
 		rel := indentOf(rest)
+		b.m.add(1 + rel)
 		body := rest[rel:]
 		allMatched := matched == len(b.items)
 		switch {
@@ -146,6 +157,7 @@ type lineView struct {
 	// lastBad は、`*`・`-`・`_` ごとに、その文字でも空白でもタブでもない最後の文字の位置です。
 	lastBad [3]int
 	ready   bool
+	m       *meter
 }
 
 func (v *lineView) thematicBreakAt(p int) bool {
@@ -158,6 +170,7 @@ func (v *lineView) thematicBreakAt(p int) bool {
 	}
 	if !v.ready {
 		v.lastBad, v.ready = [3]int{-1, -1, -1}, true
+		v.m.add(len(v.line))
 		for i := 0; i < len(v.line); i++ {
 			if ch := v.line[i]; ch != ' ' && ch != '\t' {
 				for j := range breakChars {
@@ -168,7 +181,11 @@ func (v *lineView) thematicBreakAt(p int) bool {
 			}
 		}
 	}
-	return v.lastBad[k] < p && thematicBreak.MatchString(v.line[p:])
+	if v.lastBad[k] >= p {
+		return false
+	}
+	v.m.add(len(v.line) - p)
+	return thematicBreak.MatchString(v.line[p:])
 }
 
 const breakChars = "*-_"
@@ -328,7 +345,7 @@ func (s *Scanner) Next(l Line) Scanned {
 		}
 	}
 	inComment := s.openedAt != 0
-	visible, open := stripComments(l.Text, inComment)
+	visible, open := stripComments(l.Text, inComment, nil)
 	switch {
 	case !open:
 		s.openedAt = 0
@@ -346,8 +363,8 @@ func (s *Scanner) Unclosed() int {
 
 // stripComments は、1行から HTML コメントの部分を除いた文字と、行末でコメントが開いたままかを返します。open は、
 // 行の頭でコメントが開いているかです。inline code の中の `<!--` と、バックスラッシュで逃がした `<` はコメントを
-// 開きません。`<!-->` と `<!--->` は空のコメントです。
-func stripComments(text string, open bool) (visible string, stillOpen bool) {
+// 開きません。`<!-->` と `<!--->` は空のコメントです。m は inline code の走査の手間を数えます。
+func stripComments(text string, open bool, m *meter) (visible string, stillOpen bool) {
 	var b strings.Builder
 	var runs *backtickRuns
 	line := text
@@ -362,7 +379,7 @@ func stripComments(text string, open bool) (visible string, stillOpen bool) {
 		}
 		if text[0] == '`' {
 			if runs == nil {
-				runs = newBacktickRuns(line)
+				runs = newBacktickRuns(line, m)
 			}
 			n, _ := runs.span(len(line) - len(text))
 			b.WriteString(text[:n])
@@ -408,9 +425,15 @@ func cutEmptyComment(rest string) (string, bool) {
 // 開きと閉じの長さが**同じ**ものだけを対にします（CommonMark）。中身にバッククォートを含む span も1つとして
 // 取り出します。閉じが無いバッククォートの連なりはただの文字であり、span を作りません。
 func InlineCodes(line string) []string {
+	return inlineCodes(line, nil)
+}
+
+// inlineCodes は InlineCodes の本体で、m が走査の手間を数えます。
+func inlineCodes(line string, m *meter) []string {
 	var out []string
-	runs := newBacktickRuns(line)
+	runs := newBacktickRuns(line, m)
 	for i := 0; i < len(line); {
+		m.add(1)
 		if line[i] != '`' {
 			i++
 			continue
@@ -418,6 +441,7 @@ func InlineCodes(line string) []string {
 		n, closed := runs.span(i)
 		if closed {
 			open := runLen(line, i)
+			m.add(open)
 			out = append(out, strings.TrimSpace(line[i+open:i+n-open]))
 		}
 		i += n
@@ -432,16 +456,19 @@ type backtickRuns struct {
 	line   string
 	starts map[int][]int
 	next   map[int]int
+	m      *meter
 }
 
-func newBacktickRuns(line string) *backtickRuns {
-	r := &backtickRuns{line: line, starts: map[int][]int{}, next: map[int]int{}}
+func newBacktickRuns(line string, m *meter) *backtickRuns {
+	r := &backtickRuns{line: line, starts: map[int][]int{}, next: map[int]int{}, m: m}
 	for i := 0; i < len(line); {
+		m.add(1)
 		if line[i] != '`' {
 			i++
 			continue
 		}
 		n := runLen(line, i)
+		m.add(n)
 		r.starts[n] = append(r.starts[n], i)
 		i += n
 	}
@@ -452,6 +479,7 @@ func newBacktickRuns(line string) *backtickRuns {
 func (r *backtickRuns) closeAt(from, n int) (int, bool) {
 	starts, k := r.starts[n], r.next[n]
 	for k < len(starts) && starts[k] < from {
+		r.m.add(1)
 		k++
 	}
 	r.next[n] = k
@@ -466,6 +494,7 @@ func (r *backtickRuns) closeAt(from, n int) (int, bool) {
 // at がバッククォートでなければ 0 と false です。
 func (r *backtickRuns) span(at int) (n int, closed bool) {
 	open := runLen(r.line, at)
+	r.m.add(open)
 	if open == 0 {
 		return 0, false
 	}
