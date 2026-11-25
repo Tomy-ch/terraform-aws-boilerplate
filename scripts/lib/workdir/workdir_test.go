@@ -514,3 +514,110 @@ func Test_lsFilesTmp(t *testing.T) {
 		assert.Contains(t, err.Error(), "exit status 128: "+strings.TrimSpace(string(stderr)))
 	})
 }
+
+func TestRecreate(t *testing.T) {
+	t.Parallel()
+
+	t.Run("在る -work を中身ごと消し、空のディレクトリとして作り直して root からのパスを返す", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "tmp", "w", "old"), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(root, "tmp", "w", "old", "f"), []byte("x"), 0o600))
+		got, err := Recreate(root, "tmp/w")
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join(root, "tmp", "w"), got)
+		entries, err := os.ReadDir(got)
+		require.NoError(t, err)
+		assert.Empty(t, entries)
+	})
+
+	t.Run("tmp も -work も無ければ作る", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		got, err := Recreate(root, "tmp/a/b")
+		require.NoError(t, err)
+		info, err := os.Stat(got)
+		require.NoError(t, err)
+		assert.True(t, info.IsDir())
+	})
+
+	for _, work := range []string{"", "tmp", "../x", "/abs/tmp/x", "keep"} {
+		t.Run(work+" は ErrInvalid で、何も消さない", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(root, "keep"), []byte("k"), 0o600))
+			before := snapshot(t, root)
+			_, err := Recreate(root, work)
+			require.ErrorIs(t, err, ErrInvalid)
+			assert.Equal(t, before, snapshot(t, root))
+		})
+	}
+
+	t.Run("tmp/ の下の symlink が外を指せば ErrInvalid で、外は消さない", func(t *testing.T) {
+		t.Parallel()
+		root, outside := t.TempDir(), t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(outside, "f"), []byte("o"), 0o600))
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "tmp"), 0o750))
+		require.NoError(t, os.Symlink(outside, filepath.Join(root, "tmp", "out")))
+		_, err := Recreate(root, "tmp/out/w")
+		require.ErrorIs(t, err, ErrInvalid)
+		assert.Equal(t, map[string]string{"f": "o"}, snapshot(t, outside))
+	})
+}
+
+func Test_rebuild(t *testing.T) {
+	t.Parallel()
+
+	t.Run("検証の後に途中が外への symlink へ差し替えられても、外へは辿らずに失敗し、外は消さない", func(t *testing.T) {
+		t.Parallel()
+		tmp, outside := t.TempDir(), t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(outside, "w"), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(outside, "w", "f"), []byte("o"), 0o600))
+		require.NoError(t, os.Symlink(outside, filepath.Join(tmp, "x")))
+		require.Error(t, rebuild(tmp, "x/w"))
+		assert.Equal(t, map[string]string{"w/f": "o"}, snapshot(t, outside))
+	})
+
+	t.Run("tmp を開けなければ失敗する", func(t *testing.T) {
+		t.Parallel()
+		require.Error(t, rebuild(filepath.Join(t.TempDir(), "none"), "w"))
+	})
+}
+
+func TestTemp(t *testing.T) {
+	t.Parallel()
+
+	t.Run("parent の下に一時ディレクトリを作り、後片付けはその子だけを消す", func(t *testing.T) {
+		t.Parallel()
+		parent := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(parent, "keep"), []byte("k"), 0o600))
+		dir, cleanup, err := Temp(parent, "x-")
+		require.NoError(t, err)
+		assert.Equal(t, parent, filepath.Dir(dir))
+		assert.True(t, strings.HasPrefix(filepath.Base(dir), "x-"))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "f"), []byte("t"), 0o600))
+		cleanup()
+		_, err = os.Lstat(dir)
+		require.ErrorIs(t, err, fs.ErrNotExist)
+		assert.Equal(t, map[string]string{"keep": "k"}, snapshot(t, parent))
+	})
+
+	t.Run("parent が無ければ失敗し、後片付けを返さない", func(t *testing.T) {
+		t.Parallel()
+		dir, cleanup, err := Temp(filepath.Join(t.TempDir(), "none"), "x-")
+		require.Error(t, err)
+		assert.Empty(t, dir)
+		assert.Nil(t, cleanup)
+	})
+
+	t.Run("後片付けの前に parent が消えていても、後片付けは何もせずに戻る", func(t *testing.T) {
+		t.Parallel()
+		parent := filepath.Join(t.TempDir(), "p")
+		require.NoError(t, os.Mkdir(parent, 0o750))
+		dir, cleanup, err := Temp(parent, "x-")
+		require.NoError(t, err)
+		require.NoError(t, os.Remove(dir))
+		require.NoError(t, os.Remove(parent))
+		assert.NotPanics(t, cleanup)
+	})
+}

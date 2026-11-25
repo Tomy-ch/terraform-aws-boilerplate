@@ -1,5 +1,5 @@
-// Package workdir は、検査の道具が毎回 RemoveAll で作り直す作業ディレクトリ（-work）の検証を持ちます。検証が
-// 道具ごとに分かれて片方だけ緩むと、リポジトリ直下の tmp/ の外を消します。
+// Package workdir は、検査の道具が毎回作り直す作業ディレクトリ（-work）の検証と作り直し、一時ディレクトリの
+// 後片付けを持ちます。検証や削除が道具ごとに分かれて片方だけ緩むと、リポジトリ直下の tmp/ の外を消します。
 package workdir
 
 import (
@@ -34,6 +34,66 @@ type lsFilesFunc func(root string) ([]byte, error)
 // 落とします。
 func Resolve(root, work string) (string, error) {
 	return resolve(root, work, lsFilesTmp)
+}
+
+// Recreate は、work を [Resolve] で検証し、空のディレクトリとして作り直して root からのパスを返します。消すのと作るのは
+// root の tmp を開いた [os.Root] の中で行うので、検証の後に途中を外への symlink へ差し替えられても tmp の外は消えません。
+func Recreate(root, work string) (string, error) {
+	return recreate(root, work, lsFilesTmp)
+}
+
+func recreate(root, work string, lsFiles lsFilesFunc) (string, error) {
+	target, err := resolve(root, work, lsFiles)
+	if err != nil {
+		return "", err
+	}
+	rel := strings.TrimPrefix(path.Clean(filepath.ToSlash(work)), "tmp/")
+	if err := os.MkdirAll(filepath.Join(root, "tmp"), 0o750); err != nil {
+		return "", xerrors.Wrap(err, "tmp")
+	}
+	if err := rebuild(filepath.Join(root, "tmp"), rel); err != nil {
+		return "", xerrors.Wrapf(err, "%q", work)
+	}
+
+	return target, nil
+}
+
+// rebuild は、tmp を開いた [os.Root] の中で rel を消して作り直します。rel の途中の symlink が tmp の外を指せば、
+// 外へは辿らずに失敗します。
+func rebuild(tmp, rel string) error {
+	r, err := os.OpenRoot(tmp)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = r.Close() }()
+	if err := r.RemoveAll(rel); err != nil {
+		return xerrors.Wrap(err, "消せません")
+	}
+	if err := r.MkdirAll(rel, 0o750); err != nil {
+		return xerrors.Wrap(err, "作れません")
+	}
+
+	return nil
+}
+
+// Temp は、parent の下に pattern の一時ディレクトリを作り、その子だけを消す後片付けとともに返します。parent が空なら
+// [os.TempDir] の下です。後片付けは parent を開いた [os.Root] の中で消すので、parent の外へは出ません。
+func Temp(parent, pattern string) (dir string, cleanup func(), err error) {
+	dir, err = os.MkdirTemp(parent, pattern)
+	if err != nil {
+		return "", nil, err
+	}
+	base := filepath.Dir(dir)
+	name := filepath.Base(dir)
+
+	return dir, func() {
+		r, err := os.OpenRoot(base)
+		if err != nil {
+			return
+		}
+		_ = r.RemoveAll(name)
+		_ = r.Close()
+	}, nil
 }
 
 func resolve(root, work string, lsFiles lsFilesFunc) (string, error) {
