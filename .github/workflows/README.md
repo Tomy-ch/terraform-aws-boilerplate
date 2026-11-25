@@ -109,8 +109,8 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
   （ADR-0602 決定14）。Copilot coding agent の Pull Request は、人が workflow の実行を承認したときだけ走る。
   この承認を省くリポジトリの設定を有効にしないこと（設定を突き合わせる検査は無い）
 - **plan の role を assume した後、plan の前に、apply 系の role の assume が拒否されることを確かめる。**
-  `make ci-assume-denied` が同じ job の OIDC token で、`pull_request` で起動する種別のほかのすべての role（ci.mk の `CI_DENIED_ROLES`。
-  `scripts/lib/cientry` の登録簿との一致は `cientry.Parse` が見る）を assume し、
+  `make ci-assume-denied` が同じ job の OIDC token で、`pull_request` で起動する種別のほかのすべての role
+  （`scripts/lib/cientry` の `DeniedRoles` が登録簿から求める）を assume し、
   すべてが STS の `AccessDenied` でなければ落ちる。資格情報は置かない。plan の job のこの step は skip できず、
   欠ければ `make oidc-job-lint` が落ちる。失敗した assume は run ごとに CloudTrail に残る（session 名は `gha-denied-` で始まる）
 - **リリース線宛の plan は、管理アカウントの今の状態に対する差分である。** 管理アカウントへ当たっているのは

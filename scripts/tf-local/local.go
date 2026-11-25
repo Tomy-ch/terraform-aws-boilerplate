@@ -54,6 +54,8 @@ func command(dir string, env []string, step string) *exec.Cmd {
 		cmd = exec.CommandContext(ctx, "aws", "kms", "list-aliases", "--output", "json")
 	case stepBucketEncrypt:
 		cmd = exec.CommandContext(ctx, "aws", "s3api", "get-bucket-encryption", "--cli-input-json", "file://input.json", "--output", "json")
+	case stepAssumeRole:
+		cmd = exec.CommandContext(ctx, "aws", "sts", "assume-role-with-web-identity", "--cli-input-json", "file://input.json", "--output", "json")
 	case stepLocalInit:
 		cmd = exec.CommandContext(ctx, "terraform", "init", "-input=false", "-lockfile=readonly")
 	default:

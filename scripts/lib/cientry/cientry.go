@@ -119,10 +119,6 @@ var (
 	callWordsRe = regexp.MustCompile(`^\t@\$\(call CI_[A-Z]+_[A-Z_]+,`)
 	profileRe   = regexp.MustCompile(`^(ci-[a-z0-9-]+): TF_LOCAL_PROFILE := \$\(call CI_PROFILE,(` + envWord + `),([a-z-]+)\)$`)
 	defineRe    = regexp.MustCompile(`^define CI_([A-Z_]+)$`)
-	deniedRe    = regexp.MustCompile(`^CI_DENIED_ROLES \?=(.*)$`)
-	// deniedNameRe は CI_DENIED_ROLES を定める行。行頭の空白、override・export・private、target ごとの変数、
-	// 代入の記号の違い、define も含む。名前の続く CI_DENIED_ROLES_X などは別の変数である。
-	deniedNameRe = regexp.MustCompile(`^\s*(?:(?:override|export|private)\s+)*(?:[^\s#:=][^#:=]*:\s*(?:(?:override|export|private)\s+)*)?CI_DENIED_ROLES\s*(?:\?=|:::=|::=|:=|\+=|!=|=)|^\s*define\s+CI_DENIED_ROLES(?:\s|$)`)
 )
 
 // callPrefix は入口の呼び出しの行の字面。読めた入口の件数と突き合わせる（ADR-0702 決定15）。
@@ -238,6 +234,24 @@ func (r registry) roles() []string {
 	return out
 }
 
+// DeniedRoles は、pull_request で起動する種別が取る role を除いた登録簿の role を、重複を除いて登録簿の順で
+// 返します。plan の job は、同じ OIDC token でこれらの assume がすべて拒否されることを確かめます
+// （.github/workflows/README.md の plan の job）。
+func DeniedRoles() []string {
+	return std.deniedRoles()
+}
+
+func (r registry) deniedRoles() []string {
+	var allowed []string
+	for _, k := range r {
+		if slices.Contains(k.Events, EventPullRequest) {
+			allowed = append(allowed, k.IdentityRole, k.WorkloadRole)
+		}
+	}
+
+	return slices.DeleteFunc(r.roles(), func(role string) bool { return slices.Contains(allowed, role) })
+}
+
 // SplitEnvRoot は入口の名前の `<env>-<root>` を、末尾の -identity か -workload で切ります。
 // どちらの接尾辞でもないか、env が空なら偽を返します。
 func SplitEnvRoot(envRoot string) (string, Root, bool) {
@@ -274,8 +288,8 @@ func MustPattern(prefix, suffix string, kinds ...Kind) *regexp.Regexp {
 // ci- で始まるターゲットは、入口か、入口でないと名指したもの（ci-aws-credentials・ci-assume-denied）の
 // どちらかでなければなりません。入口は、`.PHONY` の行・`TF_LOCAL_PROFILE` の行・ルール行を1つずつ持ち、
 // ルール行の次の行が `$(call CI_<種別>,<env>,<identity|workload>)` で、その種別の define を持ちます。
-// 形を読めなければ [ErrParse]、種別が登録簿に無ければ [ErrKindUnknown]、TF_LOCAL_PROFILE の role と
-// CI_DENIED_ROLES が登録簿と一致しなければ [ErrRole] を返します。入口が1件も無ければ [ErrParse] です。
+// 形を読めなければ [ErrParse]、種別が登録簿に無ければ [ErrKindUnknown]、TF_LOCAL_PROFILE の role が
+// 登録簿と一致しなければ [ErrRole] を返します。入口が1件も無ければ [ErrParse] です。
 func Parse(data string) ([]Entry, error) {
 	lines := strings.Split(data, "\n")
 	entries, err := parseRules(lines)
@@ -289,9 +303,6 @@ func Parse(data string) ([]Entry, error) {
 		return nil, err
 	}
 	if err := checkDefines(lines, entries); err != nil {
-		return nil, err
-	}
-	if err := checkDenied(lines); err != nil {
 		return nil, err
 	}
 	calls := 0
@@ -421,41 +432,6 @@ func checkDefines(lines []string, entries []Entry) error {
 		if n := defines[strings.ToUpper(e.Kind.Name)]; n != 1 {
 			return xerrors.Wrap(ErrParse, fmt.Sprintf("%s の define CI_%s が %d 個です（1個を期待）", e.Target, strings.ToUpper(e.Kind.Name), n))
 		}
-	}
-	return nil
-}
-
-// checkDenied は、plan の job が拒否を確かめる role の一覧（CI_DENIED_ROLES）が、登録簿の role のうち
-// pull_request で起動する種別の role を除いたものと、集合で一致することを見ます。
-func checkDenied(lines []string) error {
-	var found []string
-	for n, l := range lines {
-		if !deniedNameRe.MatchString(l) {
-			continue
-		}
-		m := deniedRe.FindStringSubmatch(l)
-		if m == nil {
-			return xerrors.Wrap(ErrParse, fmt.Sprintf("%d 行目: CI_DENIED_ROLES ?= <role> ... ではありません", n+1))
-		}
-		if found != nil {
-			return xerrors.Wrap(ErrParse, fmt.Sprintf("%d 行目: CI_DENIED_ROLES が2行以上あります", n+1))
-		}
-		found = append([]string{}, strings.Fields(m[1])...)
-	}
-	if found == nil {
-		return xerrors.Wrap(ErrParse, "CI_DENIED_ROLES の行がありません")
-	}
-	var allowed []string
-	for _, k := range std {
-		if slices.Contains(k.Events, EventPullRequest) {
-			allowed = append(allowed, k.IdentityRole, k.WorkloadRole)
-		}
-	}
-	want := slices.DeleteFunc(Roles(), func(r string) bool { return slices.Contains(allowed, r) })
-	got := slices.Compact(slices.Sorted(slices.Values(found)))
-	slices.Sort(want)
-	if !slices.Equal(got, want) {
-		return xerrors.Wrap(ErrRole, fmt.Sprintf("CI_DENIED_ROLES は %s（登録簿からは %s）", strings.Join(got, " "), strings.Join(want, " ")))
 	}
 	return nil
 }

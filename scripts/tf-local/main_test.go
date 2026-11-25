@@ -19,7 +19,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cientry"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/fakeexec"
 )
 
@@ -144,41 +143,6 @@ func Test_run(t *testing.T) {
 			assert.Equal(t, "commit: "+commitSHA+"\n", out.String())
 		})
 
-		t.Run("role-arn は role の ARN を1行で出す", func(t *testing.T) {
-			t.Parallel()
-
-			var out bytes.Buffer
-			args := []string{"role-arn", "-project", "tabp", "-env", "admin", "-role", "plan", "-account", "123456789012"}
-			require.NoError(t, run(args, &out, testDeps(nil)))
-			assert.Equal(t, "arn:aws:iam::123456789012:role/tabp-admin-ci-plan\n", out.String())
-		})
-
-		t.Run("assume-denied は AccessDenied の拒否を1行で出す", func(t *testing.T) {
-			t.Parallel()
-
-			var out bytes.Buffer
-			args := []string{"assume-denied", "-role", "apply", "-exitcode", "254", fileWith(t, deniedStderr)}
-			require.NoError(t, run(args, &out, testDeps(nil)))
-			assert.Equal(t, "✅ apply の role の assume は拒否されました（AccessDenied）\n", out.String())
-		})
-
-		t.Run("assume-denied は assume が通れば失敗する", func(t *testing.T) {
-			t.Parallel()
-
-			var out bytes.Buffer
-			args := []string{"assume-denied", "-role", "apply", "-exitcode", "0", fileWith(t, "")}
-			require.ErrorIs(t, run(args, &out, testDeps(nil)), errAssumeSucceeded)
-			assert.Empty(t, out.String())
-		})
-
-		t.Run("oidc-sub は sub を1行で出す", func(t *testing.T) {
-			t.Parallel()
-
-			var out bytes.Buffer
-			require.NoError(t, run([]string{"oidc-sub", fileWith(t, jwtWith(`{"sub":"`+immutable+`"}`))}, &out, testDeps(nil)))
-			assert.Equal(t, immutable+"\n", out.String())
-		})
-
 		t.Run("plan-summary は要約を1行で出す", func(t *testing.T) {
 			t.Parallel()
 
@@ -221,23 +185,6 @@ func Test_run(t *testing.T) {
 			var out bytes.Buffer
 			require.NoError(t, run([]string{"sha256", fileWith(t, "abc")}, &out, testDeps(nil)))
 			assert.Equal(t, "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=\n", out.String())
-		})
-
-		t.Run("oidc-url は要求先を1行で出す", func(t *testing.T) {
-			t.Parallel()
-
-			var out bytes.Buffer
-			environ := []string{"ACTIONS_ID_TOKEN_REQUEST_URL=https://t.actions.githubusercontent.com/x", "ACTIONS_ID_TOKEN_REQUEST_TOKEN=b"}
-			require.NoError(t, run([]string{"oidc-url"}, &out, testDeps(environ)))
-			assert.Equal(t, "https://t.actions.githubusercontent.com/x?audience=sts.amazonaws.com\n", out.String())
-		})
-
-		t.Run("oidc-token は token を1行で出す", func(t *testing.T) {
-			t.Parallel()
-
-			var out bytes.Buffer
-			require.NoError(t, run([]string{"oidc-token", fileWith(t, `{"value":"a.b.c"}`)}, &out, testDeps(nil)))
-			assert.Equal(t, "a.b.c\n", out.String())
 		})
 
 		t.Run("plan-key は key を1行で出す", func(t *testing.T) {
@@ -348,11 +295,7 @@ func Test_run(t *testing.T) {
 			"region に余分な引数があれば失敗する":     {"region", "a", "b"},
 			"env-unset に引数があれば失敗する":     {"env-unset", "x"},
 			"plan-header に引数があれば失敗する":   {"plan-header", "x"},
-			"oidc-sub にファイルが無ければ失敗する":   {"oidc-sub"},
-			"oidc-sub に余分な引数があれば失敗する":   {"oidc-sub", "a", "b"},
 			"sha256 にファイルが無ければ失敗する":     {"sha256"},
-			"oidc-url に引数があれば失敗する":      {"oidc-url", "x"},
-			"oidc-token にファイルが無ければ失敗する": {"oidc-token"},
 			"sha256 に余分な引数があれば失敗する":     {"sha256", "a", "b"},
 			"lock-key に root が無ければ失敗する": {"lock-key"},
 			"lock-key に余分な引数があれば失敗する":   {"lock-key", "a", "b"},
@@ -1394,85 +1337,9 @@ func TestCiMk(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, string(out), "root が identity か workload ではありません: security-identity")
 	})
-
-	t.Run("CI_ENV を渡さなければ資格情報と拒否の確認の入口は展開で落ちる", func(t *testing.T) {
-		t.Parallel()
-
-		for _, target := range []string{"ci-aws-credentials", "ci-assume-denied"} {
-			cmd := exec.CommandContext(t.Context(), "make", "-C", filepath.Join("..", ".."), "-n", "--no-print-directory", target)
-			cmd.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool {
-				return strings.HasPrefix(kv, "MAKEFLAGS=") || strings.HasPrefix(kv, "MFLAGS=") || strings.HasPrefix(kv, "MAKELEVEL=") || strings.HasPrefix(kv, "CI_ENV=")
-			})
-			out, err := cmd.CombinedOutput()
-			require.Error(t, err, target)
-			assert.Contains(t, string(out), "CI_ENV が空です", target)
-		}
-	})
-
-	t.Run("資格情報は OIDC の token で1回だけ assume し、token を消す", func(t *testing.T) {
-		t.Parallel()
-
-		got := expand(t, "ci-aws-credentials", "CI_ENV=admin")
-		assert.Equal(t, 1, strings.Count(got, "assume-role-with-web-identity"), got)
-		order(t, got, `oidc-url`, `-o "$resp" "$url"`, `oidc-token "$resp"' > "$token"`, `oidc-sub "$token"`, "assume-role-with-web-identity")
-		assert.Contains(t, got, `trap 'rm -f "$token" "$resp"' EXIT`)
-		assert.NotContains(t, got, "jq ")
-		assert.Contains(t, got, "role-arn -project tabp -env admin -role plan")
-		assert.Contains(t, got, `do echo "::add-mask::$v"; done`)
-		assert.Contains(t, got, "configure set --profile tabp-admin-ci-plan")
-		assert.NotContains(t, got, "AWS_ACCESS_KEY_ID")
-	})
-
-	t.Run("拒否の確認は token を取ってから役割ごとに assume を試み、応答を捨てて判定する", func(t *testing.T) {
-		t.Parallel()
-
-		got := expand(t, "ci-assume-denied", "CI_ENV=admin")
-		assert.True(t, strings.HasPrefix(strings.TrimSpace(got), "set -eu -o pipefail; umask 077;"), got)
-		assert.Contains(t, got, `trap 'rm -f "$token" "$resp" "$d/assume-stderr"' EXIT`)
-		order(t, got, `oidc-url`, `-o "$resp" "$url"`, `oidc-token "$resp"' > "$token"`, `oidc-sub "$token"`,
-			`for r in apply apply-identity unlock-identity unlock; do export r`,
-			`role-arn -project tabp -env admin -role "$r" -account "$CI_ACCOUNT_ID"`,
-			`--role-session-name "gha-denied-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"`,
-			`--output json > /dev/null 2> "$err" || rc=$?`,
-			`assume-denied -role "$r" -exitcode "$rc" "$err"`,
-			`done`,
-		)
-		assert.Equal(t, 1, strings.Count(got, "assume-role-with-web-identity"), got)
-		for _, banned := range []string{"configure", "--query", "add-mask", "AWS_PROFILE"} {
-			assert.NotContains(t, got, banned)
-		}
-	})
-
-	t.Run("既定の拒否の役割は plan のほかの役割すべてである", func(t *testing.T) {
-		t.Parallel()
-
-		got := expand(t, "ci-assume-denied", "CI_ENV=admin")
-		m := regexp.MustCompile(`for r in ([a-z -]+); do export r`).FindStringSubmatch(got)
-		require.Len(t, m, 2, got)
-		want := slices.DeleteFunc(slices.Clone(cientry.Roles()), func(r string) bool { return r == "plan" })
-		assert.ElementsMatch(t, want, strings.Fields(m[1]))
-	})
-
-	t.Run("拒否の役割が空なら展開で落ちる", func(t *testing.T) {
-		t.Parallel()
-
-		for _, value := range []string{"", " "} {
-			t.Run(strconv.Quote(value), func(t *testing.T) {
-				t.Parallel()
-
-				cmd := exec.CommandContext(t.Context(), "make", "-C", filepath.Join("..", ".."), "-n", "--no-print-directory", "ci-assume-denied", "CI_ENV=admin", "CI_DENIED_ROLES="+value)
-				cmd.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool {
-					return strings.HasPrefix(kv, "MAKEFLAGS=") || strings.HasPrefix(kv, "MFLAGS=") || strings.HasPrefix(kv, "MAKELEVEL=")
-				})
-				out, err := cmd.CombinedOutput()
-				require.Error(t, err)
-				assert.Contains(t, string(out), "CI_DENIED_ROLES が空です")
-			})
-		}
-	})
 }
 
-// ciFakes の plan・apply・assume-role は secret の文字列を出し、それが公開されるログへ漏れないことを見られるようにする。
+// ciFakes の plan・apply は secret の文字列を出し、それが公開されるログへ漏れないことを見られるようにする。
 const ciFakes = `#!/bin/sh
 k=%[1]q
 rc() { cat "$k/$1" 2>/dev/null || echo 0; }
@@ -1481,12 +1348,6 @@ case "$(basename "$0")" in
 aws)
 	case "$1 $2" in
 	"sts get-caller-identity") cat "$k/identity" 2>/dev/null || printf '123456789012\tarn:aws:iam::123456789012:user/ci\n'; exit "$(rc sts-rc)" ;;
-	"sts assume-role-with-web-identity")
-		for a; do test "$prev" = --role-arn && r=${a##*-ci-}; prev=$a; done
-		printf 'KEY-SECRET\tSECRET-SECRET\tSESSION-SECRET\n'
-		cat "$k/assume-stderr-$r" >&2 2>/dev/null || cat "$k/assume-stderr" >&2 2>/dev/null
-		test -f "$k/assume-rc-$r" && exit "$(cat "$k/assume-rc-$r")"
-		exit "$(rc assume-rc)" ;;
 	"kms list-aliases") cat "$k/aliases" 2>/dev/null || echo '{"Aliases":[{"AliasName":"alias/tabp-admin-tfstate","AliasArn":"arn:aws:kms:ap-northeast-1:123456789012:alias/tabp-admin-tfstate","TargetKeyId":"1234abcd-12ab-34cd-56ef-1234567890ab"}]}'; exit "$(rc kms-rc)" ;;
 	"s3api get-bucket-encryption") cat "$k/encryption" 2>/dev/null || echo '{"ServerSideEncryptionConfiguration":{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}}'; exit "$(rc encryption-rc)" ;;
 	"s3api list-objects-v2")
@@ -1511,10 +1372,6 @@ timeout)
 	c=$?
 	test -f "$k/timeout-rc" && exit "$(cat "$k/timeout-rc")"
 	exit "$c" ;;
-curl)
-	for a; do test "$prev" = -o && out=$a; prev=$a; done
-	cat "$k/oidc-response" > "$out"
-	exit "$(rc curl-rc)" ;;
 git)
 	case "$1" in
 	rev-parse) echo 0123456789abcdef0123456789abcdef01234567 ;;
@@ -1651,7 +1508,7 @@ func newRecipe(bin string) recipeFunc {
 			require.NoError(t, os.WriteFile(filepath.Join(k, name), []byte(v), 0o600))
 		}
 
-		writeFakes(t, filepath.Join(root, "bin"), k, "terraform", "aws", "conftest", "curl", "git", "timeout")
+		writeFakes(t, filepath.Join(root, "bin"), k, "terraform", "aws", "conftest", "git", "timeout")
 
 		cmd := exec.CommandContext(t.Context(), "make", "-C", filepath.Join("..", ".."), "-s", "--no-print-directory", target, "RUNNER_MODE=host", "GO_TOOL=",
 			"TF_LOCAL="+tfLocalShell(bin), "TF_BASE="+filepath.Join(root, "base"), "CI_PLAN_DIR="+plans,
@@ -1705,11 +1562,6 @@ func TestCiRecipes(t *testing.T) {
 		testCiPlanEntry(t, recipe)
 	})
 
-	t.Run("資格情報", func(t *testing.T) {
-		t.Parallel()
-		testCiCredentials(t, recipe)
-	})
-
 	t.Run("lock の解除の入口", func(t *testing.T) {
 		t.Parallel()
 		testCiUnlockEntry(t, recipe)
@@ -1718,116 +1570,6 @@ func TestCiRecipes(t *testing.T) {
 	t.Run("lock を残す入口", func(t *testing.T) {
 		t.Parallel()
 		testCiHoldEntry(t, recipe)
-	})
-
-	t.Run("拒否の確認の入口", func(t *testing.T) {
-		t.Parallel()
-		testCiAssumeDenied(t, recipe)
-	})
-}
-
-func testCiAssumeDenied(t *testing.T, recipe recipeFunc) {
-	t.Helper()
-
-	jwt := jwtWith(`{"sub":"repo:o/r:environment:admin-plan"}`)
-	env := []string{
-		"ACTIONS_ID_TOKEN_REQUEST_URL=https://t.actions.githubusercontent.com/x", "ACTIONS_ID_TOKEN_REQUEST_TOKEN=bearer",
-		"CI_ACCOUNT_ID=123456789012", "CI_ENV=admin",
-	}
-	denied := func(extra map[string]string) map[string]string {
-		knobs := map[string]string{"oidc-response": `{"value":"` + jwt + `"}`, "assume-rc": "254", "assume-stderr": deniedStderr}
-		maps.Copy(knobs, extra)
-
-		return knobs
-	}
-	const assume = "aws sts assume-role-with-web-identity"
-
-	noSecrets := func(t *testing.T, r recipeResult) {
-		t.Helper()
-
-		for _, v := range []string{"KEY-SECRET", "SECRET-SECRET", "SESSION-SECRET", jwt, "123456789012"} {
-			assert.NotContains(t, r.out, v)
-		}
-		assert.Zero(t, countCalls(r.calls, "aws configure"), r.calls)
-		assert.Empty(t, r.left, "作業ファイルが残っています")
-	}
-
-	t.Run("既定の4つの役割がすべて拒否されれば成功し、資格情報をどこにも置かない", func(t *testing.T) {
-		t.Parallel()
-
-		r := recipe(t, "ci-assume-denied", denied(nil), env...)
-		require.NoError(t, r.err, r.out)
-		assert.Equal(t, 4, countCalls(r.calls, assume), r.calls)
-		for _, role := range []string{"apply", "apply-identity", "unlock-identity", "unlock"} {
-			assert.Contains(t, r.calls, "--role-arn arn:aws:iam::123456789012:role/tabp-admin-ci-"+role+" ")
-			assert.Contains(t, r.out, "✅ "+role+" の role の assume は拒否されました（AccessDenied）")
-		}
-		assert.NotContains(t, r.calls, "tabp-admin-ci-plan ")
-		assert.Contains(t, r.calls, "--role-session-name gha-denied-8-1 ")
-		assert.Contains(t, r.out, "OIDC の sub: repo:o/r:environment:admin-plan")
-		noSecrets(t, r)
-	})
-
-	t.Run("assume が通った役割で失敗し、後の役割を試さない", func(t *testing.T) {
-		t.Parallel()
-
-		r := recipe(t, "ci-assume-denied", denied(map[string]string{"assume-rc-apply-identity": "0", "assume-stderr-apply-identity": ""}), env...)
-		require.Error(t, r.err, r.out)
-		assert.Contains(t, r.out, "apply-identity の role")
-		assert.Contains(t, r.out, "assume が通りました")
-		assert.Equal(t, 2, countCalls(r.calls, assume), r.calls)
-		assert.NotContains(t, r.calls, "tabp-admin-ci-unlock-identity")
-		noSecrets(t, r)
-	})
-
-	t.Run("AccessDenied でない失敗は拒否と認めず、stderr をログへ出さない", func(t *testing.T) {
-		t.Parallel()
-
-		stderr := strings.Replace(invalidToken, "Incorrect token audience", "arn:aws:iam::123456789012:role/tabp-admin-ci-apply", 1)
-		r := recipe(t, "ci-assume-denied", denied(map[string]string{"assume-stderr": stderr}), env...)
-		assert.NotContains(t, r.out, "arn:aws")
-		require.Error(t, r.err, r.out)
-		assert.Contains(t, r.out, "AccessDenied ではない理由")
-		assert.Equal(t, 1, countCalls(r.calls, assume), r.calls)
-		noSecrets(t, r)
-	})
-
-	t.Run("STS に届かない失敗は拒否と認めない", func(t *testing.T) {
-		t.Parallel()
-
-		r := recipe(t, "ci-assume-denied", denied(map[string]string{"assume-stderr": "Could not connect to the endpoint URL\n"}), env...)
-		require.Error(t, r.err, r.out)
-		assert.Contains(t, r.out, "STS のエラーを1つに読めません")
-		noSecrets(t, r)
-	})
-
-	t.Run("役割を指定すればその role だけを試す", func(t *testing.T) {
-		t.Parallel()
-
-		r := recipe(t, "ci-assume-denied", denied(nil), append(slices.Clone(env), "CI_DENIED_ROLES=unlock-identity")...)
-		require.NoError(t, r.err, r.out)
-		assert.Equal(t, 1, countCalls(r.calls, assume), r.calls)
-		assert.Contains(t, r.calls, "tabp-admin-ci-unlock-identity ")
-	})
-
-	t.Run("知らない役割は assume せずに失敗する", func(t *testing.T) {
-		t.Parallel()
-
-		r := recipe(t, "ci-assume-denied", denied(nil), append(slices.Clone(env), "CI_DENIED_ROLES=admin")...)
-		require.Error(t, r.err, r.out)
-		assert.Contains(t, r.out, "role の ARN を組めません")
-		assert.Zero(t, countCalls(r.calls, assume), r.calls)
-		noSecrets(t, r)
-	})
-
-	t.Run("token を要求できなければ assume しない", func(t *testing.T) {
-		t.Parallel()
-
-		r := recipe(t, "ci-assume-denied", denied(nil), append(slices.Clone(env), "ACTIONS_ID_TOKEN_REQUEST_URL=")...)
-		require.Error(t, r.err, r.out)
-		assert.Contains(t, r.out, "id-token: write がありません")
-		assert.Zero(t, countCalls(r.calls, assume), r.calls)
-		noSecrets(t, r)
 	})
 }
 
@@ -2343,79 +2085,6 @@ func testCiUnlockEntry(t *testing.T, recipe recipeFunc) {
 			assert.Empty(t, r.summary)
 		})
 	}
-}
-
-func testCiCredentials(t *testing.T, recipe recipeFunc) {
-	t.Helper()
-
-	jwt := jwtWith(`{"sub":"repo:o/r:environment:admin-plan"}`)
-	response := map[string]string{"oidc-response": `{"value":"` + jwt + `"}`}
-	env := []string{
-		"ACTIONS_ID_TOKEN_REQUEST_URL=https://t.actions.githubusercontent.com/x", "ACTIONS_ID_TOKEN_REQUEST_TOKEN=bearer",
-		"CI_ACCOUNT_ID=123456789012", "CI_ENV=admin",
-	}
-	const assume = "aws sts assume-role-with-web-identity"
-
-	t.Run("assume して profile を置き、token と応答を消す", func(t *testing.T) {
-		t.Parallel()
-
-		r := recipe(t, "ci-aws-credentials", response, env...)
-		require.NoError(t, r.err, r.out)
-		assert.Equal(t, 1, countCalls(r.calls, assume), r.calls)
-		assert.Contains(t, r.calls, "--role-arn arn:aws:iam::123456789012:role/tabp-admin-ci-plan")
-		assert.Equal(t, 4, countCalls(r.calls, "aws configure set --profile tabp-admin-ci-plan "), r.calls)
-		for _, v := range []string{"KEY-SECRET", "SECRET-SECRET", "SESSION-SECRET"} {
-			assert.Contains(t, r.out, "::add-mask::"+v)
-		}
-		assert.Contains(t, r.out, "OIDC の sub: repo:o/r:environment:admin-plan")
-		assert.NotContains(t, r.out, jwt)
-		assert.Contains(t, r.out, "profile に資格情報を置きました")
-		assert.Empty(t, r.left, "token と応答が残っています")
-	})
-
-	t.Run("役割の profile と role を取る", func(t *testing.T) {
-		t.Parallel()
-
-		r := recipe(t, "ci-aws-credentials", response, append(slices.Clone(env), "CI_ROLE=apply-identity")...)
-		require.NoError(t, r.err, r.out)
-		assert.Contains(t, r.calls, "--role-arn arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity")
-		assert.Equal(t, 4, countCalls(r.calls, "aws configure set --profile tabp-admin-ci-apply-identity "), r.calls)
-	})
-
-	fail := map[string]struct {
-		knobs map[string]string
-		env   []string
-		want  string
-	}{
-		"要求先が無ければ token を要求しない":              {response, []string{"ACTIONS_ID_TOKEN_REQUEST_URL="}, "id-token: write がありません"},
-		"token を要求できなければ assume しない":         {map[string]string{"oidc-response": "", "curl-rc": "22"}, nil, ""},
-		"応答から token を読めなければ assume しない":      {map[string]string{"oidc-response": "nope"}, nil, "token を読めません"},
-		"sub が environment でなければ assume しない": {map[string]string{"oidc-response": `{"value":"` + jwtWith(`{"sub":"repo:o/r:ref:refs/heads/main"}`) + `"}`}, nil, "sub を読めません"},
-		"アカウント ID が不正なら assume しない":          {response, []string{"CI_ACCOUNT_ID=1234"}, "role の ARN を組めません"},
-	}
-	for name, c := range fail {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			r := recipe(t, "ci-aws-credentials", c.knobs, append(slices.Clone(env), c.env...)...)
-			require.Error(t, r.err, r.out)
-			assert.Contains(t, r.out, c.want)
-			assert.Zero(t, countCalls(r.calls, assume), r.calls)
-			assert.Zero(t, countCalls(r.calls, "aws configure"), r.calls)
-			assert.Empty(t, r.left, "token と応答が残っています")
-		})
-	}
-
-	t.Run("assume できなければ profile を置かない", func(t *testing.T) {
-		t.Parallel()
-
-		r := recipe(t, "ci-aws-credentials", map[string]string{"oidc-response": response["oidc-response"], "assume-rc": "254"}, env...)
-		require.Error(t, r.err, r.out)
-		assert.Equal(t, 1, countCalls(r.calls, assume), r.calls)
-		assert.Zero(t, countCalls(r.calls, "aws configure"), r.calls)
-		assert.NotContains(t, r.out, "profile に資格情報を置きました")
-		assert.Empty(t, r.left, "token と応答が残っています")
-	})
 }
 
 func Test_processAlive(t *testing.T) {
