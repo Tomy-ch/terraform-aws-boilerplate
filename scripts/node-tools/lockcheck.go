@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workdir"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -26,6 +28,7 @@ var (
 	errCanaryLaunched = xerrors.New("canary: 写しで道具が起動しました（frozen の install が外れた）")
 	errCanaryReason   = xerrors.New("canary: 期待と違う理由で落ちました")
 	errCanaryNoCases  = xerrors.New("canary: 確かめるケースが0件です")
+	errLockDrift      = xerrors.New("lockfile が package.json とずれています")
 
 	canaryFiles = []string{"package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"}
 
@@ -64,14 +67,17 @@ func runLockCheck(ctx context.Context, args []string, d deps) error {
 	}
 	fmt.Fprintln(d.stderr, "✅ node-tools canary: lockfile のずれと integrity の不一致で、道具の起動の前に落ちました")
 
-	cmd := d.tool(ctx, *dir, stepLockCheck)
+	cmd := d.tool(ctx, *dir, nil, stepLockCheck)
 	cmd.Stdout, cmd.Stderr = d.stderr, d.stderr
-	if err := cmd.Run(); err != nil {
-		if ctx.Err() != nil {
-			return errInterrupted
-		}
-
+	code, err := toolrun.Exec(cmd)
+	if ctx.Err() != nil {
+		return errInterrupted
+	}
+	if err != nil {
 		return xerrors.Wrap(err, "lockfile の照合")
+	}
+	if code != 0 {
+		return xerrors.Wrapf(errLockDrift, "exit status %d", code)
 	}
 
 	return nil
@@ -97,11 +103,11 @@ func runCanary(ctx context.Context, dir string, cases []canaryCase, d deps) erro
 	if err := os.MkdirAll(parent, 0o750); err != nil {
 		return xerrors.Wrap(err, parent)
 	}
-	root, err := os.MkdirTemp(parent, "node-tools-canary.")
+	root, cleanup, err := workdir.Temp(parent, "node-tools-canary.")
 	if err != nil {
 		return xerrors.Wrap(err, "canary の一時ディレクトリ")
 	}
-	defer func() { _ = os.RemoveAll(root) }()
+	defer cleanup()
 
 	bin := filepath.Join(root, "bin")
 	if err := os.Mkdir(bin, 0o750); err != nil {

@@ -14,6 +14,7 @@ import (
 	"golang.org/x/tools/txtar"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/atomicwrite"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workdir"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -108,11 +109,11 @@ func readCase(p string) (map[string]string, error) {
 // buildCase は files を一時ディレクトリに建て、最初の段のディレクトリを走査の root、files の名前の一覧を
 // 独立の一覧として buildSyntax に渡します。
 func buildCase(files map[string]string) (syntaxDoc, error) {
-	base, err := os.MkdirTemp("", "hcl-input-fixture-")
+	base, cleanup, err := workdir.Temp("", "hcl-input-fixture-")
 	if err != nil {
 		return syntaxDoc{}, xerrors.Wrapf(errFixture, "一時ディレクトリ: %v", err)
 	}
-	defer func() { _ = os.RemoveAll(base) }()
+	defer cleanup()
 
 	names := slices.Sorted(maps.Keys(files))
 	var listed, roots []string

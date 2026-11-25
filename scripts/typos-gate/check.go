@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -24,16 +25,24 @@ func runCheck(args []string, w io.Writer, tool toolFunc, env envFunc, root strin
 	if *work == "" || *config == "" || fset.NArg() > 0 {
 		return xerrors.Wrap(errUsage, "typos-gate check -work <dir> -config <.typos.toml>")
 	}
-	fixture, err := workdir.Resolve(root, *work)
-	if err != nil {
+	if _, err := workdir.Resolve(root, *work); err != nil {
 		return xerrors.Wrapf(errUsage, "-work %v", err)
 	}
 	cfg, err := readConfig(*config)
 	if err != nil {
 		return err
 	}
+	fixture, err := workdir.Recreate(root, *work)
+	if err != nil {
+		return xerrors.Wrapf(errRead, "-work %v", err)
+	}
+	defer workdir.Cleanup(root, *work, w)
 	if err := runCanary(fixture, cfg, w, tool); err != nil {
 		return err
+	}
+	// 本走査の前に fixture を消す。走査の範囲を .gitignore の扱いに預けない。
+	if err := workdir.Remove(root, *work); err != nil {
+		return xerrors.Wrapf(errRead, "-work の後片付け: %v", err)
 	}
 	if err := runCoverage(*config, cfg, w, tool, env); err != nil {
 		return err
@@ -45,7 +54,7 @@ func runCheck(args []string, w io.Writer, tool toolFunc, env envFunc, root strin
 // runScan は、リポジトリ直下で本走査（typos --format brief）を走らせ、出力を w へ写します。誤綴りの終了コードは
 // errFailed、それ以外の 0 でない終了コード（不正な引数・設定を読めない）は errTool です。
 func runScan(w io.Writer, tool toolFunc) error {
-	r, err := toolrun.Run(tool(".", os.Environ(), stepMain))
+	r, err := toolrun.Run(tool(context.Background(), ".", os.Environ(), stepMain))
 	fmt.Fprint(w, r.Combined)
 	if err != nil {
 		return err

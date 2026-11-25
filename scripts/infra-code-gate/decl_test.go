@@ -13,6 +13,7 @@ import (
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lintreport"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/requiredchecks"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 )
 
 func ptr[T any](v T) *T { return &v }
@@ -188,7 +189,7 @@ func Test_runDecl(t *testing.T) {
 			},
 			"検出の道具のディレクトリが無ければエラー": {
 				mutate: func(t *testing.T, repo string) {
-					require.NoError(t, os.RemoveAll(filepath.Join(repo, "scripts/hcl-tally")))
+					testenv.RemoveUnder(t, repo, "scripts/hcl-tally")
 				},
 				want: errGoSource,
 			},
@@ -589,7 +590,7 @@ func Test_goTargets(t *testing.T) {
 			},
 			"import 先のディレクトリが無い": {
 				mutate: func(t *testing.T, repo string) {
-					require.NoError(t, os.RemoveAll(filepath.Join(repo, "scripts/lib/c")))
+					testenv.RemoveUnder(t, repo, "scripts/lib/c")
 				},
 				msg: "scripts/lib/c",
 			},
