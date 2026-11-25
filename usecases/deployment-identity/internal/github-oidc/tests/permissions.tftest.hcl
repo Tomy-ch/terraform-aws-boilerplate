@@ -1693,10 +1693,11 @@ run "policy_length" {
   state_key = "policy_length"
 
   variables {
-    env                          = "admin"
-    name_prefix                  = "abcdefghijklmnopqrstuvwxyz0123456-log-archive"
-    bootstrap_read_role          = { name = format("b%063d", 5), path = format("/%064d/", 6) }
-    bootstrap_member_account_ids = { for e in ["dev", "stg", "prd", "sandbox", "security", "log-archive"] : e => "111111111111" }
+    env                 = "admin"
+    name_prefix         = "abcdefghijklmnopqrstuvwxyz0123456-log-archive"
+    bootstrap_read_role = { name = format("b%063d", 5), path = format("/%064d/", 6) }
+    # 引き受けの Resource はアカウントごとなので、6つの env に別の ID を置く。
+    bootstrap_member_account_ids = { for i, e in ["dev", "stg", "prd", "sandbox", "security", "log-archive"] : e => format("%012d", i + 1) }
     state_bucket_arn             = format("arn:aws-us-gov:s3:::%063d", 1)
     state_key_arn                = "arn:aws-us-gov:kms:us-isof-south-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
     plan_output_bucket_arn       = format("arn:aws-us-gov:s3:::%063d", 2)
@@ -1765,8 +1766,12 @@ run "policy_length" {
   }
 
   assert {
-    condition     = length(var.bootstrap_member_account_ids) == 6 && length(var.bootstrap_read_role.name) == 64 && length(var.bootstrap_read_role.path) == 66
-    error_message = "境界の入力の立ち上げが、すべてのメンバーの env と、上限の長さの読み取りの role の名前と path になっていません。"
+    condition = (
+      length(var.bootstrap_member_account_ids) == 6 && length(var.bootstrap_read_role.name) == 64 && length(var.bootstrap_read_role.path) == 66 &&
+      length(one([for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Resource if s.Sid == "AssumeBootstrapReadRoles"])) == 6 &&
+      length(one([for s in jsondecode(aws_iam_policy.members[0].policy).Statement : s.Resource if s.Sid == "AssumeBootstrapAccessRoles"])) == 6
+    )
+    error_message = "境界の入力の立ち上げが、6つのメンバーの env の別々のアカウントと、上限の長さの読み取りの role の名前と path になっていないか、引き受けの Resource が6つではありません。"
   }
 
   assert {
@@ -1972,10 +1977,11 @@ run "policy_length_aws" {
   state_key = "policy_length_aws"
 
   variables {
-    env                          = "admin"
-    name_prefix                  = "abcdefghijklmnopqrstuvwxyz0123456-log-archive"
-    bootstrap_read_role          = { name = format("b%063d", 5), path = format("/%064d/", 6) }
-    bootstrap_member_account_ids = { for e in ["dev", "stg", "prd", "sandbox", "security", "log-archive"] : e => "111111111111" }
+    env                 = "admin"
+    name_prefix         = "abcdefghijklmnopqrstuvwxyz0123456-log-archive"
+    bootstrap_read_role = { name = format("b%063d", 5), path = format("/%064d/", 6) }
+    # 引き受けの Resource はアカウントごとなので、6つの env に別の ID を置く。
+    bootstrap_member_account_ids = { for i, e in ["dev", "stg", "prd", "sandbox", "security", "log-archive"] : e => format("%012d", i + 1) }
     state_bucket_arn             = format("arn:aws:s3:::%063d", 1)
     state_key_arn                = "arn:aws:kms:ap-southeast-5:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
     plan_output_bucket_arn       = format("arn:aws:s3:::%063d", 2)
@@ -2043,8 +2049,12 @@ run "policy_length_aws" {
   }
 
   assert {
-    condition     = length(var.bootstrap_member_account_ids) == 6 && length(var.bootstrap_read_role.name) == 64 && length(var.bootstrap_read_role.path) == 66
-    error_message = "境界の入力の立ち上げが、すべてのメンバーの env と、上限の長さの読み取りの role の名前と path になっていません。"
+    condition = (
+      length(var.bootstrap_member_account_ids) == 6 && length(var.bootstrap_read_role.name) == 64 && length(var.bootstrap_read_role.path) == 66 &&
+      length(one([for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Resource if s.Sid == "AssumeBootstrapReadRoles"])) == 6 &&
+      length(one([for s in jsondecode(aws_iam_policy.members[0].policy).Statement : s.Resource if s.Sid == "AssumeBootstrapAccessRoles"])) == 6
+    )
+    error_message = "境界の入力の立ち上げが、6つのメンバーの env の別々のアカウントと、上限の長さの読み取りの role の名前と path になっていないか、引き受けの Resource が6つではありません。"
   }
 
   assert {

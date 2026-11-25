@@ -46,22 +46,26 @@ assume_statements contains {"document": r.document, "statement": s} if {
 	some r in ci_documents
 	some s in lib.statements(r.body)
 	s.Effect == "Allow"
-	assumes(s)
+	some action in assume_actions
+	assumes(s, action)
 }
 
-assumes(s) if {
+# 引き受けと、引き受けに session tag と source identity を付ける Action（deployment-identity/ADR-0201 決定22）。
+assume_actions := ["sts:assumerole", "sts:tagsession", "sts:setsourceidentity"]
+
+assumes(s, action) if {
 	some a in lib.lower_all(object.get(s, "Action", []))
-	lib.iam_match(a, "sts:assumerole")
+	lib.iam_match(a, action)
 }
 
-assumes(s) if {
+assumes(s, action) if {
 	"NotAction" in object.keys(s)
-	not excluded_by_not_action(s)
+	not excluded_by_not_action(s, action)
 }
 
-excluded_by_not_action(s) if {
+excluded_by_not_action(s, action) if {
 	some a in lib.lower_all(s.NotAction)
-	lib.iam_match(a, "sts:assumerole")
+	lib.iam_match(a, action)
 }
 
 only_assume_role(s) if lib.lower_all(object.get(s, "Action", [])) == ["sts:assumerole"]
@@ -102,7 +106,7 @@ apply_identity_assume_shape(s) if {
 deny contains msg if {
 	some x in assume_statements
 	not x.document.address in {plan_policy, apply_identity_policy}
-	msg := sprintf("[PLAN-BA-03] %s: %s が sts:AssumeRole を許します。メンバーの引き受けは、plan の role の inline policy と %s だけに置いてください", [x.document.path, x.document.address, apply_identity_policy])
+	msg := sprintf("[PLAN-BA-03] %s: %s が sts:AssumeRole・sts:TagSession・sts:SetSourceIdentity のどれかを許します。メンバーの引き受けは、plan の role の inline policy と %s だけに置いてください", [x.document.path, x.document.address, apply_identity_policy])
 }
 
 accounts(address, pattern) := {regex.find_all_string_submatch_n(pattern, r, 1)[0][1] |

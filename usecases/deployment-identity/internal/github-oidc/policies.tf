@@ -796,7 +796,7 @@ resource "aws_iam_role_policy" "apply_identity" {
     # role の名前は StackSet の名前にもなる。IAM が許して StackSet が許さない名前では、Allow がどの StackSet にも当たらない。
     precondition {
       condition     = !local.management || alltrue([for n in local.stack_set_names : can(regex("^[A-Za-z][-A-Za-z0-9]*$", n))])
-      error_message = "管理アカウント（env が admin）の break-glass の role の名前は、英字で始まり英数字とハイフンだけの名前にしてください（StackSet の名前の制約）。"
+      error_message = "管理アカウント（env が admin）の break-glass の role と立ち上げの読み取りの role の名前は、英字で始まり英数字とハイフンだけの名前にしてください（StackSet の名前の制約）。"
     }
 
     # 立ち上げの読み取りの role を配る StackSet は管理アカウントにだけ在る。メンバーの引き受けも管理アカウントの CI だけが行う。

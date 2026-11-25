@@ -379,3 +379,15 @@ test_violation_assume_other_than_bootstrap_read if {
 		fixture.has("[PLAN-ROLE-02] p.json: plan の role の Allow に変更系の Action sts:assumerole があります", p.deny) with input as with_role([s], []) with data.policy_plan.deployment_identity as decl
 	}
 }
+
+test_violation_bootstrap_read_assume_does_not_exempt_other_actions if {
+	s := {"Effect": "Allow", "Action": ["sts:AssumeRole", "iam:PassRole"], "Resource": ["arn:aws:iam::111111111111:role/bootstrap/tabp-bootstrap-read"]}
+	msgs := p.deny with input as with_role([s], []) with data.policy_plan.deployment_identity as decl
+	fixture.has("[PLAN-ROLE-02] p.json: plan の role の Allow に変更系の Action iam:passrole があります", msgs)
+	not fixture.has("[PLAN-ROLE-02] p.json: plan の role の Allow に変更系の Action sts:assumerole があります", msgs)
+}
+
+test_violation_bootstrap_read_assume_not_action if {
+	s := {"Effect": "Allow", "NotAction": "s3:*", "Resource": ["arn:aws:iam::111111111111:role/bootstrap/tabp-bootstrap-read"]}
+	fixture.has("[PLAN-ROLE-01]", p.deny) with input as with_role([s], []) with data.policy_plan.deployment_identity as decl
+}

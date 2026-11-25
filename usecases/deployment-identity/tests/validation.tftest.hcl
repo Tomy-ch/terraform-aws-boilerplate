@@ -701,3 +701,63 @@ run "rejects_bootstrap_account_for_admin" {
 
   expect_failures = [var.bootstrap_member_account_ids]
 }
+
+run "rejects_bootstrap_read_role_name_leading_digit" {
+  command = plan
+
+  variables {
+    bootstrap_read_role = { name = "1tabp-bootstrap-read", path = "/bootstrap/" }
+  }
+
+  expect_failures = [var.bootstrap_read_role]
+}
+
+run "rejects_bootstrap_read_role_path_over_64_chars" {
+  command = plan
+
+  variables {
+    bootstrap_read_role = { name = "tabp-bootstrap-read", path = format("/%065d/", 1) }
+  }
+
+  expect_failures = [var.bootstrap_read_role]
+}
+
+run "rejects_bootstrap_read_role_path_without_trailing_slash" {
+  command = plan
+
+  variables {
+    bootstrap_read_role = { name = "tabp-bootstrap-read", path = "/bootstrap" }
+  }
+
+  expect_failures = [var.bootstrap_read_role]
+}
+
+run "rejects_bootstrap_account_id_13_digits" {
+  command = plan
+
+  variables {
+    bootstrap_member_account_ids = { dev = "1111111111111" }
+  }
+
+  expect_failures = [var.bootstrap_member_account_ids]
+}
+
+run "rejects_bootstrap_account_id_non_digit" {
+  command = plan
+
+  variables {
+    bootstrap_member_account_ids = { dev = "11111111111a" }
+  }
+
+  expect_failures = [var.bootstrap_member_account_ids]
+}
+
+run "rejects_bootstrap_account_unknown_env" {
+  command = plan
+
+  variables {
+    bootstrap_member_account_ids = { prod = "111111111111" }
+  }
+
+  expect_failures = [var.bootstrap_member_account_ids]
+}
