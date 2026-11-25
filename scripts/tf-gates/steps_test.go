@@ -80,7 +80,7 @@ func Test_runEach(t *testing.T) {
 			targets, err := requireDirs(scan{base: base, roots: []string{"modules", "usecases"}, log: io.Discard})
 			require.NoError(t, err)
 			var out bytes.Buffer
-			err = runEach("tf-x", targets, &out, func(tg target) *exec.Cmd {
+			err = runEach("tf-x", targets, &out, nil, func(tg target) *exec.Cmd {
 				return tool(context.Background(), tg.path, tfexec.Env(os.Environ()), stepTest)
 			})
 			assert.Len(t, calls(), 2, "落ちても残りのディレクトリを走らせる")
@@ -112,7 +112,7 @@ func Test_runEach(t *testing.T) {
 		t.Parallel()
 		targets, cmdOf, calls := threeTargets(t, map[string]string{}, "modules/a")
 		var out bytes.Buffer
-		err := runEach("tf-x", targets, &out, cmdOf)
+		err := runEach("tf-x", targets, &out, nil, cmdOf)
 		require.ErrorIs(t, err, errTool)
 		require.NotErrorIs(t, err, errDirsFailed)
 		assert.Equal(t, 2, exitCode(err))
@@ -126,7 +126,7 @@ func Test_runEach(t *testing.T) {
 		t.Parallel()
 		targets, cmdOf, calls := threeTargets(t, map[string]string{"modules/a/fail-test": ""}, "usecases/b")
 		var out bytes.Buffer
-		err := runEach("tf-x", targets, &out, cmdOf)
+		err := runEach("tf-x", targets, &out, nil, cmdOf)
 		require.ErrorIs(t, err, errTool)
 		assert.False(t, errors.Is(err, errDirsFailed), "落ちた対象の sentinel を包まない（包むと終了コードが 1 になる）")
 		assert.Equal(t, 2, exitCode(err))
@@ -140,7 +140,7 @@ func Test_runEach(t *testing.T) {
 		f := tooltest.New(t)
 		f.Set(stepTest, "kill", "")
 		targets, _, _ := threeTargets(t, map[string]string{}, "")
-		err := runEach("tf-x", targets, &bytes.Buffer{}, func(tg target) *exec.Cmd { return f.Tool()(context.Background(), tg.path, nil, stepTest) })
+		err := runEach("tf-x", targets, &bytes.Buffer{}, nil, func(tg target) *exec.Cmd { return f.Tool()(context.Background(), tg.path, nil, stepTest) })
 		require.ErrorIs(t, err, errTool)
 		assert.Contains(t, err.Error(), "がシグナルで終わりました")
 		assert.Equal(t, 2, exitCode(err))
@@ -151,12 +151,61 @@ func Test_runEach(t *testing.T) {
 		t.Parallel()
 		targets, cmdOf, calls := threeTargets(t, map[string]string{"modules/a/fail-test": ""}, "")
 		var out bytes.Buffer
-		err := runEach("tf-x", targets, &out, cmdOf)
+		err := runEach("tf-x", targets, &out, nil, cmdOf)
 		require.ErrorIs(t, err, errDirsFailed)
 		require.NotErrorIs(t, err, errTool)
 		assert.Equal(t, 1, exitCode(err))
 		assert.Len(t, calls(), 3)
 		assert.Contains(t, out.String(), "tf-x: "+targets[0].path+": exit status 1\n")
+	})
+
+	for name, c := range map[string]struct {
+		detect   []int
+		rc       string
+		wantErr  error
+		wantCode int
+		calls    int
+	}{
+		"fmt-check の 3 は落ちた対象で、全部走って終了コードは 1":       {detectFmtCheck, "3", errDirsFailed, 1, 3},
+		"fmt-check の 1 は不成立で、打ち切って終了コードは 2":         {detectFmtCheck, "1", errToolFailed, 2, 1},
+		"fmt-check の 2 は不成立で、打ち切って終了コードは 2":         {detectFmtCheck, "2", errToolFailed, 2, 1},
+		"lint の 2 は落ちた対象で、全部走って終了コードは 1":            {detectLint, "2", errDirsFailed, 1, 3},
+		"lint の 1 は不成立で、打ち切って終了コードは 2":              {detectLint, "1", errToolFailed, 2, 1},
+		"lint の 3 は不成立で、打ち切って終了コードは 2":              {detectLint, "3", errToolFailed, 2, 1},
+		"detect が空なら 0 以外の値（ここでは 5）は落ちた対象で終了コードは 1": {nil, "5", errDirsFailed, 1, 3},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := tooltest.New(t)
+			f.Set(stepTest, "rc", c.rc)
+			targets, _, _ := threeTargets(t, map[string]string{}, "")
+			var out bytes.Buffer
+			err := runEach("tf-x", targets, &out, c.detect, func(tg target) *exec.Cmd {
+				return f.Tool()(context.Background(), tg.path, nil, stepTest)
+			})
+			require.ErrorIs(t, err, c.wantErr)
+			assert.Equal(t, c.wantCode, exitCode(err))
+			assert.Len(t, f.Calls(), c.calls)
+			if c.wantErr == errToolFailed {
+				assert.Contains(t, err.Error(), "exit status "+c.rc)
+				assert.NotContains(t, out.String(), "❌")
+			}
+		})
+	}
+
+	t.Run("detect の値で先の対象が落ち、次が不成立なら、先の失敗を文面に名指して errToolFailed", func(t *testing.T) {
+		t.Parallel()
+		targets, _, _ := threeTargets(t, map[string]string{}, "")
+		f := tooltest.New(t, tooltest.WithBase(filepath.Dir(filepath.Dir(targets[0].path))))
+		f.Set(stepTest+"@modules:a", "rc", "2")
+		f.Set(stepTest+"@usecases:b", "rc", "1")
+		err := runEach("tf-x", targets, &bytes.Buffer{}, detectLint, func(tg target) *exec.Cmd {
+			return f.Tool()(context.Background(), tg.path, nil, stepTest)
+		})
+		require.ErrorIs(t, err, errToolFailed)
+		require.NotErrorIs(t, err, errDirsFailed)
+		assert.Contains(t, err.Error(), "（それまでに落ちたディレクトリ: "+targets[0].path+"）")
+		assert.Len(t, f.Calls(), 2)
 	})
 }
 

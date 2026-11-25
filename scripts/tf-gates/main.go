@@ -39,6 +39,7 @@ var (
 	errDirsFailed  = xerrors.New("落ちたディレクトリがあります")
 	errCanary      = xerrors.New("canary が期待どおりではありません")
 	errTool        = toolrun.ErrTool
+	errToolFailed  = xerrors.New("道具が検査を成り立たせられませんでした")
 )
 
 func main() {

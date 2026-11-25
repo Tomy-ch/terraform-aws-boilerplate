@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -58,20 +59,36 @@ func command(ctx context.Context, dir string, env []string, step string, _ ...st
 	return cmd
 }
 
+// 検出を表す終了コードです。terraform fmt -check（1.17.1 の internal/command/fmt.go）は差分があれば 3、TFLint
+// （0.65.0 の cmd/cli.go）は指摘があれば 2 で終わり、ほかの 0 以外は道具が検査を成り立たせられなかったことです。
+// どちらも公式の文書は値を持たず、mise.toml の版のソースで確かめました。値がずれても 0 以外は通しません。
+var (
+	detectFmtCheck = []int{3}
+	detectLint     = []int{2}
+)
+
 // runEach は、targets のそれぞれで step を起動し、出力を w へ流し、落ちたディレクトリを集めて失敗にします。
-// [errTool] のときは、残りを起動せずに [errTool] を返します。それまでに落ちたディレクトリは文面にだけ添えます。
-func runEach(name string, targets []target, w io.Writer, cmdOf func(target) *exec.Cmd) error {
+// detect が空なら 0 以外をすべて落ちたディレクトリとし、空でなければ detect の値だけを落ちたディレクトリ、ほかの
+// 0 以外を [errToolFailed] とします。[errTool] と [errToolFailed] のときは、残りを起動せずに返します。それまでに
+// 落ちたディレクトリは文面にだけ添えます。
+func runEach(name string, targets []target, w io.Writer, detect []int, cmdOf func(target) *exec.Cmd) error {
 	var failed []string
+	abort := func(err error, t target) error {
+		if len(failed) > 0 {
+			return xerrors.Wrapf(err, "%s: %s で打ち切りました（それまでに落ちたディレクトリ: %s）", name, t.path, strings.Join(failed, " "))
+		}
+
+		return xerrors.Wrapf(err, "%s: %s で打ち切りました", name, t.path)
+	}
 	for _, t := range targets {
 		cmd := cmdOf(t)
 		cmd.Stdout, cmd.Stderr = w, w
 		code, err := toolrun.Exec(cmd)
 		if err != nil {
-			if len(failed) > 0 {
-				return xerrors.Wrapf(err, "%s: %s で打ち切りました（それまでに落ちたディレクトリ: %s）", name, t.path, strings.Join(failed, " "))
-			}
-
-			return xerrors.Wrapf(err, "%s: %s で打ち切りました", name, t.path)
+			return abort(err, t)
+		}
+		if code != 0 && len(detect) > 0 && !slices.Contains(detect, code) {
+			return abort(xerrors.Wrapf(errToolFailed, "exit status %d", code), t)
 		}
 		if code != 0 {
 			fmt.Fprintf(w, "%s: %s: exit status %d\n", name, t.path, code)
@@ -117,7 +134,12 @@ func runFmt(args []string, w io.Writer, tool toolFunc) error {
 	}
 	env := tfexec.Env(os.Environ())
 
-	return runEach(name, targets, w, func(t target) *exec.Cmd { return tool(context.Background(), t.path, env, step) })
+	var detect []int
+	if check {
+		detect = detectFmtCheck
+	}
+
+	return runEach(name, targets, w, detect, func(t target) *exec.Cmd { return tool(context.Background(), t.path, env, step) })
 }
 
 // parseData は、-data を持つサブコマンドの引数を読み、対象のディレクトリを返します。
@@ -148,7 +170,7 @@ func runInit(args []string, w io.Writer, tool toolFunc) error {
 }
 
 func initTargets(data string, targets []target, w io.Writer, tool toolFunc) error {
-	return runEach("tf-init", targets, w, func(t target) *exec.Cmd {
+	return runEach("tf-init", targets, w, nil, func(t target) *exec.Cmd {
 		step := stepInit
 		if isRoot(t.rel) {
 			step = stepInitReadonly
@@ -247,7 +269,7 @@ func runTest(args []string, w io.Writer, tool toolFunc) error {
 		return xerrors.Wrap(errNoTargets, "*.tftest.hcl を持つディレクトリが0件です")
 	}
 
-	return runEach("tf-test", tested, w, func(t target) *exec.Cmd {
+	return runEach("tf-test", tested, w, nil, func(t target) *exec.Cmd {
 		return tool(context.Background(), t.path, tfexec.Env(os.Environ(), "TF_DATA_DIR="+tfexec.DataDir(data, t.rel)), stepTest)
 	})
 }
@@ -282,11 +304,11 @@ func runLint(args []string, w io.Writer, tool toolFunc) error {
 		return xerrors.Wrapf(err, "%s の作成", plugins)
 	}
 	env := tfexec.Env(os.Environ(), "TFLINT_CONFIG_FILE="+config, "TFLINT_PLUGIN_DIR="+plugins)
-	if err := runEach("tf-lint の ruleset の取得", []target{{rel: ".", path: base}}, w, func(t target) *exec.Cmd {
+	if err := runEach("tf-lint の ruleset の取得", []target{{rel: ".", path: base}}, w, nil, func(t target) *exec.Cmd {
 		return tool(context.Background(), t.path, env, stepLintInit)
 	}); err != nil {
 		return err
 	}
 
-	return runEach("tf-lint", targets, w, func(t target) *exec.Cmd { return tool(context.Background(), t.path, env, stepLint) })
+	return runEach("tf-lint", targets, w, detectLint, func(t target) *exec.Cmd { return tool(context.Background(), t.path, env, stepLint) })
 }
