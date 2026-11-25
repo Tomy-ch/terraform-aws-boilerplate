@@ -22,6 +22,7 @@ linters:
     - contextcheck # context の伝播が途切れていないか
     - copyloopvar
     - errorlint # エラーの比較が errors.Is / As を通っているか
+    - forbidigo # 作業ディレクトリを消す経路を lib/workdir と os.Root に限る
     - gocritic
     - gosec # 外部コマンドの起動とファイル操作を多く含むため
     - misspell
@@ -36,6 +37,12 @@ linters:
     - wastedassign
 
   settings:
+    forbidigo:
+      # 別名の import（o "os"）でも当てるため、型の情報で照らす。
+      analyze-types: true
+      forbid:
+        - pattern: ^os\.RemoveAll$
+          msg: 消すのは lib/workdir の Recreate・Remove・Temp か、os.Root の RemoveAll に限る（検証と削除の間に symlink へ差し替えられても外を消さない）
     staticcheck:
       checks:
         - all
