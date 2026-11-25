@@ -105,6 +105,17 @@ func (e *regionEvaluator) forEachRegions(b *hclsyntax.Block, sc *scope) ([]strin
 	if !ok {
 		return nil, xerrors.Wrap(errRegionSet, "for_each が無いブロックの each.key です")
 	}
+	top := attr.Expr
+	for {
+		p, ok := top.(*hclsyntax.ParenthesesExpr)
+		if !ok {
+			break
+		}
+		top = p.Expression
+	}
+	if _, ok := top.(*hclsyntax.TupleConsExpr); ok {
+		return nil, xerrors.Wrap(errRegionSet, "for_each の tuple は toset で包んでください（Terraform は tuple を受けません）")
+	}
 	v, err := e.eval(attr.Expr, sc)
 	if err != nil {
 		return nil, err
@@ -279,20 +290,24 @@ func (e *regionEvaluator) output(sc *scope, callName, out, at string) (regionVal
 	if !ok {
 		return regionValue{}, xerrors.Wrap(errRegionSet, at+": module."+callName+"."+out+" がありません")
 	}
+	// 同じ output を評価の途中でもう一度求めるのは、module の呼び出しが循環するときだけである。
+	key := child.dir + " output." + out
+	if e.active[key] {
+		return regionValue{}, xerrors.Wrap(errRegionSet, at+": module."+callName+"."+out+" が循環しています")
+	}
+	e.active[key] = true
+	defer delete(e.active, key)
 	return e.eval(expr, &scope{mod: child, args: call.args, caller: sc})
 }
 
-// index は map の添字を解く。添字は文字列のリテラルか、data.aws_partition.<name>.partition である。
-// partition の添字は、値の集合のうち root の aws の provider の region を含む entry がちょうど 1 つのとき、その entry を選ぶ。
+// index は map の、式の添字を解く。添字は data.aws_partition.<name>.partition に限る。partition の添字は、値の集合のうち root の aws の provider の region を含む entry がちょうど 1 つのとき、その entry を選ぶ。
 func (e *regionEvaluator) index(coll regionValue, key hclsyntax.Expression, at string) (regionValue, error) {
 	if !coll.isMap() {
 		return regionValue{}, xerrors.Wrap(errRegionSet, at+": 添字を取る値が map ではありません")
 	}
-	if s, ok := literalString(key); ok {
-		return e.entry(coll, s, at)
-	}
+	// 文字列のリテラルの添字は、HCL が参照の TraverseIndex に畳むので traversal が解く。
 	if !isPartitionRef(key) {
-		return regionValue{}, xerrors.Wrap(errRegionSet, at+": 添字が文字列のリテラルか data.aws_partition の partition ではありません")
+		return regionValue{}, xerrors.Wrap(errRegionSet, at+": 添字が data.aws_partition の partition ではありません")
 	}
 	region, err := e.rootRegion()
 	if err != nil {

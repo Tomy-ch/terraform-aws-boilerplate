@@ -283,6 +283,10 @@ func (s *ssot) expandRegionSets() error {
 				out = append(out, h[:m[0][0]]+r+h[m[0][1]:])
 			}
 		}
+		// 展開した宛先と、同じリストのリテラルの宛先の重複を拒む（requireUnique と同じ理由）。
+		if err := requireUnique(out); err != nil {
+			return nil, xerrors.Wrap(err, owner)
+		}
 		return out, nil
 	}
 	var err error

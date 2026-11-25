@@ -325,6 +325,12 @@ func Test_parseSSOT(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
+		t.Run("region_set の regions の無い集合を弾く", func(t *testing.T) {
+			t.Parallel()
+			_, err := parseSSOT(testSSOT + "\n[region_set.d]\n\n[type.aws_r_]\nhosts = [\"r.{d}.amazonaws.com\"]\n")
+			require.ErrorIs(t, err, errSSOTRegionSet)
+		})
+
 		t.Run("region_set の展開の失敗を伝播する", func(t *testing.T) {
 			t.Parallel()
 			_, err := parseSSOT(testSSOT + "\n[region_set.d]\nregions = [\"us-east-1\"]\n")
@@ -682,6 +688,7 @@ func Test_ssot_expandRegionSets(t *testing.T) {
 			"使われない集合":         {map[string][]string{"d": {"us-east-1"}, "u": {"us-east-1"}}, []string{"a.{d}.test"}},
 			"空の集合":            {map[string][]string{"d": {}}, []string{"a.{d}.test"}},
 			"region の形でない要素":  {map[string][]string{"d": {"global"}}, []string{"a.{d}.test"}},
+			"名前の無い {}":        {map[string][]string{"d": {"us-east-1"}}, []string{"a.{d}.test", "b.{}.test"}},
 			"1 つの宛先に 2 つの {}": {map[string][]string{"d": {"us-east-1"}}, []string{"{d}.{d}.test"}},
 		} {
 			t.Run(name+"を弾く", func(t *testing.T) {
@@ -692,6 +699,14 @@ func Test_ssot_expandRegionSets(t *testing.T) {
 				require.ErrorIs(t, s.expandRegionSets(), errSSOTRegionSet)
 			})
 		}
+
+		t.Run("展開した宛先と、同じリストのリテラルの宛先の重複を弾く", func(t *testing.T) {
+			t.Parallel()
+			s := withSets(map[string][]string{"d": {"us-east-1"}})
+			s.types["aws_r_"] = &typeSpec{hosts: []string{"a.{d}.test", "a.us-east-1.test"}}
+			s.typeOrder = []string{"aws_r_"}
+			require.ErrorIs(t, s.expandRegionSets(), errSSOTDuplicate)
+		})
 
 		t.Run("job の extra の未知の集合を弾く", func(t *testing.T) {
 			t.Parallel()
@@ -1662,6 +1677,26 @@ func Test_applyOrCheck(t *testing.T) {
 			got, readErr := openRoot(t, root).ReadFile(".github/workflows/a.yaml")
 			require.NoError(t, readErr)
 			assert.Equal(t, stale, string(got))
+		})
+
+		t.Run("reference の root で region を解けなければ弾き、apply でも何も書かない", func(t *testing.T) {
+			t.Parallel()
+			root := newTestRepo(t, map[string]string{"a.yaml": staleWorkflow("one"), "b.yaml": bWorkflow()})
+			writeFile(t, root, "usecases/u/reference/main.tf", "resource \"aws_x_a\" \"a\" {\n  for_each = data.aws_regions.r.names\n  region   = each.key\n}\n")
+			require.ErrorIs(t, applyOrCheck(root, false), errRegionSet)
+			got, readErr := openRoot(t, root).ReadFile(".github/workflows/a.yaml")
+			require.NoError(t, readErr)
+			assert.Equal(t, staleWorkflow("one"), string(got))
+		})
+
+		t.Run("reference の root が 1 件も無ければ弾き、apply でも何も書かない", func(t *testing.T) {
+			t.Parallel()
+			root := newTestRepo(t, map[string]string{"a.yaml": staleWorkflow("one"), "b.yaml": bWorkflow()})
+			require.NoError(t, os.RemoveAll(filepath.Join(root, "usecases")))
+			require.ErrorIs(t, applyOrCheck(root, false), errNoReferenceRoots)
+			got, readErr := openRoot(t, root).ReadFile(".github/workflows/a.yaml")
+			require.NoError(t, readErr)
+			assert.Equal(t, staleWorkflow("one"), string(got))
 		})
 
 		t.Run("SSOT が解釈できなければ workflow を書き換えない", func(t *testing.T) {

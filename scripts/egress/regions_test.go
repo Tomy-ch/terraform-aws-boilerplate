@@ -147,21 +147,24 @@ func Test_regionEvaluator_forEachRegions(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		for name, src := range map[string]string{
-			"for_each が無い":       "resource \"aws_a\" \"x\" {}\n",
-			"空の集合":               "resource \"aws_a\" \"x\" {\n  for_each = toset([])\n}\n",
-			"region の形でない要素":     "resource \"aws_a\" \"x\" {\n  for_each = toset([\"us-east-1\", \"global\"])\n}\n",
-			"region の形でない key":   "resource \"aws_a\" \"x\" {\n  for_each = { a = 1 }\n}\n",
-			"解けない式（data）":        "resource \"aws_a\" \"x\" {\n  for_each = data.aws_regions.x.names\n}\n",
-			"解けない式（条件式）":         "resource \"aws_a\" \"x\" {\n  for_each = true ? toset([\"us-east-1\"]) : toset([])\n}\n",
-			"解けない式（for 式）":       "resource \"aws_a\" \"x\" {\n  for_each = toset([for r in [\"us-east-1\"] : r])\n}\n",
-			"解けない式（setsubtract）": "resource \"aws_a\" \"x\" {\n  for_each = setsubtract([\"us-east-1\"], [])\n}\n",
+		for name, tc := range map[string]struct{ src, msg string }{
+			"for_each が無い":       {"resource \"aws_a\" \"x\" {}\n", "for_each が無い"},
+			"空の集合":               {"resource \"aws_a\" \"x\" {\n  for_each = toset([])\n}\n", "空の集合"},
+			"空の map":             {"resource \"aws_a\" \"x\" {\n  for_each = {}\n}\n", "空の集合"},
+			"toset で包まない tuple":  {"resource \"aws_a\" \"x\" {\n  for_each = ([\"us-east-1\"])\n}\n", "toset で包んで"},
+			"region の形でない要素":     {"resource \"aws_a\" \"x\" {\n  for_each = toset([\"us-east-1\", \"global\"])\n}\n", "region の形ではありません"},
+			"region の形でない key":   {"resource \"aws_a\" \"x\" {\n  for_each = { a = 1 }\n}\n", "region の形ではありません"},
+			"解けない式（data）":        {"resource \"aws_a\" \"x\" {\n  for_each = data.aws_regions.x.names\n}\n", "data の参照は解けません"},
+			"解けない式（条件式）":         {"resource \"aws_a\" \"x\" {\n  for_each = true ? toset([\"us-east-1\"]) : toset([])\n}\n", "の式は解けません"},
+			"解けない式（for 式）":       {"resource \"aws_a\" \"x\" {\n  for_each = toset([for r in [\"us-east-1\"] : r])\n}\n", "の式は解けません"},
+			"解けない式（setsubtract）": {"resource \"aws_a\" \"x\" {\n  for_each = setsubtract([\"us-east-1\"], [])\n}\n", "関数 setsubtract は解けません"},
 		} {
 			t.Run(name+"を弾く", func(t *testing.T) {
 				t.Parallel()
 				ev, sc := evalSetup(t, map[string]string{"r/main.tf": providerTF}, "r")
-				_, err := ev.forEachRegions(block(t, src), sc)
+				_, err := ev.forEachRegions(block(t, tc.src), sc)
 				require.ErrorIs(t, err, errRegionSet)
+				assert.Contains(t, err.Error(), tc.msg)
 			})
 		}
 	})
@@ -183,7 +186,6 @@ func Test_regionEvaluator_eval(t *testing.T) {
 			"local":              {`local.regions`, []string{"us-east-1"}},
 			"local の map の添字":    {`local.by["aws"]`, []string{"us-east-1"}},
 			"local の map の属性":    {`local.by.aws`, []string{"us-east-1"}},
-			"index の文字列の添字":      {`local.by["aws"]`, []string{"us-east-1"}},
 			"partition の添字":      {`local.by[data.aws_partition.current.partition]`, []string{"us-east-1"}},
 			"index 式の partition": {`(local.by)[data.aws_partition.current.partition]`, []string{"us-east-1"}},
 		} {
@@ -203,26 +205,29 @@ func Test_regionEvaluator_eval(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		for name, src := range map[string]string{
-			"toset 以外の関数":        `keys({ "us-east-1" = 1 })`,
-			"toset の引数が2つ":       `toset(["us-east-1"], ["eu-west-1"])`,
-			"toset の展開":          `toset(local.list...)`,
-			"toset の引数が map":     `toset({ a = 1 })`,
-			"要素がリテラルでない":         `[local.x]`,
-			"key が式の object":     `{ (local.k) = 1 }`,
-			"each.value":         `each.value`,
-			"テンプレート":             `"${local.x}"`,
-			"添字を取る値が set":        `toset(["us-east-1"])["us-east-1"]`,
-			"添字が式":               `local.by[local.k]`,
-			"partition 以外の data": `local.by[data.aws_region.current.region]`,
+		for name, tc := range map[string]struct{ src, msg string }{
+			"toset 以外の関数":        {`keys({ "us-east-1" = 1 })`, "関数 keys は解けません"},
+			"toset の引数が2つ":       {`toset(["us-east-1"], ["eu-west-1"])`, "関数 toset は解けません"},
+			"toset の展開":          {`toset(local.list...)`, "関数 toset は解けません"},
+			"toset の引数が map":     {`toset({ a = 1 })`, "toset の引数が map です"},
+			"要素がリテラルでない":         {`[local.x]`, "要素が文字列のリテラルではありません"},
+			"key が式の object":     {`{ (local.k) = 1 }`, "key がリテラルではありません"},
+			"each.value":         {`each.value`, "each の参照は解けません"},
+			"テンプレート":             {`"${local.x}"`, "の式は解けません"},
+			"関数の値の添字":            {`toset(["us-east-1"])["us-east-1"]`, "の式は解けません"},
+			"添字を取る値が set":        {`local.s[data.aws_partition.current.partition]`, "map ではありません"},
+			"添字を取る値を解けない":        {`local.nope[data.aws_partition.current.partition]`, "local.nope がありません"},
+			"添字が式":               {`local.by[local.k]`, "data.aws_partition の partition ではありません"},
+			"partition 以外の data": {`local.by[data.aws_region.current.region]`, "data.aws_partition の partition ではありません"},
 		} {
 			t.Run(name+"を弾く", func(t *testing.T) {
 				t.Parallel()
 				ev, sc := evalSetup(t, map[string]string{
-					"r/main.tf": providerTF + "locals {\n  by = { aws = [\"us-east-1\"] }\n  k = \"aws\"\n  list = []\n  x = \"us-east-1\"\n}\n",
+					"r/main.tf": providerTF + "locals {\n  by = { aws = [\"us-east-1\"] }\n  k = \"aws\"\n  list = []\n  x = \"us-east-1\"\n  s = toset([\"us-east-1\"])\n}\n",
 				}, "r")
-				_, err := ev.eval(parseExpr(t, src), sc)
+				_, err := ev.eval(parseExpr(t, tc.src), sc)
 				require.ErrorIs(t, err, errRegionSet)
+				assert.Contains(t, err.Error(), tc.msg)
 			})
 		}
 	})
@@ -246,21 +251,23 @@ func Test_regionEvaluator_traversal(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		for name, src := range map[string]string{
-			"local の名前が無い":     `local`,
-			"var の名前が無い":       `var`,
-			"module の出力の名前が無い": `module.m`,
-			"知らない root":        `path.module`,
-			"数の添字":             `local.m[0]`,
-			"splat":            `local.m[*]`,
-			"ない key":           `local.m.nope`,
-			"set の属性":          `local.s.a`,
+		for name, tc := range map[string]struct{ src, msg string }{
+			"local の名前が無い":          {`local`, "local の名前を読めません"},
+			"var の名前が無い":            {`var`, "var の名前を読めません"},
+			"module の出力の名前が無い":      {`module.m`, "module の出力の参照を読めません"},
+			"count の module の添字の出力": {`module.m[0].o`, "module の出力の参照を読めません"},
+			"知らない root":             {`path.module`, "path の参照は解けません"},
+			"数の添字":                  {`local.m[0]`, "添字が文字列ではありません"},
+			"splat":                 {`local.m[*]`, "の式は解けません"},
+			"ない key":                {`local.m.nope`, "key nope がありません"},
+			"set の属性":               {`local.s.a`, "map ではありません"},
 		} {
 			t.Run(name+"を弾く", func(t *testing.T) {
 				t.Parallel()
 				ev, sc := evalSetup(t, map[string]string{"r/main.tf": "locals {\n  m = { a = [\"us-east-1\"] }\n  s = [\"us-east-1\"]\n}\n"}, "r")
-				_, err := ev.eval(parseExpr(t, src), sc)
+				_, err := ev.eval(parseExpr(t, tc.src), sc)
 				require.ErrorIs(t, err, errRegionSet)
+				assert.Contains(t, err.Error(), tc.msg)
 			})
 		}
 	})
@@ -389,6 +396,18 @@ func Test_regionEvaluator_output(t *testing.T) {
 			ev, sc := evalSetup(t, files, "r")
 			_, err := ev.output(sc, "d", "nope", "at")
 			require.ErrorIs(t, err, errRegionSet)
+		})
+
+		t.Run("module の出力が循環すれば、再帰を打ち切って弾く", func(t *testing.T) {
+			t.Parallel()
+			ev, sc := evalSetup(t, map[string]string{
+				"r/main.tf":   "module \"m\" {\n  source = \"./c\"\n}\n",
+				"r/c/main.tf": "module \"s\" {\n  source = \"../c\"\n}\noutput \"o\" {\n  value = module.s.o\n}\n",
+			}, "r")
+			_, err := ev.output(sc, "m", "o", "at")
+			require.ErrorIs(t, err, errRegionSet)
+			assert.Contains(t, err.Error(), "循環")
+			assert.Empty(t, ev.active)
 		})
 
 		t.Run("呼ばれる module を読めなければ弾く", func(t *testing.T) {

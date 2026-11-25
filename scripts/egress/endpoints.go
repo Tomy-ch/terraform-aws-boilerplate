@@ -41,6 +41,9 @@ var (
 	errBlockCount   = xerrors.New("Terraform のブロックの件数が字面と解析で一致しません")
 	// errNoReferenceRoots は usecase の reference の root が 1 件も無いエラー。region の解決を事前に見る対象が無い。
 	errNoReferenceRoots = xerrors.New("usecases/*/reference の root が 1 件もありません")
+	// errReferenceMissing は reference の root を持たない usecase のエラー（ADR-0401 決定11）。持たない usecase は、
+	// region の解決の事前の検査から黙って外れる。
+	errReferenceMissing = xerrors.New("reference の root を持たない usecase があります")
 )
 
 var typeBlocks = map[string]bool{"resource": true, "data": true, "ephemeral": true, "action": true}
@@ -150,6 +153,19 @@ func checkReferenceRegions(repo string) error {
 	}
 	if len(dirs) == 0 {
 		return errNoReferenceRoots
+	}
+	usecases, err := filepath.Glob(filepath.Join(repo, "usecases", "*", "*.tf"))
+	if err != nil {
+		return xerrors.Wrap(err, "glob usecases")
+	}
+	has := map[string]bool{}
+	for _, d := range dirs {
+		has[filepath.Dir(d)] = true
+	}
+	for _, f := range usecases {
+		if u := filepath.Dir(f); !has[u] {
+			return xerrors.Wrap(errReferenceMissing, filepath.ToSlash(relTo(repo, u)))
+		}
 	}
 	for _, d := range dirs {
 		rel := filepath.ToSlash(filepath.Join("usecases", filepath.Base(filepath.Dir(d)), "reference"))
@@ -338,14 +354,8 @@ func providerRegions(repo string, dirs []string) ([]string, error) {
 	defer func() { _ = r.Close() }()
 	found := map[string]bool{}
 	for _, dir := range dirs {
-		files, err := fs.Glob(r.FS(), path.Join(dir, "*.tf"))
-		if err != nil {
-			return nil, xerrors.Wrap(err, "glob "+dir)
-		}
-		for _, f := range files {
-			if err := fileRegions(r, f, found); err != nil {
-				return nil, xerrors.Wrap(err, f)
-			}
+		if err := dirRegions(r, dir, found); err != nil {
+			return nil, err
 		}
 	}
 	if len(found) == 0 {
@@ -354,17 +364,25 @@ func providerRegions(repo string, dirs []string) ([]string, error) {
 	return sortedKeys(found), nil
 }
 
-// fileRegionsIn は dir の *.tf にある aws の provider の region を整列して返す。
-func fileRegionsIn(repo *os.Root, dir string) ([]string, error) {
+// dirRegions は dir の *.tf にある aws の provider の region を found へ足す。
+func dirRegions(repo *os.Root, dir string, found map[string]bool) error {
 	files, err := fs.Glob(repo.FS(), path.Join(dir, "*.tf"))
 	if err != nil {
-		return nil, xerrors.Wrap(err, "glob "+dir)
+		return xerrors.Wrap(err, "glob "+dir)
 	}
-	found := map[string]bool{}
 	for _, f := range files {
 		if err := fileRegions(repo, f, found); err != nil {
-			return nil, xerrors.Wrap(err, f)
+			return xerrors.Wrap(err, f)
 		}
+	}
+	return nil
+}
+
+// fileRegionsIn は dir の *.tf にある aws の provider の region を整列して返す。
+func fileRegionsIn(repo *os.Root, dir string) ([]string, error) {
+	found := map[string]bool{}
+	if err := dirRegions(repo, dir, found); err != nil {
+		return nil, err
 	}
 	if len(found) == 0 {
 		return nil, xerrors.Wrap(errRegionUnknown, dir+": aws の provider がありません")

@@ -9,7 +9,7 @@
 
 いくつかの AWS のサービスは、資源や metric を us-east-1 にしか持たない。Route 53 の公開 Hosted Zone の query log と DNSSEC の鍵と DNSSEC の metric、CloudFront の metric と CloudFront に付ける ACM の証明書がそれに当たる。その metric の alarm と通知先の Topic も、alarm と同じ region に置く。CloudWatch の alarm が別の region の SNS Topic を action に取れることを、AWS の文書は述べていない。
 
-env の root は provider を1つの region で渡す。usecase や module が `configuration_aliases` で us-east-1 の provider を求めると、そのディレクトリでの `terraform validate` が、渡されない provider を理由に落ちる。CI のランナーが出てよい宛先は `make egress-check` が root から辿る block の `region` から導き、region の形の literal でない `region` を落とす。literal の集合を `for_each` に取る block の `region = each.key` だけは、その集合の各 region として読む。AWS Provider v6 は多くの resource に `region` 引数を持ち、plan の JSON に region が値として現れる。一般 module に `region` の入力を足さないことは、us-east-1 に資源を置くどの usecase にも当たるので、repository-wide に置く（ADR-0001 決定20）。
+env の root は provider を1つの region で渡す。usecase や module が `configuration_aliases` で us-east-1 の provider を求めると、そのディレクトリでの `terraform validate` が、渡されない provider を理由に落ちる。CI のランナーが出てよい宛先は `make egress-check` が root から辿る block の `region` から導き、region の形の literal でない `region` を落とす。`region = each.key` だけは、block の `for_each` を検査が閉じた形で解ける集合（literal に辿り着く `local`・呼び手の `var`・module の `output`。形の一覧は `scripts/README.md` の `egress/` の行）として読み、その各 region とする。スカラーの `region` は決定1 のとおり literal に限る。AWS Provider v6 は多くの resource に `region` 引数を持ち、plan の JSON に region が値として現れる。一般 module に `region` の入力を足さないことは、us-east-1 に資源を置くどの usecase にも当たるので、repository-wide に置く（ADR-0001 決定20）。
 
 ## Decision
 
