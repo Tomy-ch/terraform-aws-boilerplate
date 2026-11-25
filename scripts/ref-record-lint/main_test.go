@@ -558,8 +558,19 @@ func Test_section(t *testing.T) {
 func Test_rawLines(t *testing.T) {
 	t.Parallel()
 
-	assert.Equal(t, []mdscan.Line{{Number: 1, Text: "a"}, {Number: 2, Text: "```"}, {Number: 3, Text: ""}}, rawLines([]byte("a\n```\n")),
-		"フェンスも区別せず、全行を1始まりの番号で返す")
+	for name, c := range map[string]struct {
+		content string
+		want    []mdscan.Line
+	}{
+		"フェンスも区別せず、全行を1始まりの番号で返す": {"a\n```\n", []mdscan.Line{{Number: 1, Text: "a"}, {Number: 2, Text: "```"}, {Number: 3, Text: ""}}},
+		"コメントも区別しない":              {"<!--\nb", []mdscan.Line{{Number: 1, Text: "<!--"}, {Number: 2, Text: "b"}}},
+		"空の入力は1行の空文字":             {"", []mdscan.Line{{Number: 1, Text: ""}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, rawLines([]byte(c.content)))
+		})
+	}
 }
 
 func Test_isHeading(t *testing.T) {
@@ -640,10 +651,20 @@ func Test_visibleLines(t *testing.T) {
 func Test_backtickRun(t *testing.T) {
 	t.Parallel()
 
-	assert.Equal(t, 0, backtickRun("a`"))
-	assert.Equal(t, 1, backtickRun("`a`"))
-	assert.Equal(t, 3, backtickRun("```"))
-	assert.Equal(t, 0, backtickRun(""))
+	for name, c := range map[string]struct {
+		s    string
+		want int
+	}{
+		"先頭がバッククォートでない": {"a`", 0},
+		"1つ":   {"`a`", 1},
+		"3つ続く": {"```", 3},
+		"空":    {"", 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, backtickRun(c.s))
+		})
+	}
 }
 
 func Test_checkSection(t *testing.T) {
@@ -838,8 +859,19 @@ func Test_checkList(t *testing.T) {
 func Test_isLabel(t *testing.T) {
 	t.Parallel()
 
-	assert.True(t, isLabel(adoptedLabel, adoptedLabel))
-	assert.True(t, isLabel(adoptedLabel+" \t", adoptedLabel), "後ろの空白を許す")
-	assert.False(t, isLabel(" "+adoptedLabel, adoptedLabel), "前の空白は許さない")
-	assert.False(t, isLabel(adoptedLabel+"x", adoptedLabel))
+	for name, c := range map[string]struct {
+		text string
+		want bool
+	}{
+		"label だけ":  {adoptedLabel, true},
+		"後ろの空白を許す":  {adoptedLabel + " \t", true},
+		"前の空白は許さない": {" " + adoptedLabel, false},
+		"語が続く":      {adoptedLabel + "x", false},
+		"別の label":  {rejectedLabel, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, isLabel(c.text, adoptedLabel))
+		})
+	}
 }
