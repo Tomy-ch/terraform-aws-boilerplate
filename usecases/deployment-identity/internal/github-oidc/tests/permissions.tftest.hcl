@@ -1415,7 +1415,10 @@ run "policies" {
           "arn:aws:cloudformation::123456789012:stackset-target/tabp-break-glass:*",
           "arn:aws:cloudformation:*:*:type/resource/AWS-IAM-Role",
         ]
-        Condition = { StringEquals = { "cloudformation:TargetRegion" = "ap-northeast-1" } }
+        Condition = {
+          "ForAllValues:StringEquals" = { "cloudformation:TargetRegion" = "ap-northeast-1" }
+          Null                        = { "cloudformation:TargetRegion" = "false" }
+        }
       },
     ]
     error_message = "統制の customer managed policy の文書が、統制の構成物の作成と設定だけになっていません。"
@@ -3030,7 +3033,7 @@ run "governance_follows_data_sources" {
 
   assert {
     condition = [for s in jsondecode(aws_iam_policy.governance[0].policy).Statement : [s.Resource, try(s.Condition, null)] if contains(["UpdateBreakGlassStackSet", "ManageBreakGlassStackInstances"], s.Sid)] == [
-      for c in [null, { StringEquals = { "cloudformation:TargetRegion" = "us-gov-west-1" } }] : [[
+      for c in [null, { "ForAllValues:StringEquals" = { "cloudformation:TargetRegion" = "us-gov-west-1" }, Null = { "cloudformation:TargetRegion" = "false" } }] : [[
         "arn:aws-us-gov:cloudformation:us-gov-west-1:210987654321:stackset/t4bp-break-glass:*",
         "arn:aws-us-gov:cloudformation::210987654321:stackset-target/t4bp-break-glass:*",
         "arn:aws-us-gov:cloudformation:*:*:type/resource/AWS-IAM-Role",

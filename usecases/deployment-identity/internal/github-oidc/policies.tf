@@ -546,11 +546,15 @@ locals {
       # StackSet と stack instance の削除は与えない。メンバーの break-glass の role が消える（deployment-identity/ADR-0201「与えないもの」）。
       { Sid = "UpdateBreakGlassStackSet", Effect = "Allow", Action = "cloudformation:UpdateStackSet", Resource = local.break_glass_stack_set_write_arns },
       {
-        Sid       = "ManageBreakGlassStackInstances"
-        Effect    = "Allow"
-        Action    = ["cloudformation:CreateStackInstances", "cloudformation:UpdateStackInstances"]
-        Resource  = local.break_glass_stack_set_write_arns
-        Condition = { StringEquals = { "cloudformation:TargetRegion" = data.aws_region.current.region } }
+        Sid      = "ManageBreakGlassStackInstances"
+        Effect   = "Allow"
+        Action   = ["cloudformation:CreateStackInstances", "cloudformation:UpdateStackInstances"]
+        Resource = local.break_glass_stack_set_write_arns
+        # ForAllValues は空の一覧にも成り立つので、Null を外さない（deployment-identity/ADR-0201 決定4）。
+        Condition = {
+          "ForAllValues:StringEquals" = { "cloudformation:TargetRegion" = data.aws_region.current.region }
+          Null                        = { "cloudformation:TargetRegion" = "false" }
+        }
       },
     ],
   )
