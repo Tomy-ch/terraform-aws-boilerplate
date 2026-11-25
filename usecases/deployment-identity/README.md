@@ -94,7 +94,7 @@ unsupported:
 - apply の role が作るか渡す別の主体、bootstrap の構成物の ARN を通らない要求（S3 の access point 等）、Resource `"*"` でしか与えられない Action を経た、bootstrap の構成物の変更（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) の保証範囲。別の主体は #254）
 - apply の role が、Identity Center の permission set と割当のほかの書き込み（instance・application）と identitystore の書き込み（user・group・グループの membership）を行わないこと。`DenyGovernanceChange` はこれらを拒まない（[deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) の保証範囲）
 - 帯域外で足された policy が、次の apply までの間に有効であること。検出は定期 plan（#77）、剥がすのは apply
-- write 権限を持つ主体が、保護対象のパターンに当たるブランチを新しく作り、その上で書き換えた workflow から plan の environment の job を走らせること。apply 系と lock の解除の environment はデプロイブランチだけを許すので、そこからは届かない。ruleset は `creation` の規則を持たず、`pull_request` と required status checks の規則が push によるブランチの作成を止めるかを、GitHub の文書は述べていない。デプロイブランチが無い間（作る前）は、その名前のブランチを作った主体が apply 系の environment に届く（#223）
+- write 権限を持つ主体が、保護対象のパターンに当たるブランチを新しく作り、その上で書き換えた workflow から plan の environment の job を走らせること。apply 系と lock の解除の environment はデプロイブランチだけを許すので、そこからは届かない。ruleset は `creation` の規則を持たず、`pull_request` と required status checks の規則が push によるブランチの作成を止めるかを、GitHub の文書は述べていない。bootstrap（[`docs/setup/bootstrap.md`](../../docs/setup/bootstrap.md)）は段4 の apply の前に `admin` を作り、段4 の手順3 の `make deploy-branch-exists DEPLOY_ENV=admin` がその存在を確かめる。手順を飛ばして段4 を apply した場合は、`admin` を作るまで、その名前のブランチを作った主体が apply 系の environment に届く（#223）
 - apply の role が、tag `<project>:bootstrap` を持たない anomaly monitor と subscription を、finops のものでなくても変更・削除すること。管理アカウントの bootstrap の前提の monitor と subscription は、人が [`docs/setup/bootstrap.md`](../../docs/setup/bootstrap.md) の 2-4 で tag を付けたときだけ Deny が守る（[deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) の保証範囲）
 
 ## 所有者

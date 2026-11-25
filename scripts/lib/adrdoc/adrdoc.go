@@ -94,36 +94,17 @@ func Status(source string) (status string, ok bool) {
 }
 
 // Headings は、コードフェンスと HTML コメントの外にある ATX 見出しのテキストを、現れた順に返します。
-// レベルは問いません。inline code の中の `<!--` はコメントを開きません。
-func Headings(source []byte) []string {
+// レベルは問わず、inline code の部分は除きます。HTML コメントが閉じなければ mdscan.ErrUnclosedComment を返します。
+func Headings(source []byte) ([]string, error) {
+	lines, err := mdscan.VisibleLines(source)
+	if err != nil {
+		return nil, err
+	}
 	var out []string
-	inComment := false
-	for _, l := range mdscan.Lines(source) {
-		var visible strings.Builder
-		text := inlineCode.ReplaceAllString(l.Text, "")
-		for text != "" {
-			if inComment {
-				end := strings.Index(text, "-->")
-				if end < 0 {
-					text = ""
-					continue
-				}
-				inComment = false
-				text = text[end+len("-->"):]
-				continue
-			}
-			start := strings.Index(text, "<!--")
-			if start < 0 {
-				visible.WriteString(text)
-				break
-			}
-			visible.WriteString(text[:start])
-			inComment = true
-			text = text[start+len("<!--"):]
-		}
-		if m := headingLine.FindStringSubmatch(visible.String()); m != nil {
+	for _, l := range lines {
+		if m := headingLine.FindStringSubmatch(inlineCode.ReplaceAllString(l.Text, "")); m != nil {
 			out = append(out, m[1])
 		}
 	}
-	return out
+	return out, nil
 }
