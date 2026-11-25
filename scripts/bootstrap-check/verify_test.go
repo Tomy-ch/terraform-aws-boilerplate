@@ -732,7 +732,7 @@ func Test_checkVerify(t *testing.T) {
 		{verifyOptions{stage: "before-apply"}, "# 結果: 21 件のうち NG 21 件"},
 		{verifyOptions{stage: "stage4"}, "# 結果: 24 件のうち NG 22 件"},
 		{verifyOptions{stage: "stage4", executor: "bob"}, "# 結果: 24 件のうち NG 23 件"},
-		{verifyOptions{stage: "permissions"}, "# 結果: 141 件のうち NG 76 件"},
+		{verifyOptions{stage: "permissions"}, "# 結果: 145 件のうち NG 79 件"},
 		{verifyOptions{stage: "stage5"}, "# 結果: 5 件のうち NG 4 件"},
 		{verifyOptions{stage: "output-policy", policySource: "live"}, "# 結果: 13 件のうち NG 7 件"},
 		{verifyOptions{stage: "output-policy", policySource: "reference"}, "# 結果: 13 件のうち NG 7 件"},

@@ -16,7 +16,7 @@ env の root は provider を1つの region で渡す。usecase や module が `
 1. us-east-1 にしか置けない資源と、その資源の metric の alarm の通知先は、usecase の resource に `region = "us-east-1"` を literal で書いて置く。変数・local・`configuration_aliases` を通さない。
 2. 一般 module（`modules/`）に `region` の入力を足さない。us-east-1 に置く資源を一般 module と同じ値で持つ必要がある usecase は、その資源を自分の `internal/` に持つ。この重複は ADR-0205 決定11 の重複であり、値の一致は Policy Test が一般 module と同じ検査で見る。
 3. us-east-1 は、usecase が利用者から受ける入力にしない。region を入力にすると、受け取る値の意味が AWS の表現に依存する（ADR-0204 決定2）。
-4. us-east-1 に資源を置く usecase は、CI の role の権限を provider の region と us-east-1 の2つについて列挙する。ランナーの egress の宛先は、`make egress-check` が `region` の literal から導くものを宣言する。
+4. us-east-1 に資源を置く usecase は、CI の role の権限を provider の region と us-east-1 の2つについて列挙する。ADR-0209 の集合に置く資源の権限は、同 ADR 決定4 に従う。ランナーの egress の宛先は、`make egress-check` が `region` の literal と、`for_each` の集合（同 ADR 決定5）から導くものを宣言する。
 5. us-east-1 は aws の partition の region である。aws の外の partition では、CI の role の権限に us-east-1 を足さない。
 
 ## 検討した代替案
@@ -50,7 +50,7 @@ us-east-1 にしか出ない metric は、ほかの region の alarm から見�
 ## 影響
 
 - us-east-1 に資源を置く usecase は、`internal/` に一般 module と同じ値を写す。
-- CI の apply・plan の role の権限は us-east-1 を含む。ランナーの egress の us-east-1 の宛先は、us-east-1 に資源を置く root を実行する job に限って持つ（`make egress-check` は root ごとに、置く region の宛先だけを求める）。
+- CI の apply・plan の role の権限は us-east-1 を含む。ADR-0209 の集合に置く資源の権限は、その集合に及ぶ。ランナーの egress の us-east-1 の宛先は、us-east-1 に資源を置く root を実行する job に限って持つ（`make egress-check` は root ごとに、置く region の宛先だけを求める）。
 
 ## 見直し条件
 

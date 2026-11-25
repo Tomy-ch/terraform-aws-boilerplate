@@ -71,6 +71,8 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
 11. ARNが事前に確定しない場合は、まずresource参照による依存順序の解決を試みる。解決できない場合に限り、prefixベースのARN patternをConditionで限定して使用し、根拠を記録する。
 
     ただし、拒否する statement（`Deny`）の Resource は、ARN が確定していても、それらを覆う prefix ベースの ARN pattern で書いてよく、Condition での限定を要しない。pattern は拒む範囲を広げるだけで、Allow が許す範囲を広げないからである（決定8 が Deny の Action wildcard を許すのと同じ理由）。この但し書きを使う箇所は、次の3つを当該ユースケースの ADR に記録する: 覆うべき ARN のすべてが pattern に入ることを確かめる入力の検証か検査、pattern が覆うべき ARN の外に当てる範囲、列挙せずに pattern で書く理由。
+
+    ARN の region の部分だけを `*` にした pattern は、ARN が事前に確定していても、許可する statement で使ってよい。条件は2つある。region を列挙した ARN では policy の文字数の上限を超えること。同じ role に、その statement の Action を、条件キー `aws:RequestedRegion` が許すリージョンの集合の外にあるときに拒む `Deny` の statement があること。リージョンごとの資源の ARN の region は、要求を受けた endpoint の region と一致するので、許す要求はリージョンを列挙した ARN と同じになる。この但し書きを使う箇所は、許すリージョンの集合とその根拠、`Deny` の Action が `Allow` の Action を覆うことを確かめる検査を、当該ユースケースの ADR に記録する（ADR-0209 決定4）。
 12. KMS の鍵の暗号操作（`kms:Decrypt`・`kms:Encrypt`・`kms:GenerateDataKey` など）と `kms:CreateGrant` は、IAM policy で与えない。その鍵の Key Policy が、使う principal を名指して許す。Key Policy がアカウントへ委任するのは鍵の管理の Action に限り、暗号操作と `kms:CreateGrant` を含めない。鍵を使う主体の一覧が、鍵ごとに Key Policy の1箇所に揃い、IAM の Allow を足しても鍵を使えるようにはならない。
 
 ### ネットワーク
