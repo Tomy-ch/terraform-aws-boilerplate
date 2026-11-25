@@ -104,8 +104,12 @@ var (
 		"apply-identity $ss: 1 件が implicitDeny",
 		"apply-identity $xss [cloudformation:TargetRegion=ap-northeast-1]: 2 件が implicitDeny",
 		"apply-identity $xst [cloudformation:TargetRegion=ap-northeast-1]: 2 件が implicitDeny",
+		"apply-identity $yss [cloudformation:TargetRegion=ap-northeast-1]: 2 件が implicitDeny",
+		"apply-identity $yst [cloudformation:TargetRegion=ap-northeast-1]: 2 件が implicitDeny",
 		"apply-identity $xss: 1 件が implicitDeny",
 		"apply-identity $xst: 1 件が implicitDeny",
+		"apply-identity $yss: 1 件が implicitDeny",
+		"apply-identity $yst: 1 件が implicitDeny",
 	}
 	permSLRDescs = []string{
 		"apply-identity $slr [iam:AWSServiceName=management.chatbot.amazonaws.com]: 1 件が allowed",
@@ -222,7 +226,7 @@ var (
 const (
 	// permissions の件数。条件つきの確認の有無で変わる。
 	permissionsBase     = 110
-	governanceGated     = 27
+	governanceGated     = 31
 	workloadGatedCount  = 24
 	budgetsGatedCount   = 4
 	outputPolicyCount   = 13
@@ -265,6 +269,8 @@ var permExpand = strings.NewReplacer(
 	"$ty", "arn:aws:cloudformation:*::type/resource/AWS-IAM-Role",
 	"$xss", "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-other:00000000-0000-0000-0000-0000000000b0",
 	"$xst", "arn:aws:cloudformation::123456789012:stackset-target/tabp-other:00000000-0000-0000-0000-0000000000b0/r-abcd",
+	"$yss", "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-break-glass-x:00000000-0000-0000-0000-0000000000b0",
+	"$yst", "arn:aws:cloudformation::123456789012:stackset-target/tabp-break-glass-x:00000000-0000-0000-0000-0000000000b0/r-abcd",
 	"$inst", "cloudformation:CreateStackInstances cloudformation:UpdateStackInstances",
 )
 
@@ -359,6 +365,10 @@ var permRowActions = []string{
 	"cloudformation:DeleteStackInstances",
 	"$inst ; cloudformation:TargetRegion = ap-northeast-1 (stringList)",
 	"$inst ; cloudformation:TargetRegion = ap-northeast-1 (stringList)",
+	"$inst ; cloudformation:TargetRegion = ap-northeast-1 (stringList)",
+	"$inst ; cloudformation:TargetRegion = ap-northeast-1 (stringList)",
+	"cloudformation:UpdateStackSet",
+	"cloudformation:UpdateStackSet",
 	"cloudformation:UpdateStackSet",
 	"cloudformation:UpdateStackSet",
 	// Chatbot の service-linked role
@@ -605,6 +615,10 @@ func Test_ctxSummary(t *testing.T) {
 		"ContextKeyName で始まらなければそのまま": {"c1", "c1"},
 		"ContextKeyValues が無ければそのまま":  {"ContextKeyName=k,ContextKeyType=string", "ContextKeyName=k,ContextKeyType=string"},
 		"ContextKeyType が無ければそのまま":    {"ContextKeyName=k,ContextKeyValues=v", "ContextKeyName=k,ContextKeyValues=v"},
+		"空文字列はそのまま":                   {"", ""},
+		"値が `,ContextKeyType=` を含めば、最後の `,ContextKeyType=` で切る": {"ContextKeyName=k,ContextKeyValues=a,ContextKeyType=b,ContextKeyType=string",
+			"k=a,ContextKeyType=b"},
+		"キーが空なら、空のキーと値": {"ContextKeyName=,ContextKeyValues=v,ContextKeyType=string", "=v"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -636,11 +650,19 @@ func Test_simRow_desc(t *testing.T) {
 	r.bucketPolicy = true
 	assert.Equal(t, "apply arn:x（Bucket Policy を含む）: 1 件が explicitDeny", r.desc())
 
-	assert.Equal(t, "plan arn:x [ec2:Region=us-west-2]: 1 件が implicitDeny",
-		simCtx(implicitDeny, "plan", "arn:x", []string{ctxEntry("ec2:Region", "us-west-2", "string")}, "a").desc(), "context を `[...]` で添える")
-	assert.Equal(t, "plan arn:x [k1=a,b; k2=true; c3]: 1 件が allowed",
-		simCtx(allowed, "plan", "arn:x", []string{ctxList("k1", "a", "b"), ctxEntry("k2", "true", "boolean"), "c3"}, "a").desc(),
-		"複数の context は `; ` で区切り、読めない entry はそのまま並べる")
+	t.Run("context ありなら、context を `[...]` で添える", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Equal(t, "plan arn:x [ec2:Region=us-west-2]: 1 件が implicitDeny",
+			simCtx(implicitDeny, "plan", "arn:x", []string{ctxEntry("ec2:Region", "us-west-2", "string")}, "a").desc())
+	})
+
+	t.Run("複数 context と読めない entry は、`; ` で区切り、読めない entry はそのまま並べる", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Equal(t, "plan arn:x [k1=a,b; k2=true; c3]: 1 件が allowed",
+			simCtx(allowed, "plan", "arn:x", []string{ctxList("k1", "a", "b"), ctxEntry("k2", "true", "boolean"), "c3"}, "a").desc())
+	})
 }
 
 func Test_simRow_args(t *testing.T) {
@@ -970,11 +992,15 @@ func Test_permissionSections(t *testing.T) {
 	t.Run("区分の中で desc が重ならず、NG の行がどの行かを区別できる", func(t *testing.T) {
 		t.Parallel()
 
+		require.NotEmpty(t, sections)
+
 		for _, s := range sections {
 			var descs []string
 			for _, r := range append(slices.Clone(s.rows), s.gated...) {
 				descs = append(descs, r.desc())
 			}
+
+			require.NotEmpty(t, descs, s.heading)
 
 			sorted := slices.Sorted(slices.Values(descs))
 			assert.Len(t, slices.Compact(sorted), len(descs), s.heading)
@@ -1058,6 +1084,8 @@ func Test_permissionSections(t *testing.T) {
 			ty := "arn:aws:cloudformation:*::type/resource/AWS-IAM-Role"
 			xss := "arn:aws:cloudformation:us-west-2:123456789012:stackset/tabp-other:00000000-0000-0000-0000-0000000000b0"
 			xst := "arn:aws:cloudformation::123456789012:stackset-target/tabp-other:00000000-0000-0000-0000-0000000000b0/r-abcd"
+			yss := "arn:aws:cloudformation:us-west-2:123456789012:stackset/tabp-break-glass-x:00000000-0000-0000-0000-0000000000b0"
+			yst := "arn:aws:cloudformation::123456789012:stackset-target/tabp-break-glass-x:00000000-0000-0000-0000-0000000000b0/r-abcd"
 
 			var rows []row
 
@@ -1075,6 +1103,7 @@ func Test_permissionSections(t *testing.T) {
 				{implicitDeny, ss, "us-west-2,eu-west-1"}, {implicitDeny, st, "us-west-2,eu-west-1"}, {implicitDeny, ty, "us-west-2,eu-west-1"},
 				{implicitDeny, ss, "eu-west-1"}, {implicitDeny, st, "eu-west-1"}, {implicitDeny, ty, "eu-west-1"},
 				{implicitDeny, xss, "us-west-2"}, {implicitDeny, xst, "us-west-2"},
+				{implicitDeny, yss, "us-west-2"}, {implicitDeny, yst, "us-west-2"},
 			}, rows)
 		})
 	})
@@ -1146,6 +1175,8 @@ func Test_stackInstanceRows(t *testing.T) {
 	ty := "arn:aws:cloudformation:*::type/resource/AWS-IAM-Role"
 	xss := "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-other:00000000-0000-0000-0000-0000000000b0"
 	xst := "arn:aws:cloudformation::123456789012:stackset-target/tabp-other:00000000-0000-0000-0000-0000000000b0/r-abcd"
+	yss := "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-break-glass-x:00000000-0000-0000-0000-0000000000b0"
+	yst := "arn:aws:cloudformation::123456789012:stackset-target/tabp-break-glass-x:00000000-0000-0000-0000-0000000000b0/r-abcd"
 	inst := []string{"cloudformation:CreateStackInstances", "cloudformation:UpdateStackInstances"}
 	tr := func(v string) []string {
 		return []string{"ContextKeyName=cloudformation:TargetRegion,ContextKeyValues=" + v + ",ContextKeyType=stringList"}
@@ -1155,7 +1186,7 @@ func Test_stackInstanceRows(t *testing.T) {
 	}
 
 	t.Run("作成と更新は provider の region だけの一覧で allowed、別の region を含む一覧・別の region だけの一覧・context なしで implicitDeny、"+
-		"UpdateStackSet は allowed、DeleteStackInstances と別の名前の StackSet は implicitDeny", func(t *testing.T) {
+		"UpdateStackSet は allowed、DeleteStackInstances と別の名前・名前の prefix を共有する名前の StackSet は implicitDeny", func(t *testing.T) {
 		t.Parallel()
 
 		assert.Equal(t, []simRow{
@@ -1180,8 +1211,12 @@ func Test_stackInstanceRows(t *testing.T) {
 			row(implicitDeny, ss, nil, "cloudformation:DeleteStackInstances"),
 			row(implicitDeny, xss, tr("ap-northeast-1"), inst...),
 			row(implicitDeny, xst, tr("ap-northeast-1"), inst...),
+			row(implicitDeny, yss, tr("ap-northeast-1"), inst...),
+			row(implicitDeny, yst, tr("ap-northeast-1"), inst...),
 			row(implicitDeny, xss, nil, "cloudformation:UpdateStackSet"),
 			row(implicitDeny, xst, nil, "cloudformation:UpdateStackSet"),
+			row(implicitDeny, yss, nil, "cloudformation:UpdateStackSet"),
+			row(implicitDeny, yst, nil, "cloudformation:UpdateStackSet"),
 		}, rows)
 	})
 }
@@ -1207,11 +1242,11 @@ func Test_permissionsSteps(t *testing.T) {
 		result                      string
 	}{
 		"条件つきの確認がすべて走る": {governanceAttached, workloadAttached, nil, nil, nil, permissionsBase + governanceGated + workloadGatedCount + budgetsGatedCount,
-			"# 結果: 165 件のうち NG 0 件"},
+			"# 結果: 169 件のうち NG 0 件"},
 		"統制の policy が付いていない": {noneAttached, workloadAttached, []string{governanceAbsent}, nil, nil, permissionsBase + workloadGatedCount + budgetsGatedCount,
 			"# 結果: 138 件のうち NG 0 件（確かめていない区分 1）"},
 		"workload の policy が付いていない": {governanceAttached, noneAttached, nil, []string{workloadAbsent}, []string{budgetsAbsent},
-			permissionsBase + governanceGated, "# 結果: 137 件のうち NG 0 件（確かめていない区分 2）"},
+			permissionsBase + governanceGated, "# 結果: 141 件のうち NG 0 件（確かめていない区分 2）"},
 		"どちらも付いていない": {noneAttached, noneAttached, []string{governanceAbsent}, []string{workloadAbsent}, []string{budgetsAbsent}, permissionsBase,
 			"# 結果: 110 件のうち NG 0 件（確かめていない区分 3）"},
 	} {

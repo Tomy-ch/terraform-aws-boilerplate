@@ -544,12 +544,13 @@ func stackSetARNs(n names, name string) (string, string, string) {
 }
 
 // stackInstanceRows は、apply-identity が break-glass の stack instance を provider の region にだけ作り・更新でき、削除
-// できず、別の名前の StackSet には及ばないことの行。1つの要求が3つの resource に当たり、simCheck は返った action を数えるので、
-// resource ごとに行を分ける。
+// できず、別の名前の StackSet には及ばないことの行（名前の prefix を共有する名前は、Resource を名前の prefix へ広げた policy を
+// 見つける）。1つの要求が3つの resource に当たり、simCheck は返った action を数えるので、resource ごとに行を分ける。
 func stackInstanceRows(n names, other string) []simRow {
 	ss, st, ty := stackSetARNs(n, n.project+"-break-glass")
 	// policy の type の Resource はアカウントが `*` で StackSet の名前を含まないので、type には別の名前の行を持たない。
 	xss, xst, _ := stackSetARNs(n, n.project+"-other")
+	yss, yst, _ := stackSetARNs(n, n.project+"-break-glass-x")
 	ai := n.applyIdentity
 	inst := []string{"cloudformation:CreateStackInstances", "cloudformation:UpdateStackInstances"}
 	// TargetRegion は一覧を受けるキー（Service Authorization Reference の ArrayOfString）で、provider の region に限る
@@ -577,11 +578,11 @@ func stackInstanceRows(n names, other string) []simRow {
 
 	rows = append(rows, sim(implicitDeny, ai, ss, "cloudformation:DeleteStackInstances"))
 
-	for _, r := range []string{xss, xst} {
+	for _, r := range []string{xss, xst, yss, yst} {
 		rows = append(rows, simCtx(implicitDeny, ai, r, tr(n.region), inst...))
 	}
 
-	for _, r := range []string{xss, xst} {
+	for _, r := range []string{xss, xst, yss, yst} {
 		rows = append(rows, sim(implicitDeny, ai, r, "cloudformation:UpdateStackSet"))
 	}
 
