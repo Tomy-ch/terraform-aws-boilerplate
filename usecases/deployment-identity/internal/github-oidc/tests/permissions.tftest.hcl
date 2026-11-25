@@ -311,6 +311,7 @@ run "policies" {
       },
       { Sid = "GuarddutyListOrganizationAdminAccounts", Effect = "Allow", Action = "guardduty:ListOrganizationAdminAccounts", Resource = "*" },
       { Sid = "Inspector2ListDelegatedAdminAccounts", Effect = "Allow", Action = "inspector2:ListDelegatedAdminAccounts", Resource = "*" },
+      { Sid = "ReadSecurityHubAdminAccounts", Effect = "Allow", Action = ["securityhub:ListOrganizationAdminAccounts"], Resource = "arn:aws:securityhub:*:123456789012:hub/default" },
       {
         Sid       = "DenyBaselineOutsideRegions"
         Effect    = "Deny"
@@ -321,7 +322,7 @@ run "policies" {
       {
         Sid       = "DenyDelegatedAdminOutsideRegions"
         Effect    = "Deny"
-        Action    = ["guardduty:ListOrganizationAdminAccounts", "inspector2:ListDelegatedAdminAccounts"]
+        Action    = ["guardduty:ListOrganizationAdminAccounts", "inspector2:ListDelegatedAdminAccounts", "securityhub:ListOrganizationAdminAccounts"]
         Resource  = "*"
         Condition = { StringNotEquals = { "aws:RequestedRegion" = ["ap-northeast-1", "ap-northeast-2", "ap-northeast-3", "ap-south-1", "ap-southeast-1", "ap-southeast-2", "ca-central-1", "eu-central-1", "eu-north-1", "eu-west-1", "eu-west-2", "eu-west-3", "sa-east-1", "us-east-1", "us-east-2", "us-west-1", "us-west-2"] } }
       },
@@ -1308,19 +1309,20 @@ run "policies" {
       },
       { Sid = "GuarddutyListOrganizationAdminAccounts", Effect = "Allow", Action = "guardduty:ListOrganizationAdminAccounts", Resource = "*" },
       { Sid = "Inspector2ListDelegatedAdminAccounts", Effect = "Allow", Action = "inspector2:ListDelegatedAdminAccounts", Resource = "*" },
+      { Sid = "ReadSecurityHubAdminAccounts", Effect = "Allow", Action = ["securityhub:ListOrganizationAdminAccounts"], Resource = "arn:aws:securityhub:*:123456789012:hub/default" },
       {
         Sid       = "RegisterDelegatedAdministrators"
         Effect    = "Allow"
         Action    = ["organizations:DeregisterDelegatedAdministrator", "organizations:RegisterDelegatedAdministrator"]
         Resource  = "arn:aws:organizations::123456789012:account/o-*/*"
-        Condition = { StringEquals = { "organizations:ServicePrincipal" = ["access-analyzer.amazonaws.com", "cloudtrail.amazonaws.com", "config.amazonaws.com", "guardduty.amazonaws.com", "inspector2.amazonaws.com"] } }
+        Condition = { StringEquals = { "organizations:ServicePrincipal" = ["access-analyzer.amazonaws.com", "cloudtrail.amazonaws.com", "config.amazonaws.com", "guardduty.amazonaws.com", "inspector2.amazonaws.com", "securityhub.amazonaws.com"] } }
       },
       {
         Sid       = "EnableSecurityServiceAccess"
         Effect    = "Allow"
         Action    = "organizations:EnableAWSServiceAccess"
         Resource  = "*"
-        Condition = { StringEquals = { "organizations:ServicePrincipal" = ["guardduty.amazonaws.com", "inspector2.amazonaws.com"] } }
+        Condition = { StringEquals = { "organizations:ServicePrincipal" = ["guardduty.amazonaws.com", "inspector2.amazonaws.com", "securityhub.amazonaws.com"] } }
       },
       { Sid = "DescribeOrganizationAccounts", Effect = "Allow", Action = "organizations:DescribeAccount", Resource = "arn:aws:organizations::123456789012:account/o-*/*" },
       { Sid = "CloudtrailRegisterOrganizationDelegatedAdmin", Effect = "Allow", Action = "cloudtrail:RegisterOrganizationDelegatedAdmin", Resource = "*" },
@@ -1343,15 +1345,16 @@ run "policies" {
       { Sid = "GuarddutyEnableOrganizationAdminAccount", Effect = "Allow", Action = "guardduty:EnableOrganizationAdminAccount", Resource = "*" },
       { Sid = "Inspector2DisableDelegatedAdminAccount", Effect = "Allow", Action = "inspector2:DisableDelegatedAdminAccount", Resource = "*" },
       { Sid = "Inspector2EnableDelegatedAdminAccount", Effect = "Allow", Action = "inspector2:EnableDelegatedAdminAccount", Resource = "*" },
+      { Sid = "ManageSecurityHubAdminAccounts", Effect = "Allow", Action = ["securityhub:DisableOrganizationAdminAccount", "securityhub:EnableOrganizationAdminAccount"], Resource = "arn:aws:securityhub:*:123456789012:hub/default" },
       {
         Sid       = "DenyDelegatedAdminOutsideRegions"
         Effect    = "Deny"
-        Action    = ["guardduty:DisableOrganizationAdminAccount", "guardduty:EnableOrganizationAdminAccount", "guardduty:ListOrganizationAdminAccounts", "inspector2:DisableDelegatedAdminAccount", "inspector2:EnableDelegatedAdminAccount", "inspector2:ListDelegatedAdminAccounts"]
+        Action    = ["guardduty:DisableOrganizationAdminAccount", "guardduty:EnableOrganizationAdminAccount", "guardduty:ListOrganizationAdminAccounts", "inspector2:DisableDelegatedAdminAccount", "inspector2:EnableDelegatedAdminAccount", "inspector2:ListDelegatedAdminAccounts", "securityhub:DisableOrganizationAdminAccount", "securityhub:EnableOrganizationAdminAccount", "securityhub:ListOrganizationAdminAccounts"]
         Resource  = "*"
         Condition = { StringNotEquals = { "aws:RequestedRegion" = ["ap-northeast-1", "ap-northeast-2", "ap-northeast-3", "ap-south-1", "ap-southeast-1", "ap-southeast-2", "ca-central-1", "eu-central-1", "eu-north-1", "eu-west-1", "eu-west-2", "eu-west-3", "sa-east-1", "us-east-1", "us-east-2", "us-west-1", "us-west-2"] } }
       },
     ]
-    error_message = "委任管理者の policy が、5つのサービスの委任管理者の指定・解除と読み取り、GuardDuty と Inspector の信頼アクセスの有効化、CloudTrail の SLR の作成と、リージョンごとの Action の集合の外の拒否になっていません。"
+    error_message = "委任管理者の policy が、6つのサービスの委任管理者の指定・解除と読み取り、GuardDuty・Inspector・Security Hub の信頼アクセスの有効化、CloudTrail の SLR の作成と、リージョンごとの Action の集合の外の拒否になっていません。"
   }
 
   assert {
@@ -3126,12 +3129,12 @@ run "governance_follows_data_sources" {
       "OrganizationsListDelegatedAdministrators", "ReadCloudTrailServiceLinkedRoles", "RegisterDelegatedAdministrators", "EnableSecurityServiceAccess", "DescribeOrganizationAccounts",
       "CloudtrailRegisterOrganizationDelegatedAdmin", "CloudtrailDeregisterOrganizationDelegatedAdmin", "CreateCloudTrailServiceLinkedRole", "CreateCloudTrailEventContextServiceLinkedRole",
     ]
-    error_message = "repository-wide/ADR-0209 の集合を持たない partition で、委任管理者の policy が GuardDuty と Inspector の文と、リージョンの Deny を外していません。"
+    error_message = "repository-wide/ADR-0209 の集合を持たない partition で、委任管理者の policy が GuardDuty・Inspector・Security Hub の文と、リージョンの Deny を外していません。"
   }
 
   assert {
-    condition     = !strcontains(aws_iam_role_policy.this["plan"].policy, "guardduty:") && !strcontains(aws_iam_role_policy.this["plan"].policy, "inspector2:") && !strcontains(aws_iam_role_policy.this["plan"].policy, "DenyDelegatedAdminOutsideRegions")
-    error_message = "repository-wide/ADR-0209 の集合を持たない partition で、plan の role が GuardDuty と Inspector の読み取りと、リージョンの Deny を外していません。"
+    condition     = !strcontains(aws_iam_role_policy.this["plan"].policy, "guardduty:") && !strcontains(aws_iam_role_policy.this["plan"].policy, "inspector2:") && !strcontains(aws_iam_role_policy.this["plan"].policy, "securityhub:") && !strcontains(aws_iam_role_policy.this["plan"].policy, "DenyDelegatedAdminOutsideRegions")
+    error_message = "repository-wide/ADR-0209 の集合を持たない partition で、plan の role が GuardDuty・Inspector・Security Hub の読み取りと、リージョンの Deny を外していません。"
   }
 
   assert {

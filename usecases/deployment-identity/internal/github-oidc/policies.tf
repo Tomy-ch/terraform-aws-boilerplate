@@ -564,21 +564,26 @@ locals {
 
   # 委任管理者の指定（organization-baseline の internal/delegated-admin。deployment-identity/ADR-0201 決定7）。
   # 指定するサービスの主体。Config と Access Analyzer は Organizations の API で、ほかはサービスの API で指定する。
-  delegated_admin_service_principals = ["access-analyzer.amazonaws.com", "cloudtrail.amazonaws.com", "config.amazonaws.com", "guardduty.amazonaws.com", "inspector2.amazonaws.com"]
+  delegated_admin_service_principals = ["access-analyzer.amazonaws.com", "cloudtrail.amazonaws.com", "config.amazonaws.com", "guardduty.amazonaws.com", "inspector2.amazonaws.com", "securityhub.amazonaws.com"]
   org_account_arns                   = "${local.org_arn_prefix}:account/o-*/*"
   cloudtrail_slr_arns = {
     "cloudtrail.amazonaws.com"         = "${local.iam_arn_prefix}:role/aws-service-role/cloudtrail.amazonaws.com/AWSServiceRoleForCloudTrail"
     "context.cloudtrail.amazonaws.com" = "${local.iam_arn_prefix}:role/aws-service-role/context.cloudtrail.amazonaws.com/AWSServiceRoleForCloudTrailEventContext"
   }
-  # GuardDuty と Inspector の指定はリージョンごとで、ADR-0209 の集合のすべてに置く。
+  # GuardDuty・Inspector・Security Hub の指定はリージョンごとで、ADR-0209 の集合のすべてに置く。Security Hub の Action は
+  # 管理アカウントの hub を resource に取る（Service Authorization Reference）。
   delegated_admin_regional_read_actions   = ["guardduty:ListOrganizationAdminAccounts", "inspector2:ListDelegatedAdminAccounts"]
   delegated_admin_regional_manage_actions = ["guardduty:DisableOrganizationAdminAccount", "guardduty:EnableOrganizationAdminAccount", "inspector2:DisableDelegatedAdminAccount", "inspector2:EnableDelegatedAdminAccount"]
+  securityhub_hub_arn                     = "arn:${data.aws_partition.current.partition}:securityhub:${local.baseline_arn_suffix}:hub/default"
+  securityhub_read_actions                = ["securityhub:ListOrganizationAdminAccounts"]
+  securityhub_manage_actions              = ["securityhub:DisableOrganizationAdminAccount", "securityhub:EnableOrganizationAdminAccount"]
   delegated_admin_read_statements = [for s in concat(
     [
       { Sid = "OrganizationsListDelegatedAdministrators", Effect = "Allow", Action = "organizations:ListDelegatedAdministrators", Resource = "*" },
       { Sid = "ReadCloudTrailServiceLinkedRoles", Effect = "Allow", Action = "iam:GetRole", Resource = values(local.cloudtrail_slr_arns) },
     ],
     [for a in local.delegated_admin_regional_read_actions : { Sid = replace(title(replace(a, ":", " ")), " ", ""), Effect = "Allow", Action = a, Resource = "*" } if local.baseline_supported],
+    [for s in [{ Sid = "ReadSecurityHubAdminAccounts", Effect = "Allow", Action = local.securityhub_read_actions, Resource = local.securityhub_hub_arn }] : s if local.baseline_supported],
   ) : s if local.management]
   delegated_admin_manage_statements = concat(
     [
@@ -589,13 +594,13 @@ locals {
         Resource  = local.org_account_arns
         Condition = { StringEquals = { "organizations:ServicePrincipal" = local.delegated_admin_service_principals } }
       },
-      # GuardDuty と Inspector の指定は、呼び手の権限で信頼アクセスを有効にし、指定先のアカウントを読む（各サービスの文書）。
+      # GuardDuty・Inspector・Security Hub の指定は、呼び手の権限で信頼アクセスを有効にし、指定先のアカウントを読む（各サービスの文書）。
       {
         Sid       = "EnableSecurityServiceAccess"
         Effect    = "Allow"
         Action    = "organizations:EnableAWSServiceAccess"
         Resource  = "*"
-        Condition = { StringEquals = { "organizations:ServicePrincipal" = ["guardduty.amazonaws.com", "inspector2.amazonaws.com"] } }
+        Condition = { StringEquals = { "organizations:ServicePrincipal" = ["guardduty.amazonaws.com", "inspector2.amazonaws.com", "securityhub.amazonaws.com"] } }
       },
       { Sid = "DescribeOrganizationAccounts", Effect = "Allow", Action = "organizations:DescribeAccount", Resource = local.org_account_arns },
       { Sid = "CloudtrailRegisterOrganizationDelegatedAdmin", Effect = "Allow", Action = "cloudtrail:RegisterOrganizationDelegatedAdmin", Resource = "*" },
@@ -610,11 +615,12 @@ locals {
       Condition = { StringEquals = { "iam:AWSServiceName" = svc } }
     }],
     [for a in local.delegated_admin_regional_manage_actions : { Sid = replace(title(replace(a, ":", " ")), " ", ""), Effect = "Allow", Action = a, Resource = "*" } if local.baseline_supported],
+    [for s in [{ Sid = "ManageSecurityHubAdminAccounts", Effect = "Allow", Action = local.securityhub_manage_actions, Resource = local.securityhub_hub_arn }] : s if local.baseline_supported],
   )
   # リージョンごとの Action は ADR-0209 の集合の外を拒む（ADR-0209 決定4）。
   delegated_admin_region_deny = { for role, actions in {
-    plan  = local.delegated_admin_regional_read_actions
-    apply = concat(local.delegated_admin_regional_read_actions, local.delegated_admin_regional_manage_actions)
+    plan  = concat(local.delegated_admin_regional_read_actions, local.securityhub_read_actions)
+    apply = concat(local.delegated_admin_regional_read_actions, local.delegated_admin_regional_manage_actions, local.securityhub_read_actions, local.securityhub_manage_actions)
     } : role => [for s in [{
       Sid       = "DenyDelegatedAdminOutsideRegions"
       Effect    = "Deny"

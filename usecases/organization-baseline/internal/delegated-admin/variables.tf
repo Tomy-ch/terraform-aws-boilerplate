@@ -10,7 +10,7 @@ variable "admin_account_id" {
 }
 
 variable "regions" {
-  description = "GuardDuty と Inspector の委任管理者を指定するリージョンの集合（repository-wide/ADR-0209）。"
+  description = "GuardDuty・Inspector・Security Hub の委任管理者を指定するリージョンの集合（repository-wide/ADR-0209）。"
   type        = set(string)
   nullable    = false
 

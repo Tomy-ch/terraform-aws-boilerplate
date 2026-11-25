@@ -277,6 +277,7 @@ func permissionSections(n names, sk, skReason string) []section {
 	ctslr := iam + ":role/aws-service-role/cloudtrail.amazonaws.com/AWSServiceRoleForCloudTrail"
 	delegatedRegional := []string{"guardduty:EnableOrganizationAdminAccount", "guardduty:DisableOrganizationAdminAccount", "inspector2:EnableDelegatedAdminAccount", "inspector2:DisableDelegatedAdminAccount"}
 	delegatedLists := []string{"guardduty:ListOrganizationAdminAccounts", "inspector2:ListDelegatedAdminAccounts"}
+	hub := func(r string) string { return "arn:aws:securityhub:" + r + ":" + n.account + ":hub/default" }
 	mp := n.policyARN(ai + "-manage")
 	bg := iam + ":role/break-glass/" + n.project + "-break-glass"
 	admin := "arn:aws:iam::aws:policy/AdministratorAccess"
@@ -414,6 +415,8 @@ func permissionSections(n names, sk, skReason string) []section {
 				sim(allowed, plan, "*", "organizations:ListDelegatedAdministrators"),
 				simCtx(allowed, plan, "*", inCtx, delegatedLists...),
 				simCtx(explicitDeny, plan, "*", outCtx, delegatedLists...),
+				simCtx(allowed, plan, hub(n.region), inCtx, "securityhub:ListOrganizationAdminAccounts"),
+				simCtx(explicitDeny, plan, hub(optIn), outCtx, "securityhub:ListOrganizationAdminAccounts"),
 				simCtx(implicitDeny, plan, "*", inCtx, "guardduty:EnableOrganizationAdminAccount", "inspector2:EnableDelegatedAdminAccount"),
 				sim(explicitDeny, apply, orgAccount, "organizations:RegisterDelegatedAdministrator", "organizations:DeregisterDelegatedAdministrator"),
 				sim(explicitDeny, apply, gp2, "iam:CreatePolicyVersion"),
@@ -427,6 +430,9 @@ func permissionSections(n names, sk, skReason string) []section {
 				simCtx(implicitDeny, ai, "*", principal("config.amazonaws.com"), "organizations:EnableAWSServiceAccess", "organizations:DisableAWSServiceAccess"),
 				simCtx(allowed, ai, "*", inCtx, delegatedRegional...),
 				simCtx(explicitDeny, ai, "*", outCtx, delegatedRegional...),
+				simCtx(allowed, ai, hub(n.region), inCtx, "securityhub:EnableOrganizationAdminAccount", "securityhub:DisableOrganizationAdminAccount"),
+				simCtx(explicitDeny, ai, hub(optIn), outCtx, "securityhub:EnableOrganizationAdminAccount"),
+				simCtx(allowed, ai, "*", principal("securityhub.amazonaws.com"), "organizations:EnableAWSServiceAccess"),
 				sim(allowed, ai, "*", "cloudtrail:RegisterOrganizationDelegatedAdmin", "cloudtrail:DeregisterOrganizationDelegatedAdmin"),
 				simCtx(allowed, ai, ctslr, serviceName("cloudtrail.amazonaws.com"), "iam:CreateServiceLinkedRole"),
 				simCtx(implicitDeny, ai, ctslr, serviceName("guardduty.amazonaws.com"), "iam:CreateServiceLinkedRole"),
