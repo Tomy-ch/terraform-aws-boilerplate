@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -30,7 +31,7 @@ func Test_command(t *testing.T) {
 	} {
 		t.Run(step, func(t *testing.T) {
 			t.Parallel()
-			c := command("/x", []string{"A=1"}, step)
+			c := command(context.Background(), "/x", []string{"A=1"}, step)
 			assert.Equal(t, want, c.Args)
 			assert.Equal(t, "/x", c.Dir)
 			assert.Equal(t, []string{"A=1"}, c.Env)
@@ -39,7 +40,7 @@ func Test_command(t *testing.T) {
 
 	t.Run("deprecated は PATH の provider-schema を起動する", func(t *testing.T) {
 		t.Parallel()
-		c := command("/x", nil, stepDeprecated)
+		c := command(context.Background(), "/x", nil, stepDeprecated)
 		assert.Equal(t, []string{"provider-schema", "plan-deprecated", "-out", "out/provider-schema.json", "-list", "out/plans.txt"}, c.Args)
 	})
 }
@@ -130,11 +131,11 @@ func Test_planRoots(t *testing.T) {
 		return roots
 	}
 	unstartableAt := func(tool toolFunc, path string) toolFunc {
-		return func(d string, env []string, step string) *exec.Cmd {
+		return func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
 			if d == path {
-				return tooltest.Missing(d, env, step)
+				return tooltest.Missing(ctx, d, env, step)
 			}
-			return tool(d, env, step)
+			return tool(ctx, d, env, step)
 		}
 	}
 
@@ -189,15 +190,6 @@ func Test_planRoots(t *testing.T) {
 		assert.Len(t, f.Calls(), 1)
 		assert.NoFileExists(t, filepath.Join(out, "plans.txt"))
 	})
-
-	t.Run("前の出力を消してから書く", func(t *testing.T) {
-		t.Parallel()
-		base := tree(t, map[string]string{"usecases/a/reference/plan.out": planOK})
-		out := tree(t, map[string]string{"stale.txt": ""})
-		tool, _ := fakeTool(t)
-		require.NoError(t, planRoots([]root{{name: "a", rel: "usecases/a/reference", path: filepath.Join(base, "usecases/a/reference")}}, "/d", out, &bytes.Buffer{}, tool))
-		assert.NoFileExists(t, filepath.Join(out, "stale.txt"))
-	})
 }
 
 var canaryFlags = []string{"-canary-data", "/cd", "-canary-work", "tmp/cw", "-policy", "p", "-decl", "d.json", "-layer", "l.json", "-reference", "r"}
@@ -230,6 +222,16 @@ func Test_runPlan(t *testing.T) {
 		assert.Equal(t, []string{"-data", "/cd", "-work", "tmp/cw", "-policy", "p", "-decl", "d.json", "-layer", "l.json", "-reference", "r"}, canaryArgs, "-canary-work は検証した元の値のまま渡す")
 		assert.Len(t, calls(), 1)
 		assert.Equal(t, filepath.Join(root, "tmp", "run", "runs", "a.jsonl")+"\n", readText(t, filepath.Join(root, "tmp", "run", "plans.txt")))
+	})
+
+	t.Run("前の出力を消してから書く", func(t *testing.T) {
+		t.Parallel()
+		root := tree(t, map[string]string{"tmp/run/stale.txt": ""})
+		tool, _ := fakeTool(t)
+		var canaryArgs []string
+		require.NoError(t, runPlan(planArgs(planBase(t), "tmp/run"), &bytes.Buffer{}, tool, passCanary(&canaryArgs), root))
+		assert.NoFileExists(t, filepath.Join(root, "tmp", "run", "stale.txt"))
+		assert.FileExists(t, filepath.Join(root, "tmp", "run", "plans.txt"))
 	})
 
 	t.Run("canary が落ちれば本走査を行わずに失敗する", func(t *testing.T) {

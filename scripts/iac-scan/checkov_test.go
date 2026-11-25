@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -141,7 +142,7 @@ func Test_runCheckov(t *testing.T) {
 	t.Run("結果が無ければ errResult", func(t *testing.T) {
 		t.Parallel()
 		f, tool, base := setup(t, 0, checkovCleanJSON)
-		require.NoError(t, os.RemoveAll(filepath.Join(f.dir, "scenario", "checkov", "out")))
+		testenv.RemoveUnder(t, f.dir, "scenario/checkov/out")
 		require.ErrorIs(t, runCheckov(args(base), &bytes.Buffer{}, tool), errResult)
 	})
 

@@ -12,6 +12,7 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1824,7 +1825,7 @@ func Test_applyOrCheck(t *testing.T) {
 		t.Run("reference の root が 1 件も無ければ弾き、apply でも何も書かない", func(t *testing.T) {
 			t.Parallel()
 			root := newTestRepo(t, map[string]string{"a.yaml": staleWorkflow("one"), "b.yaml": bWorkflow()})
-			require.NoError(t, os.RemoveAll(filepath.Join(root, "usecases")))
+			testenv.RemoveUnder(t, root, "usecases")
 			require.ErrorIs(t, applyOrCheck(root, false), errNoReferenceRoots)
 			got, readErr := openRoot(t, root).ReadFile(".github/workflows/a.yaml")
 			require.NoError(t, readErr)

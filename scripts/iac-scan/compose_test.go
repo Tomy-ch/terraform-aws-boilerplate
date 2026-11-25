@@ -3,6 +3,7 @@ package main
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -244,11 +245,11 @@ func Test_runImage(t *testing.T) {
 		t.Parallel()
 		f, r := newFake(t)
 		fakeTool := r.tool
-		r.tool = func(d string, env []string, step string) *exec.Cmd {
+		r.tool = func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
 			if step == stepUp {
-				return tooltest.Missing(d, env, step)
+				return tooltest.Missing(ctx, d, env, step)
 			}
-			return fakeTool(d, env, step)
+			return fakeTool(ctx, d, env, step)
 		}
 		_, err := runImage(workDir(t, "kics"), testImage, testTool, r, &bytes.Buffer{})
 		require.ErrorIs(t, err, errTool)
@@ -269,11 +270,11 @@ func Test_runImage(t *testing.T) {
 			t.Parallel()
 			_, r := newFake(t)
 			fakeTool := r.tool
-			r.tool = func(d string, env []string, s string) *exec.Cmd {
+			r.tool = func(ctx context.Context, d string, env []string, s string, _ ...string) *exec.Cmd {
 				if s == step {
-					return tooltest.Missing(d, env, s)
+					return tooltest.Missing(ctx, d, env, s)
 				}
-				return fakeTool(d, env, s)
+				return fakeTool(ctx, d, env, s)
 			}
 			_, err := runImage(workDir(t, "kics"), testImage, testTool, r, &bytes.Buffer{})
 			require.ErrorIs(t, err, errTool)
@@ -368,7 +369,6 @@ func Test_workTar(t *testing.T) {
 	})
 }
 
-// readTar は、raw の tar の header と中身を、並んだ順に返す。
 func readTar(t *testing.T, raw []byte) []tarEntry {
 	t.Helper()
 	var got []tarEntry

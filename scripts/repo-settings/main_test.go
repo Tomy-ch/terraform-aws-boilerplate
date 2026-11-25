@@ -388,7 +388,7 @@ func Test_readDeclarations(t *testing.T) {
 			writeFile(t, root, branchesFile, `{"deploy": [{"branch": "main", "release_base": true}], "lines": {"release": "release/", "hotfix": "hotfix/"}, "line_version": "v<major>.<minor>.<patch>", "revert": "revert/"}`)
 		}, errDeployMismatch},
 		{"deployment-identity を呼ぶ root が無ければ失敗する", func(root string) {
-			require.NoError(t, os.RemoveAll(filepath.Join(root, "env")))
+			testenv.RemoveUnder(t, root, "env")
 		}, os.ErrNotExist},
 		{"apply の workflow が無ければ失敗する", func(root string) {
 			require.NoError(t, os.Remove(filepath.Join(root, ".github/workflows/apply.yaml")))

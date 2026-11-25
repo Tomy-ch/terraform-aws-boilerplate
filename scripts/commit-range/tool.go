@@ -16,8 +16,7 @@ const (
 
 // command は toolFunc の実物です。引数は段ごとに固定で、rev はどれも stdin で渡します。知らない段は失敗する
 // コマンドにします。
-func command(dir string, env []string, step string) *exec.Cmd {
-	ctx := context.Background()
+func command(ctx context.Context, dir string, env []string, step string, _ ...string) *exec.Cmd {
 	var cmd *exec.Cmd
 	switch step {
 	case stepResolve:

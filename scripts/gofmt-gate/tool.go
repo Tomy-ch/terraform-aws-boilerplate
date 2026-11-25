@@ -15,8 +15,8 @@ const (
 )
 
 // command は toolFunc の実物です。canary と本走査は同じ引数で、作業ディレクトリだけが違います。
-func command(dir string, env []string, _ string) *exec.Cmd {
-	cmd := exec.CommandContext(context.Background(), "gofmt", "-l", ".")
+func command(ctx context.Context, dir string, env []string, _ string, _ ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "gofmt", "-l", ".")
 	cmd.Dir = dir
 	cmd.Env = env
 
