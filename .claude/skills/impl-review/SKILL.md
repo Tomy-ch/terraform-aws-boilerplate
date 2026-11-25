@@ -200,7 +200,7 @@ ADR-0001 の配置・所有権・依存方向・昇格を見る。**ADR の中�
   「当該ユースケースのネットワーク境界をどう保証するか」であるべき。
 - **依存方向**（決定17-19）—— **root ADR が特定ユースケースの実装詳細へ依存していないか。** 例示として
   触れる場合も、その存在を前提とした記述になっていないか。これは `make adr-lint` の検査項目5が
-  `usecases/<use-case>/` への path 参照を機械的に見るが、**path を書かずに前提だけ持ち込む形は
+  `usecases/<use-case>/` そのもの、またはその配下の path への参照を機械的に見るが、**path を書かずに前提だけ持ち込む形は
   機械では捕まらない** —— そこがこのレンズの取り分である。
 - **昇格**（決定20-22）—— 2つ以上のユースケースへ同じ原則が当たっているのに use-case ADR のままか。
   逆に、「同じ resource を使っている」「実装が似ている」だけを根拠に root へ上げていないか（決定21）。
@@ -250,7 +250,8 @@ an architecture violation and as a type-design suggestion, and shipping both dou
 | `.github/settings/**` | `make required-check-lint` |
 | `docker/**` | `make docker-lint` / `make trivy-config` |
 | `*.md` | `make md-lint`。`.claude/skills/**` なら `make skill-lint` も |
-| `usecases/**` / `modules/**` / `env/**` / `*.tf` | `make tf-fmt-check` / `make tf-validate` / `make tf-test` / `make tf-lint` / `make trivy-config` |
+| `usecases/**` / `modules/**` | `make ref-record-lint` |
+| `usecases/**` / `modules/**` / `env/**` / `*.tf` | `make tf-fmt-check` / `make tf-validate` / `make tf-test` / `make tf-lint` / `make trivy-config` / `make checkov` / `make kics` / `make semgrep` / `make tf-policy` |
 | `.makefiles/terraform/**` / `scripts/tf-gates/**` / `scripts/tf-policy/**` | `make tf-validate`（本走査の前に canary を走らせる）/ `make tf-policy` |
 
 **走らせる前に `make help` で対象が実在するか確かめる。** この表は現時点の配線であり、`make` が

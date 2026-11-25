@@ -109,8 +109,8 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
   （ADR-0602 決定14）。Copilot coding agent の Pull Request は、人が workflow の実行を承認したときだけ走る。
   この承認を省くリポジトリの設定を有効にしないこと（設定を突き合わせる検査は無い）
 - **plan の role を assume した後、plan の前に、apply 系の role の assume が拒否されることを確かめる。**
-  `make ci-assume-denied` が同じ job の OIDC token で、`pull_request` で起動する種別のほかのすべての role（ci.mk の `CI_DENIED_ROLES`。
-  `scripts/lib/cientry` の登録簿との一致は `cientry.Parse` が見る）を assume し、
+  `make ci-assume-denied` が同じ job の OIDC token で、`pull_request` で起動する種別のほかのすべての role
+  （`scripts/lib/cientry` の `DeniedRoles` が登録簿から求める）を assume し、
   すべてが STS の `AccessDenied` でなければ落ちる。資格情報は置かない。plan の job のこの step は skip できず、
   欠ければ `make oidc-job-lint` が落ちる。失敗した assume は run ごとに CloudTrail に残る（session 名は `gha-denied-` で始まる）
 - **リリース線宛の plan は、管理アカウントの今の状態に対する差分である。** 管理アカウントへ当たっているのは
@@ -151,8 +151,8 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
   デフォルトブランチをリリース線へ戻し（`gh repo edit --default-branch release/vX.Y.Z`）、hotfix の修正を
   リリース線へ merge してから昇格する
 - **Pull Request の plan を持ち越さない。** job が push の commit で plan し直し、その plan に Policy
-  （identity root は `plan.stateful_protection`・`plan.kms_key_policy`・`plan.resource_policy_exclusive`、workload root は
-  `plan.stateful_protection`。ほかの Policy が workload root の実 plan に掛からない理由は `usecases/ops-notification/README.md` の
+  （identity root は `plan.stateful_protection`・`plan.kms_key_policy`・`plan.resource_policy_exclusive`・`plan.s3_bucket_namespace`・
+  `plan.state_backend_write_deny`、workload root は `plan.stateful_protection`・`plan.s3_bucket_namespace`。ほかの Policy が workload root の実 plan に掛からない理由は `usecases/ops-notification/README.md` の
   保証しないもの）を掛け、通った plan だけを apply する（ADR-0601 決定6、ADR-0604 決定11、
   `.makefiles/terraform/operation/ci.mk` の `CI_APPLY`）。plan は lock を取る。変更の無い plan も apply する
 - **古い commit を apply しない。** 再実行は元の run の commit と payload を使うので、job の `if:` は古い
@@ -166,7 +166,7 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
   `apply/` の下へ apply-identity の role が置き、workload root なら apply の出力の Bucket へ apply の role が
   置く（ADR-0602 決定13）。Bucket の名前と key を得た後は、plan・Policy・apply の
   どこで失敗しても全文を置いてから失敗する。apply には job の `timeout-minutes` より短い時間
-  （`ci.mk` の `CI_APPLY_TIMEOUT`）で SIGINT を送り、terraform がそれで止まれば全文を置いてから失敗する。
+  （`scripts/tf-local` の `applyTimeout`）で SIGINT を送り、terraform がそれで止まれば全文を置いてから失敗する。
   job の cancel か `timeout-minutes` の到達で止まったときと、置き場への書き込みが失敗したときは、全文を置けない
 - **AWS のアカウント ID は environment `admin-apply-identity` と `admin-apply` の secret `AWS_ACCOUNT_ID` に置く。**
   無ければ拒否の step で失敗する。置いてから「Re-run failed jobs」で再実行する（先頭の commit のままなら通る）
@@ -196,12 +196,12 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
   workflow にまとめる。workflow のファイル名は変えない —— `apply-revert` は最後に成功した run を workflow の
   ファイル名で引くので、改名はその履歴を断つ
 - **workload root の apply の全文は、apply の出力の Bucket に置く。** identity root の全文は plan の出力の
-  Bucket の `apply/` に置く。apply の role は plan の出力の Bucket に書けない（`ci.mk` の `CI_APPLY_OUTPUT_KIND` が選ぶ）
+  Bucket の `apply/` に置く。apply の role は plan の出力の Bucket に書けない（`scripts/tf-local` の `ci-prepare` が選ぶ）
 - job の形（environment、取る role、起動条件、検出・順序の検査・層の検査への依存、拒否の step、terraform の経路、concurrency、
   `run:` と `env:` に置けるもの）は
-  `make oidc-job-lint` が、`CI_APPLY` が plan の失敗・終了コードと JSON の食い違い・Policy の違反と評価の欠け
-  のどれでも apply を呼ばずに非ゼロで終わることは、`scripts/tf-local` の `TestCiRecipes` が偽物の
-  terraform・aws・conftest でレシピを走らせて見る
+  `make oidc-job-lint` が、apply の入口が plan の失敗・終了コードと JSON の食い違い・Policy の違反と評価の欠け
+  のどれでも apply を呼ばずに非ゼロで終わることは、`scripts/tf-local` の段のテストが偽物の
+  terraform・aws・conftest で段を順に起動して見る
 
 保証しないこと:
 
@@ -240,8 +240,8 @@ environment `admin-unlock` の下で unlock の role を assume して、workloa
     lock file の `LastModified` で測る。閾値は `scripts/tf-local` の定数で、apply の job の
     `timeout-minutes` とのずれは tf-local のテストが見る
   - **読んだ版の条件**: 読んで判定した版だけを、その ETag を条件にした削除（`delete-object --if-match`）で
-    消す。判定の後に lock file が置き換わっていれば、削除は失敗する。レシピがこの形で消すことは
-    `TestCiRecipes` が見る
+    消す。判定の後に lock file が置き換わっていれば、削除は失敗する。`ci-unlock` がこの形で消すことは
+    `scripts/tf-local` の段のテストが見る
   - **Terraform の lock の取得**: Terraform v1.17.1（版は `mise.toml`。`scripts/tf-local` の `lockFormatTerraform`
     との一致は tf-local のテストが見る）の S3 backend は、lock file を `If-None-Match: *` の
     条件付きの書き込みで作る（`lockWithFile`）。lock file が在る間は apply の lock の取得が失敗するので、
@@ -275,9 +275,9 @@ environment `admin-unlock` の下で unlock の role を assume して、workloa
 - 通知は持たない。人が起動し、結果を画面で見る
 - 許す AWS の宛先は `aws-state` クラス（STS と S3）だけである。egress の `root` はこの job も名指すが、
   型の宛先は `ci-unlock-*` だけを呼ぶ job に求めない（「ランナーの封じ込め」節）
-- job の形は `make oidc-job-lint` が、`CI_UNLOCK` が lock の無いとき以外は lock を消すか非ゼロで終わり、
-  新しい lock・置き換わった lock・読めない lock・人の手元の apply の lock を消さないことは `scripts/tf-local` の `TestCiRecipes` が
-  偽物の aws でレシピを走らせて見る
+- job の形は `make oidc-job-lint` が、`ci-unlock` が lock の無いとき以外は lock を消すか非ゼロで終わり、
+  新しい lock・置き換わった lock・読めない lock・人の手元の apply の lock を消さないことは `scripts/tf-local` の段のテストが
+  偽物の aws で見る
 
 保証しないこと:
 
@@ -304,12 +304,12 @@ terraform は取り消しの信号（SIGINT・SIGTERM）で lock を外してか
   無いことを確かめてから、lock を取る `terraform plan`（`-parallelism=1`）を裏で起動する。plan の全文に lock を
   取った後の行（resource の `Refreshing state...` か data source の `Reading...`）が現れたら SIGKILL で止める。
   lock file は Terraform の S3 backend が書くので、`Terraform Unlock` が相手にするのは障害で残る lock と同じ形の
-  lock である。待つ判定は `scripts/tf-local` の `lock-wait` が持つ
+  lock である。待つ判定は `scripts/tf-local` の `ci-hold-plan` が持つ
 - **残った lock を確かめてから成功する。** 止めた後に lock file の一覧を取り直し、lock が残っていて、`Who` が
-  `runner@`・`Operation` が `OperationTypePlan` の、lock の解除が消す形であることを `tf-local lock-held` で確かめる。
+  `runner@`・`Operation` が `OperationTypePlan` の、lock の解除が消す形であることを `tf-local ci-hold-verify` で確かめる。
   ログに lock の説明と、`Terraform Unlock` が消せるようになる時刻（`LastModified` に閾値を足した時刻）を出す。
   plan が行を出す前に終わった、止めた後に lock が無い、消せない形の lock が残った、のどれでも失敗する。どの段で
-  終わっても、裏の terraform は trap が止める
+  終わっても、裏の terraform は `ci-hold-plan` が止める
 - **起動の前に lock が無いことを確かめる。** 前の apply が残した lock を、この job が残した lock と取り違えない。
   lock が在れば plan を起動せずに失敗する
 - **apply しない。** state と AWS の resource を変えず、plan の出力も保存しない。plan の全文はランナーの外に出さない
@@ -335,8 +335,8 @@ terraform は取り消しの信号（SIGINT・SIGTERM）で lock を外してか
 - 許す AWS の宛先は、その root の apply の job と同じクラスである。`ci-hold-*` は terraform を
   呼ぶ入口なので、egress の `root` に名指され、型の宛先を求められる（「ランナーの封じ込め」節）
 - job の形（role・environment・concurrency の group の apply の job との一致、起動条件、拒否の step、入口）は
-  `make oidc-job-lint` が、`CI_HOLD` が apply も削除も書き込みもせず、lock を確かめるまで成功しないことは
-  `scripts/tf-local` の `TestCiMk` と `TestCiRecipes` が偽物の terraform と aws でレシピを走らせて見る
+  `make oidc-job-lint` が、lock を残す入口の段が apply も削除も書き込みもせず、lock を確かめるまで成功しないことは
+  `scripts/tf-local` の段のテストが偽物の terraform と aws で見る
 
 保証しないこと:
 
@@ -355,8 +355,8 @@ apply）で戻す。CI は Pull Request を
 作らず、merge もしない。前の commit を apply し直すことはしない。決定は ADR-0601 決定17-19 が持ち、ここは
 その運用の細則を持つ。
 
-- **戻すのは、commit の中身が原因でありうる失敗だけである。** `CI_APPLY`（`.makefiles/terraform/operation/ci.mk`）が
-  失敗した段を apply の job の outputs の `failure` に書き、`scripts/apply-revert` が読む。plan・Policy・apply・
+- **戻すのは、commit の中身が原因でありうる失敗だけである。** apply の入口（`.makefiles/terraform/operation/ci.mk` の `CI_APPLY` が起動する
+  `scripts/tf-local` の段）が失敗した段を apply の job の outputs の `failure` に書き、`scripts/apply-revert` が読む。plan・Policy・apply・
   apply の打ち切りは戻す。init までの準備、plan と apply の lock の取得、apply が終わった後（全文の置き場への
   書き込みを含む）の失敗と、`refuse-stale` の拒否・資格情報の失敗・検出・順序の検査・層の検査の失敗（どれも apply の step に
   届かない）は戻さない。先に失敗した段は、その後に全文を置けなくても書き換えない。
@@ -483,7 +483,7 @@ truthy 側へ置く。
 | --- | --- | --- |
 | `go-test.yaml:go-test` | 20 | 実測 約5分 |
 | `notify.yaml:notify`、`tool-outdated-report.yaml:report`、`partitions-drift-report.yaml:report` | 15 | 実測できる完了 run が無い |
-| `md-lint.yaml:adr-lint`、`md-lint.yaml:skill-lint`、`go-test.yaml:test-mapping` | 15 | 同上（新設） |
+| `md-lint.yaml:adr-lint`、`md-lint.yaml:skill-lint`、`md-lint.yaml:ref-record-lint`、`go-test.yaml:test-mapping` | 15 | 同上（新設） |
 | `go-lint.yaml:go-lint`、`go-lint.yaml:go-fmt-check` | 15 | 同上（新設） |
 | `terraform-gates.yaml` の `changes` と plan の2 job を除く6 job、`terraform-apply.yaml:apply-infra-code-gate`、`terraform-apply.yaml:apply-resource-order-check`、`terraform-apply.yaml:apply-layer-check`、`terraform-apply.yaml:apply-root-check` | 15 | 同上（新設） |
 | `terraform-unlock.yaml` の3 job | 15 | 同上（新設）。apply の job と違い terraform を呼ばない |
@@ -596,6 +596,13 @@ Go には `min-release-age` に相当するものが無い。`go get` に「新�
 
 このディレクトリのすべての job は、最初の step で `bullfrogsec/bullfrog` を `egress-policy: block`・
 `dns-policy: allowed-domains-only`・`enable-sudo: false` で、自分の `allowed-domains` とともに開始する。
+最初の step（`id: harden-runner`、`continue-on-error: true`）が落ちたときだけ、同じ設定の2番目の step
+（`if: steps.harden-runner.outcome != 'success'`）がやり直し、2番目が落ちれば job は落ちる。bullfrog は agent の
+取得とパッケージの導入を再試行せず、配布元の一時的なエラーで必須の job を落とすためである。
+再試行が成功するのは、agent が準備の印（`/var/run/bullfrog/agent-ready`）を書いたときだけである。本体が
+agent を起動した後で落ちた場合も、再試行は sudo を外された後なら導入で落ち、そうでなければ既に動く agent の
+印で成功する —— どちらでも、通信制限の無いまま job が進むことはない（v0.11.1 の `action/src/main.ts` で確かめた。
+版を上げる Pull Request は確かめ直す。ADR-0702 決定23）。
 外向きの接続と名前解決を一覧に照らし、それ以外を拒む —— 侵害された action や道具のダウンロードが、
 その job に用の無い宛先へ持ち出せない。sudo を外すのは、sudo が残る job では step の中から通信制限
 そのものを外せるからである。決定と受け入れた限界は [ADR-0702](../../docs/adr/0702-repository-operations-substrate.md)
@@ -607,9 +614,9 @@ bullfrog は checkout の**前**に走らなければならない —— checkou
 それを守ることが目的だからである。括り出すと、塞ぐために置いた窓が開く。
 
 **固定されていないのは一覧の出所の方である。** [`.github/egress.toml`](../egress.toml) が SSOT で、
-`make egress-apply` が各 job の `with:` を丸ごと書き、`make egress-check` がずれで落ちる。step が
-`name` / `uses` / `with` 以外のキー（`if:` や `continue-on-error:`）を持つこと、job の最初の step で
-ないこと、steps を持つ job に bullfrog が無いこと、steps を読み取れない job（`steps:` は4桁、step は
+`make egress-apply` が各 job の先頭の2つの step を `uses:` を除いて丸ごと書き、`make egress-check` がずれで
+落ちる。step が `name` / `id` / `continue-on-error` / `if` / `uses` / `with` 以外のキーを持つこと、2つの step が
+job の先頭に並んでいないこと、steps を持つ job に bullfrog が無いこと、steps を読み取れない job（`steps:` は4桁、step は
 6桁のハイフンで始める）も、同じ検査が拒む。拒む条件の一覧は
 [`scripts/README.md`](../../scripts/README.md) の `egress/` の行が持つ。
 

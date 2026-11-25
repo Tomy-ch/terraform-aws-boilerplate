@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cooldown"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 )
 
@@ -139,7 +141,68 @@ func Test_run(t *testing.T) {
 		{"source に -env を渡せば usage で失敗する", []string{"source", "-base", "main", "-env", "x"}},
 		{"deploy-branch に -env が無ければ usage で失敗する", []string{"deploy-branch"}},
 		{"deploy-branch に -base を渡せば usage で失敗する", []string{"deploy-branch", "-env", "x", "-base", "main"}},
+		{"create-labels に -env を渡せば usage で失敗する", []string{"create-labels", "-repo=o/r", "-env", "x"}},
+		{"delete-labels に -env を渡せば usage で失敗する", []string{"delete-labels", "-repo=o/r", "-env", "x"}},
+		{"enable-workflows に -only を渡せば usage で失敗する", []string{"enable-workflows", "-repo=o/r", "-only", "ruleset"}},
+		{"create-deploy-branch に -base を渡せば usage で失敗する", []string{"create-deploy-branch", "-repo=o/r", "-env", "x", "-base", "main"}},
+		{"deploy-branch-exists に -only を渡せば usage で失敗する", []string{"deploy-branch-exists", "-repo=o/r", "-env", "x", "-only", "ruleset"}},
 	}
+
+	t.Run("create-deploy-branch は -env が無ければ errDeployEnvArg", func(t *testing.T) {
+		t.Parallel()
+		require.ErrorIs(t, run([]string{"create-deploy-branch", "-repo=o/r"}, fixedWD(t.TempDir()), githubClient{token: "t"}, &bytes.Buffer{}), errDeployEnvArg)
+	})
+	t.Run("deploy-branch-exists は -env が無ければ errDeployEnvArg", func(t *testing.T) {
+		t.Parallel()
+		require.ErrorIs(t, run([]string{"deploy-branch-exists", "-repo=o/r"}, fixedWD(t.TempDir()), githubClient{token: "t"}, &bytes.Buffer{}), errDeployEnvArg)
+	})
+	t.Run("deploy-branch-exists は -repo が無ければ errNoRepo", func(t *testing.T) {
+		t.Parallel()
+		require.ErrorIs(t, run([]string{"deploy-branch-exists", "-env=admin"}, fixedWD(t.TempDir()), githubClient{token: "t"}, &bytes.Buffer{}), errNoRepo)
+	})
+	t.Run("deploy-branch-exists は -env と -repo を受け付け、読み取りまで届く", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		writeFile(t, root, branchesFile, sourceBranches)
+		f, c := newFakeGitHub(t, map[string]fakeResponse{"GET /repos/o/r/branches/admin": ok(`{"name": "admin"}`)})
+		var out bytes.Buffer
+		require.NoError(t, run([]string{"deploy-branch-exists", "-repo=o/r", "-env=admin"}, fixedWD(root), c, &out))
+		assert.Equal(t, 1, requestCount(f))
+		assert.Contains(t, out.String(), "✅")
+		assert.Empty(t, f.writes())
+	})
+	t.Run("enable-workflows は -repo が無ければ errNoRepo", func(t *testing.T) {
+		t.Parallel()
+		require.ErrorIs(t, run([]string{"enable-workflows"}, fixedWD(t.TempDir()), githubClient{token: "t"}, &bytes.Buffer{}), errNoRepo)
+	})
+	t.Run("delete-labels は token が無ければ errNoToken", func(t *testing.T) {
+		t.Parallel()
+		require.ErrorIs(t, run([]string{"delete-labels", "-repo=o/r"}, fixedWD(t.TempDir()), githubClient{}, &bytes.Buffer{}), errNoToken)
+	})
+	t.Run("create-deploy-branch は -env と -repo を受け付け、作成まで届く", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		writeFile(t, root, branchesFile, sourceBranches)
+		f, c := newFakeGitHub(t, map[string]fakeResponse{
+			"GET /repos/o/r":                    ok(`{"default_branch": "main"}`),
+			"GET /repos/o/r/git/ref/heads/main": ok(`{"object": {"sha": "` + strings.Repeat("a", 40) + `"}}`),
+			"POST /repos/o/r/git/refs":          {status: http.StatusCreated, body: `{}`},
+		})
+		require.NoError(t, run([]string{"create-deploy-branch", "-repo=o/r", "-env=admin"}, fixedWD(root), c, &bytes.Buffer{}))
+		require.Len(t, f.writes(), 1)
+		assert.Contains(t, f.writes()[0].body, `"refs/heads/admin"`)
+	})
+	t.Run("delete-labels は -repo を受け付け、削除まで届く", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		writeFile(t, root, labelsFile, `[{"name": "bug", "color": "d73a4a"}]`)
+		f, c := newFakeGitHub(t, map[string]fakeResponse{
+			"GET " + pagedPath("/repos/o/r/labels", 1): ok(`[{"name": "x"}]`),
+			"DELETE /repos/o/r/labels/x":               {status: http.StatusNoContent},
+		})
+		require.NoError(t, run([]string{"delete-labels", "-repo=o/r"}, fixedWD(root), c, &bytes.Buffer{}))
+		assert.Len(t, f.writes(), 1)
+	})
 
 	t.Run("source と deploy-branch を呼ぶ", func(t *testing.T) {
 		t.Parallel()
@@ -175,6 +238,12 @@ func Test_run(t *testing.T) {
 		assert.Contains(t, out.String(), "release/v1 から到達でき")
 		err := run([]string{"source", "-base", "main", "-base-sha", base, "-head-sha", evil, "-default", "release/v1"}, fixedWD(root), githubClient{}, &bytes.Buffer{})
 		require.ErrorIs(t, err, errSource)
+	})
+	t.Run("usage はすべてのサブコマンドを名指す", func(t *testing.T) {
+		t.Parallel()
+		for _, sub := range []string{"apply", "check", "drift", "sync", "source", "deploy-branch", "delete-labels", "create-labels", "enable-workflows", "create-deploy-branch", "deploy-branch-exists"} {
+			assert.Contains(t, errUsage.Error(), sub)
+		}
 	})
 	for _, tc := range usageCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -271,6 +340,7 @@ func Test_readDeclarations(t *testing.T) {
 		assert.Equal(t, 1, decl.marks)
 		assert.Equal(t, 1, decl.exprs)
 		assert.Equal(t, 2, decl.dependabotLabels)
+		assert.Equal(t, 4, decl.dependabotCooldowns)
 	})
 
 	cases := []struct {
@@ -291,8 +361,14 @@ func Test_readDeclarations(t *testing.T) {
 			require.NoError(t, os.Remove(filepath.Join(root, vulnerabilityReportingFile)))
 		}, os.ErrNotExist},
 		{"Dependabot のラベルが labels.json に無ければ失敗する", func(root string) {
-			writeFile(t, root, labelsFile, `[{"name": "bug"}]`)
+			writeFile(t, root, labelsFile, `[{"name": "bug", "color": "d73a4a"}]`)
 		}, errDependabotLabels},
+		{"Dependabot の cooldown が窓を下回れば失敗する", func(root string) {
+			short := strings.Replace(dependabotFixture,
+				fmt.Sprintf("default-days: %d", cooldown.PinWindowDays), fmt.Sprintf("default-days: %d", cooldown.PinWindowDays-1), 1)
+			require.NotEqual(t, dependabotFixture, short, "置き換えが空振りすると窓ちょうどのまま検査が通る")
+			writeFile(t, root, dependabotFile, short)
+		}, errDependabotCooldown},
 		{"dependabot.yml が無ければ失敗する", func(root string) {
 			require.NoError(t, os.Remove(filepath.Join(root, dependabotFile)))
 		}, os.ErrNotExist},
@@ -312,7 +388,7 @@ func Test_readDeclarations(t *testing.T) {
 			writeFile(t, root, branchesFile, `{"deploy": [{"branch": "main", "release_base": true}], "lines": {"release": "release/", "hotfix": "hotfix/"}, "line_version": "v<major>.<minor>.<patch>", "revert": "revert/"}`)
 		}, errDeployMismatch},
 		{"deployment-identity を呼ぶ root が無ければ失敗する", func(root string) {
-			require.NoError(t, os.RemoveAll(filepath.Join(root, "env")))
+			testenv.RemoveUnder(t, root, "env")
 		}, os.ErrNotExist},
 		{"apply の workflow が無ければ失敗する", func(root string) {
 			require.NoError(t, os.Remove(filepath.Join(root, ".github/workflows/apply.yaml")))
@@ -547,7 +623,7 @@ func Test_applyOrCheck(t *testing.T) {
 		require.NoError(t, err)
 		// 書き込みは rename なので、書けば別のファイルになる。
 		assert.True(t, os.SameFile(before, after))
-		assert.Equal(t, "✅ repo-settings: 保護対象 3 件、environment 6 件、Private Vulnerability Reporting の宣言（enabled=true）、apply の workflow 1 件、分岐の集合の印 1 件（workflow 1 件）、ref を比べる式の検査 1 件、labels.json にある Dependabot のラベル 2 件。生成する区間は宣言どおりです\n", out.String())
+		assert.Equal(t, "✅ repo-settings: 保護対象 3 件、environment 6 件、Private Vulnerability Reporting の宣言（enabled=true）、apply の workflow 1 件、分岐の集合の印 1 件（workflow 1 件）、ref を比べる式の検査 1 件、labels.json にある Dependabot のラベル 2 件、窓を下回らない Dependabot の cooldown 4 件。生成する区間は宣言どおりです\n", out.String())
 	})
 
 	t.Run("check はずれを報せ、書かない", func(t *testing.T) {
@@ -584,7 +660,7 @@ func Test_applyOrCheck(t *testing.T) {
 		root := writeRepo(t, rulesetFixture)
 		drifted := strings.Replace(applyWorkflowFixture, "      - main", "      - 'release/*'", 1)
 		writeFile(t, root, ".github/workflows/apply.yaml", drifted)
-		writeFile(t, root, labelsFile, `[{"name": "bug"}]`)
+		writeFile(t, root, labelsFile, `[{"name": "bug", "color": "d73a4a"}]`)
 		require.ErrorIs(t, applyOrCheck(root, false, &bytes.Buffer{}), errDependabotLabels)
 		ruleset, err := os.ReadFile(filepath.Join(root, rulesetFile))
 		require.NoError(t, err)

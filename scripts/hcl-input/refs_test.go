@@ -57,52 +57,52 @@ func Test_walkExpr(t *testing.T) {
 		}{
 			"escape1-quote-pair": {
 				src: `coalesce(aws_s3_bucket.this.id, "a$", var.z, module.m.x, "b")`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"id"}],"within":[]},
-					{"root":"var","steps":[{"kind":"attr","name":"z"}],"within":[]},
-					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"x"}],"within":[]}]`,
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"id"}],"within":[],"filter":false},
+					{"root":"var","steps":[{"kind":"attr","name":"z"}],"within":[],"filter":false},
+					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"x"}],"within":[],"filter":false}]`,
 			},
 			"escape2-brace-in-interpolation": {
 				src: `"${aws_s3_bucket.this.id != "}" ? var.x : var.y}"`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"id"}],"within":[]},
-					{"root":"var","steps":[{"kind":"attr","name":"x"}],"within":[]},
-					{"root":"var","steps":[{"kind":"attr","name":"y"}],"within":[]}]`,
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"id"}],"within":[],"filter":false},
+					{"root":"var","steps":[{"kind":"attr","name":"x"}],"within":[],"filter":false},
+					{"root":"var","steps":[{"kind":"attr","name":"y"}],"within":[],"filter":false}]`,
 			},
 			"escape3-template-directive": {
 				src: `"${aws_s3_bucket.this.id}%{ if var.a }y%{ endif }"`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"id"}],"within":[]},
-					{"root":"var","steps":[{"kind":"attr","name":"a"}],"within":[]}]`,
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"id"}],"within":[],"filter":false},
+					{"root":"var","steps":[{"kind":"attr","name":"a"}],"within":[],"filter":false}]`,
 			},
 			"escape4-concatenated-dollar": {
 				src: `"${aws_s3_bucket.this.id}${"$"}${var.x}"`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"id"}],"within":[]},
-					{"root":"var","steps":[{"kind":"attr","name":"x"}],"within":[]}]`,
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"id"}],"within":[],"filter":false},
+					{"root":"var","steps":[{"kind":"attr","name":"x"}],"within":[],"filter":false}]`,
 			},
 			"escape5-comment-in-expression": {
 				src: `(aws_s3_bucket.this.id /* " */ == var.x ? aws_s3_bucket.this.id : aws_s3_bucket.this.id /* " */)`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"id"}],"within":[]},
-					{"root":"var","steps":[{"kind":"attr","name":"x"}],"within":[]},
-					{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"id"}],"within":[]},
-					{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"id"}],"within":[]}]`,
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"id"}],"within":[],"filter":false},
+					{"root":"var","steps":[{"kind":"attr","name":"x"}],"within":[],"filter":false},
+					{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"id"}],"within":[],"filter":false},
+					{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"id"}],"within":[],"filter":false}]`,
 			},
 			"escape5-comment-in-expression-line": {
 				src: "[aws_s3_bucket.this.id # \"\n, var.x # \"\n][1]",
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"id"}],"within":[]},
-					{"root":"var","steps":[{"kind":"attr","name":"x"}],"within":[]}]`,
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"id"}],"within":[],"filter":false},
+					{"root":"var","steps":[{"kind":"attr","name":"x"}],"within":[],"filter":false}]`,
 			},
 			"escape6-iterator-shadowing": {
 				src: `concat([for var in aws_s3_bucket.this : var.id], [var.y])[0]`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"}],"within":[]},
-					{"root":"var","steps":[{"kind":"attr","name":"y"}],"within":[]}]`,
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"}],"within":[],"filter":false},
+					{"root":"var","steps":[{"kind":"attr","name":"y"}],"within":[],"filter":false}]`,
 			},
 			"escape6-iterator-shadowing-resource-type": {
 				src: `concat([for aws_iam_role in [aws_s3_bucket.this.id] : aws_iam_role], [aws_iam_role.r.arn])[0]`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"id"}],"within":[]},
-					{"root":"aws_iam_role","steps":[{"kind":"attr","name":"r"},{"kind":"attr","name":"arn"}],"within":[]}]`,
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"id"}],"within":[],"filter":false},
+					{"root":"aws_iam_role","steps":[{"kind":"attr","name":"r"},{"kind":"attr","name":"arn"}],"within":[],"filter":false}]`,
 			},
 			"escape7-object-key": {
 				src: `{ (module.m.x) = aws_s3_bucket.this.id }`,
-				want: `[{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"x"}],"within":[]},
-					{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"id"}],"within":[]}]`,
+				want: `[{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"x"}],"within":[],"filter":false},
+					{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"id"}],"within":[],"filter":false}]`,
 			},
 		}
 		for name, tt := range tests {
@@ -122,79 +122,79 @@ func Test_walkExpr(t *testing.T) {
 		}{
 			"属性の後の添字": {
 				src: `aws_s3_bucket.this[module.x.key].id`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"other"}},{"kind":"attr","name":"id"}],"within":[]},
-					{"root":"module","steps":[{"kind":"attr","name":"x"},{"kind":"attr","name":"key"}],"within":[{"ref":0,"step":1}]}]`,
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"other"}},{"kind":"attr","name":"id"}],"within":[],"filter":false},
+					{"root":"module","steps":[{"kind":"attr","name":"x"},{"kind":"attr","name":"key"}],"within":[{"ref":0,"step":1}],"filter":false}]`,
 			},
 			"2つ目の添字": {
 				src: `aws_s3_bucket.this[module.a.x][module.b.y]`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"other"}},{"kind":"index","index":{"form":"other"}}],"within":[]},
-					{"root":"module","steps":[{"kind":"attr","name":"a"},{"kind":"attr","name":"x"}],"within":[{"ref":0,"step":1}]},
-					{"root":"module","steps":[{"kind":"attr","name":"b"},{"kind":"attr","name":"y"}],"within":[{"ref":0,"step":2}]}]`,
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"other"}},{"kind":"index","index":{"form":"other"}}],"within":[],"filter":false},
+					{"root":"module","steps":[{"kind":"attr","name":"a"},{"kind":"attr","name":"x"}],"within":[{"ref":0,"step":1}],"filter":false},
+					{"root":"module","steps":[{"kind":"attr","name":"b"},{"kind":"attr","name":"y"}],"within":[{"ref":0,"step":2}],"filter":false}]`,
 			},
 			"属性とリテラルの添字の後の添字": {
 				src: `aws_s3_bucket.this.tags["a"][module.m.x]`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"tags"},{"kind":"index","index":{"form":"literal","value":"a"}},{"kind":"index","index":{"form":"other"}}],"within":[]},
-					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"x"}],"within":[{"ref":0,"step":3}]}]`,
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"tags"},{"kind":"index","index":{"form":"literal","value":"a"}},{"kind":"index","index":{"form":"other"}}],"within":[],"filter":false},
+					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"x"}],"within":[{"ref":0,"step":3}],"filter":false}]`,
 			},
 			"リテラルの添字の後の添字": {
 				src: `aws_s3_bucket.this[0][module.m.x]`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"literal","value":0}},{"kind":"index","index":{"form":"other"}}],"within":[]},
-					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"x"}],"within":[{"ref":0,"step":2}]}]`,
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"literal","value":0}},{"kind":"index","index":{"form":"other"}}],"within":[],"filter":false},
+					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"x"}],"within":[{"ref":0,"step":2}],"filter":false}]`,
 			},
 			"関数の呼び出しの後の添字は参照に付かない": {
 				src: `element(aws_s3_bucket.this, 0)[module.m.x]`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"}],"within":[]},
-					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"x"}],"within":[]}]`,
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"}],"within":[],"filter":false},
+					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"x"}],"within":[],"filter":false}]`,
 			},
 			"括弧の後の添字は参照に付かない": {
 				src: `(aws_s3_bucket.this)[module.m.x]`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"}],"within":[]},
-					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"x"}],"within":[]}]`,
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"}],"within":[],"filter":false},
+					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"x"}],"within":[],"filter":false}]`,
 			},
 			"タプルの後の添字は参照に付かない": {
 				src: `[aws_s3_bucket.this][module.m.x]`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"}],"within":[]},
-					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"x"}],"within":[]}]`,
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"}],"within":[],"filter":false},
+					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"x"}],"within":[],"filter":false}]`,
 			},
 			"splat の後の Each の中の添字は辿る側に倒す": {
 				src: `aws_s3_bucket.this[*].tags[module.m.x]`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"splat"}],"within":[]},
-					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"x"}],"within":[]}]`,
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"splat"}],"within":[],"filter":false},
+					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"x"}],"within":[],"filter":false}]`,
 			},
 			"属性の splat も splat の段": {
 				src:  `aws_s3_bucket.this.*.id[0]`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"splat"}],"within":[]}]`,
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"splat"}],"within":[],"filter":false}]`,
 			},
 			"添字の中の補間": {
 				src: `aws_s3_bucket.this["${module.m.x}"]`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"other"}}],"within":[]},
-					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"x"}],"within":[{"ref":0,"step":1}]}]`,
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"other"}}],"within":[],"filter":false},
+					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"x"}],"within":[{"ref":0,"step":1}],"filter":false}]`,
 			},
 			"補間の中の添字": {
 				src: `"x-${aws_s3_bucket.this[module.m.x]}"`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"other"}}],"within":[]},
-					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"x"}],"within":[{"ref":0,"step":1}]}]`,
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"other"}}],"within":[],"filter":false},
+					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"x"}],"within":[{"ref":0,"step":1}],"filter":false}]`,
 			},
 			"添字の中の for の collection": {
 				src: `aws_s3_bucket.this[[for k in module.m.keys : k][0]]`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"other"}}],"within":[]},
-					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"keys"}],"within":[{"ref":0,"step":1}]}]`,
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"other"}}],"within":[],"filter":false},
+					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"keys"}],"within":[{"ref":0,"step":1}],"filter":false}]`,
 			},
 			"for の collection の中の添字": {
 				src: `[for b in aws_s3_bucket.this[module.m.x] : b.id]`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"other"}}],"within":[]},
-					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"x"}],"within":[{"ref":0,"step":1}]}]`,
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"other"}}],"within":[],"filter":false},
+					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"x"}],"within":[{"ref":0,"step":1}],"filter":false}]`,
 			},
 			"テンプレートのリテラルの [ は添字にならない": {
 				src: `"${aws_s3_bucket.this.id}-x[${module.x.id}]"`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"id"}],"within":[]},
-					{"root":"module","steps":[{"kind":"attr","name":"x"},{"kind":"attr","name":"id"}],"within":[]}]`,
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"id"}],"within":[],"filter":false},
+					{"root":"module","steps":[{"kind":"attr","name":"x"},{"kind":"attr","name":"id"}],"within":[],"filter":false}]`,
 			},
 			"祖先2段の入れ子の添字": {
 				src: `aws_s3_bucket.this[module.m.list[var.i]]`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"other"}}],"within":[]},
-					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"list"},{"kind":"index","index":{"form":"other"}}],"within":[{"ref":0,"step":1}]},
-					{"root":"var","steps":[{"kind":"attr","name":"i"}],"within":[{"ref":0,"step":1},{"ref":1,"step":2}]}]`,
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"other"}}],"within":[],"filter":false},
+					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"list"},{"kind":"index","index":{"form":"other"}}],"within":[{"ref":0,"step":1}],"filter":false},
+					{"root":"var","steps":[{"kind":"attr","name":"i"}],"within":[{"ref":0,"step":1},{"ref":1,"step":2}],"filter":false}]`,
 			},
 		}
 		for name, tt := range tests {
@@ -214,28 +214,66 @@ func Test_walkExpr(t *testing.T) {
 		}{
 			"入れ子の for の同名の反復変数": {
 				src: `[for k, v in var.m : [for k in v : k if k != local.z]]`,
-				want: `[{"root":"var","steps":[{"kind":"attr","name":"m"}],"within":[]},
-					{"root":"local","steps":[{"kind":"attr","name":"z"}],"within":[]}]`,
+				want: `[{"root":"var","steps":[{"kind":"attr","name":"m"}],"within":[],"filter":false},
+					{"root":"local","steps":[{"kind":"attr","name":"z"}],"within":[],"filter":true}]`,
 			},
 			"予約語と同名の反復変数でも collection は外のスコープ": {
 				src:  `[for var in var.list : var]`,
-				want: `[{"root":"var","steps":[{"kind":"attr","name":"list"}],"within":[]}]`,
+				want: `[{"root":"var","steps":[{"kind":"attr","name":"list"}],"within":[],"filter":false}]`,
 			},
 			"for の外では同名の参照を数える": {
 				src: `concat([for x in var.l : x], [x.y])`,
-				want: `[{"root":"var","steps":[{"kind":"attr","name":"l"}],"within":[]},
-					{"root":"x","steps":[{"kind":"attr","name":"y"}],"within":[]}]`,
+				want: `[{"root":"var","steps":[{"kind":"attr","name":"l"}],"within":[],"filter":false},
+					{"root":"x","steps":[{"kind":"attr","name":"y"}],"within":[],"filter":false}]`,
 			},
 			"オブジェクトの for のキーと条件": {
 				src: `{for k, v in var.m : "${k}-${local.p}" => v if v != local.z}`,
-				want: `[{"root":"var","steps":[{"kind":"attr","name":"m"}],"within":[]},
-					{"root":"local","steps":[{"kind":"attr","name":"p"}],"within":[]},
-					{"root":"local","steps":[{"kind":"attr","name":"z"}],"within":[]}]`,
+				want: `[{"root":"var","steps":[{"kind":"attr","name":"m"}],"within":[],"filter":false},
+					{"root":"local","steps":[{"kind":"attr","name":"p"}],"within":[],"filter":false},
+					{"root":"local","steps":[{"kind":"attr","name":"z"}],"within":[],"filter":true}]`,
 			},
 			"テンプレートの for の指示子": {
 				src: `"%{ for x in var.l }${x}${local.y}%{ endfor }"`,
-				want: `[{"root":"var","steps":[{"kind":"attr","name":"l"}],"within":[]},
-					{"root":"local","steps":[{"kind":"attr","name":"y"}],"within":[]}]`,
+				want: `[{"root":"var","steps":[{"kind":"attr","name":"l"}],"within":[],"filter":false},
+					{"root":"local","steps":[{"kind":"attr","name":"y"}],"within":[],"filter":false}]`,
+			},
+		}
+		for name, tt := range tests {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				assert.JSONEq(t, tt.want, refsJSON(t, tt.src))
+			})
+		}
+	})
+
+	t.Run("for の条件の中の参照だけが filter を持つ", func(t *testing.T) {
+		t.Parallel()
+
+		tests := map[string]struct {
+			src  string
+			want string
+		}{
+			"条件の中の関数の引数": {
+				src: `{for k, a in aws_s3_bucket.this : k => a.id if !contains(var.skip, k)}`,
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"}],"within":[],"filter":false},
+					{"root":"var","steps":[{"kind":"attr","name":"skip"}],"within":[],"filter":true}]`,
+			},
+			"条件の中の for は collection も値も filter": {
+				src: `[for a in var.l : a if contains([for x in local.m : x.id], a)]`,
+				want: `[{"root":"var","steps":[{"kind":"attr","name":"l"}],"within":[],"filter":false},
+					{"root":"local","steps":[{"kind":"attr","name":"m"}],"within":[],"filter":true}]`,
+			},
+			"値の中の for の条件は、外の値を filter にしない": {
+				src: `[for a in var.l : [for x in a : local.v if x != local.c]]`,
+				want: `[{"root":"var","steps":[{"kind":"attr","name":"l"}],"within":[],"filter":false},
+					{"root":"local","steps":[{"kind":"attr","name":"v"}],"within":[],"filter":false},
+					{"root":"local","steps":[{"kind":"attr","name":"c"}],"within":[],"filter":true}]`,
+			},
+			"条件の中の添字の参照": {
+				src: `[for a in var.l : a if aws_s3_bucket.this[local.k].id != a]`,
+				want: `[{"root":"var","steps":[{"kind":"attr","name":"l"}],"within":[],"filter":false},
+					{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"other"}},{"kind":"attr","name":"id"}],"within":[],"filter":true},
+					{"root":"local","steps":[{"kind":"attr","name":"k"}],"within":[{"ref":1,"step":1}],"filter":true}]`,
 			},
 		}
 		for name, tt := range tests {
@@ -255,10 +293,10 @@ func Test_walkExpr(t *testing.T) {
 		}{
 			"括弧の無い1語":        {src: `{ a = 1 }`, want: `[]`},
 			"予約語と同名の括弧の無い1語": {src: `{ var = 1 }`, want: `[]`},
-			"括弧つきのキー":        {src: `{ (module.m.x) = 1 }`, want: `[{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"x"}],"within":[]}]`},
-			"括弧つきの1語":        {src: `{ (local.k) = 1 }`, want: `[{"root":"local","steps":[{"kind":"attr","name":"k"}],"within":[]}]`},
-			"括弧の無い複数段":       {src: `{ b.c = 2 }`, want: `[{"root":"b","steps":[{"kind":"attr","name":"c"}],"within":[]}]`},
-			"文字列のキー":         {src: `{ "s" = var.v }`, want: `[{"root":"var","steps":[{"kind":"attr","name":"v"}],"within":[]}]`},
+			"括弧つきのキー":        {src: `{ (module.m.x) = 1 }`, want: `[{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"x"}],"within":[],"filter":false}]`},
+			"括弧つきの1語":        {src: `{ (local.k) = 1 }`, want: `[{"root":"local","steps":[{"kind":"attr","name":"k"}],"within":[],"filter":false}]`},
+			"括弧の無い複数段":       {src: `{ b.c = 2 }`, want: `[{"root":"b","steps":[{"kind":"attr","name":"c"}],"within":[],"filter":false}]`},
+			"文字列のキー":         {src: `{ "s" = var.v }`, want: `[{"root":"var","steps":[{"kind":"attr","name":"v"}],"within":[],"filter":false}]`},
 		}
 		for name, tt := range tests {
 			t.Run(name, func(t *testing.T) {
@@ -277,13 +315,13 @@ func Test_walkExpr(t *testing.T) {
 		}{
 			"深い入れ子のオブジェクト": {
 				src: `"${aws_s3_bucket.this.id}${ {a = {b = {c = {d = module.x.id}}}} }"`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"id"}],"within":[]},
-					{"root":"module","steps":[{"kind":"attr","name":"x"},{"kind":"attr","name":"id"}],"within":[]}]`,
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"id"}],"within":[],"filter":false},
+					{"root":"module","steps":[{"kind":"attr","name":"x"},{"kind":"attr","name":"id"}],"within":[],"filter":false}]`,
 			},
 			"テンプレートの中のテンプレート": {
 				src: `"${aws_s3_bucket.this.id}${"${module.x.id}"}"`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"id"}],"within":[]},
-					{"root":"module","steps":[{"kind":"attr","name":"x"},{"kind":"attr","name":"id"}],"within":[]}]`,
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"id"}],"within":[],"filter":false},
+					{"root":"module","steps":[{"kind":"attr","name":"x"},{"kind":"attr","name":"id"}],"within":[],"filter":false}]`,
 			},
 		}
 		for name, tt := range tests {
@@ -315,7 +353,7 @@ func Test_walkExpr(t *testing.T) {
 	t.Run("単項演算子と二項演算子の中の参照を出す", func(t *testing.T) {
 		t.Parallel()
 		assert.JSONEq(t,
-			`[{"root":"var","steps":[{"kind":"attr","name":"b"}],"within":[]},{"root":"var","steps":[{"kind":"attr","name":"n"}],"within":[]}]`,
+			`[{"root":"var","steps":[{"kind":"attr","name":"b"}],"within":[],"filter":false},{"root":"var","steps":[{"kind":"attr","name":"n"}],"within":[],"filter":false}]`,
 			refsJSON(t, `!var.b || var.n > 1`))
 	})
 
@@ -487,9 +525,9 @@ func Test_indexFormOf(t *testing.T) {
 
 	t.Run("添字の参照の段に形が載る", func(t *testing.T) {
 		t.Parallel()
-		assert.JSONEq(t, `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"each_key"}},{"kind":"attr","name":"id"}],"within":[]},
-			{"root":"each","steps":[{"kind":"attr","name":"key"}],"within":[{"ref":0,"step":1}]}]`, refsJSON(t, `aws_s3_bucket.this[each.key].id`))
-		assert.JSONEq(t, `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"literal","value":"a"}}],"within":[]}]`,
+		assert.JSONEq(t, `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"each_key"}},{"kind":"attr","name":"id"}],"within":[],"filter":false},
+			{"root":"each","steps":[{"kind":"attr","name":"key"}],"within":[{"ref":0,"step":1}],"filter":false}]`, refsJSON(t, `aws_s3_bucket.this[each.key].id`))
+		assert.JSONEq(t, `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"literal","value":"a"}}],"within":[],"filter":false}]`,
 			refsJSON(t, `aws_s3_bucket.this["a"]`))
 	})
 
@@ -497,11 +535,11 @@ func Test_indexFormOf(t *testing.T) {
 		t.Parallel()
 		assert.Equal(t, &indexForm{Form: indexOther}, indexFormOf(parseExpr(t, `each.key`), map[string]bool{"each": true}))
 		assert.Equal(t, &indexForm{Form: indexOther}, indexFormOf(parseExpr(t, `count.index`), map[string]bool{"count": true}))
-		assert.JSONEq(t, `[{"root":"var","steps":[{"kind":"attr","name":"x"}],"within":[]},
-			{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"other"}}],"within":[]}]`,
+		assert.JSONEq(t, `[{"root":"var","steps":[{"kind":"attr","name":"x"}],"within":[],"filter":false},
+			{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"other"}}],"within":[],"filter":false}]`,
 			refsJSON(t, `[for each in var.x : aws_s3_bucket.this[each.key]]`))
-		assert.JSONEq(t, `[{"root":"var","steps":[{"kind":"attr","name":"x"}],"within":[]},
-			{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"other"}}],"within":[]}]`,
+		assert.JSONEq(t, `[{"root":"var","steps":[{"kind":"attr","name":"x"}],"within":[],"filter":false},
+			{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"other"}}],"within":[],"filter":false}]`,
 			refsJSON(t, `[for count in var.x : aws_s3_bucket.this[count.index]]`))
 	})
 }

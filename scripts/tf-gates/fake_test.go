@@ -18,8 +18,8 @@ import (
 // 偽の道具は書いた直後のファイルを exec せず、/bin/sh に読ませて起動する。並行のテストが別の偽の道具を書いている
 // 間に fork した子がその書き込みの fd を持ち越すと、書いたばかりのファイルの exec が ETXTBSY で落ちるため。
 // fakeTool は、起動ごとに「作業ディレクトリ 段 TF_DATA_DIR」を calls.log へ書く偽の道具を作る。作業ディレクトリに
-// `fail-<段>` があればその段は 1 で、`validate.out` があれば validate はその中身を出す。環境に AWS_ で始まる変数
-// （宣言で塞ぐ3つを除く）が残っていれば 3 で落ちる。
+// `fail-<段>` があればその段は検出の終了コード（fmt-check は 3、lint は 2、ほかは 1）で、`validate.out` があれば
+// validate はその中身を出す。`rc-<段>` があればその中身の終了コードで終わる。環境に AWS_ で始まる変数（宣言で塞ぐ3つを除く）が残っていれば 97 で落ちる。
 func fakeTool(t *testing.T) (toolFunc, func() []string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -29,14 +29,17 @@ func fakeTool(t *testing.T) (toolFunc, func() []string) {
 step="$1"
 echo "$PWD $step ${TF_DATA_DIR:-} ${TFLINT_CONFIG_FILE:-} ${TFLINT_PLUGIN_DIR:-}" >> '` + log + `'
 left=$(env | grep '^AWS_' | grep -vE '^AWS_(SHARED_CREDENTIALS_FILE|CONFIG_FILE|EC2_METADATA_DISABLED)=')
-if [ -n "$left" ]; then echo "AWS の環境変数が残っています: $left"; exit 3; fi
-if [ -e "fail-$step" ]; then echo "$step が落ちた"; exit 1; fi
+if [ -n "$left" ]; then echo "AWS の環境変数が残っています: $left"; exit 97; fi
+rc=1
+case "$step" in fmt-check) rc=3 ;; lint) rc=2 ;; esac
+if [ -e "fail-$step" ]; then echo "$step が落ちた"; exit "$rc"; fi
+if [ -e "rc-$step" ]; then exit "$(cat "rc-$step")"; fi
 if [ "$step" = validate ] && [ -e validate.out ]; then cat validate.out; fi
 exit 0
 `
 	require.NoError(t, os.WriteFile(script, []byte(body), 0o600))
-	tool := func(d string, env []string, step string) *exec.Cmd {
-		c := exec.CommandContext(context.Background(), "/bin/sh", script, step)
+	tool := func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
+		c := exec.CommandContext(ctx, "/bin/sh", script, step)
 		c.Dir = d
 		c.Env = env
 		return c

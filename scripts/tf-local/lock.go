@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -51,7 +50,6 @@ var (
 	errLockExists  = xerrors.New("❌ lock が既にあります。どの lock を残したのか区別できないので、lock を取りません")
 	errLockMissing = xerrors.New("❌ lock が残りませんでした（terraform が lock を外してから止まったか、lock を取る前に終わった）。起動し直してください")
 	errLockWait    = xerrors.New("❌ plan が lock を取った後の行を、待つ時間の内に出しませんでした")
-	errLockWant    = xerrors.New("❌ -want は absent か present です")
 )
 
 // heldLine は、plan が lock を取った後にだけ全文へ書く行。Terraform は backend の lock を取ってから
@@ -110,36 +108,6 @@ func lockKey(root string, readFile func(string) ([]byte, error)) (string, error)
 	return keys[0] + lockSuffix, nil
 }
 
-func runLockETag(args []string, readFile func(string) ([]byte, error)) (string, error) {
-	fs := flag.NewFlagSet("lock-etag", flag.ContinueOnError)
-	key := fs.String("key", "", "")
-	want := fs.String("want", "", "")
-
-	if err := fs.Parse(args); err != nil {
-		return "", xerrors.Wrap(errUsage, err.Error())
-	}
-
-	if fs.NArg() != 1 {
-		return "", errUsage
-	}
-
-	if *want != "" && *want != "absent" && *want != "present" {
-		return "", xerrors.Wrap(errUsage, errLockWant.Error())
-	}
-
-	data, err := readFile(fs.Arg(0))
-	if err != nil {
-		return "", xerrors.Wrap(errLockList, err.Error())
-	}
-
-	etag, err := lockETag(*key, data)
-	if err != nil {
-		return "", err
-	}
-
-	return wantLock(*want, etag)
-}
-
 // wantLock は、-want の指定に合わない lock の有無を失敗にします。指定が空なら、有無を問わず ETag（無ければ空）を返す。
 func wantLock(want, etag string) (string, error) {
 	switch {
@@ -189,58 +157,6 @@ func lockETag(key string, data []byte) (string, error) {
 	return etags[0], nil
 }
 
-func runLockStale(args []string, d deps) (string, error) {
-	fs := flag.NewFlagSet("lock-stale", flag.ContinueOnError)
-	etag := fs.String("etag", "", "")
-	metaPath := fs.String("meta", "", "")
-
-	if err := fs.Parse(args); err != nil {
-		return "", xerrors.Wrap(errUsage, err.Error())
-	}
-
-	if fs.NArg() != 1 {
-		return "", errUsage
-	}
-
-	meta, err := d.readFile(*metaPath)
-	if err != nil {
-		return "", xerrors.Wrap(errLockMeta, err.Error())
-	}
-
-	body, err := d.readFile(fs.Arg(0))
-	if err != nil {
-		return "", xerrors.Wrap(errLockInfo, err.Error())
-	}
-
-	return lockStale(*etag, meta, body, d.now())
-}
-
-func runLockHeld(args []string, d deps) (string, error) {
-	fs := flag.NewFlagSet("lock-held", flag.ContinueOnError)
-	etag := fs.String("etag", "", "")
-	metaPath := fs.String("meta", "", "")
-
-	if err := fs.Parse(args); err != nil {
-		return "", xerrors.Wrap(errUsage, err.Error())
-	}
-
-	if fs.NArg() != 1 {
-		return "", errUsage
-	}
-
-	meta, err := d.readFile(*metaPath)
-	if err != nil {
-		return "", xerrors.Wrap(errLockMeta, err.Error())
-	}
-
-	body, err := d.readFile(fs.Arg(0))
-	if err != nil {
-		return "", xerrors.Wrap(errLockInfo, err.Error())
-	}
-
-	return lockHeld(*etag, meta, body, d.now())
-}
-
 // lockHeld は、lock を残す job が残した lock の説明と、lock の解除がそれを消せるようになる時刻を返します。
 // lock の解除が消す形（lockStale）でなければ、待っても消せないので失敗する。古さでは失敗しない。
 func lockHeld(etag string, metaJSON, body []byte, now time.Time) (string, error) {
@@ -251,23 +167,6 @@ func lockHeld(etag string, metaJSON, body []byte, now time.Time) (string, error)
 
 	return fmt.Sprintf("%s\nTerraform Unlock が消せるのは %s より後", line,
 		modified.Add(applyJobTimeout+staleLockMargin).UTC().Format(time.RFC3339)), nil
-}
-
-func runLockWait(args []string, d deps) (string, error) {
-	fs := flag.NewFlagSet("lock-wait", flag.ContinueOnError)
-	pid := fs.Int("pid", 0, "")
-	interval := fs.Duration("interval", time.Second, "")
-	limit := fs.Duration("limit", 10*time.Minute, "")
-
-	if err := fs.Parse(args); err != nil {
-		return "", xerrors.Wrap(errUsage, err.Error())
-	}
-
-	if fs.NArg() != 1 || *pid <= 0 || *interval <= 0 || *limit <= 0 {
-		return "", errUsage
-	}
-
-	return lockWait(fs.Arg(0), *pid, *interval, *limit, d)
 }
 
 // lockWait は、裏で走る plan（pid）の全文を読み、lock を取った後の行（heldLine）が現れたら `held` を返します。

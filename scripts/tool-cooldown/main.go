@@ -37,8 +37,10 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cooldown"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/gitenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/mdfence"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/misetoml"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -82,6 +84,9 @@ const (
 var (
 	errUsage    = xerrors.New("invalid usage")
 	errBlocking = xerrors.New("blocking violations")
+	// errBaseUnresolved は、比較対象の base が commit として解決できないか、mise.toml を持たないことです。
+	errBaseUnresolved = xerrors.New("base を解決できません")
+	errMiseRegistry   = xerrors.New("mise registry が落ちました")
 	// errUnsupportedBackend は、公開時刻の取得経路を持たない backend を指すエラー。
 	errUnsupportedBackend = xerrors.New("no publish-time source for this backend")
 	// errNotFound は、上流がそのバージョンを知らない場合のエラー。
@@ -105,7 +110,7 @@ var (
 
 // tool は宣言の 1 行。backend は解決後の値で、短縮名なら mise registry が決める。
 type tool struct {
-	key     string // 宣言に書かれたキーそのもの
+	key     string
 	version string
 	backend string // 例: aqua:owner/repo, go:module, npm:pkg, pypi:pkg, core:go
 	file    string // 宣言元のパス。注釈を宣言した場所へ付けるために持つ
@@ -151,15 +156,55 @@ func (t tool) id() string { return t.key + "@" + t.version }
 func main() {
 	log.SetFlags(0)
 
-	if err := run(os.Args[1:], &http.Client{Timeout: fetchTimeout}, time.Now().UTC()); err != nil {
-		log.Fatalf("%v", err)
+	if err := run(os.Args[1:], &http.Client{Timeout: fetchTimeout}, time.Now().UTC(), command); err != nil {
+		log.Printf("%v", err)
+		os.Exit(exitCode(err))
 	}
 }
 
-// run は mise.toml の宣言を cooldown に照らして報告します。gate で違反が残った場合はエラーを
+// exitCode は lib/toolrun の取り決めで、cooldown の違反が残ったことを 1、検査を成り立たせられなかったこと
+// （道具を起動できない、base を解決できない、宣言を読めない、使い方の誤りなど）を 2 で返します。
+func exitCode(err error) int {
+	return toolrun.ExitCode(err, errBlocking)
+}
+
+type toolFunc = toolrun.Func
+
+const (
+	stepGitShow      = "git-show"
+	stepGitRevParse  = "git-rev-parse"
+	stepMiseRegistry = "mise-registry"
+)
+
+// command は toolFunc の実物です。operand は1つで、git の rev（`<base>:<path>` か `<base>^{commit}`）は
+// --end-of-options の、mise の道具の名前は -- の後ろに置き、`-` で始まる値を option と読ませません。operand が
+// ちょうど1つでなければ、起動せずに落ちる false を返します。
+func command(ctx context.Context, dir string, env []string, step string, operands ...string) *exec.Cmd {
+	var name string
+	var args []string
+	switch step {
+	case stepGitShow:
+		name, args = "git", []string{"-c", "core.hooksPath=/dev/null", "show", "--end-of-options"}
+	case stepGitRevParse:
+		name, args = "git", []string{"-c", "core.hooksPath=/dev/null", "rev-parse", "--verify", "--quiet", "--end-of-options"}
+	case stepMiseRegistry:
+		name, args = "mise", []string{"registry", "--"}
+	}
+	var cmd *exec.Cmd
+	if name == "" || len(operands) != 1 {
+		cmd = exec.CommandContext(ctx, "false")
+	} else {
+		cmd = exec.CommandContext(ctx, name, append(args, operands...)...) //nolint:gosec // G204: operand は呼び出し側が与える base の rev か mise.toml のキーで、境の後ろだけに置く。道具と option はリテラル。gosec が境の後ろの operand を区別できるようになれば外す
+	}
+	cmd.Dir, cmd.Env = dir, env
+
+	return cmd
+}
+
+// run はツールの宣言を cooldown に照らして報告します。gate で違反が残った場合はエラーを
 // 返し、終了コードへの変換は呼び出し側に委ねます。
-// client は上流への問い合わせ手段、now は窓と期限の基準時刻で、差し替えられるよう引数で受けます。
-func run(args []string, client *http.Client, now time.Time) error {
+// client は上流への問い合わせ手段、now は窓と期限の基準時刻です。
+func run(args []string, client *http.Client, now time.Time, launch toolFunc) error {
 	sub, opt, err := parseArgs(args)
 	if err != nil {
 		// usage は flag が既に出力している。
@@ -198,7 +243,7 @@ func run(args []string, client *http.Client, now time.Time) error {
 	}
 
 	if sub == "outdated" {
-		return reportOutdated(client, declared, opt, now)
+		return reportOutdated(client, declared, opt, now, launch)
 	}
 
 	bypasses, err := readBypasses(bypassFile)
@@ -209,14 +254,14 @@ func run(args []string, client *http.Client, now time.Time) error {
 
 	targets := declared
 	if sub == "gate" {
-		targets, err = added(opt.base, paths, declared)
+		targets, err = added(opt.base, paths, declared, launch)
 		if err != nil {
 			return xerrors.Wrap(err, "❌ base との差分")
 		}
 	}
 
 	ctx := context.Background()
-	resolved, skipped, err := resolveBackends(ctx, targets)
+	resolved, skipped, err := resolveBackends(ctx, launch, targets)
 	if err != nil {
 		return xerrors.Wrap(err, "❌ backend の解決")
 	}
@@ -301,10 +346,9 @@ func parseTools(content []byte) ([]tool, error) {
 }
 
 func declarationPaths() []string {
-	return []string{miseFile, tflintFile}
+	return []string{miseFile, tflintFile, semgrepFile}
 }
 
-// readDeclarations は作業ツリーの宣言ファイルを読む。
 func readDeclarations(paths []string) ([]declaration, error) {
 	decls := make([]declaration, 0, len(paths))
 	for _, path := range paths {
@@ -326,8 +370,11 @@ func parseDeclarations(decls []declaration) ([]tool, error) {
 	var tools []tool
 	for _, d := range decls {
 		parse := parseTools
-		if filepath.Base(d.path) == tflintFile {
+		switch filepath.Base(d.path) {
+		case tflintFile:
 			parse = parseTflintPlugins
+		case filepath.Base(semgrepFile):
+			parse = parseSemgrepRules
 		}
 		parsed, err := parse(d.content)
 		if err != nil {
@@ -353,9 +400,8 @@ func countFrom(tools []tool, path string) int {
 	return n
 }
 
-// added は base 時点の宣言に無かった (key, version) の組を返す。
-func added(base string, paths []string, current []tool) ([]tool, error) {
-	decls, err := baseDeclarations(base, paths)
+func added(base string, paths []string, current []tool, launch toolFunc) ([]tool, error) {
+	decls, err := baseDeclarations(base, paths, launch)
 	if err != nil {
 		return nil, err
 	}
@@ -366,33 +412,41 @@ func added(base string, paths []string, current []tool) ([]tool, error) {
 // ファイルが base に無いのが正常なので、それは空として扱う。ただし mise.toml はどの base にも
 // あるはずのファイルで、無いのは base の取り違えを意味する。ref そのものを解決できない場合と
 // 併せてエラーにする。差分を取れないまま進むと gate は何も検査せずに通る。
-func baseDeclarations(base string, paths []string) ([]declaration, error) {
+func baseDeclarations(base string, paths []string, launch toolFunc) ([]declaration, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
+	env, err := gitenv.Env(os.Environ())
+	if err != nil {
+		return nil, xerrors.Wrap(err, "git の環境")
+	}
 
 	decls := make([]declaration, 0, len(paths))
 	for _, path := range paths {
-		//nolint:gosec // base は呼び出し側が与える git ref、path は declarationPaths が決めたもの
-		out, err := exec.CommandContext(ctx, "git", "show", base+":"+path).Output()
+		res, err := toolrun.Run(launch(ctx, "", env, stepGitShow, base+":"+path))
 		if err != nil {
+			return nil, xerrors.Wrapf(err, "git show %s:%s", base, path)
+		}
+		if res.Code != 0 {
 			if path == miseFile {
-				return nil, xerrors.Wrap(err, fmt.Sprintf("git show %s:%s（base を取得できていない可能性があります）", base, path))
+				return nil, xerrors.Wrapf(errBaseUnresolved, "git show %s:%s が exit status %d（base を取得できていない可能性があります）", base, path, res.Code)
 			}
-			if refErr := verifyRef(ctx, base); refErr != nil {
+			if refErr := verifyRef(ctx, launch, env, base); refErr != nil {
 				return nil, xerrors.Wrap(refErr, fmt.Sprintf("git show %s:%s（base を取得できていない可能性があります）", base, path))
 			}
 			continue
 		}
-		decls = append(decls, declaration{path: path, content: out})
+		decls = append(decls, declaration{path: path, content: []byte(res.Stdout)})
 	}
 	return decls, nil
 }
 
-// verifyRef は base が commit として解決できるかを見る。
-func verifyRef(ctx context.Context, base string) error {
-	//nolint:gosec // base は呼び出し側が与える git ref
-	if err := exec.CommandContext(ctx, "git", "rev-parse", "--verify", "--quiet", base+"^{commit}").Run(); err != nil {
+func verifyRef(ctx context.Context, launch toolFunc, env []string, base string) error {
+	code, err := toolrun.Exec(launch(ctx, "", env, stepGitRevParse, base+"^{commit}"))
+	if err != nil {
 		return xerrors.Wrap(err, "git rev-parse "+base)
+	}
+	if code != 0 {
+		return xerrors.Wrapf(errBaseUnresolved, "git rev-parse %s が exit status %d", base, code)
 	}
 	return nil
 }
@@ -407,7 +461,6 @@ func addedFrom(baseDecls []declaration, current []tool) ([]tool, error) {
 	return diffAdded(before, current), nil
 }
 
-// diffAdded は before に無い (key, version) の組を返す。
 func diffAdded(before, current []tool) []tool {
 	known := make(map[string]struct{}, len(before))
 	for _, t := range before {
@@ -424,13 +477,13 @@ func diffAdded(before, current []tool) []tool {
 
 // resolveBackends は各ツールの backend を決め、対象と除外（core backend）へ振り分ける。
 // 短縮名は miseRegistry 経由で解決する（候補の選び方は firstBackend を見よ）。
-func resolveBackends(ctx context.Context, tools []tool) ([]tool, []tool, error) {
+func resolveBackends(ctx context.Context, launch toolFunc, tools []tool) ([]tool, []tool, error) {
 	var targets, skipped []tool
 	for _, t := range tools {
 		if strings.Contains(t.key, ":") {
 			t.backend = t.key
 		} else {
-			backend, resolveErr := miseRegistry(ctx, t.key)
+			backend, resolveErr := miseRegistry(ctx, launch, t.key)
 			if resolveErr != nil {
 				return nil, nil, resolveErr
 			}
@@ -445,15 +498,18 @@ func resolveBackends(ctx context.Context, tools []tool) ([]tool, []tool, error) 
 	return targets, skipped, nil
 }
 
-func miseRegistry(ctx context.Context, name string) (string, error) {
+func miseRegistry(ctx context.Context, launch toolFunc, name string) (string, error) {
 	cctx, cancel := context.WithTimeout(ctx, miseTimeout)
 	defer cancel()
 
-	out, err := exec.CommandContext(cctx, "mise", "registry", name).Output() //nolint:gosec // name は mise.toml のキー
+	res, err := toolrun.Run(launch(cctx, "", nil, stepMiseRegistry, name))
 	if err != nil {
 		return "", xerrors.Wrap(err, "mise registry "+name)
 	}
-	return firstBackend(out, name)
+	if res.Code != 0 {
+		return "", xerrors.Wrapf(errMiseRegistry, "%s: exit status %d: %s", name, res.Code, strings.TrimSpace(res.Combined))
+	}
+	return firstBackend([]byte(res.Stdout), name)
 }
 
 // firstBackend は `mise registry` の出力から先頭の候補だけを採る。mise 自身が選ぶのと同じ順序で、
@@ -468,7 +524,7 @@ func firstBackend(registryOutput []byte, name string) (string, error) {
 
 func windowFor(backend string) int {
 	switch backendKind(backend) {
-	case "github":
+	case "github", "commit":
 		return releaseWindowDays
 	default:
 		return registryWindowDays
@@ -480,6 +536,8 @@ func backendKind(backend string) string {
 	switch name {
 	case "aqua", "ubi", "github":
 		return "github"
+	case "github-commit":
+		return "commit"
 	case "go":
 		return "go"
 	case "npm":
@@ -544,6 +602,16 @@ func publishedAt(ctx context.Context, client *http.Client, t tool) (time.Time, e
 		}
 
 		return time.Time{}, err
+	case "commit":
+		info, err := githubCommit(ctx, client, ref, t.version)
+		if err != nil {
+			return time.Time{}, err
+		}
+		if branchErr := verifyOnDefaultBranch(ctx, client, ref, t.version); branchErr != nil {
+			return time.Time{}, branchErr
+		}
+
+		return info.at, nil
 	case "go":
 		return goModuleAt(ctx, client, ref, t.version)
 	case "npm":

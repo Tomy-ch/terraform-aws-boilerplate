@@ -251,6 +251,9 @@ classes = ["mise"]
 [job."md-lint.yaml:skill-lint"]
 classes = ["mise"]
 
+[job."md-lint.yaml:ref-record-lint"]
+classes = ["mise"]
+
 [job."notify.yaml:notify"]
 classes = []
 extra = [

@@ -13,7 +13,7 @@
 //	bootstrap-check account -project <project> -region <region>
 //	    アカウントの準備（docs/setup/bootstrap.md の 1-0 から 2-4）を、一時 IAM user の資格情報で読んで確かめる。
 //	    何も作らず、何も変えない
-//	bootstrap-check verify -stage <stage> -project <project> -region <region> [-executor <user>] [-policy-source live|reference]
+//	bootstrap-check verify -stage <stage> -project <project> -region <region> [-executor <user>] [-policy-source live|reference -reference-dir <make tf-policy の -out>]
 //	    bootstrap の段の確認（stage1・before-apply・stage4・permissions・stage5・output-policy）を、実環境を読んで行う。
 //	    -executor は stage4 の、段3 で例外に入れた段4 の実行者。-policy-source は output-policy が評価する
 //	    Bucket Policy の文書の出所（既定は live）。何も作らず、何も変えない
@@ -47,7 +47,7 @@ const (
 var (
 	accountPattern = regexp.MustCompile(`[0-9]{12}`)
 
-	errUsage = xerrors.New("使い方: bootstrap-check plan [-partial] -header-file <plan-header の出力> <plan の JSON | -> | bootstrap-check plan -mock -test-exit-file <file> <terraform test -json -verbose の出力> | bootstrap-check account -project <project> -region <region> | bootstrap-check verify -stage <stage1|before-apply|stage4|permissions|stage5|output-policy> -project <project> -region <region> [-executor <user>] [-policy-source live|reference]")
+	errUsage = xerrors.New("使い方: bootstrap-check plan [-partial] -header-file <plan-header の出力> <plan の JSON | -> | bootstrap-check plan -mock -test-exit-file <file> <terraform test -json -verbose の出力> | bootstrap-check account -project <project> -region <region> | bootstrap-check verify -stage <stage1|before-apply|stage4|permissions|stage5|output-policy> -project <project> -region <region> [-executor <user>] [-policy-source live|reference -reference-dir <make tf-policy の -out>]")
 	// errMismatch は、期待値と plan に差分があること。理由は結果の行が述べるので、メッセージを持たない。
 	errMismatch = xerrors.New("差分があります")
 )

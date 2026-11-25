@@ -71,6 +71,8 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
 11. ARNが事前に確定しない場合は、まずresource参照による依存順序の解決を試みる。解決できない場合に限り、prefixベースのARN patternをConditionで限定して使用し、根拠を記録する。
 
     ただし、拒否する statement（`Deny`）の Resource は、ARN が確定していても、それらを覆う prefix ベースの ARN pattern で書いてよく、Condition での限定を要しない。pattern は拒む範囲を広げるだけで、Allow が許す範囲を広げないからである（決定8 が Deny の Action wildcard を許すのと同じ理由）。この但し書きを使う箇所は、次の3つを当該ユースケースの ADR に記録する: 覆うべき ARN のすべてが pattern に入ることを確かめる入力の検証か検査、pattern が覆うべき ARN の外に当てる範囲、列挙せずに pattern で書く理由。
+
+    ARN の region の部分だけを `*` にした pattern は、ARN が事前に確定していても、許可する statement で使ってよい。条件は2つある。region を列挙した ARN では policy の文字数の上限を超えること。同じ role に、その statement の Action を、条件キー `aws:RequestedRegion` が許すリージョンの集合の外にあるときに拒む `Deny` の statement があること。リージョンごとの資源の ARN の region は、要求を受けた endpoint の region と一致するので、許す要求はリージョンを列挙した ARN と同じになる。この但し書きを使う箇所は、許すリージョンの集合とその根拠、`Deny` の Action が `Allow` の Action を覆うことを確かめる検査を、当該ユースケースの ADR に記録する（ADR-0209 決定4）。
 12. KMS の鍵の暗号操作（`kms:Decrypt`・`kms:Encrypt`・`kms:GenerateDataKey` など）と `kms:CreateGrant` は、IAM policy で与えない。その鍵の Key Policy が、使う principal を名指して許す。Key Policy がアカウントへ委任するのは鍵の管理の Action に限り、暗号操作と `kms:CreateGrant` を含めない。鍵を使う主体の一覧が、鍵ごとに Key Policy の1箇所に揃い、IAM の Allow を足しても鍵を使えるようにはならない。
 
 ### ネットワーク
@@ -177,7 +179,6 @@ IAM Identity Center の文書の手順である。外部 IdP を前提とし、I
   - policy document の Allow の statement に Action wildcard が存在しないこと
   - Resource wildcard が、許可リストに登録されたaction以外で使用されていないこと。同じ範囲を与える `NotResource` の Allow が無いこと。許可リストに、使われていない action が残っていないこと
   - `0.0.0.0/0` と `::/0` からのingressが、インターネット公開点として宣言されたresource以外に存在しないこと
-  - 暗号化・public access block・secure transport等のSecure by Default設定が有効であること
   - 意味論的権限指定から生成されたActionの集合が、期待集合と完全一致すること
   - KMS Key Policy のアカウントへの委任に暗号操作と `kms:CreateGrant` が無いこと。identity-based policy（role・user・group の inline policy と customer managed policy）の Allow に KMS の暗号操作と `kms:CreateGrant` が無いこと
   - break-glass の IAM user がちょうど2つで、Terraform がアクセスキーと login profile を持たないこと。IAM user の Allow が break-glass の role の `sts:AssumeRole` と自身の MFA・パスワードの管理に限られ、長期の資格情報の作成（`iam:CreateAccessKey`・`iam:CreateServiceSpecificCredential`・`iam:UploadSSHPublicKey`・`iam:UploadSigningCertificate`）を、条件なしで全 Resource について Deny していること
@@ -188,6 +189,7 @@ IAM Identity Center の文書の手順である。外部 IdP を前提とし、I
   - permission set に付く AWS managed policy が、設計記録の一覧（permission set ごとの許可リスト）に一致すること。一覧に無い policy の attachment が無いこと、一覧に使われていない項目が残っていないこと
   - `AdministratorAccess` を付ける permission set の割当が、管理アカウントだけ、かつ `principal_type = "USER"` だけであること。メンバーアカウントへの割当に、`AdministratorAccess` を付けた permission set が無いこと
   - 排他の resource（`aws_iam_role_policy_attachments_exclusive`）が載せる policy ごとに、同じ role への attachment がちょうど1つ在ること。排他の resource に載らない attachment が無いこと（決定21。`plan.iam_role_attachment_pairing`、`PLAN-ATTACH-*`）
+- Security（ADR-0501 決定6 の道具）: 暗号化・public access block・secure transport 等の Secure by Default の設定が有効であること。道具の既定ルールが本リポジトリの書き方を検出しない設定は、ADR-0402 決定6 の表の下の文により Policy Test が持つ。
 - Unit Test: 権限語彙と入力の組合せに対する導出結果を検証する。
 - 人の手順: break-glass で実際にサインインして role を引き受け、通知が届くことを定期的に試す。手順と頻度は `organization-baseline` の README の検証方法が持つ。
 - Integration / E2E Test: 意図した通信のみが成立し、意図しない通信が拒否されることを実環境で検証する。

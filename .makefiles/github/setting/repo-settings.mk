@@ -10,6 +10,7 @@
 .PHONY: apply-vulnerability-reporting ## private-vulnerability-reporting.json を対象リポジトリの Private Vulnerability Reporting へ適用
 .PHONY: deploy-source-check ## [CI] デプロイブランチへ入る Pull Request の head を検査する（ADR-0603 決定31）
 .PHONY: create-deploy-branch ## DEPLOY_ENV のデプロイブランチを、デフォルトブランチの先頭から作る（管理者が bootstrap で1回）
+.PHONY: deploy-branch-exists ## DEPLOY_ENV のデプロイブランチが在ることを確かめる（読み取りのみ。bootstrap の段4 の apply の前）
 
 REPO_SETTINGS_REPO ?= $(or $(GITHUB_REPOSITORY),$(shell gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null))
 
@@ -35,16 +36,13 @@ apply-environments:
 apply-vulnerability-reporting:
 	@$(call REPO_SETTINGS_REMOTE,sync -only vulnerability-reporting)
 
-# 引数は RUN_SCRIPT_HOST の sh が環境変数から展開する。宣言とツールは base の commit を取り出した木のものを使う。
+# 引数は RUN_SCRIPT_HOST の sh が環境変数から展開する。
 deploy-source-check:
 	@$(call RUN_SCRIPT_HOST,repo-settings,source -base "$${BASE_REF:-}" -base-sha "$${BASE_SHA:-}" -head-sha "$${HEAD_SHA:-}" -default "$${DEFAULT_BRANCH:-}")
 
-# 既に在れば GitHub が拒むので、上書きしない。
+# DEPLOY_ENV は人が渡す値なので、deploy-source-check と同じく RUN_SCRIPT_HOST の sh が環境変数から展開する。
 create-deploy-branch:
-	@set -eu; test -n "$(DEPLOY_ENV)" || { echo "❌ DEPLOY_ENV を指定してください（例: DEPLOY_ENV=admin）" >&2; exit 1; }; \
-	repo="$(REPO_SETTINGS_REPO)"; test -n "$$repo" || { echo "❌ 対象のリポジトリを解決できません" >&2; exit 1; }; \
-	branch=$$($(call RUN_SCRIPT_HOST,repo-settings,deploy-branch -env $(DEPLOY_ENV))); \
-	default=$$(gh api "repos/$$repo" --jq .default_branch); \
-	sha=$$(gh api "repos/$$repo/git/ref/heads/$$default" --jq .object.sha); \
-	gh api "repos/$$repo/git/refs" -f ref="refs/heads/$$branch" -f sha="$$sha" --jq .object.sha >/dev/null; \
-	echo "✅ $$branch を $$default の先頭 $$sha から作りました"
+	@$(call REPO_SETTINGS_REMOTE,create-deploy-branch -env "$${DEPLOY_ENV:-}")
+
+deploy-branch-exists:
+	@$(call REPO_SETTINGS_REMOTE,deploy-branch-exists -env "$${DEPLOY_ENV:-}")

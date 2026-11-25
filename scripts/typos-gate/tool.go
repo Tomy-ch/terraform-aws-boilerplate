@@ -20,8 +20,7 @@ const (
 const fixtureConfig = ".typos.toml"
 
 // command は toolFunc の実物です。引数は段ごとに固定です。
-func command(dir string, env []string, step string) *exec.Cmd {
-	ctx := context.Background()
+func command(ctx context.Context, dir string, env []string, step string, _ ...string) *exec.Cmd {
 	var cmd *exec.Cmd
 	switch step {
 	case stepMain:

@@ -43,7 +43,7 @@ service-managed の StackSet は、組織への信頼アクセスを CloudFormat
 
 ## 失敗時の扱い
 
-stack instance の作成や更新が失敗すると、Terraform の apply は StackSet の操作の失敗で止まる（AWS Provider の `aws_cloudformation_stack_instances` は操作の完了を待つ）。作成の API が拒まれたときは、resource は state に入らない。API が通って操作が失敗したときは、resource は state に tainted で残り、次の plan は作り直しを求めて `prevent_destroy` で止まる。CI は削除の権限を持たないので、人が原因を直し、state の tainted を外す。権限の不足で拒まれたときは、権限とそれを要る resource を別の apply に分ける。手順は `docs/setup/organization-baseline.md` が持つ。
+stack instance の作成や更新が失敗すると、Terraform の apply は StackSet の操作の失敗で止まる（AWS Provider の `aws_cloudformation_stack_instances` は操作の完了を待つ）。作成の API が拒まれたときは、resource は state に入らない。API が通って操作が失敗したときは、resource は state に tainted で残り、次の plan は作り直しを求めて `prevent_destroy` で止まる。CI は削除の権限を持たないので、人が原因を直し、state の tainted を外す。tainted を外した state は作成済みとして残り、apply は配り直さない。失敗したアカウントへは、人が同じテンプレートで StackSet の更新を送って配り直す。IAM の反映の遅れで拒まれたときは、失敗した job を走らせ直す。権限の不足で拒まれたときは、権限を直す変更を昇格し、同じ apply で resource を作る。手順は `docs/setup/organization-baseline.md` が持つ。
 
 ## 業務要件の変更で修正が必要にならない理由
 
