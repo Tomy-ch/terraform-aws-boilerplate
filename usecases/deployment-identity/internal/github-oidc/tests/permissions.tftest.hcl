@@ -260,6 +260,12 @@ run "policies" {
         Resource = "arn:aws:organizations::123456789012:policy/o-*/*/p-*"
       },
       {
+        Sid      = "ReadMemberAccountEmails"
+        Effect   = "Allow"
+        Action   = "ssm:GetParameter"
+        Resource = "arn:aws:ssm:ap-northeast-1:123456789012:parameter/tabp/organization-baseline/member-account-emails"
+      },
+      {
         Sid    = "ReadBreakGlassUsers"
         Effect = "Allow"
         Action = ["iam:GetUser", "iam:ListUserTags"]
@@ -663,6 +669,12 @@ run "policies" {
           "organizations:ListTargetsForPolicy",
         ]
         Resource = "arn:aws:organizations::123456789012:policy/o-*/*/p-*"
+      },
+      {
+        Sid      = "ReadMemberAccountEmails"
+        Effect   = "Allow"
+        Action   = "ssm:GetParameter"
+        Resource = "arn:aws:ssm:ap-northeast-1:123456789012:parameter/tabp/organization-baseline/member-account-emails"
       },
       {
         Sid    = "ReadBreakGlassUsers"

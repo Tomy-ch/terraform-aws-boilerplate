@@ -127,6 +127,8 @@ locals {
   org_root_arns  = ["${local.org_arn_prefix}:root/o-*/r-*"]
   org_ou_arns    = ["${local.org_arn_prefix}:ou/o-*/ou-*"]
   org_policy_arn = "${local.org_arn_prefix}:policy/o-*/*/p-*"
+  # メンバーアカウントのメールは、organization-baseline が管理アカウントの parameter から読む（organization-baseline/README.md）。
+  member_account_emails_parameter_arn = "arn:${data.aws_partition.current.partition}:ssm:${local.regional_arn_suffix}:parameter/${trimsuffix(var.name_prefix, "-${var.env}")}/organization-baseline/member-account-emails"
 
   break_glass_user_arns  = [for a in var.break_glass_arns : a if strcontains(a, ":user/")]
   break_glass_group_arns = [for a in var.break_glass_arns : a if strcontains(a, ":group/")]
@@ -447,6 +449,7 @@ locals {
         Action   = ["organizations:DescribePolicy", "organizations:ListTagsForResource", "organizations:ListTargetsForPolicy"]
         Resource = local.org_policy_arn
       },
+      { Sid = "ReadMemberAccountEmails", Effect = "Allow", Action = "ssm:GetParameter", Resource = local.member_account_emails_parameter_arn },
       { Sid = "ReadBreakGlassUsers", Effect = "Allow", Action = ["iam:GetUser", "iam:ListUserTags"], Resource = local.break_glass_user_arns },
       { Sid = "ReadBreakGlassGroup", Effect = "Allow", Action = ["iam:GetGroup", "iam:GetGroupPolicy"], Resource = local.break_glass_group_arns },
       {

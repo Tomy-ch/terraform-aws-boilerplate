@@ -53,7 +53,6 @@ var (
 	errApplyKey     = xerrors.New("❌ apply の出力の key を組めません")
 	errApplyFailed  = xerrors.New("❌ apply が失敗しました")
 	errApplyTimeout = xerrors.New("❌ apply を打ち切りました（timeout）")
-	errFailureKind  = xerrors.New("❌ 失敗の種類を決められません")
 	errDigest       = xerrors.New("❌ SHA-256 を計算するファイルを読めません")
 
 	errAssumeSucceeded  = xerrors.New("❌ 拒否されるべき role の assume が通りました")
@@ -66,24 +65,6 @@ var (
 	errPolicyRules = policyresult.ErrRules
 )
 
-func runRoleARN(args []string) (string, error) {
-	fs := flag.NewFlagSet("role-arn", flag.ContinueOnError)
-	project := fs.String("project", "", "")
-	env := fs.String("env", "", "")
-	role := fs.String("role", "", "")
-	account := fs.String("account", "", "")
-
-	if err := fs.Parse(args); err != nil {
-		return "", xerrors.Wrap(errUsage, err.Error())
-	}
-
-	if fs.NArg() > 0 {
-		return "", errUsage
-	}
-
-	return roleARN(*project, *env, *role, *account)
-}
-
 func roleARN(project, env, role, account string) (string, error) {
 	if !tokenPattern.MatchString(project) || !tokenPattern.MatchString(env) ||
 		!slices.Contains(cientry.Roles(), role) || !accountPattern.MatchString(account) {
@@ -91,43 +72,6 @@ func roleARN(project, env, role, account string) (string, error) {
 	}
 
 	return fmt.Sprintf(roleFormat, account, project, env, role), nil
-}
-
-func runAssumeDenied(args []string, readFile func(string) ([]byte, error)) (string, error) {
-	fs := flag.NewFlagSet("assume-denied", flag.ContinueOnError)
-	role := fs.String("role", "", "")
-	exitCode := fs.String("exitcode", "", "")
-
-	if err := fs.Parse(args); err != nil {
-		return "", xerrors.Wrap(errUsage, err.Error())
-	}
-
-	if fs.NArg() != 1 || !slices.Contains(cientry.Roles(), *role) {
-		return "", errUsage
-	}
-
-	code, err := strconv.Atoi(*exitCode)
-	if err != nil || code < 0 || code > 255 {
-		return "", xerrors.Wrap(errUsage, "-exitcode は 0 から 255 の整数です")
-	}
-
-	// assume が成立したことが最も重いので、stderr を読む前に落とす。
-	if code == 0 {
-		return "", xerrors.Wrapf(errAssumeSucceeded, "%s の role", *role)
-	}
-
-	stderr, err := readFile(fs.Arg(0))
-	if err != nil {
-		return "", xerrors.Wrap(errAssumeUnreadable, "stderr のファイルを読めません")
-	}
-
-	value, err := assumeDenied(*role, stderr)
-	// stderr は文に入れられないので、STS に届かなかった失敗の手掛かりは終了コードだけが運ぶ。
-	if xerrors.Is(err, errAssumeUnreadable) {
-		return "", xerrors.Wrapf(err, "aws の終了コード %d", code)
-	}
-
-	return value, err
 }
 
 // assumeDenied は、失敗した `aws sts assume-role-with-web-identity` の stderr から、拒否が AccessDenied で
@@ -146,8 +90,7 @@ func assumeDenied(role string, stderr []byte) (string, error) {
 	return fmt.Sprintf("✅ %s の role の assume は拒否されました（AccessDenied）", role), nil
 }
 
-// oidcURL は、GitHub Actions が渡す OIDC token の要求先に STS 向けの audience を付けて返します。要求の
-// token は curl が環境変数から直接読み、ここは出さない。
+// oidcURL は、GitHub Actions が渡す OIDC token の要求先に STS 向けの audience を付けて返します。
 func oidcURL(environ []string) (string, error) {
 	var request, bearer string
 
@@ -179,12 +122,7 @@ func oidcURL(environ []string) (string, error) {
 }
 
 // oidcToken は、OIDC token の要求の応答 `{"value": "<JWT>"}` から token を返します。JWT の形でなければ失敗します。
-func oidcToken(path string, readFile func(string) ([]byte, error)) (string, error) {
-	raw, err := readFile(path)
-	if err != nil {
-		return "", xerrors.Wrap(errOIDCResponse, "応答のファイルを読めません")
-	}
-
+func oidcToken(raw []byte) (string, error) {
 	var resp struct {
 		Value string `json:"value"`
 	}
@@ -203,13 +141,8 @@ func oidcToken(path string, readFile func(string) ([]byte, error)) (string, erro
 
 // oidcSub は、GitHub Actions の OIDC token（JWT）の payload の sub を返します。署名は検証しない
 // —— 値は公開ログへの表示用で、信頼の判断は AWS の STS が行う。
-func oidcSub(path string, readFile func(string) ([]byte, error)) (string, error) {
-	raw, err := readFile(path)
-	if err != nil {
-		return "", xerrors.Wrap(errOIDCToken, "token のファイルを読めません")
-	}
-
-	token := strings.TrimSpace(string(raw))
+func oidcSub(raw string) (string, error) {
+	token := strings.TrimSpace(raw)
 	if token == "" || len(token) > maxTokenSize {
 		return "", xerrors.Wrap(errOIDCToken, "token が空か、大きすぎます")
 	}
@@ -286,31 +219,6 @@ func (c planCounts) String() string {
 	return b.String()
 }
 
-func runPlanSummary(args []string, readFile func(string) ([]byte, error)) (string, error) {
-	fs := flag.NewFlagSet("plan-summary", flag.ContinueOnError)
-	exitCode := fs.String("exitcode", "", "")
-
-	if err := fs.Parse(args); err != nil {
-		return "", xerrors.Wrap(errUsage, err.Error())
-	}
-
-	if fs.NArg() != 1 {
-		return "", errUsage
-	}
-
-	// plan が失敗すれば show の JSON は無いので、ファイルより先に終了コードを見る。
-	if *exitCode == "1" {
-		return "", errPlanFailed
-	}
-
-	data, err := readFile(fs.Arg(0))
-	if err != nil {
-		return "", xerrors.Wrap(errPlanJSON, "ファイルを読めません")
-	}
-
-	return planSummary(*exitCode, data)
-}
-
 // planSummary は、`terraform plan -detailed-exitcode` の終了コードと `terraform show -json` の変更を
 // 独立に数え、食い違えば失敗します。どちらか一方だけでは、plan の失敗と「変更なし」を取り違えうるためです。
 func planSummary(exitCode string, data []byte) (string, error) {
@@ -384,25 +292,6 @@ func countChanges(p planJSON) (planCounts, error) {
 	return c, nil
 }
 
-func runPlanKey(args []string) (string, error) {
-	fs := flag.NewFlagSet("plan-key", flag.ContinueOnError)
-	pr := fs.String("pr", "", "")
-	branch := fs.String("branch", "", "")
-	runID := fs.String("run", "", "")
-	attempt := fs.String("attempt", "", "")
-	root := fs.String("root", "", "")
-
-	if err := fs.Parse(args); err != nil {
-		return "", xerrors.Wrap(errUsage, err.Error())
-	}
-
-	if fs.NArg() > 0 {
-		return "", errUsage
-	}
-
-	return planKey(*pr, *branch, *runID, *attempt, *root)
-}
-
 // planKey は、plan の出力を置く object の key を返します。Pull Request の plan は `pr/`、保護ブランチの
 // plan は `branch/` の下に置く —— plan の role が書けるのはこの2つの接頭辞だけである
 // （usecases/deployment-identity/internal/github-oidc/policies.tf）。
@@ -431,23 +320,6 @@ func planKey(pr, branch, runID, attempt, root string) (string, error) {
 	}
 }
 
-func runApplyKey(args []string) (string, error) {
-	fs := flag.NewFlagSet("apply-key", flag.ContinueOnError)
-	runID := fs.String("run", "", "")
-	attempt := fs.String("attempt", "", "")
-	root := fs.String("root", "", "")
-
-	if err := fs.Parse(args); err != nil {
-		return "", xerrors.Wrap(errUsage, err.Error())
-	}
-
-	if fs.NArg() > 0 {
-		return "", errUsage
-	}
-
-	return applyKey(*runID, *attempt, *root)
-}
-
 // applyKey は、apply の出力を置く object の key を返します。apply-identity の role が書けるのは `apply/` の下だけで、
 // plan の role はそこへ書けない（usecases/deployment-identity/internal/github-oidc/policies.tf）。
 func applyKey(runID, attempt, root string) (string, error) {
@@ -461,83 +333,9 @@ func applyKey(runID, attempt, root string) (string, error) {
 // applyTimedOut は、`timeout` が command を打ち切ったときに返す終了コード（GNU coreutils の timeout）。
 const applyTimedOut = 124
 
-func runApplyResult(args []string) (string, error) {
-	fs := flag.NewFlagSet("apply-result", flag.ContinueOnError)
-	exitCode := fs.String("exitcode", "", "")
-
-	if err := fs.Parse(args); err != nil {
-		return "", xerrors.Wrap(errUsage, err.Error())
-	}
-
-	if fs.NArg() > 0 {
-		return "", errUsage
-	}
-
-	code, err := strconv.Atoi(*exitCode)
-	if err != nil || code < 0 || code > 255 {
-		return "", xerrors.Wrap(errUsage, "-exitcode は 0 から 255 の整数です")
-	}
-
-	switch code {
-	case 0:
-		return "✅ apply が終わりました", nil
-	case applyTimedOut:
-		return "", errApplyTimeout
-	default:
-		return "", xerrors.Wrapf(errApplyFailed, "終了コード %d", code)
-	}
-}
-
 // lockError は、Terraform が state の lock を取れなかったときに出す見出し（internal/command/clistate/state.go）。
 // Terraform の版を上げたら、この文言が変わっていないかを見直す。
 const lockError = "Error acquiring the state lock"
-
-// runFailureKind は、apply の入口の段の種類を返します。種類は revert の対象かの判定（scripts/apply-revert）が
-// 読む。plan と apply の段は、どちらも state の lock を取るので、終了コード 1 で全文が lock の取得の失敗を
-// 述べていれば lock とする。apply の段は、0 なら applied（apply は終わり、それより後の失敗は commit の中身に
-// 依らない）、`timeout` の打ち切り（124）なら timeout とする。それ以外は段の名前（plan か apply）を返す。
-func runFailureKind(args []string, readFile func(string) ([]byte, error)) (string, error) {
-	fs := flag.NewFlagSet("failure-kind", flag.ContinueOnError)
-	step := fs.String("step", "", "")
-	exitCode := fs.String("exitcode", "", "")
-
-	if err := fs.Parse(args); err != nil {
-		return "", xerrors.Wrap(errUsage, err.Error())
-	}
-
-	code, err := strconv.Atoi(*exitCode)
-	if err != nil || code < 0 || code > 255 {
-		return "", xerrors.Wrap(errUsage, "-exitcode は 0 から 255 の整数です")
-	}
-
-	if *step != "plan" && *step != "apply" {
-		return "", xerrors.Wrap(errUsage, "-step は plan か apply です")
-	}
-
-	if fs.NArg() != 1 {
-		return "", errUsage
-	}
-
-	switch {
-	case *step == "apply" && code == 0:
-		return "applied", nil
-	case *step == "apply" && code == applyTimedOut:
-		return "timeout", nil
-	case code != 1:
-		return *step, nil
-	}
-
-	data, err := readFile(fs.Arg(0))
-	if err != nil {
-		return "", xerrors.Wrapf(errFailureKind, "%s の全文を読めません", *step)
-	}
-
-	if strings.Contains(string(data), lockError) {
-		return "lock", nil
-	}
-
-	return *step, nil
-}
 
 func runPolicyResult(args []string, readFile func(string) ([]byte, error)) (string, error) {
 	fs := flag.NewFlagSet("policy-result", flag.ContinueOnError)

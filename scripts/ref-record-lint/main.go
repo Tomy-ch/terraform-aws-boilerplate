@@ -57,8 +57,6 @@ const (
 	dateLayout       = "2006-01-02"
 	dateLayoutSize   = len(dateLayout)
 	dateShape        = "YYYY-MM-DD"
-	commentOpen      = "<!--"
-	commentClose     = "-->"
 	frontMatterFence = "---"
 )
 
@@ -360,14 +358,13 @@ type scanned struct {
 	openedAt    int
 }
 
-// scanReadme は、フェンスと HTML コメントの状態を1度の走査で一緒に追います。CommonMark のとおり、フェンスの中の
-// `<!--` はコメントを開かず、コメントの中のフェンスの区切りはフェンスを開きません。見出しは元の行が見出しの形を
-// しているときだけ数え（headingLevel）、`<!-- -->## …` のように行頭がコメントの行と、コメントの中で始まる行は、
-// 参照記録の見出しとしても、節と一覧の終わりとしても見出しではありません。フェンスとコメントの外の HTML ブロック
-// の開始行と setext 見出しの下線は、読み違えずに読む方法を持たないので unsupported に挙げます。
+// scanReadme は、見出しを元の行が見出しの形をしているときだけ数え（headingLevel）、`<!-- -->## …` のように
+// 行頭がコメントの行と、コメントの中で始まる行は、参照記録の見出しとしても、節と一覧の終わりとしても見出しに
+// しません。フェンスとコメントの外の HTML ブロックの開始行と setext 見出しの下線は、読み違えずに読む方法を
+// 持たないので unsupported に挙げます。
 func scanReadme(content []byte) scanned {
 	var sc scanned
-	var fence mdscan.Fence
+	var s mdscan.Scanner
 	// paragraph は直前の行が段落の行か、inlineComment は開いているコメントが段落の中で開いたか（行頭で開いた
 	// コメントは HTML ブロックで、閉じた後ろに段落は続かない）。
 	paragraph, inlineComment := false, false
@@ -382,24 +379,15 @@ func scanReadme(content []byte) scanned {
 			sc.lines = append(sc.lines, scanLine{Number: number, Text: text})
 			continue
 		}
-		if sc.openedAt == 0 {
-			var in bool
-			if fence, in = fence.Next(text); in {
-				paragraph = false
-				if isHeading(text) {
-					sc.hidden = append(sc.hidden, hiddenLine{Line: number, Reason: reasonFence})
-				}
-				continue
+		r := s.Next(mdscan.Line{Number: number, Text: text})
+		if r.Fence {
+			paragraph = false
+			if isHeading(text) {
+				sc.hidden = append(sc.hidden, hiddenLine{Line: number, Reason: reasonFence})
 			}
+			continue
 		}
-		inComment := sc.openedAt != 0
-		visible, open := stripComments(text, inComment)
-		switch {
-		case !open:
-			sc.openedAt = 0
-		case !inComment || strings.Contains(text, commentClose):
-			sc.openedAt = number
-		}
+		inComment := r.Comment
 		level := 0
 		if !inComment {
 			level = headingLevel(text)
@@ -424,8 +412,9 @@ func scanReadme(content []byte) scanned {
 				sc.headings = append(sc.headings, len(sc.lines))
 			}
 		}
-		sc.lines = append(sc.lines, scanLine{Number: number, Text: visible, Level: level})
+		sc.lines = append(sc.lines, scanLine{Number: number, Text: r.Visible, Level: level})
 	}
+	sc.openedAt = s.Unclosed()
 	return sc
 }
 
@@ -457,7 +446,6 @@ func isHTMLBlockStart(text string) bool {
 	return htmlBlockStart.MatchString(text) && !commentStart.MatchString(text)
 }
 
-// isSetextUnderline は、text が、直前の段落の行を setext 見出しにする下線の形かを返します。
 func isSetextUnderline(text string) bool {
 	return setextUnderline.MatchString(text)
 }
@@ -502,61 +490,6 @@ func hasTail(rest string, tails []string) bool {
 		}
 	}
 	return false
-}
-
-// stripComments は、1行から HTML コメントの部分を除いた文字と、行末でコメントが開いたままかを返します。open は、
-// 行の頭でコメントが開いているかです。inline code の中の `<!--` と、バックスラッシュで逃がした `<` はコメントを
-// 開きません。`<!-->` と `<!--->` は
-// 空のコメントです。
-func stripComments(text string, open bool) (visible string, stillOpen bool) {
-	var b strings.Builder
-	for text != "" {
-		if open {
-			_, after, found := strings.Cut(text, commentClose)
-			if !found {
-				break
-			}
-			open, text = false, after
-			continue
-		}
-		if text[0] == '`' {
-			n, _ := mdscan.CodeSpan(text)
-			b.WriteString(text[:n])
-			text = text[n:]
-			continue
-		}
-		if text[0] == '\\' && len(text) > 1 {
-			b.WriteString(text[:2])
-			text = text[2:]
-			continue
-		}
-		if rest, ok := strings.CutPrefix(text, commentOpen); ok {
-			if empty, ok := cutEmptyComment(rest); ok {
-				text = empty
-				continue
-			}
-			open, text = true, rest
-			continue
-		}
-		next := strings.IndexAny(text[1:], "`<\\")
-		if next < 0 {
-			b.WriteString(text)
-			break
-		}
-		b.WriteString(text[:next+1])
-		text = text[next+1:]
-	}
-	return b.String(), open
-}
-
-// cutEmptyComment は、`<!--` の直後の rest が `>` か `->` で始まる（`<!-->` か `<!--->` の）とき、その後ろを返します。
-func cutEmptyComment(rest string) (string, bool) {
-	for _, end := range []string{">", "->"} {
-		if after, ok := strings.CutPrefix(rest, end); ok {
-			return after, true
-		}
-	}
-	return "", false
 }
 
 // section は、lines[start] の見出しの次の行から、次の1段目か2段目の見出しの手前までを返します。

@@ -78,7 +78,7 @@ git diff --name-only --diff-filter=U
 | 版の写し | `scripts/go.mod` の `go` 行、`docker/tools/Dockerfile` の `FROM` タグ | 正本は `mise.toml`。そちらを先に解決し、`make versions-apply` |
 | 依存の lockfile | `scripts/go.sum` | 行を選ばない。`go -C scripts mod tidy` |
 | 保護設定 | `.github/settings/branch-protection.json` | **和集合にしない。** 片方が required から外した検査を、機械的な和集合は黙って戻す。宣言の意図を人へ返す |
-| 追記専用の索引 | `docs/adr/README.md` の表 | 両側のエントリの和集合 —— **ただし同じ番号が両側に現れたら Step 5 へ渡す** |
+| 追記専用の索引 | `docs/adr/README.md` の表、`usecases/<use-case>/docs/adr/README.md` の表 | 両側のエントリの和集合 —— **ただし同じ scope の中で同じ番号が両側に現れたら Step 5 へ渡す** |
 | ADR の本文 | `docs/adr/*.md` | **両側が同じ決定を変えている。** v1.0.0 までは Accepted ADR の本文を直接書き換えるため（ADR-0001 決定2）、決定の変更どうしが衝突する。どちらを採るかは決定の変更であり停止点なので、人へ返す。v1.0.0 以後の衝突は immutable の違反を示す <!-- v1.0.0 で削除: #141 --> |
 | Terraform の lockfile | `.terraform.lock.hcl` | **まだ存在しない。** 入ったら `terraform providers lock` が持ち主で、行を選ばない |
 | 実装 | それ以外すべて | **機械的でない。** マーカーを残して手渡す |
