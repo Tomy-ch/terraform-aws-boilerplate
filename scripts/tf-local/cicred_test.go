@@ -411,6 +411,13 @@ func Test_parseCredentials(t *testing.T) {
 		assert.Equal(t, credentials{AccessKeyID: "KEY-SECRET", SecretAccessKey: "SECRET-SECRET", SessionToken: "SESSION-SECRET"}, got)
 	})
 
+	t.Run("base64 の詰め物の = や + / を含む値も返す", func(t *testing.T) {
+		t.Parallel()
+		got, err := parseCredentials([]byte(`{"Credentials":{"AccessKeyId":"k","SecretAccessKey":"s+/x","SessionToken":"tok+/en=="}}`))
+		require.NoError(t, err)
+		assert.Equal(t, credentials{AccessKeyID: "k", SecretAccessKey: "s+/x", SessionToken: "tok+/en=="}, got)
+	})
+
 	for name, body := range map[string]string{
 		"JSON でない":      "x",
 		"値が欠ける":         `{"Credentials":{"AccessKeyId":"k","SecretAccessKey":"s"}}`,
@@ -446,6 +453,15 @@ func Test_writeProfile(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), name)
 		}
+	})
+
+	t.Run("= を含む token をそのまま値として書く", func(t *testing.T) {
+		t.Parallel()
+		home := t.TempDir()
+		require.NoError(t, writeProfile(home, "p", credentials{AccessKeyID: "k", SecretAccessKey: "s", SessionToken: "t+/x=="}, "us-east-1"))
+		raw, err := os.ReadFile(filepath.Join(home, ".aws", "credentials"))
+		require.NoError(t, err)
+		assert.Equal(t, "[p]\naws_access_key_id = k\naws_secret_access_key = s\naws_session_token = t+/x==\n", string(raw))
 	})
 
 	t.Run("HOME が絶対パスでなければ書かない", func(t *testing.T) {
