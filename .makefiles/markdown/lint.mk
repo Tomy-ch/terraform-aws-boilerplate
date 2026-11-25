@@ -19,3 +19,7 @@ adr-lint:
 .PHONY: skill-lint ## スキルが名指しした make target / スキル / パスの実在を検査
 skill-lint:
 	@$(call RUN_SCRIPT,skill-lint,)
+
+.PHONY: ref-record-lint ## ユースケースと一般 module の README が公式実装の参照記録を持つかを検査
+ref-record-lint:
+	@$(call RUN_SCRIPT,ref-record-lint,)
