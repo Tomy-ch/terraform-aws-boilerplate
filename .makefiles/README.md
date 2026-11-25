@@ -86,7 +86,7 @@ workflow と action の検査、commit message、egress の SSOT、action と ru
 
 ### `github/setting/`
 
-ブランチ保護・ラベル・リポジトリ設定の適用。
+ブランチ保護・ラベル・リポジトリ設定の適用。判定と GitHub への書き込みは `scripts/repo-settings` が持つ。
 
 ### `go/`
 

@@ -39,12 +39,6 @@ apply-vulnerability-reporting:
 deploy-source-check:
 	@$(call RUN_SCRIPT_HOST,repo-settings,source -base "$${BASE_REF:-}" -base-sha "$${BASE_SHA:-}" -head-sha "$${HEAD_SHA:-}" -default "$${DEFAULT_BRANCH:-}")
 
-# 既に在れば GitHub が拒むので、上書きしない。
+# DEPLOY_ENV は人が渡す値なので、deploy-source-check と同じく RUN_SCRIPT_HOST の sh が環境変数から展開する。
 create-deploy-branch:
-	@set -eu; test -n "$(DEPLOY_ENV)" || { echo "❌ DEPLOY_ENV を指定してください（例: DEPLOY_ENV=admin）" >&2; exit 1; }; \
-	repo="$(REPO_SETTINGS_REPO)"; test -n "$$repo" || { echo "❌ 対象のリポジトリを解決できません" >&2; exit 1; }; \
-	branch=$$($(call RUN_SCRIPT_HOST,repo-settings,deploy-branch -env $(DEPLOY_ENV))); \
-	default=$$(gh api "repos/$$repo" --jq .default_branch); \
-	sha=$$(gh api "repos/$$repo/git/ref/heads/$$default" --jq .object.sha); \
-	gh api "repos/$$repo/git/refs" -f ref="refs/heads/$$branch" -f sha="$$sha" --jq .object.sha >/dev/null; \
-	echo "✅ $$branch を $$default の先頭 $$sha から作りました"
+	@$(call REPO_SETTINGS_REMOTE,create-deploy-branch -env "$${DEPLOY_ENV:-}")

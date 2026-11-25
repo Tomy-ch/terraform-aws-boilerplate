@@ -139,7 +139,48 @@ func Test_run(t *testing.T) {
 		{"source に -env を渡せば usage で失敗する", []string{"source", "-base", "main", "-env", "x"}},
 		{"deploy-branch に -env が無ければ usage で失敗する", []string{"deploy-branch"}},
 		{"deploy-branch に -base を渡せば usage で失敗する", []string{"deploy-branch", "-env", "x", "-base", "main"}},
+		{"create-labels に -env を渡せば usage で失敗する", []string{"create-labels", "-repo=o/r", "-env", "x"}},
+		{"delete-labels に -env を渡せば usage で失敗する", []string{"delete-labels", "-repo=o/r", "-env", "x"}},
+		{"enable-workflows に -only を渡せば usage で失敗する", []string{"enable-workflows", "-repo=o/r", "-only", "ruleset"}},
+		{"create-deploy-branch に -base を渡せば usage で失敗する", []string{"create-deploy-branch", "-repo=o/r", "-env", "x", "-base", "main"}},
 	}
+
+	t.Run("create-deploy-branch は -env が無ければ errDeployEnvArg", func(t *testing.T) {
+		t.Parallel()
+		require.ErrorIs(t, run([]string{"create-deploy-branch", "-repo=o/r"}, fixedWD(t.TempDir()), githubClient{token: "t"}, &bytes.Buffer{}), errDeployEnvArg)
+	})
+	t.Run("enable-workflows は -repo が無ければ errNoRepo", func(t *testing.T) {
+		t.Parallel()
+		require.ErrorIs(t, run([]string{"enable-workflows"}, fixedWD(t.TempDir()), githubClient{token: "t"}, &bytes.Buffer{}), errNoRepo)
+	})
+	t.Run("delete-labels は token が無ければ errNoToken", func(t *testing.T) {
+		t.Parallel()
+		require.ErrorIs(t, run([]string{"delete-labels", "-repo=o/r"}, fixedWD(t.TempDir()), githubClient{}, &bytes.Buffer{}), errNoToken)
+	})
+	t.Run("create-deploy-branch は -env と -repo を受け付け、作成まで届く", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		writeFile(t, root, branchesFile, sourceBranches)
+		f, c := newFakeGitHub(t, map[string]fakeResponse{
+			"GET /repos/o/r":                    ok(`{"default_branch": "main"}`),
+			"GET /repos/o/r/git/ref/heads/main": ok(`{"object": {"sha": "` + strings.Repeat("a", 40) + `"}}`),
+			"POST /repos/o/r/git/refs":          {status: http.StatusCreated, body: `{}`},
+		})
+		require.NoError(t, run([]string{"create-deploy-branch", "-repo=o/r", "-env=admin"}, fixedWD(root), c, &bytes.Buffer{}))
+		require.Len(t, f.writes(), 1)
+		assert.Contains(t, f.writes()[0].body, `"refs/heads/admin"`)
+	})
+	t.Run("delete-labels は -repo を受け付け、削除まで届く", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		writeFile(t, root, labelsFile, `[{"name": "bug", "color": "d73a4a"}]`)
+		f, c := newFakeGitHub(t, map[string]fakeResponse{
+			"GET " + pagedPath("/repos/o/r/labels", 1): ok(`[{"name": "x"}]`),
+			"DELETE /repos/o/r/labels/x":               {status: http.StatusNoContent},
+		})
+		require.NoError(t, run([]string{"delete-labels", "-repo=o/r"}, fixedWD(root), c, &bytes.Buffer{}))
+		assert.Len(t, f.writes(), 1)
+	})
 
 	t.Run("source と deploy-branch を呼ぶ", func(t *testing.T) {
 		t.Parallel()
@@ -291,7 +332,7 @@ func Test_readDeclarations(t *testing.T) {
 			require.NoError(t, os.Remove(filepath.Join(root, vulnerabilityReportingFile)))
 		}, os.ErrNotExist},
 		{"Dependabot のラベルが labels.json に無ければ失敗する", func(root string) {
-			writeFile(t, root, labelsFile, `[{"name": "bug"}]`)
+			writeFile(t, root, labelsFile, `[{"name": "bug", "color": "d73a4a"}]`)
 		}, errDependabotLabels},
 		{"dependabot.yml が無ければ失敗する", func(root string) {
 			require.NoError(t, os.Remove(filepath.Join(root, dependabotFile)))
@@ -584,7 +625,7 @@ func Test_applyOrCheck(t *testing.T) {
 		root := writeRepo(t, rulesetFixture)
 		drifted := strings.Replace(applyWorkflowFixture, "      - main", "      - 'release/*'", 1)
 		writeFile(t, root, ".github/workflows/apply.yaml", drifted)
-		writeFile(t, root, labelsFile, `[{"name": "bug"}]`)
+		writeFile(t, root, labelsFile, `[{"name": "bug", "color": "d73a4a"}]`)
 		require.ErrorIs(t, applyOrCheck(root, false, &bytes.Buffer{}), errDependabotLabels)
 		ruleset, err := os.ReadFile(filepath.Join(root, rulesetFile))
 		require.NoError(t, err)
