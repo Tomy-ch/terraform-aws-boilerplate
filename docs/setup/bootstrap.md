@@ -194,6 +194,10 @@ Billing and Cost Management コンソール →「Cost Explorer」→「Launch C
 
    最後の行が `NG 0 件` なら完了
 
+#### 2-5. メンバーアカウントのメールを置く
+
+段4 の apply は、security と log-archive のメンバーアカウントも作る。段2 の plan はそのメールを管理アカウントの parameter から読むので、parameter が無いと落ちる。[organization-baseline 手順書](organization-baseline.md#38-メンバーアカウントを作る) の手順1-3 を行う。
+
 ### 段1. state Bucket を作る
 
 以下は bash で実行する（fish などを使っているなら、先に `bash` を起動する）。
