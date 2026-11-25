@@ -66,14 +66,14 @@
     | --- | --- | --- |
     | env | `env/<env>/` | 環境ごとの値と、usecase の組み合わせ。apply の起点 |
     | usecase | `usecases/<use-case>/` | 公開契約（決定2）と、module の合成 |
-    | 一般 module | `modules/<module>/` | どのユースケースでも同じ形で成立する機構の resource と、その不変条件 |
+    | 一般 module | `modules/<module>/` | どのユースケースでも同じ形で成立する機構の resource と、その不変条件。resource を持たず、repository-wide の ADR が定める不変の値だけを出力する module を含む（例: ADR-0209 の `modules/default-regions`） |
     | usecase の module | `usecases/<use-case>/internal/<module>/` | 一般 module で表せない、そのユースケースに固有の機構 |
 
     `internal/` は必要なときにだけ置く。ユースケースの推奨構成は `usecases/<use-case>/reference/` に置く（ADR-0401 決定11-13）。リポジトリ直下に置かない。
 
 13. 公開契約と semver の保証の対象は usecase だけとする。env は利用者が値を持つ層であり、module は決定9 のとおり内部実装である。
 14. `usecases/<use-case>/` 直下の `*.tf` に、`resource` block と `provider` block を置かない。対象は直下に限り、`internal/` と `reference/` は含まない。ユースケースごとの差異は module の合成と入出力で表し、不変条件の強制は module が持つ。usecase は env から呼ばれる子 module なので、root module にしか置けない block（`import`、`terraform` の `backend` と `cloud`）もここには置かない。
-15. 1つの module は1つの機構をまとめる。一般 module は、どのユースケースでも同じ形で成立する機構だけを持ち、ユースケースごとの差異を入力の切り替え（用途の種別、`enable_*` 等）で抱えない。値が変わるだけで構造が変わらない入力（grantee の集合、保持日数等）は切り替えに当たらない。入力によって resource の有無や種類が変わるなら切り替えに当たる。一般 module で表せない機構は、それを必要とするユースケースの `internal/` に置く。attachment 型の resource は親と同じ module に置くので（決定18）、一般 module の resource に固有の attachment が要るなら、親の resource ごと `internal/` に置く。
+15. 1つの module は1つの機構をまとめる。一般 module は、どのユースケースでも同じ形で成立する機構（決定12 の不変の値を含む）だけを持ち、ユースケースごとの差異を入力の切り替え（用途の種別、`enable_*` 等）で抱えない。値が変わるだけで構造が変わらない入力（grantee の集合、保持日数等）は切り替えに当たらない。入力によって resource の有無や種類が変わるなら切り替えに当たる。一般 module で表せない機構は、それを必要とするユースケースの `internal/` に置く。attachment 型の resource は親と同じ module に置くので（決定18）、一般 module の resource に固有の attachment が要るなら、親の resource ごと `internal/` に置く。
 16. ユースケースの間で共有するのは、module のコードと resource の実体の2つであり、扱いを分ける。
 
     - module のコード: 一般 module として `modules/` に置き、各ユースケースが呼ぶ。共有のための別の置き場を設けない

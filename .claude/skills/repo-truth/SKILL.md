@@ -132,7 +132,8 @@ Read the indexes and pick entries by *what concern they own*, not by keyword mat
 
 | Index | Covers |
 | --- | --- |
-| `docs/adr/README.md` | 受理されたすべての決定、1行ずつ —— **ADR の一覧が存在する唯一の場所** |
+| `docs/adr/README.md` | repository-wide の受理された決定、1行ずつ —— **repository-wide の ADR の一覧が存在する唯一の場所** |
+| `usecases/<use-case>/docs/adr/README.md` | そのユースケースの受理された決定 —— **その scope の ADR の一覧が存在する唯一の場所** |
 | `AGENTS.md` の *正典となる文書* | どの問いをどの文書が所有するか。索引の索引である |
 | `scripts/README.md` | 運用機構の各ツールが何を解いているか、および Test Strategy |
 | `.github/workflows/README.md` | workflow の規則、必須検査の考え方、結果コメント |

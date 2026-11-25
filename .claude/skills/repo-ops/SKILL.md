@@ -57,7 +57,7 @@ description: >-
 | 答えたいこと | 読む先 | 権威に見えるが違うもの |
 | --- | --- | --- |
 | どの make target が何を走らせるか | `.makefiles/**/*.mk`、一覧は `make help` | `.makefiles/README.md`。**ターゲットの一覧は持たない** |
-| なぜそう決まっているか | `docs/adr/`（一覧は `docs/adr/README.md` —— **一覧が存在する唯一の場所**） | supersede 済みの ADR。Status を見る |
+| なぜそう決まっているか | `docs/adr/`（repository-wide の一覧は `docs/adr/README.md`、use-case の一覧は `usecases/<use-case>/docs/adr/README.md` —— **それぞれが、その scope の一覧が存在する唯一の場所**） | supersede 済みの ADR。Status を見る |
 | ユースケースの責務境界・公開契約 | `usecases/<use-case>/README.md`（**未作成**） | — |
 | そのユースケース固有の判断 | `usecases/<use-case>/docs/adr/`（**未作成**） | root の ADR。上書きしない（ADR-0001 決定17-19） |
 | 運用機構の各ツールが何を解いているか | `scripts/README.md` | ツールのコードだけ。**なぜ**はここに無い |
