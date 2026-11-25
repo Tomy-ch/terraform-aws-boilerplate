@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/fakeexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -45,10 +46,12 @@ var accountDescs = []string{
 
 // fakeAWS は、引数列（--output と --region を含む）ごとの応答を返す awsFunc を作る。登録の無い呼び出しは
 // テストを失敗にし、呼ばれた引数列を calls に残す。
+// handler は、responses に無い呼び出しに応答する（偽なら登録の無い呼び出し）。
 type fakeAWS struct {
 	t         *testing.T
 	mu        sync.Mutex
 	responses map[string]awsResult
+	handler   func(args []string) (awsResult, bool)
 	calls     []string
 }
 
@@ -60,6 +63,10 @@ func (f *fakeAWS) fn(args ...string) awsResult {
 	f.calls = append(f.calls, key)
 
 	r, ok := f.responses[key]
+	if !ok && f.handler != nil {
+		r, ok = f.handler(args)
+	}
+
 	if !ok {
 		f.t.Errorf("想定していない aws の呼び出し: %s", key)
 
@@ -79,7 +86,7 @@ func failed(stderr string) awsResult {
 	return awsResult{stderr: stderr, err: &exec.ExitError{}}
 }
 
-// goodResponses は、15 件すべてが ok になる応答。
+// goodResponses は、確認の表のすべてが ok になる応答。
 func goodResponses() map[string]awsResult {
 	return map[string]awsResult{
 		"sts get-caller-identity --query Arn --output text --region " + testRegion: okResult(testARN + "\n"),
@@ -146,7 +153,7 @@ func Test_hostAWS(t *testing.T) {
 
 		path := filepath.Join(t.TempDir(), "aws")
 		body := "#!/bin/sh\nfor a in \"$@\"; do echo \"$a\"; done\necho \"home=${HOME:-}\" >&2\nexit " + code + "\n"
-		require.NoError(t, os.WriteFile(path, []byte(body), 0o700))
+		fakeexec.Write(t, path, body, 0o700)
 
 		return path
 	}
@@ -290,7 +297,7 @@ func Test_query_call(t *testing.T) {
 
 		q := newQuery(func(...string) awsResult { return failed("boom") }, testRegion)
 
-		r, err := q.call("json", "x")
+		r, err := q.call("json", "iam", "get-x")
 
 		require.NoError(t, err)
 		assert.Error(t, r.err)
@@ -308,7 +315,7 @@ func Test_query_call(t *testing.T) {
 		}, testRegion)
 
 		for range 2 {
-			r, err := q.call("json", "x")
+			r, err := q.call("json", "iam", "get-x")
 			require.NoError(t, err)
 			assert.Equal(t, "boom", r.stderr)
 		}
@@ -321,8 +328,99 @@ func Test_query_call(t *testing.T) {
 
 		q := newQuery(func(...string) awsResult { return awsResult{err: os.ErrNotExist} }, testRegion)
 
-		_, err := q.call("json", "x")
+		_, err := q.call("json", "iam", "get-x")
 		require.ErrorIs(t, err, errAWSStart)
+	})
+
+	for _, args := range [][]string{
+		{"sts", "get-caller-identity"}, {"iam", "list-roles"}, {"kms", "describe-key"}, {"s3api", "head-object"}, {"iam", "simulate-principal-policy"},
+	} {
+		t.Run(strings.Join(args, " ")+" は読むだけの操作として起動する", func(t *testing.T) {
+			t.Parallel()
+
+			calls := 0
+			q := newQuery(func(...string) awsResult {
+				calls++
+
+				return okResult("{}")
+			}, testRegion)
+
+			_, err := q.call("json", args...)
+
+			require.NoError(t, err)
+			assert.Equal(t, 1, calls)
+		})
+	}
+
+	for name, args := range map[string][]string{
+		"書き込みの操作":   {"s3api", "put-bucket-policy", "--bucket", "b"},
+		"削除の操作":     {"iam", "delete-role"},
+		"get を含むだけ": {"iam", "update-get-x"},
+		"操作名が無い":    {"iam"},
+		"引数が無い":     nil,
+		"大文字の Get-": {"iam", "Get-role"},
+	} {
+		t.Run(name+"は起動せずに errNotReadOnly", func(t *testing.T) {
+			t.Parallel()
+
+			calls := 0
+			q := newQuery(func(...string) awsResult {
+				calls++
+
+				return okResult("{}")
+			}, testRegion)
+
+			_, err := q.call("json", args...)
+
+			require.ErrorIs(t, err, errNotReadOnly)
+			assert.Zero(t, calls)
+		})
+	}
+}
+
+func Test_awsProfile(t *testing.T) {
+	t.Parallel()
+
+	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+
+	t.Run("AWS_PROFILE を返す", func(t *testing.T) {
+		t.Parallel()
+
+		p, err := awsProfile(env(map[string]string{"AWS_PROFILE": "tabp-bootstrap", "AWS_REGION": "x"}))
+
+		require.NoError(t, err)
+		assert.Equal(t, "tabp-bootstrap", p)
+	})
+
+	t.Run("AWS_PROFILE が空なら errNoProfile", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := awsProfile(env(nil))
+
+		require.ErrorIs(t, err, errNoProfile)
+	})
+
+	for _, k := range []string{
+		"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_ROLE_ARN", "AWS_WEB_IDENTITY_TOKEN_FILE",
+		"AWS_CONTAINER_CREDENTIALS_FULL_URI", "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE",
+	} {
+		t.Run(k+" が在れば、profile が在っても errStaticCredentials", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := awsProfile(env(map[string]string{"AWS_PROFILE": "p", k: "v"}))
+
+			require.ErrorIs(t, err, errStaticCredentials)
+			assert.Equal(t, k+": "+errStaticCredentials.Error(), err.Error())
+		})
+	}
+
+	t.Run("在る名前をすべて挙げる", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := awsProfile(env(map[string]string{"AWS_ACCESS_KEY_ID": "a", "AWS_SESSION_TOKEN": "s"}))
+
+		require.ErrorIs(t, err, errStaticCredentials)
+		assert.Contains(t, err.Error(), "AWS_ACCESS_KEY_ID・AWS_SESSION_TOKEN")
 	})
 }
 
@@ -346,7 +444,7 @@ func Test_query_object(t *testing.T) {
 
 			q := newQuery(func(...string) awsResult { return tc.r }, testRegion)
 
-			v, reason, err := q.object("x")
+			v, reason, err := q.object("iam", "get-x")
 
 			require.NoError(t, err)
 			assert.Equal(t, tc.reason, reason)
@@ -364,7 +462,7 @@ func Test_query_object(t *testing.T) {
 
 		q := newQuery(func(...string) awsResult { return awsResult{err: os.ErrNotExist} }, testRegion)
 
-		_, _, err := q.object("x")
+		_, _, err := q.object("iam", "get-x")
 		require.ErrorIs(t, err, errAWSStart)
 	})
 }
@@ -404,7 +502,7 @@ func Test_expectJSON(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			c := expectJSON("d", pred, "s", "op")
+			c := expectJSON("d", pred, "s", "get-op")
 			v, err := c.eval(newQuery(func(...string) awsResult { return tc.r }, testRegion))
 
 			require.NoError(t, err)
@@ -416,7 +514,7 @@ func Test_expectJSON(t *testing.T) {
 	t.Run("起動できなければ error", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := expectJSON("d", pred).eval(newQuery(func(...string) awsResult { return awsResult{err: os.ErrNotExist} }, testRegion))
+		_, err := expectJSON("d", pred, "s", "get-op").eval(newQuery(func(...string) awsResult { return awsResult{err: os.ErrNotExist} }, testRegion))
 		require.ErrorIs(t, err, errAWSStart)
 	})
 }
@@ -788,6 +886,32 @@ func Test_checkAccount(t *testing.T) {
 		})
 	}
 
+	t.Run("読むだけの操作（get-・list-・describe-・head-・simulate-）しか呼ばない", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFake(t, nil)
+
+		_, err := runAccount(t, f)
+
+		require.NoError(t, err)
+		assert.Len(t, f.calls, len(goodResponses()))
+		assert.Empty(t, writeOps(f.calls))
+	})
+
+	t.Run("静的な資格情報が環境に在れば aws を起動せずに errStaticCredentials", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFake(t, nil)
+		d := accountDeps(f)
+		d.getenv = func(k string) string { return map[string]string{"AWS_PROFILE": "p", "AWS_SECRET_ACCESS_KEY": "s"}[k] }
+
+		var out bytes.Buffer
+
+		require.ErrorIs(t, checkAccount(accountOpts, &out, d), errStaticCredentials)
+		assert.Empty(t, f.calls)
+		assert.Empty(t, out.String())
+	})
+
 	t.Run("AWS_PROFILE が空なら aws を起動せずに errNoProfile", func(t *testing.T) {
 		t.Parallel()
 
@@ -807,7 +931,8 @@ func Test_checkAccount(t *testing.T) {
 
 		var out bytes.Buffer
 
-		d := deps{aws: func(...string) awsResult { return awsResult{err: os.ErrNotExist} }, getenv: func(string) string { return "p" }}
+		d := accountDeps(newFake(t, nil))
+		d.aws = func(...string) awsResult { return awsResult{err: os.ErrNotExist} }
 
 		require.ErrorIs(t, checkAccount(accountOpts, &out, d), errAWSStart)
 	})

@@ -64,11 +64,18 @@ valid_statements := [
 	full_deny([ao]),
 	{"Effect": "Deny", "NotAction": ["s3:PutObject"], "Resource": ao_objects},
 	governance_deny,
+	management_deny,
 ]
 
 governance_actions := ["organizations:Create*", "sts:AssumeRoot"]
 
+management_actions := ["iam:UpdateAccountPasswordPolicy"]
+
 governance_deny := {"Effect": "Deny", "Action": governance_actions, "Resource": "*"}
+
+management_deny := {"Effect": "Deny", "Action": management_actions, "Resource": "*"}
+
+management_index := 10
 
 governance_index := 9
 
@@ -99,7 +106,8 @@ others := [
 	key_policy,
 ]
 
-world(statements) := array.concat(array.concat(array.concat(array.concat(role_resources, others), exclusives), siblings), [apply_policy(statements)])
+# 入力は管理アカウントの reference の plan なので、統制の policy を既定で持つ。
+world(statements) := array.concat(array.concat(array.concat(array.concat(role_resources, others), exclusives), siblings), [apply_policy(statements), governance_policy_rc])
 
 cov(parent, ref, parent_ref) := {"class": "covered_by", "parent": parent, "ref": ref, "parent_ref": parent_ref}
 
@@ -129,7 +137,7 @@ decl := {
 	"deployment_identity": {"apply_role": {
 		"role": apply_role_address,
 		"policy": apply_policy_address,
-		"governance": {"actions": governance_actions},
+		"governance": {"actions": governance_actions, "management_actions": management_actions, "management_policy": governance_policy_address},
 		"bootstrap": bootstrap,
 	}},
 	"state_backend": {
@@ -678,7 +686,7 @@ workload_attachment(arn) := res("aws_iam_role_policy_attachment", sprintf("%saws
 
 read_attachment := res("aws_iam_role_policy_attachment", sprintf("%saws_iam_role_policy_attachment.workload_read", [g]), {"role": "ci-apply", "policy_arn": read_policy_arn})
 
-declared_world := two_workload_world([workload_policy_arn, read_policy_arn])
+declared_world := two_workload_world(all_workload_arns)
 
 test_pass_declared_workload_policy_attachment if {
 	count(messages_for(array.concat(declared_world, [workload_attachment(workload_policy_arn), read_attachment]), with_two_workload_decl)) == 0
@@ -692,30 +700,43 @@ read_policy_address := sprintf("%saws_iam_policy.workload_read", [g])
 
 read_policy_arn := sprintf("arn:aws:iam::%s:policy/ci-apply-workload-read", [account])
 
-with_two_workload_decl := json.patch(with_type("aws_iam_policy", {"class": "target"}), [{"op": "add", "path": "/deployment_identity/workload", "value": {"policy": workload_policy_address, "read_policy": read_policy_address}}])
+policy_2_address := sprintf("%saws_iam_policy.workload_2", [g])
 
-# 宣言した型の aws_iam_policy は Deny で守る対象なので、2つの policy の ARN を Deny に載せる。
+policy_2_arn := sprintf("arn:aws:iam::%s:policy/ci-apply-workload-2", [account])
+
+with_two_workload_decl := json.patch(with_type("aws_iam_policy", {"class": "target"}), [{"op": "add", "path": "/deployment_identity/workload", "value": {"policy": workload_policy_address, "read_policy": read_policy_address, "policy_2": policy_2_address}}])
+
+all_workload_arns := [workload_policy_arn, read_policy_arn, policy_2_arn]
+
+# 宣言した型の aws_iam_policy は Deny で守る対象なので、3つの policy の ARN を Deny に載せる。
 two_workload_world(arns) := array.concat(
-	with_after(world(array.concat(valid_statements, [full_deny([workload_policy_arn, read_policy_arn])])), exclusives[1].address, {"role_name": "ci-apply", "policy_arns": arns}),
+	with_after(world(array.concat(valid_statements, [full_deny(all_workload_arns)])), exclusives[1].address, {"role_name": "ci-apply", "policy_arns": arns}),
 	[
 		res("aws_iam_policy", workload_policy_address, {"name": "ci-apply-workload", "arn": workload_policy_arn, "policy": json.marshal({"Statement": []})}),
 		res("aws_iam_policy", read_policy_address, {"name": "ci-apply-workload-read", "arn": read_policy_arn, "policy": json.marshal({"Statement": []})}),
+		res("aws_iam_policy", policy_2_address, {"name": "ci-apply-workload-2", "arn": policy_2_arn, "policy": json.marshal({"Statement": []})}),
 	],
 )
 
 test_pass_two_workload_policies_attached_in_any_order if {
-	every arns in [[workload_policy_arn, read_policy_arn], [read_policy_arn, workload_policy_arn]] {
+	every arns in [all_workload_arns, [policy_2_arn, read_policy_arn, workload_policy_arn]] {
 		count(messages_for(two_workload_world(arns), with_two_workload_decl)) == 0
 	}
+}
+
+test_violation_declared_policy_2_absent if {
+	world := [r | some r in two_workload_world(all_workload_arns); r.address != policy_2_address]
+	fixture.has("[PLAN-APPLY-05] data.policy_plan.deployment_identity.workload.policy_2", messages_for(world, with_two_workload_decl))
 }
 
 test_violation_two_workload_policies_not_attached if {
 	every arns in [
 		[workload_policy_arn], [read_policy_arn], [],
-		[workload_policy_arn, read_policy_arn, "arn:aws:iam::aws:policy/ReadOnlyAccess"],
+		[workload_policy_arn, read_policy_arn],
+		[workload_policy_arn, read_policy_arn, policy_2_arn, "arn:aws:iam::aws:policy/ReadOnlyAccess"],
 		[workload_policy_arn, "arn:aws:iam::aws:policy/ReadOnlyAccess"],
 		[read_policy_arn, "arn:aws:iam::aws:policy/ReadOnlyAccess"],
-		[workload_policy_arn, workload_policy_arn],
+		[workload_policy_arn, workload_policy_arn, policy_2_arn],
 	] {
 		fixture.has(sprintf("[PLAN-APPLY-05] p.json: %s の policy_arns", [exclusives[1].address]), messages_for(two_workload_world(arns), with_two_workload_decl))
 	}
@@ -974,11 +995,16 @@ test_pass_writes_denied_elsewhere if {
 
 # --- PLAN-APPLY-06: 統制の構成物の変更の拒否 ---
 
-with_governance(g) := json.patch(decl, [{"op": "replace", "path": "/deployment_identity/apply_role/governance", "value": g}])
+with_governance(g) := json.patch(decl, [{"op": "replace", "path": "/deployment_identity/apply_role/governance", "value": governance_value(g)}])
+
+# management_actions と management_policy を書かない宣言は、既定の値を持つとして扱う。
+governance_value(g) := object.union({"management_actions": management_actions, "management_policy": governance_policy_address}, g) if is_object(g)
+
+else := g
 
 denied_06(a) := sprintf("[PLAN-APPLY-06] apply の role %q が、%s を Resource", [apply_policy_address, a])
 
-malformed_governance := "[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.governance.actions が"
+malformed_governance := "[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.governance の"
 
 test_pass_governance_case_and_array_resource if {
 	s := replace(valid_statements, governance_index, {"Effect": "Deny", "Action": ["Organizations:Create*", "STS:AssumeRoot"], "Resource": ["*"]})
@@ -1212,4 +1238,76 @@ test_violation_declared_cloudformation_action_missing if {
 	msgs := declared_messages([a | some a in declared_governance_actions; a != "cloudformation:UpdateStackInstances"])
 	some m in msgs
 	startswith(m, denied_06("cloudformation:UpdateStackInstances"))
+}
+
+# --- 管理アカウントでだけ拒む統制の Action（deployment-identity/ADR-0201 決定5）---
+
+# bootstrap の modules の外に置き、PLAN-APPLY-02・03 の対象にしない。
+governance_policy_address := "module.governance_marker.aws_iam_policy.governance[0]"
+
+governance_policy_rc := res("aws_iam_policy", governance_policy_address, {"name": "tabp-admin-ci-apply-identity-governance", "arn": sprintf("arn:aws:iam::%s:policy/tabp-admin-ci-apply-identity-governance", [account]), "policy": json.marshal({"Statement": []})})
+
+without_management_deny := remove(valid_statements, management_index)
+
+test_violation_management_action_not_denied_in_admin if {
+	fixture.has(denied_06("iam:UpdateAccountPasswordPolicy"), messages_for(world(without_management_deny), decl))
+}
+
+test_pass_management_action_denied_in_admin if {
+	not fixture.has("[PLAN-APPLY-06]", messages_for(world(valid_statements), decl))
+}
+
+# 統制の policy が無い入力では、宣言の address のずれとして落とし、management_actions は求めない。
+test_pass_management_action_not_required_without_governance_policy if {
+	msgs := messages_for(without(world(without_management_deny), governance_policy_address), decl)
+	not fixture.has(denied_06("iam:UpdateAccountPasswordPolicy"), msgs)
+	fixture.has("[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.governance.management_policy", msgs)
+}
+
+# 宣言の address が入力に無いと、management_actions の検査が黙って外れる。role の名前によらず落とす。
+test_violation_management_policy_absent if {
+	rcs := without(world(valid_statements), governance_policy_address)
+	fixture.has("[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.governance.management_policy", messages_for(rcs, decl))
+}
+
+test_violation_management_policy_at_other_address if {
+	other := json.patch(governance_policy_rc, [{"op": "replace", "path": "/address", "value": "module.governance_marker.aws_iam_policy.governance_x[0]"}])
+	fixture.has("[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.governance.management_policy", messages_for(array.concat(without(world(valid_statements), governance_policy_address), [other]), decl))
+}
+
+test_pass_management_policy_present if {
+	not fixture.has("[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.governance.management_policy", messages_for(world(valid_statements), decl))
+}
+
+management_malformed(patch) if {
+	some msg in messages_for(world(valid_statements), json.patch(decl, [patch]))
+	startswith(msg, malformed_governance)
+}
+
+test_violation_management_actions_not_array if {
+	management_malformed({"op": "replace", "path": "/deployment_identity/apply_role/governance/management_actions", "value": "iam:UpdateAccountPasswordPolicy"})
+}
+
+test_violation_management_actions_empty if {
+	management_malformed({"op": "replace", "path": "/deployment_identity/apply_role/governance/management_actions", "value": []})
+}
+
+test_violation_management_actions_empty_string if {
+	management_malformed({"op": "replace", "path": "/deployment_identity/apply_role/governance/management_actions", "value": [""]})
+}
+
+test_violation_management_actions_not_string if {
+	management_malformed({"op": "replace", "path": "/deployment_identity/apply_role/governance/management_actions", "value": [1]})
+}
+
+test_violation_management_actions_missing if {
+	management_malformed({"op": "remove", "path": "/deployment_identity/apply_role/governance/management_actions"})
+}
+
+test_violation_management_policy_missing if {
+	management_malformed({"op": "remove", "path": "/deployment_identity/apply_role/governance/management_policy"})
+}
+
+test_violation_management_policy_empty if {
+	management_malformed({"op": "replace", "path": "/deployment_identity/apply_role/governance/management_policy", "value": ""})
 }

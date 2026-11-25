@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cientry"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/fakeexec"
 )
 
 const (
@@ -1708,7 +1709,7 @@ func writeFakes(t *testing.T, dir, knobs string, tools ...string) {
 	t.Helper()
 
 	for _, tool := range tools {
-		require.NoError(t, os.WriteFile(filepath.Join(dir, tool), fmt.Appendf(nil, ciFakes, knobs), 0o700)) //nolint:gosec // 偽物の道具は実行できなければならない
+		fakeexec.Write(t, filepath.Join(dir, tool), fmt.Sprintf(ciFakes, knobs), 0o700)
 	}
 }
 

@@ -5,8 +5,9 @@
 //	typos-gate check -work <dir> -config <.typos.toml>
 //
 // 範囲の突き合わせは、本走査の対象（typos --files）が git の一覧を覆っていることを、独立の経路の突き合わせで確かめます
-// （ADR-0702 決定15）。外れてよいのは、expectedExcludes に当たるものと、typos が走査から外す自身の設定ファイル
-// だけです。**expectedExcludes は .typos.toml の [files] の extend-exclude と意図して二重に持つ独立の宣言です。**
+// （ADR-0702 決定15）。作業ツリーから消えた追跡ファイル（git ls-files --deleted）は引きます。ほかに外れてよいのは、
+// expectedExcludes に当たるものと、typos が走査から外す自身の設定ファイルだけです。**expectedExcludes は
+// .typos.toml の [files] の extend-exclude と意図して二重に持つ独立の宣言です。**
 // 設定から期待を導くと、設定へ足した除外がそのまま「外れてよい」になり、範囲の縮みが何も赤くしません。両者が集合と
 // して一致しなければ落ちるので、除外を変えるときは両方を変えます。
 //

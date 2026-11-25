@@ -12,6 +12,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun/tooltest"
 )
 
 const canaryWarningJSON = `{"format_version":"1.0","valid":true,"error_count":0,"warning_count":1,"diagnostics":[
@@ -19,8 +21,7 @@ const canaryWarningJSON = `{"format_version":"1.0","valid":true,"error_count":0,
 "range":{"filename":"main.tf","start":{"line":4,"column":25,"byte":90},"end":{"line":4,"column":27,"byte":92}},
 "snippet":{"context":"resource \"aws_iam_role\" \"this\"","code":"  managed_policy_arns = []","start_line":4,"highlight_start_offset":24,"highlight_end_offset":26,"values":[]}}]}`
 
-// 偽の道具は書いた直後のファイルを exec せず、/bin/sh に読ませて起動する。並行のテストが別の偽の道具を書いている
-// 間に fork した子がその書き込みの fd を持ち越すと、書いたばかりのファイルの exec が ETXTBSY で落ちるため。
+// 偽の道具は書いた直後のファイルを exec せず、/bin/sh に読ませて起動する（理由は fakeTool）。
 // canaryTool は、main.tf が非推奨の引数を持てば警告を、持たなければ警告の無い結果を出す偽の terraform を作る。
 // behaves が "silent" なら、非推奨の引数を書いても警告を出さない（Provider が警告をやめた形）。
 func canaryTool(t *testing.T, behaves string) toolFunc {
@@ -73,6 +74,102 @@ func Test_runValidateCanary(t *testing.T) {
 			return c
 		}
 		require.ErrorIs(t, runValidateCanary(canaryArgs(t, "tmp/w"), &bytes.Buffer{}, broken, tree(t, nil)), errCanary)
+	})
+
+	t.Run("道具を起動できなければ、ケースの不成立に畳まずに errTool で終了コードは 2", func(t *testing.T) {
+		t.Parallel()
+		var out bytes.Buffer
+		err := runValidateCanary(canaryArgs(t, "tmp/w"), &out, tooltest.Missing, tree(t, nil))
+		require.ErrorIs(t, err, errTool)
+		require.NotErrorIs(t, err, errCanary)
+		assert.Equal(t, 2, exitCode(err))
+		assert.NotContains(t, out.String(), "--- canary")
+	})
+
+	t.Run("落ちることを期待するケースで道具を起動できなくても、期待どおりに落ちたと数えずに errTool", func(t *testing.T) {
+		t.Parallel()
+		actual := canaryTool(t, "")
+		tool := func(d string, env []string, step string) *exec.Cmd {
+			if strings.Contains(d, string(filepath.Separator)+"deprecated"+string(filepath.Separator)) {
+				return tooltest.Missing(d, env, step)
+			}
+			return actual(d, env, step)
+		}
+		var out bytes.Buffer
+		err := runValidateCanary(canaryArgs(t, "tmp/w"), &out, tool, tree(t, nil))
+		require.ErrorIs(t, err, errTool)
+		require.NotErrorIs(t, err, errCanary)
+		assert.Equal(t, 2, exitCode(err))
+		assert.NotContains(t, out.String(), "--- canary deprecated")
+		assert.NotContains(t, err.Error(), "それまでに落ちたケース")
+	})
+
+	t.Run("抑止の宣言を当てた validate だけを起動できなければ、errTool で終了コードは 2", func(t *testing.T) {
+		t.Parallel()
+		actual := canaryTool(t, "")
+		validates := 0
+		tool := func(d string, env []string, step string) *exec.Cmd {
+			if step == stepValidate && strings.Contains(d, string(filepath.Separator)+"deprecated"+string(filepath.Separator)) {
+				validates++
+				if validates == 2 {
+					return tooltest.Missing(d, env, step)
+				}
+			}
+			return actual(d, env, step)
+		}
+		var out bytes.Buffer
+		err := runValidateCanary(canaryArgs(t, "tmp/w"), &out, tool, tree(t, nil))
+		require.ErrorIs(t, err, errTool)
+		require.NotErrorIs(t, err, errCanary)
+		assert.Equal(t, 2, exitCode(err))
+		assert.Equal(t, 2, validates, "deprecated の validate は、警告を見る1回目と抑止を当てる2回目")
+		assert.NotContains(t, out.String(), "--- canary")
+	})
+
+	t.Run("clean が期待どおりでなく、抑止を当てる validate だけを起動できなければ、clean を文面にだけ名指して errTool", func(t *testing.T) {
+		t.Parallel()
+		actual := canaryTool(t, "")
+		sep := string(filepath.Separator)
+		validates := 0
+		tool := func(d string, env []string, step string) *exec.Cmd {
+			switch {
+			case strings.Contains(d, sep+"clean"+sep):
+				return exec.CommandContext(context.Background(), "/bin/sh", "-c", "exit 1")
+			case step == stepValidate && strings.Contains(d, sep+"deprecated"+sep):
+				validates++
+				if validates == 2 {
+					return tooltest.Missing(d, env, step)
+				}
+			}
+			return actual(d, env, step)
+		}
+		err := runValidateCanary(canaryArgs(t, "tmp/w"), &bytes.Buffer{}, tool, tree(t, nil))
+		require.ErrorIs(t, err, errTool)
+		require.NotErrorIs(t, err, errCanary)
+		assert.Equal(t, 2, exitCode(err))
+		assert.Contains(t, err.Error(), "canary ignored で打ち切りました（それまでに落ちたケース: clean）")
+	})
+
+	t.Run("先のケースが期待どおりでなく、後のケースで道具を起動できなければ、先のケースを文面にだけ名指して errTool", func(t *testing.T) {
+		t.Parallel()
+		actual := canaryTool(t, "")
+		sep := string(filepath.Separator)
+		tool := func(d string, env []string, step string) *exec.Cmd {
+			switch {
+			case strings.Contains(d, sep+"clean"+sep):
+				return exec.CommandContext(context.Background(), "/bin/sh", "-c", "exit 1")
+			case strings.Contains(d, sep+"deprecated"+sep):
+				return tooltest.Missing(d, env, step)
+			}
+			return actual(d, env, step)
+		}
+		var out bytes.Buffer
+		err := runValidateCanary(canaryArgs(t, "tmp/w"), &out, tool, tree(t, nil))
+		require.ErrorIs(t, err, errTool)
+		require.NotErrorIs(t, err, errCanary)
+		assert.Equal(t, 2, exitCode(err))
+		assert.Contains(t, err.Error(), "canary deprecated で打ち切りました（それまでに落ちたケース: clean）")
+		assert.Contains(t, out.String(), "--- canary clean の出力")
 	})
 
 	t.Run("reference の lock が無ければ失敗する", func(t *testing.T) {

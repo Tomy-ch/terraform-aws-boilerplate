@@ -136,7 +136,13 @@ tree_decl := {
 		"aws_security_group": "親になる resource",
 		"aws_default_security_group": "既定の SG",
 		"aws_kms_key": "親になる resource",
-		"aws_route_table": "親になる resource"
+		"aws_route_table": "親になる resource",
+		"aws_s3_account_public_access_block": "アカウントの単位で設定する"
+	},
+	"singletons": {
+		"aws_s3_account_public_access_block": [
+			"account-baseline"
+		]
 	},
 	"unrelated_deprecated_arguments": {
 		"aws_s3_bucket": {
@@ -154,6 +160,13 @@ tree_decl := {
 }
 
 tree_schema := {
+	"aws_s3_account_public_access_block": {
+		"arguments": [
+			"block_public_acls"
+		],
+		"deprecated": [],
+		"blocks": []
+	},
 	"aws_s3_bucket": {
 		"arguments": [
 			"bucket",
@@ -208,6 +221,13 @@ tree_schema := {
 }
 
 tree_schema_website := {
+	"aws_s3_account_public_access_block": {
+		"arguments": [
+			"block_public_acls"
+		],
+		"deprecated": [],
+		"blocks": []
+	},
 	"aws_s3_bucket": {
 		"arguments": [
 			"bucket",

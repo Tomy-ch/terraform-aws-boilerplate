@@ -2277,6 +2277,21 @@
       "aws_vpc_endpoint": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
       "aws_wafv2_web_acl": "親になる resource（自前の identity と lifecycle を持ち、他の resource の設定を書き換えない）"
     },
+    "singletons": {
+      "aws_account_alternate_contact": ["account-baseline"],
+      "aws_config_configuration_recorder": ["account-baseline"],
+      "aws_config_delivery_channel": ["account-baseline"],
+      "aws_config_retention_configuration": ["account-baseline"],
+      "aws_ebs_encryption_by_default": ["account-baseline"],
+      "aws_ecr_registry_scanning_configuration": ["image-registry"],
+      "aws_emr_block_public_access_configuration": ["account-baseline"],
+      "aws_iam_account_password_policy": ["account-baseline", "organization-baseline"],
+      "aws_iam_organizations_features": ["organization-baseline"],
+      "aws_organizations_organization": ["organization-baseline"],
+      "aws_s3_account_public_access_block": ["account-baseline"],
+      "aws_ssm_service_setting": ["account-baseline"],
+      "aws_vpc_block_public_access_options": ["account-baseline"]
+    },
     "unrelated_deprecated_arguments": {
       "aws_cloudwatch_event_rule": {
         "is_enabled": {

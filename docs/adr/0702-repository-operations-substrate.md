@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-09-16
 - Scope: repository-wide
-- Related: ADR-0001, ADR-0401, ADR-0501, ADR-0402, ADR-0302, ADR-0603, ADR-0103, ADR-0601
+- Related: ADR-0001, ADR-0401, ADR-0501, ADR-0402, ADR-0302, ADR-0603, ADR-0103, ADR-0601, ADR-0503, ADR-0504
 
 ## Context
 
@@ -28,7 +28,7 @@ ADR-0501 決定4 は、Terraformコードの故障モードごとに道具を割
 
 ### 区分
 
-1. 「リポジトリ運用機構」を、ADR-0501 決定4 のレイヤーとは独立した区分として定義する。対象は、Terraformコードの正しさではなく、リポジトリ自身の構造・CI定義・依存の固定・ブランチ運用・保護設定・outbound 制限を検査または適用するものとする。人が手元から terraform を動かす入口が terraform に渡す値を算出し、検証するものも対象とする。
+1. 「リポジトリ運用機構」を、ADR-0501 決定4 のレイヤーとは独立した区分として定義する。対象は、Terraformコードの正しさではなく、リポジトリ自身の構造・CI定義・依存の固定・ブランチ運用・保護設定・outbound 制限を検査または適用するものとする。人が手元から terraform を動かす入口が terraform に渡す値を算出し、検証するものも対象とする。人が手順書の完了条件として実行し、実環境の状態を読んで期待と突き合わせる確認も対象とする。
 2. 本区分はADR-0501 決定4 の表を変更しない。Terraformコードの検証の権威は同表が持ち続ける。運用機構が同表のレイヤーを代替または補完しない。
 
 ### 境界
@@ -72,7 +72,7 @@ ADR-0501 決定4 は、Terraformコードの故障モードごとに道具を割
 
 ### outbound 制限
 
-20. CI のすべての job は、最初の step で runner の外向き通信を許可リストへ固定する。許可リストは決定10 の形で持つ —— 宣言は `.github/egress.toml`、適用は `make egress-apply`、検査は `make egress-check` である。Terraform を実行する job の許可リストは、その root が使う resource / data source の型が呼ぶ宛先を含む。
+20. CI のすべての job は、最初の step で runner の外向き通信を許可リストへ固定する。許可リストは決定10 の形で持つ —— 宣言は `.github/egress.toml`、適用は `make egress-apply`、検査は `make egress-check` である。Terraform を実行する job の許可リストは、その root が使う resource / data source の型が呼ぶ宛先を含む。`make egress-check` は、usecase の `reference/` の root でも、ブロックの `region` を解けることを確かめる。reference の root が無いか、reference の root を持たない usecase（ADR-0401 決定11）があれば落ちる。CI の root がその usecase を呼ぶ前に、解けない形をその usecase の変更で落とすためである。
 21. 名前解決も、許可したドメインに限る。遮断を始めた後の step に sudo を残さない。sudo が残る job では、step の中から通信制限そのものを外せる。
 22. 手段は `bullfrogsec/bullfrog` とする。契約なしで遮断し、`api-token` を渡さなければ接続の記録を外へ送らない。
 23. 手段の挙動についての本 ADR の記述は、`.github/actions-pin.toml` が固定した版のソースから読んだものとする。版を上げる Pull Request は、その記述を確かめ直す。
@@ -81,6 +81,7 @@ ADR-0501 決定4 は、Terraformコードの故障モードごとに道具を割
 
 24. 運用機構の1回の起動は1つの目的を持ち、その目的の道具だけを起動する。目的の違う道具（例: plan を作る `terraform`、全文を置く `aws`、Policy を掛ける `conftest`）を1回の起動の中で続けて呼ばない。目的の間の順序と値の受け渡しは make が持ち、値の算出と判定は運用機構が持つ。複数の目的を1回の起動に抱えると、各目的の失敗の扱いが1つのコマンドに埋もれ、目的ごとに差し替えることもテストすることもできなくなる。前の目的の結果によって後の目的を省くかどうかも判定であり、運用機構が持つ。後の目的の入口が、前の目的の結果を読んで何もせずに終える形にする。
 25. make のレシピは、運用機構と道具を決まった順に呼び出すことと、軽い条件分岐だけを持つ。判定・計算・繰り返しと、特定の処理を行うスクリプトはレシピに置かない。レシピが処理のスクリプトを持った時点で、その機構を丸ごと運用機構の Go へ置き換える。テストは運用機構の Go のテストが持ち、`.mk` にテストを書かない。検査が落ちるべき入力で落ちることを確かめる canary は、その検査を走らせる運用機構の Go が、本走査の前に同じ起動の中で走らせる。canary が落ちれば本走査を行わずに失敗する。canary を make のターゲットとして別に置かない。ADR-0601（change-delivery-path）決定18 の書き込みの job が呼ぶレシピは、その job が道具を導入しないので、運用機構へ置き換えず、runner に在るコマンド（`git`・`gh`）を決まった順に呼び出す形にする。
+26. 決定1 の実環境の状態を読む確認は、その目的の道具として `aws` だけを起動してよい。起動する操作は読み取り（get・list・describe・head と、権限の評価の simulate）に限る。資格情報を変える環境変数を外すことと、使う profile と region を渡すことは make が持ち、外す変数の一覧は人が terraform を動かす入口と同じものを使う。運用機構は profile が渡されなければ確認をせずに終える。実環境の資格情報を使うので、ホストで実行する（ADR-0504 決定1・3 と同じ理由）。
 
 ## 検討した代替案
 
@@ -139,6 +140,7 @@ runner の DNS 構成の変更（egress proxy による `/etc/resolv.conf` の�
 - 保証すること: 運用機構が動作しない状態でも `terraform` の各コマンドが成功すること。配線された運用機構がテストを持つこと。検査が対象を持たないまま成功を報告しないこと
 - 保証しないこと: 運用機構が検出しない構造上の誤りが存在しないこと
 - 保証しないこと（決定25）: `.mk` が処理のスクリプトとテストを持たないこと。レビューが持つ
+- 保証しないこと（決定26）: 確認の表が手順書の完了条件を漏れなく覆うこと。対応はレビューが持つ
 - 保証しないこと（決定20-22）: port による絞り込み。bullfrog は宛先の IP で判定するため、許可したドメインの IP へは任意の port で繋がり、同じ IP を共有する別のホストへも繋がる。`*.example.com` は添字の回る宛先をまとめて許す。agent が既定で許す宛先（runner の結果と cache の置き場）は宣言に現れない
 - 受け入れた限界（決定22）: 上流の保守の継続を本リポジトリは保証しない。agent に SLSA provenance が無く、action の SHA が固定する sha256 だけで検証される。遮断の前に `nftables` を版の固定なしに `apt-get` で取る。GitHub-hosted の Ubuntu runner 専用である
 
@@ -148,6 +150,7 @@ runner の DNS 構成の変更（egress proxy による `/etc/resolv.conf` の�
 - Static Analysis: 各運用機構にテストが存在すること（決定16）
 - 各機構のテスト: 対象0件の入力に対して非ゼロで終了すること（決定13）
 - 各機構のテスト: 解釈できない入力に対してエラーを返すこと（決定14）
+- 各機構のテスト: 決定26 の運用機構が組む aws の操作が読み取りの動詞に限ること、profile が渡されなければ確認をせずに終えること
 - `egress-check`: steps を持つ job に bullfrog の step が無いこと、それが最初の step でないこと、`enable-sudo: false` を含む生成済みの `with:` からずれていることで落ちる（決定20・21）。宣言の root が module を辿って使う resource / data source の型が宣言の type に当たらないこと、root が呼ぶ type の宛先を root を実行する job の許可リストが持たないこと、type の宛先を許す job がどの root にも名指されていないこと、job が CI の plan / apply の入口を通して実行する root と宣言の root がその job を名指す先が食い違うこと、root が type の resource / data source を置く region（ブロックの `region` 引数のリテラル。持たないブロックは root の aws の provider のただ 1 つの region）に、その region を含む type の宛先が無いこと、region を含む type の宛先の region に、どの root もその type を置かないこと、ブロックの `region` 引数が region の形のリテラルでないことでも落ちる。ただし、AWS が region を固定した global のサービスの宛先（organizations.us-east-1.amazonaws.com）は、運用機構が閉じた一覧として持ち、この突き合わせから外す（決定20）
 - 定期実行: バイパス宣言の期限検査が、Pull Request契機とは独立に実行されること（決定18）
 - レビュー: 決定8・9（既製品で足りるものを自前実装しない）は機械判定できない。運用機構を追加するPull Requestのレビュー観点とする

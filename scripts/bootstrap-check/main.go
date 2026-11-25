@@ -1,6 +1,6 @@
 // Package main は、bootstrap の手順書が完了条件として人に実行させる確認の判定を持つツール。
 // plan は make が渡した内容を読んで判定するだけで、terraform も aws も git も起動しない（ADR-0702 決定24）。
-// account は aws だけを起動して読む。資格情報を変える環境変数の外し方と AWS_PROFILE は make が整える。
+// account と verify は aws だけを起動して読む。資格情報を変える環境変数の外し方と AWS_PROFILE は make が整える。
 //
 //	bootstrap-check plan [-partial] -header-file <file> <plan の JSON | ->
 //	    `terraform show -json` の出力（- なら標準入力）を、期待値と突き合わせる。-header-file は
@@ -13,6 +13,10 @@
 //	bootstrap-check account -project <project> -region <region>
 //	    アカウントの準備（docs/setup/bootstrap.md の 1-0 から 2-4）を、一時 IAM user の資格情報で読んで確かめる。
 //	    何も作らず、何も変えない
+//	bootstrap-check verify -stage <stage> -project <project> -region <region> [-executor <user>] [-policy-source live|reference]
+//	    bootstrap の段の確認（stage1・before-apply・stage4・permissions・stage5・output-policy）を、実環境を読んで行う。
+//	    -executor は stage4 の、段3 で例外に入れた段4 の実行者。-policy-source は output-policy が評価する
+//	    Bucket Policy の文書の出所（既定は live）。何も作らず、何も変えない
 //
 // 終了コードは、0 が一致、1 が差分あり、2 が検証できない（引数の誤りを含む）。出力は標準出力にまとめ、
 // 12桁の数字（アカウント ID）は伏せる。出すのは resource address と変更の種類だけで、属性の値は出さない。
@@ -43,7 +47,7 @@ const (
 var (
 	accountPattern = regexp.MustCompile(`[0-9]{12}`)
 
-	errUsage = xerrors.New("使い方: bootstrap-check plan [-partial] -header-file <plan-header の出力> <plan の JSON | -> | bootstrap-check plan -mock -test-exit-file <file> <terraform test -json -verbose の出力> | bootstrap-check account -project <project> -region <region>")
+	errUsage = xerrors.New("使い方: bootstrap-check plan [-partial] -header-file <plan-header の出力> <plan の JSON | -> | bootstrap-check plan -mock -test-exit-file <file> <terraform test -json -verbose の出力> | bootstrap-check account -project <project> -region <region> | bootstrap-check verify -stage <stage1|before-apply|stage4|permissions|stage5|output-policy> -project <project> -region <region> [-executor <user>] [-policy-source live|reference]")
 	// errMismatch は、期待値と plan に差分があること。理由は結果の行が述べるので、メッセージを持たない。
 	errMismatch = xerrors.New("差分があります")
 )
@@ -70,7 +74,7 @@ func execute(args []string, stdout io.Writer, d deps) int {
 	err := run(args, &out, d)
 
 	mask := maskAccounts
-	if len(args) > 0 && args[0] == "account" {
+	if len(args) > 0 && (args[0] == "account" || args[0] == "verify") {
 		mask = maskAllAccounts
 	}
 
@@ -109,7 +113,7 @@ func maskAccounts(s string) string {
 	return strings.Join(lines, "")
 }
 
-// maskAllAccounts は、12桁の数字をすべて伏せる。commit の行を出さない account の出力に使う。
+// maskAllAccounts は、12桁の数字をすべて伏せる。commit の行を出さない account と verify の出力に使う。
 func maskAllAccounts(s string) string {
 	return accountPattern.ReplaceAllString(s, "<account>")
 }
@@ -194,6 +198,15 @@ func run(args []string, out io.Writer, d deps) error {
 		}
 
 		return finish(out, false, checkAccount(o, out, d))
+	}
+
+	if len(args) > 0 && args[0] == "verify" {
+		o, err := parseVerifyArgs(args[1:])
+		if err != nil {
+			return finish(out, false, err)
+		}
+
+		return finish(out, false, checkVerify(o, out, d))
 	}
 
 	if len(args) == 0 || args[0] != "plan" {
