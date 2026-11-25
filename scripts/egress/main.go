@@ -44,7 +44,7 @@ const (
 )
 
 var (
-	sectionRe   = regexp.MustCompile(`^\[(class|job|root|type)\.(?:"([^"]+)"|([A-Za-z0-9_-]+))\]$`)
+	sectionRe   = regexp.MustCompile(`^\[(class|job|root|type|region_set)\.(?:"([^"]+)"|([A-Za-z0-9_-]+))\]$`)
 	scalarRe    = regexp.MustCompile(`^(\w+)\s*=\s*"([^"]*)"$`)
 	arrayHeadRe = regexp.MustCompile(`^(\w+)\s*=\s*\[(.*)$`)
 	quotedRe    = regexp.MustCompile(`"([^"]*)"`)
@@ -90,6 +90,7 @@ var (
 	errSSOTTypeName   = xerrors.New("SSOT の type が resource / data source の型の接頭辞の形をしていません")
 	// errSSOTTypeHosts は、宛先の無い接頭辞の type のエラー。API を呼ばない型は型名そのもので宣言する。
 	errSSOTTypeHosts  = xerrors.New("SSOT の接頭辞の type が宛先を持ちません")
+	errSSOTRegionSet  = xerrors.New("SSOT の region_set か、宛先の {<set>} が不正です")
 	errWorkflowNoJobs = xerrors.New("jobs: を持たない workflow があります")
 	// errJobUnparsed は、reusable workflow の呼び出しでもないのに steps を読み取れないジョブのエラー。
 	// 読める形は scripts/lib/workflow の切り出しが決める。
@@ -129,25 +130,32 @@ type typeSpec struct {
 	hosts []string
 }
 
+// regionSetSpec は region の集合 1 件。宛先の `{<name>}` を集合の各 region に展開する。
+type regionSetSpec struct {
+	regions []string
+}
+
 // ssot は .github/egress.toml の内容。*Order は各セクションの宣言順。
 type ssot struct {
-	classes   map[string]*class
-	jobs      map[string]*jobSpec
-	jobOrder  []string
-	roots     map[string]*rootSpec
-	rootOrder []string
-	types     map[string]*typeSpec
-	typeOrder []string
-	baseHosts []string
-	baseIPs   []string
+	regionSets map[string]*regionSetSpec
+	classes    map[string]*class
+	jobs       map[string]*jobSpec
+	jobOrder   []string
+	roots      map[string]*rootSpec
+	rootOrder  []string
+	types      map[string]*typeSpec
+	typeOrder  []string
+	baseHosts  []string
+	baseIPs    []string
 }
 
 // section は解析中のセクション。どれか 1 つだけが nil でない。
 type section struct {
-	class *class
-	job   *jobSpec
-	root  *rootSpec
-	typ   *typeSpec
+	regionSet *regionSetSpec
+	class     *class
+	job       *jobSpec
+	root      *rootSpec
+	typ       *typeSpec
 }
 
 // orderedHosts は初出順を保ったまま重複を落とすホスト集合。
@@ -195,7 +203,7 @@ func run(args []string, wd func() (string, error)) error {
 func parseSSOT(data string) (*ssot, error) {
 	s := &ssot{
 		classes: map[string]*class{}, jobs: map[string]*jobSpec{},
-		roots: map[string]*rootSpec{}, types: map[string]*typeSpec{},
+		roots: map[string]*rootSpec{}, types: map[string]*typeSpec{}, regionSets: map[string]*regionSetSpec{},
 	}
 	var cur section
 	var seen map[string]bool
@@ -231,7 +239,74 @@ func parseSSOT(data string) (*ssot, error) {
 			return nil, xerrors.Wrap(err, fmt.Sprintf("%d 行目", i+1))
 		}
 	}
+	if err := s.expandRegionSets(); err != nil {
+		return nil, err
+	}
 	return s, s.validate()
+}
+
+// regionTemplateRe は宛先の `{<name>}`。
+var regionTemplateRe = regexp.MustCompile(`\{([^{}]*)\}`)
+
+// expandRegionSets は class・job の extra・type の宛先の `{<name>}` を、region_set の各 region に展開する。
+// 未知の集合、使われない集合、空の集合、region の形でない要素、1 つの宛先に 2 つ以上の `{}` を拒む。
+func (s *ssot) expandRegionSets() error {
+	for name, rs := range s.regionSets {
+		if len(rs.regions) == 0 {
+			return xerrors.Wrap(errSSOTRegionSet, name+": regions が空です")
+		}
+		for _, r := range rs.regions {
+			if !regionLabelRe.MatchString(r) {
+				return xerrors.Wrap(errSSOTRegionSet, fmt.Sprintf("%s: %q は region の形ではありません", name, r))
+			}
+		}
+	}
+	used := map[string]bool{}
+	expand := func(owner string, hosts []string) ([]string, error) {
+		var out []string
+		for _, h := range hosts {
+			m := regionTemplateRe.FindAllStringSubmatchIndex(h, -1)
+			if len(m) == 0 {
+				out = append(out, h)
+				continue
+			}
+			if len(m) > 1 {
+				return nil, xerrors.Wrap(errSSOTRegionSet, owner+": "+h+"（{} は 1 つだけ）")
+			}
+			name := h[m[0][2]:m[0][3]]
+			rs, ok := s.regionSets[name]
+			if !ok {
+				return nil, xerrors.Wrap(errSSOTRegionSet, owner+": "+h+"（region_set "+name+" がありません）")
+			}
+			used[name] = true
+			for _, r := range rs.regions {
+				out = append(out, h[:m[0][0]]+r+h[m[0][1]:])
+			}
+		}
+		return out, nil
+	}
+	var err error
+	for _, name := range sortedKeys(s.classes) {
+		if s.classes[name].hosts, err = expand("class "+name, s.classes[name].hosts); err != nil {
+			return err
+		}
+	}
+	for _, key := range s.jobOrder {
+		if s.jobs[key].extra, err = expand("job "+key, s.jobs[key].extra); err != nil {
+			return err
+		}
+	}
+	for _, name := range s.typeOrder {
+		if s.types[name].hosts, err = expand("type "+name, s.types[name].hosts); err != nil {
+			return err
+		}
+	}
+	for _, name := range sortedKeys(s.regionSets) {
+		if !used[name] {
+			return xerrors.Wrap(errSSOTRegionSet, name+"（どの宛先も使いません。"+ssotFile+" から削除してください）")
+		}
+	}
+	return nil
 }
 
 // stripComment は行末コメントを落とす。値のクオート内に `#` は現れない前提。
@@ -259,6 +334,12 @@ func (s *ssot) openSection(kind, name string) (section, error) {
 		s.jobs[name] = &jobSpec{}
 		s.jobOrder = append(s.jobOrder, name)
 		return section{job: s.jobs[name]}, nil
+	case "region_set":
+		if _, ok := s.regionSets[name]; ok {
+			return dup()
+		}
+		s.regionSets[name] = &regionSetSpec{}
+		return section{regionSet: s.regionSets[name]}, nil
 	case "root":
 		if _, ok := s.roots[name]; ok {
 			return dup()
@@ -335,6 +416,8 @@ func assign(cur section, key string, values []string) error {
 		cur.root.jobs = values
 	case cur.typ != nil && key == "hosts":
 		cur.typ.hosts = values
+	case cur.regionSet != nil && key == "regions":
+		cur.regionSet.regions = values
 	default:
 		return xerrors.Wrap(errSSOTSyntax, "未知のキー "+key)
 	}
@@ -703,6 +786,9 @@ func applyOrCheck(root string, dryRun bool) error {
 		return err
 	}
 	if err := s.checkEndpoints(root, ran); err != nil {
+		return err
+	}
+	if err := checkReferenceRegions(root); err != nil {
 		return err
 	}
 	return writeChanges(root, changes, dryRun)
