@@ -14,7 +14,6 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun/tooltest"
 )
 
-// canaryOut は、canary の前提どおりの gofmt -l の出力です。
 const canaryOut = "sub/unformatted.go\nunformatted.go\n"
 
 func Test_runCanary(t *testing.T) {

@@ -110,7 +110,6 @@ var (
 	errGitUnset   = errors.New("git の環境変数を外せません")
 )
 
-// runner は *testing.M の部分です。
 type runner interface {
 	Run() int
 }
@@ -131,7 +130,6 @@ func RunGitIsolated(m runner) int {
 	return m.Run()
 }
 
-// isolateGitEnv は、gitEnvVars の変数をすべてプロセスから外します。1つでも外せなければ、そこで止めます。
 func isolateGitEnv() error {
 	names, err := gitEnvVars()
 	if err != nil {

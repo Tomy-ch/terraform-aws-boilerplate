@@ -169,7 +169,6 @@ func exitCode(err error) int {
 	return toolrun.ExitCode(err, errPinDrift, errLockMissingImage, errLooseRef, errNoStepBack, errHookMissing, errHookUncovered)
 }
 
-// toolFunc は、外部の道具を段ごとに起動するコマンドを作ります。テストは差し替えます。
 type toolFunc = toolrun.Func
 
 // imagetools inspect の段です。created の2つの段は --format の雛形だけが違います。マルチアーキ（index）は .Image が

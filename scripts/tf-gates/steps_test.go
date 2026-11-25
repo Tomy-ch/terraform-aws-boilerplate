@@ -20,7 +20,6 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-// okTree は、modules/a・usecases/b・env/dev に構成とテストを持つ木を建てる。
 func okTree(t *testing.T, extra map[string]string) string {
 	t.Helper()
 	files := map[string]string{}

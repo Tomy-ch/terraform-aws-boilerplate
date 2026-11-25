@@ -94,7 +94,6 @@ func writeCompose(dir, image string, t imageTool) error {
 		Image:       image,
 		NetworkMode: "none",
 		CapDrop:     []string{"ALL"},
-		// docker cp はホストの uid と mode を保つので、root で走る道具が入力を読むにはこれが要る。
 		SecurityOpt: []string{"no-new-privileges:true"},
 		PidsLimit:   composePidsLimit,
 		WorkingDir:  escape(t.workingDir),

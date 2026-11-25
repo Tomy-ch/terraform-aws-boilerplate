@@ -168,7 +168,6 @@ func exitCode(err error) int {
 	return toolrun.ExitCode(err, errBlocking)
 }
 
-// toolFunc は、外部の道具（git と mise）を段ごとに起動するコマンドを作ります。テストは差し替えます。
 type toolFunc = toolrun.Func
 
 const (
@@ -204,7 +203,7 @@ func command(ctx context.Context, dir string, env []string, step string, operand
 
 // run はツールの宣言を cooldown に照らして報告します。gate で違反が残った場合はエラーを
 // 返し、終了コードへの変換は呼び出し側に委ねます。
-// client は上流への問い合わせ手段、now は窓と期限の基準時刻で、差し替えられるよう引数で受けます。
+// client は上流への問い合わせ手段、now は窓と期限の基準時刻です。
 func run(args []string, client *http.Client, now time.Time, launch toolFunc) error {
 	sub, opt, err := parseArgs(args)
 	if err != nil {
@@ -350,7 +349,6 @@ func declarationPaths() []string {
 	return []string{miseFile, tflintFile, semgrepFile}
 }
 
-// readDeclarations は作業ツリーの宣言ファイルを読む。
 func readDeclarations(paths []string) ([]declaration, error) {
 	decls := make([]declaration, 0, len(paths))
 	for _, path := range paths {
@@ -402,7 +400,6 @@ func countFrom(tools []tool, path string) int {
 	return n
 }
 
-// added は base 時点の宣言に無かった (key, version) の組を返す。
 func added(base string, paths []string, current []tool, launch toolFunc) ([]tool, error) {
 	decls, err := baseDeclarations(base, paths, launch)
 	if err != nil {
@@ -443,7 +440,6 @@ func baseDeclarations(base string, paths []string, launch toolFunc) ([]declarati
 	return decls, nil
 }
 
-// verifyRef は base が commit として解決できるかを見る。
 func verifyRef(ctx context.Context, launch toolFunc, env []string, base string) error {
 	code, err := toolrun.Exec(launch(ctx, "", env, stepGitRevParse, base+"^{commit}"))
 	if err != nil {
@@ -465,7 +461,6 @@ func addedFrom(baseDecls []declaration, current []tool) ([]tool, error) {
 	return diffAdded(before, current), nil
 }
 
-// diffAdded は before に無い (key, version) の組を返す。
 func diffAdded(before, current []tool) []tool {
 	known := make(map[string]struct{}, len(before))
 	for _, t := range before {

@@ -369,7 +369,6 @@ func Test_workTar(t *testing.T) {
 	})
 }
 
-// readTar は、raw の tar の header と中身を、並んだ順に返す。
 func readTar(t *testing.T, raw []byte) []tarEntry {
 	t.Helper()
 	var got []tarEntry

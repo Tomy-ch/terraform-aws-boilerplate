@@ -16,7 +16,6 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun/tooltest"
 )
 
-// hit は、editorconfig-checker が file の字下げの違反を名指す出力です。
 func hit(file string) string {
 	return "\x1b[33;1m" + file + ":\x1b[33;0m\n\x1b[31;1m\t2: wrong indent style found (tabs instead of spaces)\x1b[33;0m\n"
 }
@@ -135,7 +134,6 @@ func Test_runDirectiveCanary(t *testing.T) {
 	}
 }
 
-// excludeListed は、exclude-canary の fixture で -dry-run が対照だけを載せた出力です。
 const excludeListed = "\x1b[0m.editorconfig\n./.editorconfig-checker.json\n" + excludeDir + "/" + excludeControl + "\n" + excludeDir + "/" + excludeControlNonASCII + "\n"
 
 func Test_runExcludeCanary(t *testing.T) {

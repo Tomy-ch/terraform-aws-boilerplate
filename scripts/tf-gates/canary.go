@@ -112,7 +112,6 @@ func runValidateCanary(args []string, w io.Writer, tool toolFunc, root string) e
 	return nil
 }
 
-// validateCanary は、root をリポジトリ直下として runValidateCanary を走らせる canary です。
 func validateCanary(root string) canaryFunc {
 	return func(args []string, w io.Writer, tool toolFunc) error { return runValidateCanary(args, w, tool, root) }
 }

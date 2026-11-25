@@ -14,7 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// git は、dir で git を起動し、失敗すればテストを落とします。
 func git(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "git", append([]string{"-c", "core.hooksPath=/dev/null"}, args...)...)
@@ -39,7 +38,6 @@ func snapshot(t *testing.T, dir string) map[string]string {
 	return files
 }
 
-// caseInsensitive は、t.TempDir() のファイルシステムが大文字小文字を区別しないかを返します。
 func caseInsensitive(t *testing.T) bool {
 	t.Helper()
 	dir := t.TempDir()
@@ -80,7 +78,6 @@ func TestResolve(t *testing.T) {
 		})
 	}
 
-	// root と外を、symlink を解いた実パスで建てる。
 	realDir := func(t *testing.T) string {
 		t.Helper()
 		d, err := filepath.EvalSymlinks(t.TempDir())

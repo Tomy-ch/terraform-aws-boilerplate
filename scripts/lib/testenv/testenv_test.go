@@ -27,15 +27,12 @@ func TestEnvNames_workflowと一致する(t *testing.T) {
 	}
 }
 
-// probe は、外界のどれが何回読まれたかを控えます。
 type probe struct {
 	euidCalls int
 	envNames  []string
 	lookNames []string
 }
 
-// installProbe は外界を probe へ差し替えます。uid は Geteuid の戻り、found は
-// shellcheck が PATH に在るかです。
 func installProbe(t *testing.T, uid int, found bool) *probe {
 	t.Helper()
 

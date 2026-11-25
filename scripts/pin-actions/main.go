@@ -121,7 +121,6 @@ func exitCode(err error) int {
 	return toolrun.ExitCode(err, errLooseUses, errLockOrphanKey, errLockMissingKey, errPinDrift)
 }
 
-// toolFunc は、外部の道具を段ごとに起動するコマンドを作ります。テストは差し替えます。
 type toolFunc = toolrun.Func
 
 const stepLsRemote = "git-ls-remote"
@@ -592,7 +591,6 @@ func sortedChangePaths(changes map[string]string) []string {
 	return paths
 }
 
-// relAll は paths を root からの相対パスへ順序を保って写す。
 func relAll(root string, paths []string) []string {
 	out := make([]string, 0, len(paths))
 	for _, p := range paths {

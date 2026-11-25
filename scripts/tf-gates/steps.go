@@ -32,7 +32,6 @@ const (
 	stepLint         = "lint"
 )
 
-// root の init は lock を書き換えない（ADR-0205 決定9。lock の更新は人が root で行う）。
 func command(ctx context.Context, dir string, env []string, step string, _ ...string) *exec.Cmd {
 	var cmd *exec.Cmd
 	switch step {
@@ -43,6 +42,7 @@ func command(ctx context.Context, dir string, env []string, step string, _ ...st
 	case stepInit:
 		cmd = exec.CommandContext(ctx, "terraform", "init", "-backend=false", "-input=false")
 	case stepInitReadonly:
+		// root の init は lock を書き換えない。lock の更新は人が root で行う。
 		cmd = exec.CommandContext(ctx, "terraform", "init", "-backend=false", "-input=false", "-lockfile=readonly")
 	case stepValidate:
 		cmd = exec.CommandContext(ctx, "terraform", "validate", "-json")
@@ -59,9 +59,8 @@ func command(ctx context.Context, dir string, env []string, step string, _ ...st
 	return cmd
 }
 
-// 検出を表す終了コードです。terraform fmt -check（1.17.1 の internal/command/fmt.go）は差分があれば 3、TFLint
-// （0.65.0 の cmd/cli.go）は指摘があれば 2 で終わり、ほかの 0 以外は道具が検査を成り立たせられなかったことです。
-// どちらも公式の文書は値を持たず、mise.toml の版のソースで確かめました。値がずれても 0 以外は通しません。
+// 検出を表す終了コードです。terraform fmt -check は差分があれば 3、TFLint は指摘があれば 2 で終わり、ほかの 0 以外は
+// 道具が検査を成り立たせられなかったことです。どちらも公式の文書は値を持ちません。値がずれても 0 以外は通しません。
 var (
 	detectFmtCheck = []int{3}
 	detectLint     = []int{2}

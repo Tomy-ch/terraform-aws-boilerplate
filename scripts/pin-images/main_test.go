@@ -108,7 +108,6 @@ const coveringHook = "pre-commit:\n" +
 	"        - \".lefthook.yaml\"\n" +
 	"      run: make pin-images-check\n"
 
-// writeHook は root に hook の設定を書く。
 func writeHook(t *testing.T, root, body string) {
 	t.Helper()
 	writeFile(t, filepath.Join(root, hookFile), body)

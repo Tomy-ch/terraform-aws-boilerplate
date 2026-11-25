@@ -75,7 +75,7 @@ func (c candidate) heldByWindow() bool {
 }
 
 // surveyOutdated は各ツールの上流を調べ、窓を満たす更新先を決めます。
-// client は上流への問い合わせ手段、now は齢の基準時刻で、差し替えられるよう引数で受けます。
+// client は上流への問い合わせ手段、now は齢の基準時刻です。
 func surveyOutdated(ctx context.Context, client *http.Client, tools []tool, now time.Time) []candidate {
 	out := make([]candidate, len(tools))
 	sem := make(chan struct{}, fetchWorkers)
@@ -196,8 +196,8 @@ func githubReleases(ctx context.Context, client *http.Client, repo string) ([]re
 	return out, nil
 }
 
-// goModuleReleases は module proxy の版一覧を新しい方から maxGoProxyProbes 件だけ日付付きにします。
-// proxy の一覧に日付が無く 1 版ごとに .info が要るため、全件を引くと往復が跳ね上がります。
+// goModuleReleases は module proxy の版一覧を新しい方から maxGoProxyProbes 件だけ日付付きにします（上限の理由は
+// maxGoProxyProbes）。
 func goModuleReleases(ctx context.Context, client *http.Client, pkg string) ([]release, error) {
 	versions, base, err := goModuleVersions(ctx, client, pkg)
 	if err != nil {

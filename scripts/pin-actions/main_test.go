@@ -1765,7 +1765,6 @@ func writeLockAt(t *testing.T, root string, lock map[string]string) {
 	require.NoError(t, lockFormat.Write(path, lock))
 }
 
-// gitFake は、ls-remote の段に3つの tag を返す偽の道具です。
 func gitFake(t *testing.T) toolFunc {
 	t.Helper()
 	f := tooltest.New(t)
@@ -1809,12 +1808,10 @@ func githubTimesStub(t *testing.T, publishedAgo, committedAgo int) string {
 	})
 }
 
-// writePublishedAt は releases/tags の応答として daysAgo 日前の published_at を書く。
 func writePublishedAt(w http.ResponseWriter, daysAgo int) {
 	_, _ = fmt.Fprintf(w, `{"published_at":%q}`, agoRFC3339(daysAgo))
 }
 
-// writeCommitDate は commits の応答として daysAgo 日前の committer date を書く。
 func writeCommitDate(w http.ResponseWriter, daysAgo int) {
 	_, _ = fmt.Fprintf(w, `{"commit":{"committer":{"date":%q}}}`, agoRFC3339(daysAgo))
 }
