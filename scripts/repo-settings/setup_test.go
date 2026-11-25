@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/branchdecl"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -497,6 +498,17 @@ func Test_createDeployBranch(t *testing.T) {
 		assert.Zero(t, requestCount(f))
 	})
 
+	t.Run("branches.json が壊れていれば GitHub に問わずに失敗する", func(t *testing.T) {
+		t.Parallel()
+		broken := t.TempDir()
+		writeFile(t, broken, branchesFile, `{`)
+		f, c := newFakeGitHub(t, map[string]fakeResponse{})
+		err := deployBranchExists(context.Background(), broken, c, repo, "admin", &bytes.Buffer{})
+		require.ErrorIs(t, err, branchdecl.ErrDeclaration)
+		assert.NotErrorIs(t, err, errNoDeployEnv)
+		assert.Zero(t, requestCount(f))
+	})
+
 	t.Run("branches.json が無ければ GitHub に問わずに失敗する", func(t *testing.T) {
 		t.Parallel()
 		f, c := newFakeGitHub(t, map[string]fakeResponse{})
@@ -569,12 +581,13 @@ func Test_deployBranchExists(t *testing.T) {
 
 	t.Run("404 なら errNoDeployBranch", func(t *testing.T) {
 		t.Parallel()
-		f, c := newFakeGitHub(t, map[string]fakeResponse{})
+		f, c := newFakeGitHub(t, map[string]fakeResponse{branchPath: {status: http.StatusNotFound, body: `{"message": "Branch not found"}`}})
 		var out bytes.Buffer
 		err := deployBranchExists(context.Background(), root, c, repo, "admin", &out)
 		require.ErrorIs(t, err, errNoDeployBranch)
 		assert.Contains(t, err.Error(), "admin")
 		assert.Empty(t, out.String())
+		assert.Equal(t, 1, requestCount(f))
 		assert.Empty(t, f.writes())
 	})
 

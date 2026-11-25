@@ -165,8 +165,10 @@ func Test_run(t *testing.T) {
 		root := t.TempDir()
 		writeFile(t, root, branchesFile, sourceBranches)
 		f, c := newFakeGitHub(t, map[string]fakeResponse{"GET /repos/o/r/branches/admin": ok(`{"name": "admin"}`)})
-		require.NoError(t, run([]string{"deploy-branch-exists", "-repo=o/r", "-env=admin"}, fixedWD(root), c, &bytes.Buffer{}))
+		var out bytes.Buffer
+		require.NoError(t, run([]string{"deploy-branch-exists", "-repo=o/r", "-env=admin"}, fixedWD(root), c, &out))
 		assert.Equal(t, 1, requestCount(f))
+		assert.Contains(t, out.String(), "✅")
 		assert.Empty(t, f.writes())
 	})
 	t.Run("enable-workflows は -repo が無ければ errNoRepo", func(t *testing.T) {
@@ -236,6 +238,12 @@ func Test_run(t *testing.T) {
 		assert.Contains(t, out.String(), "release/v1 から到達でき")
 		err := run([]string{"source", "-base", "main", "-base-sha", base, "-head-sha", evil, "-default", "release/v1"}, fixedWD(root), githubClient{}, &bytes.Buffer{})
 		require.ErrorIs(t, err, errSource)
+	})
+	t.Run("usage はすべてのサブコマンドを名指す", func(t *testing.T) {
+		t.Parallel()
+		for _, sub := range []string{"apply", "check", "drift", "sync", "source", "deploy-branch", "delete-labels", "create-labels", "enable-workflows", "create-deploy-branch", "deploy-branch-exists"} {
+			assert.Contains(t, errUsage.Error(), sub)
+		}
 	})
 	for _, tc := range usageCases {
 		t.Run(tc.name, func(t *testing.T) {

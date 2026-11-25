@@ -158,7 +158,9 @@ func Test_githubClient_do(t *testing.T) {
 	t.Run("403 は errNotFound にならない", func(t *testing.T) {
 		t.Parallel()
 		_, c := newFakeGitHub(t, map[string]fakeResponse{"GET /x": {status: http.StatusForbidden, body: "no"}})
-		assert.NotErrorIs(t, c.do(context.Background(), http.MethodGet, "/x", nil, nil), errNotFound)
+		err := c.do(context.Background(), http.MethodGet, "/x", nil, nil)
+		require.ErrorIs(t, err, errHTTP)
+		assert.NotErrorIs(t, err, errNotFound)
 	})
 
 	t.Run("JSON でない応答は失敗する", func(t *testing.T) {
