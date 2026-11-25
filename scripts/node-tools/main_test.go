@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -42,7 +43,7 @@ chmod +x node_modules/.bin/markdownlint-cli2
 func TestMain(m *testing.M) {
 	if os.Getenv(asNodeTools) != "" {
 		d := deps{
-			tool: func(ctx context.Context, dir, _ string) *exec.Cmd {
+			tool: func(ctx context.Context, dir string, _ []string, _ string, _ ...string) *exec.Cmd {
 				cmd := exec.CommandContext(ctx, "sh", "-c", fakePnpm)
 				cmd.Dir = dir
 
@@ -89,7 +90,7 @@ type fakeTools struct {
 	calls   []toolCall
 }
 
-func (f *fakeTools) tool(ctx context.Context, dir, step string) *exec.Cmd {
+func (f *fakeTools) tool(ctx context.Context, dir string, env []string, step string, _ ...string) *exec.Cmd {
 	f.mu.Lock()
 	f.calls = append(f.calls, toolCall{dir: dir, step: step})
 	script, ok := f.scripts[step]
@@ -190,14 +191,14 @@ func Test_command(t *testing.T) {
 	} {
 		t.Run(step+" の引数は固定でディレクトリを作業ディレクトリで渡す", func(t *testing.T) {
 			t.Parallel()
-			c := command(context.Background(), "/x/d", step)
+			c := command(context.Background(), "/x/d", nil, step)
 			assert.Equal(t, want, c.Args)
 			assert.Equal(t, "/x/d", c.Dir)
 		})
 	}
 	t.Run("知らない段は別の道具へ落とさず panic する", func(t *testing.T) {
 		t.Parallel()
-		assert.Panics(t, func() { command(context.Background(), "/x/d", "unknown-step") })
+		assert.Panics(t, func() { command(context.Background(), "/x/d", nil, "unknown-step") })
 	})
 }
 
@@ -235,10 +236,28 @@ func Test_exitCode(t *testing.T) {
 		t.Parallel()
 		assert.Equal(t, 130, exitCode(fmt.Errorf("x: %w", errInterrupted)))
 	})
-	t.Run("ほかの失敗は 1 で終わる", func(t *testing.T) {
-		t.Parallel()
-		assert.Equal(t, 1, exitCode(errInstall))
-	})
+	for name, c := range map[string]struct {
+		err  error
+		want int
+	}{
+		"mise が npm: の道具を入れるのは 1":   {errMiseNPM, 1},
+		"canary が PATH の道具へ退いたのは 1": {errCanaryFallback, 1},
+		"canary の写しで道具が起動したのは 1":    {errCanaryLaunched, 1},
+		"canary が期待と違う理由で落ちたのは 1":   {errCanaryReason, 1},
+		"lockfile のずれは 1":           {errLockDrift, 1},
+		"install の失敗は 2":            {errInstall, 2},
+		"道具を起動できないのは 2":             {toolrun.ErrTool, 2},
+		"canary のケースが0件なのは 2":       {errCanaryNoCases, 2},
+		"canary の写しを書き換えられないのは 2":   {errCanaryShape, 2},
+		"mise ls の失敗は 2":            {errMiseLs, 2},
+		"使い方の誤りは 2":                 {errUsage, 2},
+		"成功は 0":                     {nil, 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, exitCode(c.err))
+		})
+	}
 }
 
 func Test_stopGently(t *testing.T) {
