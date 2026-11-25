@@ -102,7 +102,7 @@ func Test_runTrivyConfig(t *testing.T) {
 	t.Run("canary は tmp の下の一時の置き場で、抑止の宣言を写して走る", func(t *testing.T) {
 		t.Parallel()
 		var seen, dir string
-		tool := func(d string, env []string, _ string) *exec.Cmd {
+		tool := func(ctx context.Context, d string, env []string, _ string, _ ...string) *exec.Cmd {
 			if strings.HasPrefix(filepath.Base(d), "trivy-config-canary.") {
 				dir = d
 				raw, err := os.ReadFile(filepath.Join(d, ".trivyignore.yaml"))
@@ -112,7 +112,7 @@ func Test_runTrivyConfig(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal(t, trivyCanary, string(docker))
 			}
-			c := exec.CommandContext(context.Background(), "sh", "-c", `echo '`+trivyCanaryJSON+`'; exit 1`)
+			c := exec.CommandContext(ctx, "sh", "-c", `echo '`+trivyCanaryJSON+`'; exit 1`)
 			c.Dir, c.Env = d, env
 			return c
 		}
@@ -268,11 +268,11 @@ func Test_runTrivyConfig(t *testing.T) {
 		t.Parallel()
 		f, r, base := setup(t, 0, trivyMainJSON)
 		fakeTool := r.tool
-		r.tool = func(d string, env []string, step string) *exec.Cmd {
+		r.tool = func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
 			if d == base {
-				return tooltest.Missing(d, env, step)
+				return tooltest.Missing(ctx, d, env, step)
 			}
-			return fakeTool(d, env, step)
+			return fakeTool(ctx, d, env, step)
 		}
 		var stdout bytes.Buffer
 		require.ErrorIs(t, runTrivyConfig(args(base, "-format", "json"), &stdout, &bytes.Buffer{}, r), errTool)

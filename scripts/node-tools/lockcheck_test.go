@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun/tooltest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -110,24 +112,39 @@ func Test_runLockCheck(t *testing.T) {
 		require.ErrorIs(t, runLockCheck(ctx, []string{"-dir", dir}, d), errCanaryShape)
 		assert.Empty(t, f.called())
 	})
-	t.Run("照合が落ちれば、その終了コードで落ちる", func(t *testing.T) {
+	t.Run("照合が落ちれば errLockDrift で、終了コードは 1", func(t *testing.T) {
 		t.Parallel()
 		f := &fakeTools{scripts: map[string]string{stepLockCheck: "echo ERR_PNPM_OUTDATED_LOCKFILE >&2; exit 1"}}
 		var stderr bytes.Buffer
 		d, _ := canaryDeps(t, f, &stderr)
 		err := runLockCheck(ctx, []string{"-dir", declDir(t, "")}, d)
-		var exitErr *exec.ExitError
-		require.ErrorAs(t, err, &exitErr)
-		assert.Equal(t, 1, exitErr.ExitCode())
+		require.ErrorIs(t, err, errLockDrift)
+		assert.Contains(t, err.Error(), "exit status 1")
+		assert.Equal(t, 1, exitCode(err))
 		assert.Contains(t, stderr.String(), "ERR_PNPM_OUTDATED_LOCKFILE")
+	})
+	t.Run("照合の pnpm を起動できなければ ErrTool で、終了コードは 2", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeTools{scripts: map[string]string{}}
+		d, _ := canaryDeps(t, f, io.Discard)
+		inner := d.tool
+		d.tool = func(c context.Context, dir string, env []string, step string, ops ...string) *exec.Cmd {
+			if step == stepLockCheck {
+				return tooltest.Missing(c, dir, env, step)
+			}
+			return inner(c, dir, env, step, ops...)
+		}
+		err := runLockCheck(ctx, []string{"-dir", declDir(t, "")}, d)
+		require.ErrorIs(t, err, toolrun.ErrTool)
+		assert.Equal(t, 2, exitCode(err))
 	})
 	t.Run("照合の途中で中断されたら中断として落ちる", func(t *testing.T) {
 		t.Parallel()
 		f := &fakeTools{scripts: map[string]string{stepLockCheck: "exec sleep 30"}}
 		d, _ := canaryDeps(t, f, io.Discard)
 		cctx, cancel := context.WithCancel(ctx)
-		d.tool = func(c context.Context, dir, step string) *exec.Cmd {
-			cmd := f.tool(c, dir, step)
+		d.tool = func(c context.Context, dir string, env []string, step string, _ ...string) *exec.Cmd {
+			cmd := f.tool(c, dir, env, step)
 			cancel()
 
 			return cmd

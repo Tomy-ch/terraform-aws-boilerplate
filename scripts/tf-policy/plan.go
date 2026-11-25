@@ -38,8 +38,7 @@ const policyInput = "tests/policy-input.tftest.hcl"
 // data.json・layer.json・out/plans.txt・out/provider-schema.json・out/inputs）を読みます。Rego のテストは宣言そのもの
 // （decl.json・layer-decl.json）に対して走り、canary が差し替えるのは適用の段の宣言（data.json・layer.json）だけです。
 // provider-schema は PATH のものを起動します（make が、ビルドした置き場を PATH の先頭に置く）。
-func command(dir string, env []string, step string) *exec.Cmd {
-	ctx := context.Background()
+func command(ctx context.Context, dir string, env []string, step string, _ ...string) *exec.Cmd {
 	var cmd *exec.Cmd
 	switch step {
 	case stepDeprecated:
@@ -121,20 +120,17 @@ func errorMessages(jsonl []byte) []string {
 }
 
 // planRoots は、roots のそれぞれで Policy の入力を出す terraform test を走らせ、出力を <out>/runs/<name>.jsonl に
-// 置き、一覧を <out>/plans.txt に書きます。落ちた root は最後まで走らせてから名指します。[errTool] の
+// 置き、一覧を <out>/plans.txt に書きます。out は呼び出し側が空にしておきます。落ちた root は最後まで走らせてから名指します。[errTool] の
 // ときは、残りを起動せず plans.txt を書かずに [errTool] を返し、それまでに落ちた root は文面にだけ添えます。
 func planRoots(roots []root, data, out string, w io.Writer, tool toolFunc) error {
 	runs := filepath.Join(out, "runs")
-	if err := os.RemoveAll(out); err != nil {
-		return xerrors.Wrapf(err, "%s の削除", out)
-	}
 	if err := os.MkdirAll(runs, 0o750); err != nil {
 		return xerrors.Wrapf(err, "%s の作成", runs)
 	}
 	var plans, failed []string
 	for _, r := range roots {
 		var stdout bytes.Buffer
-		cmd := tool(r.path, tfexec.Env(os.Environ(), "TF_DATA_DIR="+tfexec.DataDir(data, r.rel)), stepPlan)
+		cmd := tool(context.Background(), r.path, tfexec.Env(os.Environ(), "TF_DATA_DIR="+tfexec.DataDir(data, r.rel)), stepPlan)
 		cmd.Stdout, cmd.Stderr = &stdout, w
 		code, err := toolrun.Exec(cmd)
 		if err != nil {
@@ -205,6 +201,9 @@ func runPlan(args []string, w io.Writer, tool toolFunc, canary canaryFunc, root 
 	roots, err := listRoots(*base)
 	if err != nil {
 		return err
+	}
+	if _, err := workdir.Recreate(root, *out); err != nil {
+		return xerrors.Wrapf(err, "%s の作り直し", outDir)
 	}
 
 	return planRoots(roots, *data, outDir, w, tool)

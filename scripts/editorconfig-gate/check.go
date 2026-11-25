@@ -1,10 +1,10 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
@@ -26,15 +26,18 @@ func runCheck(args []string, w io.Writer, tool toolFunc, env envFunc, root strin
 	if *work == "" || *editorconfig == "" || *checkerConfig == "" || fset.NArg() > 0 {
 		return xerrors.Wrap(errUsage, "editorconfig-gate check -work <dir> -editorconfig <path> -checker-config <path>")
 	}
-	base, err := workdir.Resolve(root, *work)
-	if err != nil {
+	if _, err := workdir.Resolve(root, *work); err != nil {
 		return xerrors.Wrapf(errUsage, "-work %v", err)
 	}
 	gitEnv, err := env()
 	if err != nil {
 		return xerrors.Wrapf(errTool, "%v", err)
 	}
-	defer func() { _ = os.RemoveAll(base) }()
+	base, err := workdir.Recreate(root, *work)
+	if err != nil {
+		return xerrors.Wrapf(errRead, "-work %v", err)
+	}
+	defer workdir.Cleanup(root, *work, w)
 	fixture := func(sub string) fixturePaths {
 		return fixturePaths{work: filepath.Join(base, sub), editorconfig: *editorconfig, checkerConfig: *checkerConfig}
 	}
@@ -47,6 +50,10 @@ func runCheck(args []string, w io.Writer, tool toolFunc, env envFunc, root strin
 	if err := runExcludeCanary(fixture("exclude"), w, tool, gitEnv); err != nil {
 		return err
 	}
+	// 本走査の前に fixture を消す。走査の範囲を .gitignore の扱いに預けない。
+	if err := workdir.Remove(root, *work); err != nil {
+		return xerrors.Wrapf(errRead, "-work の後片付け: %v", err)
+	}
 	if err := runConfig(*checkerConfig, w, tool, gitEnv); err != nil {
 		return err
 	}
@@ -57,7 +64,7 @@ func runCheck(args []string, w io.Writer, tool toolFunc, env envFunc, root strin
 // runScan は、リポジトリ直下で本走査（引数なしの editorconfig-checker）を走らせ、出力を w へ写します。0 でない
 // 終了コードは errFailed です。
 func runScan(w io.Writer, tool toolFunc, env []string) error {
-	r, err := toolrun.Run(tool(".", checkerEnv(env), stepScan))
+	r, err := toolrun.Run(tool(context.Background(), ".", checkerEnv(env), stepScan))
 	fmt.Fprint(w, r.Combined)
 	if err != nil {
 		return err

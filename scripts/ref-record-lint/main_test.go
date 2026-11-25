@@ -64,7 +64,6 @@ func fixedLister(names []string, err error) listFunc {
 	return func(string) ([]string, error) { return names, err }
 }
 
-// lineOf は、body の中で sub が最初に現れる行の番号を返す。
 func lineOf(t *testing.T, body, sub string) string {
 	t.Helper()
 	i := strings.Index(body, sub)
@@ -1016,69 +1015,6 @@ func Test_scanReadme(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, c.want, scanReadme([]byte(c.content)))
-		})
-	}
-}
-
-func Test_stripComments(t *testing.T) {
-	t.Parallel()
-
-	for name, c := range map[string]struct {
-		text      string
-		open      bool
-		want      string
-		stillOpen bool
-	}{
-		"コメントが無ければそのまま":                        {"a", false, "a", false},
-		"1行のコメントは空になる":                         {"<!-- a -->", false, "", false},
-		"行末のコメントを外す":                           {"- A <!-- note -->", false, "- A ", false},
-		"開いたままの行は空になる":                         {"## x", true, "", true},
-		"閉じた後ろの文字は残す":                          {"b --> c", true, " c", false},
-		"1行に2つのコメント":                           {"a<!-- x -->b<!-- y -->c", false, "abc", false},
-		"inline code の中の開きは開かない":               {"`<!--` a", false, "`<!--` a", false},
-		"閉じない inline code の後ろは開く":              {"`a <!-- b", false, "`a ", true},
-		"閉じなければ開いたままを返す":                       {"a <!-- b", false, "a ", true},
-		"長さの違う並びを読み飛ばして inline code を閉じる":      {"`a``b<!-- c`", false, "`a``b<!-- c`", false},
-		"長さの違う閉じは inline code を閉じない":           {"`a``<!-- b", false, "`a``", true},
-		"2つ以上のバッククォートの inline code の中の開きは開かない": {"``a`<!--``", false, "``a`<!--``", false},
-		"閉じた同じ行で開き直す":                          {"<!-- a --> b <!-- c", false, " b ", true},
-		"コメントでない < の後ろの開きは開く":                  {"a <div> <!-- x", false, "a <div> ", true},
-		"<! で始まるがコメントでないものは文字":                 {"a <div> <!x> b", false, "a <div> <!x> b", false},
-		"バックスラッシュで逃がした < は開かない":                {"\\<!-- x", false, "\\<!-- x", false},
-		"逃がしたバックスラッシュの後ろの < は開く":               {"\\\\<!-- x", false, "\\\\", true},
-		"逃がしたバッククォートは inline code を開かない":       {"\\`<!-- x`", false, "\\`", true},
-		"<!--> は空のコメント":                        {"a<!-->b", false, "ab", false},
-		"<!---> は空のコメント":                       {"a<!--->b", false, "ab", false},
-		"<!----> は閉じたコメント":                     {"a<!---->b", false, "ab", false},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			got, stillOpen := stripComments(c.text, c.open)
-			assert.Equal(t, c.want, got)
-			assert.Equal(t, c.stillOpen, stillOpen)
-		})
-	}
-}
-
-func Test_cutEmptyComment(t *testing.T) {
-	t.Parallel()
-
-	for name, c := range map[string]struct {
-		rest string
-		want string
-		ok   bool
-	}{
-		"> で閉じる":          {">b", "b", true},
-		"-> で閉じる":         {"->b", "b", true},
-		"--> は空のコメントではない": {"-->b", "", false},
-		"本文が続く":           {" a -->", "", false},
-		"空":               {"", "", false},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			got, ok := cutEmptyComment(c.rest)
-			assert.Equal(t, c.want, got)
-			assert.Equal(t, c.ok, ok)
 		})
 	}
 }

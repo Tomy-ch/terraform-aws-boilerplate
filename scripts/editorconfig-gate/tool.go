@@ -26,8 +26,7 @@ const (
 // editorconfig-checker は GITHUB_ACTIONS=true で出力を github-actions の形（`::error file=...`）へ替えます。出力を
 // 読んで判定する canary（stepCheck）と -dry-run は -format default で形を固定します。本走査（stepScan）は出力を
 // 写して終了コードだけで判定するので形を固定せず、GitHub Actions では違反が注釈として出ます。
-func command(dir string, env []string, step string) *exec.Cmd {
-	ctx := context.Background()
+func command(ctx context.Context, dir string, env []string, step string, _ ...string) *exec.Cmd {
 	var cmd *exec.Cmd
 	switch step {
 	case stepGitInit:

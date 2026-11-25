@@ -36,7 +36,6 @@ func Test_runCanary(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, filepath.Join(workReal, "work")+" "+stepScan+" ", calls[0])
 		assert.Equal(t, realCwd(t)+" "+stepFiles+" ", calls[1], "--files は fixture ではなくリポジトリ直下（cwd）で走る")
-		assert.NoDirExists(t, work)
 	})
 
 	degenerate := map[string]struct {
@@ -146,12 +145,10 @@ func Test_readConfig(t *testing.T) {
 func Test_buildFixture(t *testing.T) {
 	t.Parallel()
 
-	t.Run("作り直し、設定の複写と隠しディレクトリの誤綴りを置く", func(t *testing.T) {
+	t.Run("設定の複写と隠しディレクトリの誤綴りを置く", func(t *testing.T) {
 		t.Parallel()
 		work := filepath.Join(t.TempDir(), "w")
-		stale := writeFile(t, filepath.Join(work, "stale"), "")
 		require.NoError(t, buildFixture(work, []byte("CFG")))
-		assert.NoFileExists(t, stale)
 		cfg, err := os.ReadFile(filepath.Join(work, ".typos.toml"))
 		require.NoError(t, err)
 		assert.Equal(t, "CFG", string(cfg))

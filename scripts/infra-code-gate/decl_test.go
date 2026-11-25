@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lintreport"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/requiredchecks"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 )
 
 func ptr[T any](v T) *T { return &v }
@@ -44,11 +46,30 @@ var gateWorkflowFixtures = map[string]string{
 	"lint.yaml":             "jobs:\n  l:\n    steps:\n      # make infra-code-gate は走らせない\n      - name: make ci-apply-admin-identity の説明\n        run: make md-lint\n",
 }
 
+// goSourceFixtures は、検出の道具と、それが import するパッケージの最小の形です。lib/b はテストだけが、lib/c は
+// lib/a だけが import します。
+var goSourceFixtures = map[string]string{
+	goModPath:                              "module example.com/m/scripts\n\ngo 1.22\n",
+	"scripts/infra-code-gate/main.go":      "package main\n\nimport _ \"example.com/m/scripts/lib/a\"\n",
+	"scripts/infra-code-gate/main_test.go": "package main\n\nimport (\n\t\"testing\"\n\n\t_ \"example.com/m/scripts/lib/b\"\n)\n",
+	"scripts/hcl-input/main.go":            "package main\n",
+	"scripts/hcl-tally/main.go":            "package main\n\nimport \"fmt\"\n",
+	"scripts/tf-job-lint/main.go":          "package main\n",
+	"scripts/lib/a/a.go":                   "package a\n\nimport _ \"example.com/m/scripts/lib/c\"\n",
+	"scripts/lib/b/b.go":                   "package b\n",
+	"scripts/lib/c/c.go":                   "package c\n",
+}
+
+var goTargetFixtures = []string{
+	"scripts/hcl-input/", "scripts/hcl-tally/", "scripts/infra-code-gate/",
+	"scripts/lib/a/", "scripts/lib/b/", "scripts/lib/c/", "scripts/tf-job-lint/",
+}
+
 var gateWorkflowTargets = []string{".github/workflows/terraform-apply.yaml", ".github/workflows/terraform-gates.yaml", ".github/workflows/terraform-unlock.yaml"}
 
 func codeownersFor(extra ...string) string {
 	var b strings.Builder
-	for _, t := range append(append(append([]string{}, codeownerTargets...), gateWorkflowTargets...), extra...) {
+	for _, t := range append(append(append(append([]string{}, codeownerTargets...), goTargetFixtures...), gateWorkflowTargets...), extra...) {
 		b.WriteString(t + " @owner\n")
 	}
 	return b.String()
@@ -64,6 +85,9 @@ func buildRepo(t *testing.T) string {
 	writeFile(t, filepath.Join(repo, "usecases/x/docs/adr/0001-fn-runtime.md"), acceptedADR)
 	for name, body := range gateWorkflowFixtures {
 		writeFile(t, filepath.Join(repo, ".github/workflows", name), body)
+	}
+	for name, body := range goSourceFixtures {
+		writeFile(t, filepath.Join(repo, name), body)
 	}
 	for _, target := range codeownerTargets {
 		if strings.HasSuffix(target, "/") {
@@ -86,6 +110,7 @@ func Test_runDecl(t *testing.T) {
 		var out bytes.Buffer
 		require.NoError(t, runDecl([]string{"-decl", testDeclPath}, repo, &out))
 		assert.Contains(t, out.String(), "許可リスト 2 項目")
+		assert.Contains(t, out.String(), fmt.Sprintf("code owner の対象 %d 件", len(codeownerTargets)+len(goTargetFixtures)+len(gateWorkflowTargets)+1))
 	})
 
 	t.Run("異常系", func(t *testing.T) {
@@ -150,10 +175,23 @@ func Test_runDecl(t *testing.T) {
 			},
 			"code owner の対象の path が実在しなければ違反": {
 				mutate: func(t *testing.T, repo string) {
-					require.NoError(t, os.RemoveAll(filepath.Join(repo, "scripts/hcl-tally")))
+					require.NoError(t, os.Remove(filepath.Join(repo, ".makefiles/terraform/hcl-input.mk")))
 				},
 				want: errViolations,
-				msg:  "対象 scripts/hcl-tally/ が実在しません",
+				msg:  "対象 .makefiles/terraform/hcl-input.mk が実在しません",
+			},
+			"検出の道具が推移的に import するパッケージの code owner が欠ければ違反": {
+				mutate: func(t *testing.T, repo string) {
+					writeFile(t, filepath.Join(repo, defaultCodeownersPath), strings.Replace(codeownersFor("usecases/x/internal/fn/src"), "scripts/lib/c/ @owner\n", "", 1))
+				},
+				want: errViolations,
+				msg:  "scripts/lib/c/ に当たる行がありません",
+			},
+			"検出の道具のディレクトリが無ければエラー": {
+				mutate: func(t *testing.T, repo string) {
+					testenv.RemoveUnder(t, repo, "scripts/hcl-tally")
+				},
+				want: errGoSource,
 			},
 			"ADR が Accepted でなければ違反": {
 				mutate: func(t *testing.T, repo string) {
@@ -454,20 +492,24 @@ func Test_checkADR(t *testing.T) {
 	writeFile(t, filepath.Join(repo, "docs/adr/0005-deep.md"), strings.Replace(acceptedADR, "## 入出力", "#### 入出力", 1))
 	writeFile(t, filepath.Join(repo, "docs/adr/0006-no-status.md"), strings.Replace(acceptedADR, "- Status: Accepted\n", "", 1))
 	writeFile(t, filepath.Join(repo, "docs/adr/0007-commented.md"), strings.Replace(acceptedADR, "## 入出力\n", "<!--\n## 入出力\n-->\n", 1))
+	writeFile(t, filepath.Join(repo, "docs/adr/0008-unclosed.md"), acceptedADR+"<!-- 閉じない\n")
+	writeFile(t, filepath.Join(repo, "docs/adr/0009-unclosed-proposed.md"), strings.Replace(acceptedADR, "Accepted", "Proposed", 1)+"<!--\n")
 
 	tests := map[string]struct {
 		id   string
 		want []string
 	}{
-		"Accepted で4見出しを持てば通る": {id: "repository-wide/ok"},
-		"見出しのレベルは問わない":         {id: "repository-wide/deep"},
-		"Status 行の無い ADR は落ちる": {id: "repository-wide/no-status", want: []string{"Status が Accepted ではありません"}},
-		"HTML コメントの中の見出しは数えない": {id: "repository-wide/commented", want: []string{"見出し「入出力」がありません"}},
-		"Accepted でなければ落ちる":    {id: "repository-wide/proposed", want: []string{"Status が Accepted ではありません"}},
-		"見出しが欠ければ落ちる":          {id: "repository-wide/no-heading", want: []string{"見出し「入出力」がありません"}},
-		"フェンスの中の見出しは数えない":      {id: "repository-wide/fenced", want: []string{"見出し「入出力」がありません"}},
-		"実在しない ADR は落ちる":       {id: "repository-wide/none", want: []string{"identity に当たる ADR がありません"}},
-		"identity の形でない参照は落ちる": {id: "0001", want: []string{"`<scope>/<slug>` の形ではありません"}},
+		"Accepted で4見出しを持てば通る":         {id: "repository-wide/ok"},
+		"見出しのレベルは問わない":                 {id: "repository-wide/deep"},
+		"Status 行の無い ADR は落ちる":         {id: "repository-wide/no-status", want: []string{"Status が Accepted ではありません"}},
+		"HTML コメントの中の見出しは数えない":         {id: "repository-wide/commented", want: []string{"見出し「入出力」がありません"}},
+		"Accepted でなければ落ちる":            {id: "repository-wide/proposed", want: []string{"Status が Accepted ではありません"}},
+		"見出しが欠ければ落ちる":                  {id: "repository-wide/no-heading", want: []string{"見出し「入出力」がありません"}},
+		"フェンスの中の見出しは数えない":              {id: "repository-wide/fenced", want: []string{"見出し「入出力」がありません"}},
+		"見出しをすべて持っても、閉じないコメントは落ちる":     {id: "repository-wide/unclosed", want: []string{"HTML コメントが閉じていません"}},
+		"閉じないコメントは Status の違反と並べて報告する": {id: "repository-wide/unclosed-proposed", want: []string{"Status が Accepted ではありません", "HTML コメントが閉じていません"}},
+		"実在しない ADR は落ちる":               {id: "repository-wide/none", want: []string{"identity に当たる ADR がありません"}},
+		"identity の形でない参照は落ちる":         {id: "0001", want: []string{"`<scope>/<slug>` の形ではありません"}},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -482,6 +524,223 @@ func Test_checkADR(t *testing.T) {
 	}
 }
 
+func Test_goTargets(t *testing.T) {
+	t.Parallel()
+
+	build := func(t *testing.T, extra map[string]string) string {
+		t.Helper()
+		repo := t.TempDir()
+		for name, body := range goSourceFixtures {
+			writeFile(t, filepath.Join(repo, name), body)
+		}
+		for name, body := range extra {
+			writeFile(t, filepath.Join(repo, name), body)
+		}
+		return repo
+	}
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		tests := map[string]struct {
+			extra map[string]string
+			want  []string
+		}{
+			"道具と、テストを含めて推移的に import する同じモジュールのパッケージを返す": {want: goTargetFixtures},
+			"2つの経路で import されるパッケージは1度だけ返す": {
+				extra: map[string]string{"scripts/lib/b/b.go": "package b\n\nimport _ \"example.com/m/scripts/lib/c\"\n"},
+				want:  goTargetFixtures,
+			},
+			"循環する import でも終わる": {
+				extra: map[string]string{"scripts/lib/c/c.go": "package c\n\nimport _ \"example.com/m/scripts/lib/a\"\n"},
+				want:  goTargetFixtures,
+			},
+			"module のパスを接頭辞にだけ持つ import はたどらない": {
+				extra: map[string]string{"scripts/hcl-input/main.go": "package main\n\nimport _ \"example.com/m/scriptsx/foo\"\n"},
+				want:  goTargetFixtures,
+			},
+			"module の root の import は root のディレクトリをたどる": {
+				extra: map[string]string{
+					"scripts/hcl-input/main.go": "package main\n\nimport _ \"example.com/m/scripts\"\n",
+					"scripts/root.go":           "package scripts\n",
+				},
+				want: append([]string{"scripts/"}, goTargetFixtures...),
+			},
+		}
+		for name, tt := range tests {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				got, err := goTargets(build(t, tt.extra), detectionTools)
+				require.NoError(t, err)
+				assert.Equal(t, tt.want, got)
+			})
+		}
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		tests := map[string]struct {
+			mutate func(t *testing.T, repo string)
+			msg    string
+		}{
+			"モジュールの宣言が無い": {
+				mutate: func(t *testing.T, repo string) { require.NoError(t, os.Remove(filepath.Join(repo, goModPath))) },
+				msg:    goModPath,
+			},
+			"import 先のディレクトリが無い": {
+				mutate: func(t *testing.T, repo string) {
+					testenv.RemoveUnder(t, repo, "scripts/lib/c")
+				},
+				msg: "scripts/lib/c",
+			},
+			"道具のディレクトリに Go のソースが無い": {
+				mutate: func(t *testing.T, repo string) {
+					require.NoError(t, os.Remove(filepath.Join(repo, "scripts/tf-job-lint/main.go")))
+				},
+				msg: "scripts/tf-job-lint に Go のソースがありません",
+			},
+			"解釈できないソース": {
+				mutate: func(t *testing.T, repo string) {
+					writeFile(t, filepath.Join(repo, "scripts/lib/b/b.go"), "package b\nimport (\n")
+				},
+				msg: "scripts/lib/b/b.go",
+			},
+			"module の root の import で root に Go のソースが無い": {
+				mutate: func(t *testing.T, repo string) {
+					writeFile(t, filepath.Join(repo, "scripts/hcl-input/main.go"), "package main\n\nimport _ \"example.com/m/scripts\"\n")
+				},
+				msg: "scripts に Go のソースがありません",
+			},
+			"道具が同じモジュールのパッケージを1つも import しない": {
+				mutate: func(t *testing.T, repo string) {
+					writeFile(t, filepath.Join(repo, "scripts/infra-code-gate/main.go"), "package main\n")
+					writeFile(t, filepath.Join(repo, "scripts/infra-code-gate/main_test.go"), "package main\n")
+				},
+				msg: "module example.com/m/scripts のパッケージがありません",
+			},
+			"module のパスが読み違えられて import に当たらない": {
+				mutate: func(t *testing.T, repo string) {
+					writeFile(t, filepath.Join(repo, goModPath), "module example.com/other\n")
+				},
+				msg: "module example.com/other のパッケージがありません",
+			},
+		}
+		for name, tt := range tests {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				repo := build(t, nil)
+				tt.mutate(t, repo)
+				got, err := goTargets(repo, detectionTools)
+				require.ErrorIs(t, err, errGoSource)
+				require.ErrorContains(t, err, tt.msg)
+				assert.Nil(t, got)
+			})
+		}
+	})
+
+	t.Run("リポジトリのディレクトリが無ければエラー", func(t *testing.T) {
+		t.Parallel()
+		missing := filepath.Join(t.TempDir(), "none")
+		got, err := goTargets(missing, detectionTools)
+		require.ErrorIs(t, err, errGoSource)
+		require.ErrorContains(t, err, missing)
+		assert.Nil(t, got)
+	})
+}
+
+func Test_modulePath(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		for name, c := range map[string]struct {
+			content string
+			want    string
+		}{
+			"module 行のパスを返す":      {"// x\nmodule example.com/m/scripts\n\ngo 1.22\n", "example.com/m/scripts"},
+			"引用したパスを外して返す":        {"module \"example.com/m/scripts\"\n", "example.com/m/scripts"},
+			"行末のコメントを含めない":        {"module example.com/m/scripts // c\n", "example.com/m/scripts"},
+			"ブロックの形の module 行も読む": {"module (\n\texample.com/m/scripts\n)\n", "example.com/m/scripts"},
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				repo := t.TempDir()
+				writeFile(t, filepath.Join(repo, goModPath), c.content)
+				got, err := modulePath(os.DirFS(repo))
+				require.NoError(t, err)
+				assert.Equal(t, c.want, got)
+			})
+		}
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		for name, content := range map[string]string{
+			"module 行が無い":      "go 1.22\n",
+			"パスの無い module 行":   "module \n",
+			"パスが2つある module 行": "module a b\n",
+			"宣言が無い":            "",
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				repo := t.TempDir()
+				if content != "" {
+					writeFile(t, filepath.Join(repo, goModPath), content)
+				}
+				got, err := modulePath(os.DirFS(repo))
+				require.ErrorIs(t, err, errGoSource)
+				require.ErrorContains(t, err, goModPath)
+				assert.Empty(t, got)
+			})
+		}
+	})
+}
+
+func Test_dirImports(t *testing.T) {
+	t.Parallel()
+
+	t.Run("直下のソースとテストの import を返し、Go でないファイルと下のディレクトリは読まない", func(t *testing.T) {
+		t.Parallel()
+		repo := t.TempDir()
+		writeFile(t, filepath.Join(repo, "d/a.go"), "package d\n\nimport \"fmt\"\n")
+		writeFile(t, filepath.Join(repo, "d/a_test.go"), "package d\n\nimport \"testing\"\n")
+		writeFile(t, filepath.Join(repo, "d/README.md"), "import \"x\"")
+		writeFile(t, filepath.Join(repo, "d/sub/s.go"), "package sub\n\nimport \"os\"\n")
+		got, err := dirImports(os.DirFS(repo), "d")
+		require.NoError(t, err)
+		assert.ElementsMatch(t, []string{"fmt", "testing"}, got)
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		for name, c := range map[string]struct {
+			files map[string]string
+			msg   string
+		}{
+			"ディレクトリが無い":  {files: map[string]string{"other/a.go": "package other\n"}, msg: "d"},
+			"Go のソースが無い": {files: map[string]string{"d/README.md": "x"}, msg: "d に Go のソースがありません"},
+			"x.go という名前のディレクトリはソースと数えない": {files: map[string]string{"d/x.go/a.txt": "x"}, msg: "d に Go のソースがありません"},
+			"解釈できないソースがある":               {files: map[string]string{"d/a.go": "package d\nimport (\n"}, msg: "d/a.go"},
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				repo := t.TempDir()
+				for p, body := range c.files {
+					writeFile(t, filepath.Join(repo, p), body)
+				}
+				got, err := dirImports(os.DirFS(repo), "d")
+				require.ErrorIs(t, err, errGoSource)
+				require.ErrorContains(t, err, c.msg)
+				assert.Nil(t, got)
+			})
+		}
+	})
+}
+
 func Test_ownedTargets(t *testing.T) {
 	t.Parallel()
 
@@ -491,7 +750,8 @@ func Test_ownedTargets(t *testing.T) {
 	}}
 	got := ownedTargets(d, gateWorkflowTargets)
 	assert.Equal(t, append(append(append([]string{}, codeownerTargets...), gateWorkflowTargets...), "usecases/x/src"), got)
-	assert.Len(t, codeownerTargets, 10, "固定の対象を書き換えていない")
+	assert.Len(t, codeownerTargets, 5, "固定の対象を書き換えていない")
+	assert.NotContains(t, codeownerTargets, "scripts/lib/adrdoc/", "検出の道具が import するパッケージは直書きせず導く")
 	assert.NotContains(t, codeownerTargets, ".github/workflows/terraform-apply.yaml", "workflow は直書きせず導く")
 }
 

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -71,16 +72,19 @@ func installLocked(ctx context.Context, dir, lock string, d deps) error {
 	}
 	defer release()
 
-	cmd := d.tool(ctx, dir, stepInstall)
+	cmd := d.tool(ctx, dir, nil, stepInstall)
 	// 道具の stdin（パイプで渡すコミットメッセージなど）を install に読ませない。
 	cmd.Stdin = nil
 	cmd.Stdout, cmd.Stderr = d.stderr, d.stderr
-	runErr := cmd.Run()
+	code, runErr := toolrun.Exec(cmd)
 	if ctx.Err() != nil {
 		return errInterrupted
 	}
 	if runErr != nil {
-		return xerrors.Wrap(errInstall, runErr.Error())
+		return xerrors.Wrap(runErr, "install")
+	}
+	if code != 0 {
+		return xerrors.Wrapf(errInstall, "exit status %d", code)
 	}
 
 	return nil

@@ -1,77 +1,21 @@
 // Package main は、Terraform を動かす入口（人の手元の .makefiles/terraform/operation/local.mk と、
-// CI の ci.mk）が aws と terraform に渡す値を組み立てて検証するツール。
+// CI の ci.mk）の段と、それらが使う値を組み立てて検証するツール。
 //
-//	tf-local region <root>
-//	    <root>/backend.tf の backend の region を1行で出す。<root>/providers.tf の provider の
-//	    region と違えば失敗する（Bucket 名の region は provider の region から決まる）
-//	tf-local bucket -project <p> -env <e> [-kind tfstate|tfplan|tfapply] -region <r> -identity <out>
-//	    `aws sts get-caller-identity --query '[Account,Arn]' --output text` の出力から、
-//	    state Bucket の名前を1行で出す
-//	tf-local state-key -project <p> -env <e> -region <r> -identity <out> -aliases <json> -encryption <json> -missing <fail|sse-s3>
-//	    `aws kms list-aliases` と `aws s3api get-bucket-encryption` の JSON から、init に渡す
-//	    `-backend-config=kms_key_id=<state の鍵の ARN>` を1行で出す。Bucket の既定が SSE-KMS で鍵が違えば失敗する。
-//	    alias が無ければ失敗し、-missing sse-s3 で既定が AES256 のときだけ空行を出す
 //	tf-local env-unset
 //	    aws と terraform の振る舞いを呼び出し元の環境変数で変えさせないために外す名前を、
 //	    `env` に渡す `-u <名前>` の並びで出す
 //	tf-local plan-header
 //	    plan の log の1行目（plan した commit と、作業ツリーに未コミットの変更があるか）を出す
-//	tf-local role-arn -project <p> -env <e> -role <役割> -account <id>
-//	    CI が assume する role の ARN を1行で出す。役割は lib/cientry の登録簿の role に限る
-//	tf-local assume-denied -role <役割> -exitcode <n> <stderr-file>
-//	    `aws sts assume-role-with-web-identity` の終了コードと stderr から、assume が AccessDenied で拒否されたことを
-//	    確かめて1行で出す。assume が通ったか、拒否が AccessDenied でなければ失敗する
-//	tf-local oidc-url
-//	    GitHub Actions の OIDC token を STS 向けに要求する URL を1行で出す。job に id-token: write が無く、
-//	    要求先か要求の token が環境変数に無ければ失敗する
-//	tf-local oidc-token <response-file>
-//	    OIDC token の要求の応答（JSON）から token を1行で出す
-//	tf-local oidc-sub <token-file>
-//	    GitHub Actions の OIDC token の sub を1行で出す
-//	tf-local plan-summary -exitcode <0|1|2> <show.json>
-//	    plan の終了コードと `terraform show -json` の変更を突き合わせ、件数の要約を1行で出す。終了コードが 1 なら
-//	    JSON を読まずに plan の失敗として落ちる
-//	tf-local plan-key (-pr <n> | -branch <b>) -run <id> -attempt <n> -root <root>
-//	    plan の出力を置く object の key を1行で出す
-//	tf-local apply-key -run <id> -attempt <n> -root <root>
-//	    apply の出力を置く object の key を1行で出す
-//	tf-local apply-result -exitcode <n>
-//	    `timeout` で包んだ apply の終了コードから成否を読む。0 なら成功の行を出し、124 は打ち切り、
-//	    ほかは apply の失敗として落ちる
-//	tf-local failure-kind -step <plan|apply> -exitcode <n> <全文>
-//	    apply の入口の段の種類（plan・lock・apply・timeout・applied）を1行で出す。終了コードが 1 のときだけ全文を
-//	    読み、lock の取得の失敗なら lock を出す
 //	tf-local policy-result -namespace <ns> -rego <file> <conftest.json>
 //	tf-local policy-result -policy <dir> <conftest.json>
 //	    `conftest test -o json` の結果から、名前空間の規則の評価件数と違反を読む。違反が無いのに
 //	    評価が rego の `deny contains` の数でなければ失敗する。-policy は dir の下の rego を走査して、
 //	    package ごとに突き合わせる
 //
-//	tf-local account -identity <out>
-//	    `aws sts get-caller-identity --query '[Account,Arn]' --output text` の出力から、アカウント ID を1行で出す
-//	tf-local sha256 <file>
-//	    ファイルの SHA-256 を base64 で1行で出す（`aws s3api put-object --checksum-sha256` に渡す形）
-//	tf-local lock-key <root>
-//	    <root>/backend.tf の key から、state の lock file の key を1行で出す
-//	tf-local lock-etag -key <k> [-want absent|present] <list.json>
-//	    `aws s3api list-objects-v2 --no-paginate` の応答から、lock file の ETag を1行で出す。lock が無ければ空行を出す。
-//	    -want absent は lock があれば、-want present は lock が無ければ失敗する
-//	tf-local lock-stale -etag <e> -meta <meta.json> <lock.json>
-//	    `aws s3api get-object` の応答と lock file から、消してよい lock の説明を1行で出す。lock が apply の job の
-//	    timeout と余裕を超えて古くなければ、説明を添えて失敗する
-//	tf-local lock-held -etag <e> -meta <meta.json> <lock.json>
-//	    lock を残す job が残した lock の説明と、lock の解除が消せるようになる時刻を出す。lock の解除が消す形の
-//	    lock でなければ失敗する
-//	tf-local lock-wait -pid <pid> [-interval <d>] [-limit <d>] <全文>
-//	    裏で走る plan の全文に、lock を取った後の行が現れたら held を出す。現れる前に plan が終われば空行を出す。
-//	    どちらも起きずに limit を過ぎたら失敗する
-//
-// aws も terraform も起動しない。起動は make が行い、ここは値だけを返す（ADR-0702 決定3）。
-// plan-header だけは git を起動して作業ツリーを読む。assume-denied・oidc-token・oidc-sub・plan-summary・failure-kind・
-// policy-result・sha256・lock-key・lock-etag・lock-stale・lock-held・lock-wait はファイルを読み、oidc-url は環境変数を読み、
-// lock-stale と lock-held は時刻を読み、lock-wait は pid のプロセスが生きているかを見る。
-// 値を決められない入力はすべて非ゼロで終わり、make はその時点で terraform を呼ばない。
-// make のレシピに分岐を置かず、判断はすべてここのテストで固定する。
+// 入口の段は、1回の起動で1つの目的の道具（aws か terraform か conftest）だけを、固定の引数で起動する
+// （ADR-0702 決定3・24）。人の手元の段は local.go、CI の資格情報の段は cicred.go、plan と apply の段は ciflow.go、
+// lock の解除と lock を残す段は cihold.go が持つ。値を決められない入力はすべて非ゼロで終わり、make はその時点で
+// 後の段を起動しない。make のレシピに分岐を置かず、判断はすべてここのテストで固定する。
 //
 // backend block は式を持てないので、Bucket 名・state の鍵の alias 名・role 名の規則をここに写す。Bucket 名と alias 名の正本は
 // modules/s3 と usecases/state-backend、role 名の正本は usecases/deployment-identity で、写しのずれはテストが
@@ -82,7 +26,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -122,7 +65,7 @@ var (
 	unsetNames    = []string{"TF_WORKSPACE", "TF_DATA_DIR", "TF_CLI_CONFIG_FILE", "TF_REATTACH_PROVIDERS",
 		"ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"}
 
-	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> [-kind tfstate|tfplan|tfapply] -region <r> -identity <out> | state-key ... | env-unset | plan-header | role-arn ... | assume-denied -role <r> -exitcode <n> <file> | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ... | apply-key ... | apply-result -exitcode <n> | failure-kind -step <s> -exitcode <n> <file> | policy-result -namespace <ns> -rego <file> <file> | policy-result -policy <dir> <file> | account -identity <out> | sha256 <file> | oidc-url | oidc-token <file> | lock-key <root> | lock-etag -key <k> [-want absent|present] <file> | lock-stale -etag <e> -meta <file> <file> | lock-held -etag <e> -meta <file> <file> | lock-wait -pid <pid> [-interval <d>] [-limit <d>] <file>")
+	errUsage            = xerrors.New("❌ usage: tf-local env-unset | plan-header | policy-result ... | local-prepare|local-init|local-plan ... | ci-credentials|ci-assume-denied ... | ci-prepare|ci-init|ci-plan|ci-policy|ci-apply|ci-upload|ci-finish ... | ci-unlock ... | ci-hold-absent|ci-hold-plan|ci-hold-verify ...")
 	errBackendMissing   = xerrors.New("❌ backend.tf がありません")
 	errProvidersMissing = xerrors.New("❌ providers.tf がありません")
 	errRegionMismatch   = xerrors.New("❌ provider と backend の region が違います")
@@ -143,12 +86,15 @@ type deps struct {
 	now      func() time.Time
 	alive    func(pid int) bool
 	sleep    func(time.Duration)
+	tool     toolFunc
+	fetch    fetchFunc
+	stderr   io.Writer
 }
 
 func main() {
 	log.SetFlags(0)
 
-	if err := run(os.Args[1:], os.Stdout, deps{readFile: os.ReadFile, environ: os.Environ(), git: gitOutput, now: time.Now, alive: processAlive, sleep: time.Sleep}); err != nil {
+	if err := run(os.Args[1:], os.Stdout, deps{readFile: os.ReadFile, environ: os.Environ(), git: gitOutput, now: time.Now, alive: processAlive, sleep: time.Sleep, tool: command, fetch: fetchOIDC, stderr: os.Stderr}); err != nil {
 		log.Fatalf("%v", err)
 	}
 }
@@ -158,11 +104,6 @@ var argCounts = map[string]int{
 	"region":      2,
 	"env-unset":   1,
 	"plan-header": 1,
-	"oidc-url":    1,
-	"oidc-token":  2,
-	"oidc-sub":    2,
-	"sha256":      2,
-	"lock-key":    2,
 }
 
 func run(args []string, out io.Writer, d deps) error {
@@ -174,11 +115,6 @@ func run(args []string, out io.Writer, d deps) error {
 		return errUsage
 	}
 
-	arg := ""
-	if len(args) > 1 {
-		arg = args[1]
-	}
-
 	var (
 		value string
 		err   error
@@ -186,51 +122,45 @@ func run(args []string, out io.Writer, d deps) error {
 
 	switch args[0] {
 	case "region":
-		value, err = rootRegion(arg, d.readFile)
-	case "bucket":
-		value, err = runBucket(args[1:])
-	case "state-key":
-		value, err = runStateKey(args[1:])
+		value, err = rootRegion(args[len(args)-1], d.readFile)
 	case "env-unset":
 		value, err = envUnset(d.environ)
 	case "plan-header":
 		value, err = planHeader(d.git)
-	case "role-arn":
-		value, err = runRoleARN(args[1:])
-	case "assume-denied":
-		value, err = runAssumeDenied(args[1:], d.readFile)
-	case "oidc-url":
-		value, err = oidcURL(d.environ)
-	case "oidc-token":
-		value, err = oidcToken(arg, d.readFile)
-	case "oidc-sub":
-		value, err = oidcSub(arg, d.readFile)
-	case "plan-summary":
-		value, err = runPlanSummary(args[1:], d.readFile)
-	case "plan-key":
-		value, err = runPlanKey(args[1:])
-	case "apply-key":
-		value, err = runApplyKey(args[1:])
-	case "apply-result":
-		value, err = runApplyResult(args[1:])
-	case "failure-kind":
-		value, err = runFailureKind(args[1:], d.readFile)
 	case "policy-result":
 		value, err = runPolicyResult(args[1:], d.readFile)
-	case "account":
-		value, err = runAccount(args[1:])
-	case "sha256":
-		value, err = fileSHA256(arg, d.readFile)
-	case "lock-key":
-		value, err = lockKey(arg, d.readFile)
-	case "lock-etag":
-		value, err = runLockETag(args[1:], d.readFile)
-	case "lock-stale":
-		value, err = runLockStale(args[1:], d)
-	case "lock-held":
-		value, err = runLockHeld(args[1:], d)
-	case "lock-wait":
-		value, err = runLockWait(args[1:], d)
+	case "local-prepare":
+		value, err = localPrepare(args[1:], d, d.stderr)
+	case "local-init":
+		value, err = localInit(args[1:], d, out, d.stderr)
+	case "local-plan":
+		value, err = localPlan(args[1:], d, out, d.stderr)
+	case "ci-credentials":
+		value, err = ciCredentials(args[1:], d, out)
+	case "ci-assume-denied":
+		value, err = ciAssumeDenied(args[1:], d, out)
+	case "ci-prepare":
+		value, err = ciPrepareStep(args[1:], d, out)
+	case "ci-init":
+		value, err = ciInitStep(args[1:], d)
+	case "ci-plan":
+		value, err = ciPlanStep(args[1:], d, out)
+	case "ci-policy":
+		value, err = ciPolicyStep(args[1:], d, out)
+	case "ci-apply":
+		value, err = ciApplyStep(args[1:], d, out)
+	case "ci-upload":
+		value, err = ciUploadStep(args[1:], d, out)
+	case "ci-finish":
+		value, err = ciFinishStep(args[1:], d)
+	case "ci-unlock":
+		value, err = ciUnlockStep(args[1:], d, out)
+	case "ci-hold-absent":
+		value, err = ciHoldAbsentStep(args[1:], d)
+	case "ci-hold-plan":
+		value, err = ciHoldPlanStep(args[1:], d)
+	case "ci-hold-verify":
+		value, err = ciHoldVerifyStep(args[1:], d, out)
 	default:
 		return xerrors.Wrap(errUsage, args[0])
 	}
@@ -242,45 +172,6 @@ func run(args []string, out io.Writer, d deps) error {
 	_, err = fmt.Fprintln(out, value)
 
 	return err
-}
-
-func runBucket(args []string) (string, error) {
-	fs := flag.NewFlagSet("bucket", flag.ContinueOnError)
-	project := fs.String("project", "", "")
-	env := fs.String("env", "", "")
-	kind := fs.String("kind", "tfstate", "")
-	region := fs.String("region", "", "")
-	identity := fs.String("identity", "", "")
-
-	if err := fs.Parse(args); err != nil {
-		return "", xerrors.Wrap(errUsage, err.Error())
-	}
-
-	if fs.NArg() > 0 {
-		return "", xerrors.Wrap(errUsage, strings.Join(fs.Args(), " "))
-	}
-
-	account, err := accountOf(*identity)
-	if err != nil {
-		return "", err
-	}
-
-	return bucketName(*project, *env, *kind, account, *region)
-}
-
-func runAccount(args []string) (string, error) {
-	fs := flag.NewFlagSet("account", flag.ContinueOnError)
-	identity := fs.String("identity", "", "")
-
-	if err := fs.Parse(args); err != nil {
-		return "", xerrors.Wrap(errUsage, err.Error())
-	}
-
-	if fs.NArg() > 0 {
-		return "", errUsage
-	}
-
-	return accountOf(*identity)
 }
 
 // accountOf は、callerAccount の失敗の文から入力の値を落とします。文は CI の公開されるログに出る。
