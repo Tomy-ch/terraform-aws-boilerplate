@@ -90,7 +90,7 @@ type fakeTools struct {
 	calls   []toolCall
 }
 
-func (f *fakeTools) tool(ctx context.Context, dir string, env []string, step string, _ ...string) *exec.Cmd {
+func (f *fakeTools) tool(ctx context.Context, dir string, _ []string, step string, _ ...string) *exec.Cmd {
 	f.mu.Lock()
 	f.calls = append(f.calls, toolCall{dir: dir, step: step})
 	script, ok := f.scripts[step]
