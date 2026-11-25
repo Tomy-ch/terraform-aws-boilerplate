@@ -6,13 +6,13 @@
 
 すべての作業に3つの制約が掛かる。
 
-1. **決定的な検査が在るなら、それがあなたの判断より上位に立つ。** `terraform validate`、TFLint、Trivy、`terraform test`、Policy Test、CI の実行。結論したことではなく、それが何と言ったかを報告し、行や件数を落とすフィルタ越しに報告しない。検査を持たない安全性の主張は、保証として扱わない（[0301](docs/adr/0301-least-privilege-policy.md) 決定20、[0401](docs/adr/0401-testing-policy.md) 決定3）。
+1. **決定的な検査が在るなら、それがあなたの判断より上位に立つ。** `terraform validate`、TFLint、Security の道具（[0501](docs/adr/0501-development-tooling-composition.md) 決定6）、`terraform test`、Policy Test、CI の実行。結論したことではなく、それが何と言ったかを報告し、行や件数を落とすフィルタ越しに報告しない。検査を持たない安全性の主張は、保証として扱わない（[0301](docs/adr/0301-least-privilege-policy.md) 決定20、[0401](docs/adr/0401-testing-policy.md) 決定3）。
 2. **アーキテクチャと方針の決定は、人のゲートを残す。** 決定と選択肢を差し出すのであって、選ばない。どこがそれに当たるかは *手を止めてよい場所* が閉じた一覧として持ち、その外では決めて、決定を Pull Request へ記録する。
 3. **インフラは AI に依存しない。** `terraform validate` / `terraform test` / `terraform plan` / `terraform apply` と CI の必須検査は、エージェントが1つも居ない状態で通らなければならない。必須検査の経路へ自らを差し込む道具は、ここに置かない。
 
 ## 現在の配線状態
 
-**Terraform の実装は、ユースケースの `usecases/state-backend/` と `usecases/deployment-identity/`（bootstrap の段1-4 の分）と `usecases/finops/`・`usecases/network-foundation/`・`usecases/dns-zone/`・`usecases/audit-evidence/`・`usecases/ops-notification/`・`usecases/image-registry/`・`usecases/organization-baseline/`・`usecases/account-baseline/`、管理アカウントの identity root の `env/admin/identity/` と workload root の `env/admin/`、一般 module の `modules/s3/`・`modules/kms/`・`modules/log-group/`・`modules/vended-log-group/`・`modules/sns/`・`modules/vpc/` だけである。** 決定（`docs/adr/`）と、それを守る機構
+**Terraform の実装は、ユースケースの `usecases/state-backend/` と `usecases/deployment-identity/`（bootstrap の段1-4 の分）と `usecases/finops/`・`usecases/network-foundation/`・`usecases/dns-zone/`・`usecases/audit-evidence/`・`usecases/ops-notification/`・`usecases/image-registry/`・`usecases/organization-baseline/`・`usecases/account-baseline/`、管理アカウントの identity root の `env/admin/identity/` と workload root の `env/admin/`、一般 module の `modules/s3/`・`modules/kms/`・`modules/log-group/`・`modules/vended-log-group/`・`modules/sns/`・`modules/vpc/`・`modules/default-regions/` だけである。** 決定（`docs/adr/`）と、それを守る機構
 （`.github/` / `.makefiles/` / `scripts/` / `docker/`）は配線済みである。次はいずれも未配線とする。
 
 - `usecases/` / `env/` —— `state-backend`・`deployment-identity`・`organization-baseline`・`finops`・`network-foundation`・`dns-zone`・`audit-evidence`・`ops-notification`・`image-registry`・`account-baseline` と管理アカウントの identity root と workload root のほかに、ユースケースと環境が無い。`network-foundation`・`dns-zone`・`audit-evidence`・`image-registry`・`account-baseline` を呼ぶ env は無い
@@ -101,7 +101,7 @@
 
 ## 禁止事項をここに列挙しない
 
-機械的に判定できるものはゲートが捕まえる —— `terraform fmt` / `terraform validate`、TFLint、Trivy、Policy Test、Contract Test（[0501](docs/adr/0501-development-tooling-composition.md) 決定4）。残りは、触っているユースケースの `README.md` と ADR が述べる。
+機械的に判定できるものはゲートが捕まえる —— `terraform fmt` / `terraform validate`、TFLint、Security の道具、Policy Test、Contract Test（[0501](docs/adr/0501-development-tooling-composition.md) 決定4・6）。残りは、触っているユースケースの `README.md` と ADR が述べる。
 
 **ここに禁止が書かれていないことは、本書についての情報であって、その禁止についての情報ではない。**
 
@@ -138,6 +138,7 @@
 6. **文書が、検査手段を持たない主張を述べようとしている**（[0401](docs/adr/0401-testing-policy.md) 決定3、[0701](docs/adr/0701-documentation-ownership-and-language.md) 決定12）。
 7. **次の一手が履歴を書き換えるか、保護ブランチへ触れる** —— force push、rebase、amend してからの push、保護ブランチの checkout。
 8. **次の一手が実環境へ直接 apply する**（[0601](docs/adr/0601-change-delivery-path.md) 決定3・5・13）。bootstrap の初回と回復の apply も含む —— [0602](docs/adr/0602-bootstrap-and-ci-authentication.md) 決定9 の例外は人が実行するものであり、エージェントがこのワイヤを越える根拠にならない。
+   v1.0.0 より前は、このリポジトリそのものの開発のために、エージェントが手元から apply してよい（[0601](docs/adr/0601-change-delivery-path.md) 決定3・5 の例外）。当てる前に、統括 AI へ実行の前の報告を送り、ユーザーの承認を得る。当てる木は線の commit に限り、plan を保存したファイルだけを当てる。開始と終わりも統括 AI に報告する。当てた木は、昇格でデプロイブランチへ運ぶ。 <!-- v1.0.0 で削除: #141 -->
 
 ### それ以外
 
