@@ -88,7 +88,7 @@ make pin-images-check
 ```
 
 **多くの場合 `resolve` はここで閉じる方向に落ちる。** 新しい `golang:` タグは lockfile に前のエントリを
-持たず、公開されたばかりなので `PIN_IMAGES_MIN_AGE_DAYS`（既定14日）の窓の中にある —— **退行先が無い**。
+持たず、公開されたばかりなので `PIN_IMAGES_MIN_AGE_DAYS`（既定は `scripts/lib/cooldown` の `PinWindowDays`）の窓の中にある —— **退行先が無い**。
 `images-pin` の rule 3 がこれを採らずに非ゼロで終わる。これは故障ではなく設計である。
 
 > **Go の版上げは、そのベースイメージの窓が明けるまで着地できない。**
