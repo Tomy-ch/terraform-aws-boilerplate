@@ -190,15 +190,6 @@ func Test_planRoots(t *testing.T) {
 		assert.Len(t, f.Calls(), 1)
 		assert.NoFileExists(t, filepath.Join(out, "plans.txt"))
 	})
-
-	t.Run("前の出力を消してから書く", func(t *testing.T) {
-		t.Parallel()
-		base := tree(t, map[string]string{"usecases/a/reference/plan.out": planOK})
-		out := tree(t, map[string]string{"stale.txt": ""})
-		tool, _ := fakeTool(t)
-		require.NoError(t, planRoots([]root{{name: "a", rel: "usecases/a/reference", path: filepath.Join(base, "usecases/a/reference")}}, "/d", out, &bytes.Buffer{}, tool))
-		assert.NoFileExists(t, filepath.Join(out, "stale.txt"))
-	})
 }
 
 var canaryFlags = []string{"-canary-data", "/cd", "-canary-work", "tmp/cw", "-policy", "p", "-decl", "d.json", "-layer", "l.json", "-reference", "r"}
@@ -231,6 +222,16 @@ func Test_runPlan(t *testing.T) {
 		assert.Equal(t, []string{"-data", "/cd", "-work", "tmp/cw", "-policy", "p", "-decl", "d.json", "-layer", "l.json", "-reference", "r"}, canaryArgs, "-canary-work は検証した元の値のまま渡す")
 		assert.Len(t, calls(), 1)
 		assert.Equal(t, filepath.Join(root, "tmp", "run", "runs", "a.jsonl")+"\n", readText(t, filepath.Join(root, "tmp", "run", "plans.txt")))
+	})
+
+	t.Run("前の出力を消してから書く", func(t *testing.T) {
+		t.Parallel()
+		root := tree(t, map[string]string{"tmp/run/stale.txt": ""})
+		tool, _ := fakeTool(t)
+		var canaryArgs []string
+		require.NoError(t, runPlan(planArgs(planBase(t), "tmp/run"), &bytes.Buffer{}, tool, passCanary(&canaryArgs), root))
+		assert.NoFileExists(t, filepath.Join(root, "tmp", "run", "stale.txt"))
+		assert.FileExists(t, filepath.Join(root, "tmp", "run", "plans.txt"))
 	})
 
 	t.Run("canary が落ちれば本走査を行わずに失敗する", func(t *testing.T) {

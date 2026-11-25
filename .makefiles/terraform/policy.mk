@@ -13,8 +13,9 @@ POLICY_PLAN_DECL = conftest/plan/decl.json
 # 決定17 の引数の一部は、ADR-0102 決定18 の宣言（層の検査の宣言）から導く（conftest/plan/README.md の「入力」）。
 POLICY_LAYER_DECL = conftest/hcl/layer/decl.json
 CONFTEST_BIN ?= conftest
-# conftest はツールランナーの中で走り、リポジトリは /app に mount される。パスは相対で渡す。
-TF_POLICY_INPUT = $(TF_BASE)/tmp/tf-policy
+# conftest はツールランナーの中で走り、リポジトリは /app に mount される。パスは相対で渡す。tf-policy plan の -out は
+# リポジトリ直下の tmp/ の下に限るので、走査の基点（TF_BASE）とは切り離す。
+TF_POLICY_INPUT = tmp/tf-policy
 # canary は tf-policy plan が本走査の前に同じ起動の中で走らせる（ADR-0702 決定25）。実物の terraform・Conftest・
 # mock provider で段を通しで走らせ、terraform と Conftest はホストの PATH のものを起動する。provider-schema は
 # ビルドした置き場を PATH の先頭に置いて起動させる。aws の fixture は state-backend の reference の版の AWS Provider を使う。

@@ -47,15 +47,49 @@ func recreate(root, work string, lsFiles lsFilesFunc) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	rel := strings.TrimPrefix(path.Clean(filepath.ToSlash(work)), "tmp/")
-	if err := os.MkdirAll(filepath.Join(root, "tmp"), 0o750); err != nil {
+	tmp := filepath.Join(root, "tmp")
+	if err := os.MkdirAll(tmp, 0o750); err != nil {
 		return "", xerrors.Wrap(err, "tmp")
 	}
-	if err := rebuild(filepath.Join(root, "tmp"), rel); err != nil {
+	tmpReal, rel, err := realRel(tmp, target)
+	if err != nil {
+		return "", xerrors.Wrapf(ErrInvalid, "%q: %v", work, err)
+	}
+	if err := rebuild(tmpReal, rel); err != nil {
 		return "", xerrors.Wrapf(err, "%q", work)
 	}
 
 	return target, nil
+}
+
+// realRel は、tmp の symlink を解いた先と、target の在る祖先の symlink を解いた先からの target の相対パスを返します。
+// [os.Root] は root の外を指さない symlink でも絶対パスのものを辿らないので、検証済みの値を実パスへ直してから渡します。
+func realRel(tmp, target string) (string, string, error) {
+	tmpReal, err := filepath.EvalSymlinks(tmp)
+	if err != nil {
+		return "", "", err
+	}
+	existing, rest := target, ""
+	for {
+		if _, err := os.Lstat(existing); err == nil {
+			break
+		}
+		rest = filepath.Join(filepath.Base(existing), rest)
+		existing = filepath.Dir(existing)
+	}
+	resolved, err := filepath.EvalSymlinks(existing)
+	if err != nil {
+		return "", "", err
+	}
+	rel, err := filepath.Rel(tmpReal, filepath.Join(resolved, rest))
+	if err != nil {
+		return "", "", err
+	}
+	if rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", "", xerrors.Newf("%s は %s の下にありません", resolved, tmpReal)
+	}
+
+	return tmpReal, rel, nil
 }
 
 // rebuild は、tmp を開いた [os.Root] の中で rel を消して作り直します。rel の途中の symlink が tmp の外を指せば、

@@ -553,6 +553,20 @@ func TestRecreate(t *testing.T) {
 		})
 	}
 
+	t.Run("tmp/ の下を指す絶対パスの symlink を経た -work も、実パスの側で作り直す", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		tmp := filepath.Join(root, "tmp")
+		require.NoError(t, os.MkdirAll(filepath.Join(tmp, "real", "w"), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(tmp, "real", "w", "old"), []byte("x"), 0o600))
+		require.NoError(t, os.Symlink(filepath.Join(tmp, "real"), filepath.Join(tmp, "link")))
+		_, err := Recreate(root, "tmp/link/w")
+		require.NoError(t, err)
+		entries, err := os.ReadDir(filepath.Join(tmp, "real", "w"))
+		require.NoError(t, err)
+		assert.Empty(t, entries)
+	})
+
 	t.Run("tmp/ の下の symlink が外を指せば ErrInvalid で、外は消さない", func(t *testing.T) {
 		t.Parallel()
 		root, outside := t.TempDir(), t.TempDir()
@@ -562,6 +576,43 @@ func TestRecreate(t *testing.T) {
 		_, err := Recreate(root, "tmp/out/w")
 		require.ErrorIs(t, err, ErrInvalid)
 		assert.Equal(t, map[string]string{"f": "o"}, snapshot(t, outside))
+	})
+}
+
+func Test_realRel(t *testing.T) {
+	t.Parallel()
+
+	t.Run("tmp の下を指す絶対パスの symlink を解き、実パスからの相対パスを返す", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		tmp := filepath.Join(root, "tmp")
+		require.NoError(t, os.MkdirAll(filepath.Join(tmp, "real"), 0o750))
+		require.NoError(t, os.Symlink(filepath.Join(tmp, "real"), filepath.Join(tmp, "link")))
+		tmpReal, rel, err := realRel(tmp, filepath.Join(tmp, "link", "w"))
+		require.NoError(t, err)
+		want, err := filepath.EvalSymlinks(tmp)
+		require.NoError(t, err)
+		assert.Equal(t, want, tmpReal)
+		assert.Equal(t, filepath.Join("real", "w"), rel)
+	})
+
+	t.Run("解いた先が tmp 自身か外なら失敗する", func(t *testing.T) {
+		t.Parallel()
+		root, outside := t.TempDir(), t.TempDir()
+		tmp := filepath.Join(root, "tmp")
+		require.NoError(t, os.MkdirAll(tmp, 0o750))
+		require.NoError(t, os.Symlink(tmp, filepath.Join(tmp, "self")))
+		require.NoError(t, os.Symlink(outside, filepath.Join(tmp, "out")))
+		_, _, err := realRel(tmp, filepath.Join(tmp, "self"))
+		require.Error(t, err)
+		_, _, err = realRel(tmp, filepath.Join(tmp, "out", "w"))
+		require.Error(t, err)
+	})
+
+	t.Run("tmp が無ければ失敗する", func(t *testing.T) {
+		t.Parallel()
+		_, _, err := realRel(filepath.Join(t.TempDir(), "tmp"), "x")
+		require.Error(t, err)
 	})
 }
 

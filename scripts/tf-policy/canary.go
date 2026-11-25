@@ -87,8 +87,8 @@ func runCanary(args []string, w io.Writer, tool toolFunc, root string) error {
 	if err != nil {
 		return xerrors.Wrapf(errRead, "%s: %v", *planDecl, err)
 	}
-	if err := os.RemoveAll(workAbs); err != nil {
-		return xerrors.Wrapf(err, "%s の削除", workAbs)
+	if _, err := workdir.Recreate(root, *work); err != nil {
+		return xerrors.Wrapf(err, "%s の作り直し", workAbs)
 	}
 	layerRaw, err := os.ReadFile(filepath.Clean(*layerDecl))
 	if err != nil {

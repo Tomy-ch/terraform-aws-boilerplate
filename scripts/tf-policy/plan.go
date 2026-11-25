@@ -120,13 +120,10 @@ func errorMessages(jsonl []byte) []string {
 }
 
 // planRoots は、roots のそれぞれで Policy の入力を出す terraform test を走らせ、出力を <out>/runs/<name>.jsonl に
-// 置き、一覧を <out>/plans.txt に書きます。落ちた root は最後まで走らせてから名指します。[errTool] の
+// 置き、一覧を <out>/plans.txt に書きます。out は呼び出し側が空にしておきます。落ちた root は最後まで走らせてから名指します。[errTool] の
 // ときは、残りを起動せず plans.txt を書かずに [errTool] を返し、それまでに落ちた root は文面にだけ添えます。
 func planRoots(roots []root, data, out string, w io.Writer, tool toolFunc) error {
 	runs := filepath.Join(out, "runs")
-	if err := os.RemoveAll(out); err != nil {
-		return xerrors.Wrapf(err, "%s の削除", out)
-	}
 	if err := os.MkdirAll(runs, 0o750); err != nil {
 		return xerrors.Wrapf(err, "%s の作成", runs)
 	}
@@ -204,6 +201,9 @@ func runPlan(args []string, w io.Writer, tool toolFunc, canary canaryFunc, root 
 	roots, err := listRoots(*base)
 	if err != nil {
 		return err
+	}
+	if _, err := workdir.Recreate(root, *out); err != nil {
+		return xerrors.Wrapf(err, "%s の作り直し", outDir)
 	}
 
 	return planRoots(roots, *data, outDir, w, tool)

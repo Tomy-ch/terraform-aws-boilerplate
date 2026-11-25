@@ -42,12 +42,12 @@ func runValidateCanary(args []string, w io.Writer, tool toolFunc, root string) e
 	if *data == "" || *work == "" || *reference == "" || fset.NArg() > 0 || !filepath.IsAbs(*data) {
 		return xerrors.Wrap(errUsage, "canary -data <絶対パス> -work <tmp/ の下の相対パス> -reference <dir>")
 	}
-	workDir, err := workdir.Resolve(root, *work)
-	if err != nil {
+	workDir, err := workdir.Recreate(root, *work)
+	if xerrors.Is(err, workdir.ErrInvalid) {
 		return xerrors.Wrapf(errUsage, "-work %v", err)
 	}
-	if err := os.RemoveAll(workDir); err != nil {
-		return xerrors.Wrapf(err, "%s の削除", workDir)
+	if err != nil {
+		return xerrors.Wrapf(err, "-work の作り直し")
 	}
 	empty := filepath.Join(workDir, "ignore-empty.yaml")
 	if err := writeText(empty, "warnings: []\n"); err != nil {
