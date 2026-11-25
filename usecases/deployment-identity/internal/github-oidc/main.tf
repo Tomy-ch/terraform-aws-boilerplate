@@ -201,3 +201,8 @@ resource "aws_iam_role_policy_attachments_exclusive" "this" {
     aws_iam_role_policy_attachment.plan_workload_read,
   ]
 }
+
+# repository-wide/ADR-0209 の、partition ごとの既定で有効なリージョンの集合。
+module "default_regions" {
+  source = "../../../../modules/default-regions"
+}
