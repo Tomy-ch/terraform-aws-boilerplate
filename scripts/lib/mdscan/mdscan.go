@@ -20,8 +20,6 @@ import (
 const (
 	commentOpen  = "<!--"
 	commentClose = "-->"
-	// maxNested は、1行の中で開く入れ子の項目の上限です。超えた残りは段落の文として読みます。
-	maxNested = 32
 	// maxIndent は、フェンスの区切り・一覧の印・段落の行頭が持てる字下げの空白の数です。4つ目からは字下げしたコードブロックです。
 	maxIndent = 3
 )
@@ -101,7 +99,8 @@ func (b *Blocks) Next(text string) bool {
 	if matched > 0 {
 		base = b.items[matched-1].col
 	}
-	for opened := 0; ; opened++ {
+	v := lineView{line: line}
+	for {
 		rest := line[base:]
 		rel := indentOf(rest)
 		body := rest[rel:]
@@ -121,12 +120,11 @@ func (b *Blocks) Next(text string) bool {
 			b.fence, b.fenceBase = marker, base
 			return true
 		}
-		if thematicBreak.MatchString(body) || interrupter.MatchString(body) {
+		if v.thematicBreakAt(len(line)-len(body)) || interrupter.MatchString(body) {
 			b.items, b.paragraph = b.items[:matched], false
 			return false
 		}
-		if col, empty, ok := listMarker(body, base+rel); ok && opened < maxNested &&
-			(!b.paragraph || !allMatched || canInterrupt(body, empty)) {
+		if col, empty, ok := listMarker(body, base+rel); ok && (!b.paragraph || !allMatched || canInterrupt(body, empty)) {
 			b.items = append(b.items[:matched], listItem{col: col, empty: empty})
 			matched, base, lazy, b.paragraph = matched+1, col, false, false
 			if empty {
@@ -141,6 +139,40 @@ func (b *Blocks) Next(text string) bool {
 		return false
 	}
 }
+
+// lineView は、1行の中で入れ子の印を読み進めるあいだ、区切り線かの判定を行の長さに比例する手間で済ませます。
+type lineView struct {
+	line string
+	// lastBad は、`*`・`-`・`_` ごとに、その文字でも空白でもタブでもない最後の文字の位置です。
+	lastBad [3]int
+	ready   bool
+}
+
+// thematicBreakAt は、line[p:] が区切り線かを返します。
+func (v *lineView) thematicBreakAt(p int) bool {
+	if p >= len(v.line) {
+		return false
+	}
+	k := strings.IndexByte(breakChars, v.line[p])
+	if k < 0 {
+		return false
+	}
+	if !v.ready {
+		v.lastBad, v.ready = [3]int{-1, -1, -1}, true
+		for i := 0; i < len(v.line); i++ {
+			if ch := v.line[i]; ch != ' ' && ch != '\t' {
+				for j := range breakChars {
+					if ch != breakChars[j] {
+						v.lastBad[j] = i
+					}
+				}
+			}
+		}
+	}
+	return v.lastBad[k] < p && thematicBreak.MatchString(v.line[p:])
+}
+
+const breakChars = "*-_"
 
 var (
 	listStart       = regexp.MustCompile(`^([-+*]|([0-9]{1,9})[.)])( *)`)
@@ -164,7 +196,7 @@ func listMarker(body string, at int) (col int, empty, ok bool) {
 	}
 	width, spaces, content := len(m[1]), len(m[3]), body[len(m[0]):]
 	switch {
-	case strings.TrimSpace(content) == "":
+	case strings.TrimLeft(content, " \t\r\n\v\f") == "":
 		return at + width + 1, true, true
 	case spaces == 0:
 		return 0, false, false

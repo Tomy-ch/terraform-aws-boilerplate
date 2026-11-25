@@ -1,6 +1,7 @@
 package mdscan
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -244,16 +245,25 @@ func TestBlocks_Next(t *testing.T) {
 		})
 	}
 
-	t.Run("1行に並ぶ印は上限までだけ項目として開き、残りを段落として読む", func(t *testing.T) {
+	t.Run("1行に2万個並ぶ印も、行の長さに比例する手間ですべて項目として開く", func(t *testing.T) {
 		t.Parallel()
 		var b Blocks
 		start := time.Now()
 		in := b.Next(strings.Repeat("- ", 20000) + "x")
 		assert.Less(t, time.Since(start), time.Second)
 		assert.False(t, in)
-		assert.Len(t, b.items, maxNested)
+		assert.Len(t, b.items, 20000)
 		assert.True(t, b.paragraph)
 	})
+
+	for _, depth := range []int{33, 100} {
+		t.Run(fmt.Sprintf("1行に %d 個並ぶ印の後ろの ``` はフェンスを開く", depth), func(t *testing.T) {
+			t.Parallel()
+			indent := strings.Repeat(" ", 2*depth)
+			content := strings.Repeat("- ", depth) + "```\n" + indent + "中\n" + indent + "```\n外"
+			assert.Equal(t, []Line{{Number: 4, Text: "外"}}, Lines([]byte(content)))
+		})
+	}
 }
 
 func Test_fenceMarker(t *testing.T) {
@@ -294,6 +304,31 @@ func Test_fenceMarker(t *testing.T) {
 			})
 		}
 	})
+}
+
+func Test_lineView_thematicBreakAt(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		line string
+		p    int
+		want bool
+	}{
+		"3つの - は区切り線":          {"---", 0, true},
+		"空白を挟んでもよい":            {"* * *", 0, true},
+		"位置より後ろだけを見る":          {"x ___", 2, true},
+		"2つでは区切り線でない":          {"- -", 0, false},
+		"後ろに別の文字があれば区切り線でない":   {"- - - x", 0, false},
+		"別の区切りの文字が混じれば区切り線でない": {"- * -", 0, false},
+		"区切りの文字で始まらない":         {"a---", 0, false},
+		"行末の位置":                {"---", 3, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			v := lineView{line: c.line}
+			assert.Equal(t, c.want, v.thematicBreakAt(c.p))
+		})
+	}
 }
 
 func Test_listMarker(t *testing.T) {
