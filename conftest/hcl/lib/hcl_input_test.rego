@@ -155,8 +155,8 @@ ok_doc := {"files": [{"path": "m/a.tf", "parsed": true}], "blocks": [{
 			{"kind": "template", "parts": [{"kind": "traversal", "root": "path", "steps": [{"kind": "attr", "name": "module"}]}, {"kind": "literal", "value": "/x"}]},
 		]}},
 		{"path": "y", "parent": -1, "line": 4, "refs": [
-			{"root": "var", "steps": [{"kind": "splat"}, {"kind": "index", "index": {"form": "other"}}], "within": []},
-			{"root": "var", "steps": [{"kind": "attr", "name": "k"}], "within": [{"ref": 0, "step": 1}]},
+			{"root": "var", "steps": [{"kind": "splat"}, {"kind": "index", "index": {"form": "other"}}], "within": [], "filter": false},
+			{"root": "var", "steps": [{"kind": "attr", "name": "k"}], "within": [{"ref": 0, "step": 1}], "filter": true},
 		], "expr": {"kind": "object", "items": [
 			{"key": {"kind": "literal", "value": "k"}, "value": {"kind": "traversal", "root": "var", "steps": [{"kind": "splat"}, {"kind": "index", "index": {"form": "literal", "value": 0}}]}},
 		]}},
@@ -210,6 +210,8 @@ test_shape_errors_deny_each_broken_field if {
 		{"op": "replace", "path": "/blocks/0/attributes/1/refs/0", "value": "var"},
 		{"op": "add", "path": "/blocks/0/attributes/1/refs/0/extra", "value": 1},
 		{"op": "remove", "path": "/blocks/0/attributes/1/refs/0/within"},
+		{"op": "remove", "path": "/blocks/0/attributes/1/refs/0/filter"},
+		{"op": "replace", "path": "/blocks/0/attributes/1/refs/0/filter", "value": "true"},
 		{"op": "replace", "path": "/blocks/0/attributes/1/refs/0/root", "value": ""},
 		{"op": "replace", "path": "/blocks/0/attributes/1/refs/0/steps", "value": {}},
 		{"op": "replace", "path": "/blocks/0/attributes/1/refs/0/steps/0", "value": {"kind": "call"}},
