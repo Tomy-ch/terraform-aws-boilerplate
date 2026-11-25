@@ -12,7 +12,7 @@ policy の文書が参照する ARN は、`override_resource`（`override_during
 
 `inline_arguments` に宣言した文字列の属性は、同じ `override_resource` で `null` を与える。mock provider は書いていない computed な属性に乱数を入れ、そのままでは `[PLAN-INPUT-09]` で落ちる。override は書いた値を隠さない。`aws_s3_bucket` の `policy` について、`make tf-policy` が本走査の前に走らせる canary がこれを固定する。
 
-`env/` の root は `make tf-policy` の入力にしない。資格情報なしでは plan できないためである。CI の plan と apply の経路（`.makefiles/terraform/operation/ci.mk` の `CI_PLAN` と `CI_APPLY`）は、実 provider の plan の `terraform show -json` に `plan.stateful_protection`・`plan.kms_key_policy`・`plan.resource_policy_exclusive` だけを掛ける（target ごとの `CI_POLICY_NAMESPACES`）。ほかの package は mock の入力を前提にしているので、実 plan には掛けない。CI は `plan.input` を掛けないので、Key Policy が無いことと読めないことは `plan.kms_key_policy` 自身が落とす（`PLAN-KMS-00`・`09`）
+`env/` の root は `make tf-policy` の入力にしない。資格情報なしでは plan できないためである。CI の plan と apply の経路（`.makefiles/terraform/operation/ci.mk` の `CI_PLAN` と `CI_APPLY`）は、実 provider の plan の `terraform show -json` に、identity root には `plan.stateful_protection`・`plan.kms_key_policy`・`plan.resource_policy_exclusive`・`plan.s3_bucket_namespace`・`plan.state_backend_write_deny` を、workload root には `plan.stateful_protection`・`plan.s3_bucket_namespace` だけを掛ける（target ごとの `CI_POLICY_NAMESPACES`）。ほかの package は mock の入力を前提にしているので、実 plan には掛けない。CI は `plan.input` を掛けないので、Key Policy が無いことと読めないことは `plan.kms_key_policy` 自身が落とす（`PLAN-KMS-00`・`09`）
 
 入力は `tmp/tf-policy/` に書かれる。mock の値だけを含む。`make tf-policy` も CI の `tf-policy` job も、これを artifact や Pull Request のコメントへ出さない。
 
