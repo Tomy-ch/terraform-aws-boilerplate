@@ -451,7 +451,7 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
 
    > **重要**: 再実行を確かめる前に、次を昇格しない。apply-identity の権限を足す変更は、その権限で作る resource の変更より先に昇格して apply する。
 
-4. 権限を足す変更では、足した Action と期待の判定を、同じ変更で `scripts/bootstrap-check` の `permissionSections` に足す。Condition を持つ Action は、条件キーを `simCtx` の context で与える。apply の後に実行する
+4. 権限を足す変更では、足した Action と期待の判定を、同じ変更で `scripts/bootstrap-check` の `permissionSections` に足す。Condition を持つ Action は、条件キーを `simCtx` の context で与える。一覧を受ける条件キー（Service Authorization Reference の型が `ArrayOfString`）は、`ctxList` で `stringList` として与える。apply の後に実行する
 
    ```bash
    make bootstrap-verify STAGE=permissions
