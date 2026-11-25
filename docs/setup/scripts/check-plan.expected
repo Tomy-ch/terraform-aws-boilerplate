@@ -6,7 +6,6 @@ import module.state_backend.module.s3.aws_s3_bucket.this
 import module.state_backend.module.s3.aws_s3_bucket_public_access_block.this
 import module.state_backend.module.s3.aws_s3_bucket_ownership_controls.this
 import module.state_backend.module.s3.aws_s3_bucket_versioning.this
-import module.deployment_identity.module.service_linked_roles.aws_iam_service_linked_role.chatbot[0]
 
 add module.state_backend.module.s3.aws_s3_bucket_server_side_encryption_configuration.this
 add module.state_backend.module.s3.aws_s3_bucket_policy.this
@@ -61,6 +60,7 @@ add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachment
 add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachment.workload
 add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachment.workload_2
 add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachment.workload_read
+add module.deployment_identity.module.service_linked_roles.aws_iam_service_linked_role.chatbot[0]
 
 add module.organization_baseline.module.break_glass.aws_cloudformation_stack_instances.this
 add module.organization_baseline.module.break_glass.aws_cloudformation_stack_set.this
