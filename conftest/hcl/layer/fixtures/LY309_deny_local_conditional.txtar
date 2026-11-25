@@ -1,0 +1,15 @@
+-- modules/m/main.tf --
+resource "aws_iam_role" "r" {
+  name = "r"
+}
+resource "aws_iam_policy" "p" {
+  policy = "{}"
+}
+variable "on" {}
+locals {
+  arn = var.on ? aws_iam_policy.p.arn : "arn:aws:iam::123456789012:policy/x"
+}
+resource "aws_iam_role_policy_attachment" "a" {
+  role       = aws_iam_role.r.name
+  policy_arn = local.arn
+}

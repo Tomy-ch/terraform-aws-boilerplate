@@ -76,6 +76,7 @@ import (
 	"strings"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cientry"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/harden"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lintreport"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/requiredchecks"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
@@ -1228,6 +1229,8 @@ func allowedNeeds() string {
 // checkGateJob は、needs の先の検査の job が skip も失敗の無視もできず、決めたターゲットだけを走らせることを検査します。
 func checkGateJob(d workflow.Job, g gate, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
 	var findings []lintreport.Finding
+	// egress が生成した bullfrog の対の continue-on-error: と if: は見逃す（harden.GeneratedLines。ADR-0702 決定20）。
+	generated := harden.GeneratedLines(d)
 	// 依存先が skip すると検査の job も skip され、後続は走らないまま失敗も報告されない。
 	if _, at, ok := jobKey(d, "needs"); ok {
 		findings = append(findings, finding(at, "%s %s に needs: を置かないでください", g.label, d.ID))
@@ -1236,7 +1239,7 @@ func checkGateJob(d workflow.Job, g gate, finding func(int, string, ...any) lint
 		if commentLine.MatchString(l.Text) {
 			continue
 		}
-		if skipsOrHides.MatchString(l.Text) {
+		if skipsOrHides.MatchString(l.Text) && !generated[l.Number] {
 			findings = append(findings, finding(l.Number, "%s %s に if:・continue-on-error:・working-directory:・defaults:・env:・shell:・container:・services: を置かないでください。skip も失敗の無視も別の場所や別の shell での実行も、成功と同じく後続を止めません", g.label, d.ID))
 		}
 		if makeFlags.MatchString(l.Text) {

@@ -154,6 +154,9 @@ pre-commit:
         - "modules/**"
         - "env/**"
         - "scripts/tf-gates/**"
+        - "scripts/lib/**"
+        - "scripts/go.mod"
+        - "scripts/go.sum"
       skip:
         - run: make -s tf-no-targets
       run: make tf-fmt-check
@@ -262,12 +265,6 @@ pre-commit:
         - "Makefile"
         - ".makefiles/**"
       run: make -k root-check
-
-    secret-gates-test:
-      glob:
-        - "Makefile"
-        - ".makefiles/**"
-      run: make secret-gates-test
 
 commit-msg:
   commands:

@@ -1,8 +1,8 @@
 ## .editorconfig の宣言とファイルの一致の検査
 ##
 ## 引数を渡さない editorconfig-checker は、git の一覧（追跡ファイルと、ignore されていない未追跡のファイル）を
-## すべて見る。.editorconfig-checker.json は空に保つ —— 除外を足すと、検査対象が黙って縮む。canary・設定の確認・
-## 本走査の順と判定は scripts/editorconfig-gate が持つ。
+## 既定の除外を引いて見る。.editorconfig-checker.json は空に保つ —— 除外を足すと、検査対象が黙って縮む。canary・
+## 設定の確認・走査の範囲の突き合わせ・本走査の順と判定は scripts/editorconfig-gate が持つ。
 ##
 ## 抑止は範囲を開く印と閉じる印で囲んだ範囲に限り、開く印に理由と撤回条件を書く
 ## （ADR-0501 決定13）。ファイルや行の単位で外さない。書き方は scripts/ の *_test.go にある実例に倣う。
