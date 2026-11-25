@@ -23,6 +23,10 @@ mock_provider "aws" {
   mock_resource "aws_organizations_organizational_unit" {
     defaults = { id = "ou-exam-abcdefgh" }
   }
+  # 委任管理者の指定は、アカウントの ID を12桁の数字として受ける。
+  mock_resource "aws_organizations_account" {
+    defaults = { id = "222222222222" }
+  }
 }
 
 variables {
@@ -55,6 +59,11 @@ run "outputs" {
   assert {
     condition     = output.account_ids == module.organization.account_ids && keys(output.account_ids) == ["log-archive", "security"]
     error_message = "account_ids が、メンバーアカウントの env から ID への map を返していません。"
+  }
+
+  assert {
+    condition     = jsonencode(module.delegated_admin.service_principals) == jsonencode(["access-analyzer.amazonaws.com", "cloudtrail.amazonaws.com", "config.amazonaws.com", "guardduty.amazonaws.com", "inspector2.amazonaws.com", "securityhub.amazonaws.com"]) && module.delegated_admin.regions == module.default_regions.by_partition["aws"] && module.delegated_admin.admin_account_id == output.account_ids["security"]
+    error_message = "セキュリティのサービスの委任管理者が、security のアカウントに、6つのサービスについて、repository-wide/ADR-0209 の集合の各リージョンで指定されていません。"
   }
 
   assert {

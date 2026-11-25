@@ -19,3 +19,25 @@ module "break_glass" {
   path                 = local.break_glass_path
   organization_root_id = module.organization.root_id
 }
+
+# partition ごとの、既定で有効なリージョン（repository-wide/ADR-0209）。
+module "default_regions" {
+  source = "../../modules/default-regions"
+}
+
+data "aws_partition" "current" {
+  lifecycle {
+    postcondition {
+      condition     = contains(keys(module.default_regions.by_partition), self.partition)
+      error_message = "partition ${self.partition} は organization-baseline の対象の外です（README の unsupported）。"
+    }
+  }
+}
+
+# セキュリティのサービスの委任管理者は security のアカウント（repository-wide/ADR-0602 決定1）。
+module "delegated_admin" {
+  source = "./internal/delegated-admin"
+
+  admin_account_id = module.organization.account_ids["security"]
+  regions          = module.default_regions.by_partition[data.aws_partition.current.partition]
+}
