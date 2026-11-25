@@ -12,13 +12,14 @@ import (
 	"strings"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/atomicwrite"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/tfexec"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
 // tfCommand は、ディレクトリ d で terraform の段 step（init か schema）を起動するコマンドを作ります。
 type tfCommand func(d, step string) *exec.Cmd
 
-// terraformCmd は tfCommand の実物です。引数は段ごとに固定で、ディレクトリは作業ディレクトリとして渡します。
+// terraformCmd は tfCommand の実物です。
 func terraformCmd(d, step string) *exec.Cmd {
 	var cmd *exec.Cmd
 	if step == "init" {
@@ -27,6 +28,7 @@ func terraformCmd(d, step string) *exec.Cmd {
 		cmd = exec.CommandContext(context.Background(), "terraform", "providers", "schema", "-json")
 	}
 	cmd.Dir = d
+	cmd.Env = tfexec.Env(os.Environ())
 
 	return cmd
 }
@@ -63,7 +65,6 @@ func fetch(args []string, stderr io.Writer, tf tfCommand) error {
 	return nil
 }
 
-// fetchOne は、d で init と schema の取得を順に起動します。
 func fetchOne(tf tfCommand, d string, stderr io.Writer) error {
 	var initLog bytes.Buffer
 	init := tf(d, "init")

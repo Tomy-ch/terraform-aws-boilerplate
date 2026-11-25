@@ -33,12 +33,11 @@ layer-inputs:
 	@mkdir -p $(LY_OUT)
 	@$(call HCL_TALLY,$(LY_BASE),$(LY_OUT),$(LY_ROOTS),-files-key layer_files)
 
-# fetch は terraform をホストで起動する（terraform は提供段のコンテナに無い）。
 .PHONY: layer-schema ## 層の検査に渡す AWS Provider の schema の一覧（lock した版ごとの和）を作る
 layer-schema: layer-inputs
 	@$(call RUN_SCRIPT,provider-schema,prepare -provider $(LY_AWS_PROVIDER) -out "$(LY_SCHEMA_DIR)" -base "$(LY_BASE)" -listed "$(LY_OUT)/found.txt" $(LY_ROOTS))
 	@mkdir -p "$$TF_PLUGIN_CACHE_DIR"
-	@$(TF_ENV) $(call RUN_SCRIPT_HOST,provider-schema,fetch -dir "$(LY_SCHEMA_DIR)")
+	@$(call RUN_SCRIPT_HOST,provider-schema,fetch -dir "$(LY_SCHEMA_DIR)")
 	@$(call RUN_SCRIPT,provider-schema,merge -provider $(LY_AWS_PROVIDER) -dir "$(LY_SCHEMA_DIR)" -out $(LY_OUT)/schema.json)
 
 .PHONY: layer-detect ## Terraform の構成を層の規則で検査し、読んだファイルを独立の走査と突き合わせる
