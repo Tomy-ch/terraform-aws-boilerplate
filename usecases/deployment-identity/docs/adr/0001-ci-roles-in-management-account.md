@@ -7,14 +7,14 @@
 
 ## Context
 
-bootstrap は管理アカウントから始まり、OIDC provider と plan / apply / apply-identity / unlock-identity / unlock の role をそのアカウントに置く（repository-wide/ADR-0602 (bootstrap-and-ci-authentication) 決定1・4・13）。管理アカウントの identity root は apply-identity の role で apply する（repository-wide/ADR-0604 (state-split-by-apply-role) 決定3）。したがって apply-identity の role は、管理アカウントの中で IAM の role と policy を変更できる。
+bootstrap は管理アカウントから始まり、OIDC provider と CI の role をそのアカウントに置く（repository-wide/ADR-0602 (bootstrap-and-ci-authentication) 決定1・4・13）。管理アカウントの identity root は apply-identity の role で apply する（repository-wide/ADR-0604 (state-split-by-apply-role) 決定3）。したがって apply-identity の role は、管理アカウントの中で IAM の role と policy を変更できる。
 
 AWS Organizations のベストプラクティスは、管理アカウントを、管理アカウントでなければならない作業にだけ使い、resource を他のアカウントへ置くことを勧める。SCP は管理アカウントの主体に効かない。state Bucket の配置は state-backend/ADR-0001 (management-account-placement) が記録したが、CI の role は記録していない。本 ADR はこの推奨から外れる配置を記録する（repository-wide/ADR-0207 (default-value-policy) 決定11）。
 
 ## Decision
 
-1. 管理アカウントに、OIDC provider と plan / apply / apply-identity / unlock-identity / unlock の5つの role を置く。
-2. 5つの role の権限は、管理アカウントの bootstrap の構成物と state に要る分に限る（deployment-identity/ADR-0201 (enumerated-permissions)）。管理アカウントの workload の usecase のための権限は、その usecase を足す変更が apply の role へ足す。
+1. 管理アカウントに、OIDC provider と CI の role を置く。CI の role は、CI の入口の種別が取る role である。その集合の正本は CI の入口の種別の登録簿（`scripts/lib/cientry`）で、このユースケースが作る role（`internal/github-oidc` の `local.roles`）と README の role の表の役割の列は、登録簿と過不足なく一致する（`lib/cientry` のテストが見る）。各 role の名前・GitHub の environment・使う場面は README の role の表が持つ。
+2. CI の role の権限は、管理アカウントの bootstrap の構成物と state に要る分に限る（deployment-identity/ADR-0201 (enumerated-permissions)）。管理アカウントの workload の usecase のための権限は、その usecase を足す変更が apply の role へ足す。
 
 ## 検討した代替案
 
@@ -49,7 +49,7 @@ CI の role を管理アカウントに置かない。repository-wide/ADR-0602 �
 
 ## 検証方法
 
-- Unit Test: `internal/github-oidc/tests/permissions.tftest.hcl` が、5つの role の policy の文書を完全一致で固定する
+- Unit Test: `internal/github-oidc/tests/permissions.tftest.hcl` が、CI の role の policy の文書を完全一致で固定する
 - 置き場（決定1）は repository-wide/ADR-0604 決定3・5 の identity root の形に従う
 
 ## 影響
