@@ -95,7 +95,7 @@ func Test_exitCode(t *testing.T) {
 		err  error
 		want int
 	}{
-		"nil":     {nil, 0},
+		"エラーなし":   {nil, 0},
 		"違反":      {xerrors.Wrapf(errViolations, "1 件"), 1},
 		"引数":      {errUsage, 2},
 		"読めない":    {errUnreadable, 2},
@@ -207,12 +207,15 @@ func Test_run(t *testing.T) {
 		require.ErrorIs(t, run([]string{"-root", root}, &bytes.Buffer{}, fixedLister(tracked, nil)), errUnreadable)
 	})
 
-	t.Run("引数の誤りは errUsage", func(t *testing.T) {
-		t.Parallel()
-		for _, args := range [][]string{{"-nope"}, {"extra"}} {
+	for name, args := range map[string][]string{
+		"未知のフラグは errUsage": {"-nope"},
+		"余分な引数は errUsage":  {"extra"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			require.ErrorIs(t, run(args, &bytes.Buffer{}, fixedLister(nil, nil)), errUsage)
-		}
-	})
+		})
+	}
 }
 
 func Test_gitFiles(t *testing.T) {
@@ -328,16 +331,23 @@ func Test_listTargets(t *testing.T) {
 func Test_trackedTargets(t *testing.T) {
 	t.Parallel()
 
-	got := trackedTargets([]string{
-		"usecases/b/README.md",
-		"usecases/a/tests/x.tftest.hcl",
-		"usecases/a/main.tf",
-		"usecases/top.md",
-		"modules/m/README.md",
-		"usecasesx/c/README.md",
-	}, "usecases")
-	assert.Equal(t, []string{"a", "b"}, got, "直下のファイルと、名前が接頭辞で一致するだけの root を数えない")
-	assert.Empty(t, trackedTargets(nil, "usecases"))
+	t.Run("直下のディレクトリの名前を昇順で返し、直下のファイルと接頭辞が一致するだけの root を数えない", func(t *testing.T) {
+		t.Parallel()
+		got := trackedTargets([]string{
+			"usecases/b/README.md",
+			"usecases/a/tests/x.tftest.hcl",
+			"usecases/a/main.tf",
+			"usecases/top.md",
+			"modules/m/README.md",
+			"usecasesx/c/README.md",
+		}, "usecases")
+		assert.Equal(t, []string{"a", "b"}, got)
+	})
+
+	t.Run("追跡ファイルが無ければ空", func(t *testing.T) {
+		t.Parallel()
+		assert.Empty(t, trackedTargets(nil, "usecases"))
+	})
 }
 
 func Test_compareSets(t *testing.T) {
@@ -369,9 +379,19 @@ func Test_compareSets(t *testing.T) {
 func Test_difference(t *testing.T) {
 	t.Parallel()
 
-	assert.Equal(t, []string{"a", "c"}, difference([]string{"a", "b", "c"}, []string{"b"}))
-	assert.Nil(t, difference([]string{"a"}, []string{"a"}))
-	assert.Nil(t, difference(nil, []string{"a"}))
+	for name, c := range map[string]struct {
+		a, b []string
+		want []string
+	}{
+		"a にだけ在るものを a の順で返す": {[]string{"a", "b", "c"}, []string{"b"}, []string{"a", "c"}},
+		"同じなら nil":   {[]string{"a"}, []string{"a"}, nil},
+		"a が空なら nil": {nil, []string{"a"}, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, difference(c.a, c.b))
+		})
+	}
 }
 
 func Test_checkTarget(t *testing.T) {
@@ -548,6 +568,30 @@ func Test_checkReadme(t *testing.T) {
 		assert.Contains(t, err.Error(), "読まなかった行: "+lineOf(t, body, heading)+" 行目（HTML コメント）")
 	})
 
+	t.Run("閉じないフェンスが節の見出しを飲み込めば、その行をフェンスの理由で名指す errCountMismatch", func(t *testing.T) {
+		t.Parallel()
+		body := "# x\n\n```\n\n" + validSection
+		_, err := checkReadme("R.md", []byte(body))
+		require.ErrorIs(t, err, errCountMismatch)
+		assert.Contains(t, err.Error(), "読まなかった行: "+lineOf(t, body, heading)+" 行目（フェンス）")
+	})
+
+	t.Run("コメントの中の参照日と AWS Provider の version は数えない", func(t *testing.T) {
+		t.Parallel()
+		date := "参照日: 2026-11-19（一部は 2026-11-20）、AWS Provider v6.70.0 の文書"
+		body := readmeWith(strings.Replace(validSection, date, "<!-- "+date+" -->", 1))
+		got, err := checkReadme("R.md", []byte(body))
+		require.NoError(t, err)
+		msgs := make([]string, 0, len(got))
+		for _, f := range got {
+			msgs = append(msgs, f.Message)
+		}
+		assert.ElementsMatch(t, []string{
+			`節に "参照日: YYYY-MM-DD" の行がありません`,
+			"節に AWS Provider の version（`AWS Provider v6.70.0` の形）がありません",
+		}, msgs)
+	})
+
 	t.Run("空のコメントは閉じないコメントではない", func(t *testing.T) {
 		t.Parallel()
 		got, err := checkReadme("R.md", []byte("<!--> a <!--->\n"+readmeWith(validSection)))
@@ -620,20 +664,26 @@ func Test_checkReadme(t *testing.T) {
 func Test_section(t *testing.T) {
 	t.Parallel()
 
-	ls := lines("## 公式実装の参照\na\n### 小見出し\nb\n## 次\nc\n")
-	got := section(ls, 0)
-	require.Len(t, got, 3, "3段目の見出しでは終わらない")
-	assert.Equal(t, "a", got[0].Text)
-	assert.Equal(t, "b", got[2].Text)
-
-	ls = lines("## 公式実装の参照\na\n# 1段目\n")
-	assert.Len(t, section(ls, 0), 1, "1段目の見出しで終わる")
-
-	ls = lines("## 公式実装の参照\na\nb")
-	assert.Len(t, section(ls, 0), 2, "見出しが続かなければ末尾まで")
-
-	ls = lines("## 公式実装の参照\na\n<!-- -->## 別\nb\n<!--\n## 中\n-->\nc")
-	assert.Len(t, section(ls, 0), 7, "行頭がコメントの行と、コメントの中の行では終わらない")
+	for name, c := range map[string]struct {
+		body string
+		want []string
+	}{
+		"3段目の見出しでは終わらず、次の2段目の見出しで終わる": {"## 公式実装の参照\na\n### 小見出し\nb\n## 次\nc\n", []string{"a", "### 小見出し", "b"}},
+		"1段目の見出しで終わる":                 {"## 公式実装の参照\na\n# 1段目\n", []string{"a"}},
+		"字下げした2段目の見出しで終わる":            {"## 公式実装の参照\na\n   ## 次\n", []string{"a"}},
+		"見出しが続かなければ末尾まで":              {"## 公式実装の参照\na\nb", []string{"a", "b"}},
+		"行頭がコメントの行と、コメントの中の行では終わらない":  {"## 公式実装の参照\na\n<!-- -->## 別\nb\n<!--\n## 中\n-->\nc", []string{"a", "## 別", "b", "", "", "", "c"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got := section(lines(c.body), 0)
+			texts := make([]string, 0, len(got))
+			for _, l := range got {
+				texts = append(texts, l.Text)
+			}
+			assert.Equal(t, c.want, texts)
+		})
+	}
 }
 
 func Test_headingLevel(t *testing.T) {
@@ -870,6 +920,10 @@ func Test_scanReadme(t *testing.T) {
 			scanned{lines: []line{{Number: 1, Text: "a"}, {Number: 2}, {Number: 3, Text: "---"}, {Number: 4, Text: "- A"}, {Number: 5, Text: "-"},
 				{Number: 9}, {Number: 10}, {Number: 11}}},
 		},
+		"閉じないフェンスは後ろの行を返さず、中の見出しをフェンスの理由で報告する": {
+			"a\n```\nb\n" + heading + "\nc",
+			scanned{lines: []line{{Number: 1, Text: "a"}}, hidden: []hiddenLine{{Line: 4, Reason: reasonFence}}},
+		},
 		"閉じれば開いた行を忘れる": {
 			"<!-- a\nb -->",
 			scanned{lines: []line{{Number: 1}, {Number: 2}}},
@@ -904,6 +958,8 @@ func Test_stripComments(t *testing.T) {
 		"長さの違う閉じは inline code を閉じない":           {"`a``<!-- b", false, "`a``", true},
 		"2つ以上のバッククォートの inline code の中の開きは開かない": {"``a`<!--``", false, "``a`<!--``", false},
 		"閉じた同じ行で開き直す":                          {"<!-- a --> b <!-- c", false, " b ", true},
+		"コメントでない < の後ろの開きは開く":                  {"a <div> <!-- x", false, "a <div> ", true},
+		"<! で始まるがコメントでないものは文字":                 {"a <div> <!x> b", false, "a <div> <!x> b", false},
 		"<!--> は空のコメント":                        {"a<!-->b", false, "ab", false},
 		"<!---> は空のコメント":                       {"a<!--->b", false, "ab", false},
 		"<!----> は閉じたコメント":                     {"a<!---->b", false, "ab", false},
@@ -1136,6 +1192,10 @@ func Test_checkList(t *testing.T) {
 		"行頭がコメントの見出しの形では一覧が終わらない": {
 			"採用した知見:\n- A\n<!-- -->### 小\n- B\n", adoptedLabel, false,
 			[]lintreport.Finding{{Line: 3, Message: `"採用した知見:" の一覧の途中に項目でない行があります`}},
+		},
+		"採用しなかった知見のハイフンだけの項目は、本文が空の違反だけを出す": {
+			"採用しなかった知見と理由:\n- A: 理由\n-\n", rejectedLabel, true,
+			[]lintreport.Finding{{Line: 3, Message: `"採用しなかった知見と理由:" の項目の本文が空です`}},
 		},
 		"理由を求めなければコロンを見ない": {
 			"採用した知見:\n- A\n", adoptedLabel, false, nil,
