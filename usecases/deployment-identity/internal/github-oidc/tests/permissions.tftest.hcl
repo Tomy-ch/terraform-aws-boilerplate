@@ -229,6 +229,7 @@ run "policies" {
       },
       { Sid = "IamGetAccountPasswordPolicy", Effect = "Allow", Action = "iam:GetAccountPasswordPolicy", Resource = "*" },
       { Sid = "IamListOrganizationsFeatures", Effect = "Allow", Action = "iam:ListOrganizationsFeatures", Resource = "*" },
+      { Sid = "OrganizationsDescribeCreateAccountStatus", Effect = "Allow", Action = "organizations:DescribeCreateAccountStatus", Resource = "*" },
       { Sid = "OrganizationsDescribeOrganization", Effect = "Allow", Action = "organizations:DescribeOrganization", Resource = "*" },
       {
         Sid      = "OrganizationsListAWSServiceAccessForOrganization"
@@ -646,6 +647,7 @@ run "policies" {
       },
       { Sid = "IamGetAccountPasswordPolicy", Effect = "Allow", Action = "iam:GetAccountPasswordPolicy", Resource = "*" },
       { Sid = "IamListOrganizationsFeatures", Effect = "Allow", Action = "iam:ListOrganizationsFeatures", Resource = "*" },
+      { Sid = "OrganizationsDescribeCreateAccountStatus", Effect = "Allow", Action = "organizations:DescribeCreateAccountStatus", Resource = "*" },
       { Sid = "OrganizationsDescribeOrganization", Effect = "Allow", Action = "organizations:DescribeOrganization", Resource = "*" },
       {
         Sid      = "OrganizationsListAWSServiceAccessForOrganization"
@@ -1318,7 +1320,6 @@ run "policies" {
       { Sid = "IamUpdateAccountPasswordPolicy", Effect = "Allow", Action = "iam:UpdateAccountPasswordPolicy", Resource = "*" },
       { Sid = "OrganizationsCreateAccount", Effect = "Allow", Action = "organizations:CreateAccount", Resource = "*" },
       { Sid = "OrganizationsCreateOrganization", Effect = "Allow", Action = "organizations:CreateOrganization", Resource = "*" },
-      { Sid = "OrganizationsDescribeCreateAccountStatus", Effect = "Allow", Action = "organizations:DescribeCreateAccountStatus", Resource = "*" },
       {
         Sid       = "CloudformationCreateStackSet"
         Effect    = "Allow"

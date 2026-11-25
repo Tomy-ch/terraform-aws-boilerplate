@@ -431,6 +431,8 @@ locals {
   governance_wildcard_read_actions = [
     "iam:GetAccountPasswordPolicy",
     "iam:ListOrganizationsFeatures",
+    # アカウントの作成の待ち。統制の policy の長さを抑えるため、読みに置く。
+    "organizations:DescribeCreateAccountStatus",
     "organizations:DescribeOrganization",
     "organizations:ListAWSServiceAccessForOrganization",
     "organizations:ListAccounts",
@@ -485,8 +487,6 @@ locals {
     "iam:UpdateAccountPasswordPolicy",
     "organizations:CreateAccount",
     "organizations:CreateOrganization",
-    # アカウントの作成の待ち。CreateAccount と同じく resource-level 権限を持たない。
-    "organizations:DescribeCreateAccountStatus",
   ]
 
   # 組織の削除・メンバーの閉鎖・組織からの除外と、prevent_destroy を持つ構成物の削除は与えない（deployment-identity/ADR-0201 決定3）。
