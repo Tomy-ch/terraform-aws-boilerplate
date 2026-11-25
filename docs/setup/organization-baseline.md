@@ -93,7 +93,7 @@ AWS CLI を使える管理アカウントの資格情報が在るなら、`aws c
 
 メンバーアカウントを作る変更が昇格した後に、次を確かめる。
 
-1. CloudFormation の「StackSets」で `<project>-break-glass` を開き、「スタックインスタンス」のすべてのメンバーアカウントの状態が `CURRENT` であることを確かめる
+1. CloudFormation の「StackSets」で `<project>-break-glass` と `<project>-bootstrap-read` を開き、それぞれの「スタックインスタンス」のすべてのメンバーアカウントの状態が `CURRENT` であることを確かめる
 2. 3.6 の試験で、メンバーアカウントの break-glass の role へも切り替えられることを確かめ、結果を Pull Request に書く
 
 StackSet か stack instance の作成で昇格の apply が失敗したときは、失敗した resource が state に残ったかで直し方が分かれる。`prevent_destroy` を持つ resource が tainted で残ると、次の plan は作り直しを求めて止まる。CI の role は削除の権限を持たないので、tainted は人が外す。apply は人が行わず、CI の経路でやり直す。
@@ -103,7 +103,7 @@ StackSet か stack instance の作成で昇格の apply が失敗したときは
    1. 拒否が、同じ apply の権限の更新の直後なら、IAM の反映の遅れである。失敗した job を走らせ直す（[bootstrap 手順書](bootstrap.md#段5-の-ci-の-apply-が失敗した) の `AccessDenied` の行）
    2. 走らせ直しも拒まれるなら、権限の不足である。権限を直す Pull Request を昇格する。resource は state に無いので、同じ apply で作られる
 3. 操作が失敗したとき（tainted で残る）: 先に tainted を外してから直す
-   1. `organization_admin` の資格情報で `env/admin/identity` を `terraform init` し、失敗した resource の tainted を外す（`terraform untaint 'module.organization_baseline.module.break_glass.aws_cloudformation_stack_instances.this'`。StackSet が失敗したなら `aws_cloudformation_stack_set.this` も）
+   1. `organization_admin` の資格情報で `env/admin/identity` を `terraform init` し、失敗した resource の tainted を外す（`terraform untaint 'module.organization_baseline.module.break_glass.aws_cloudformation_stack_instances.this'`。StackSet が失敗したなら `aws_cloudformation_stack_set.this` も。立ち上げの読み取りの StackSet なら `module.bootstrap_access` の同じ2つ）
    2. 原因を Pull Request で直して昇格する。コードの変更が要らなければ、昇格の apply をやり直す
 4. どちらも、昇格の前に CI の plan が作り直しを示さないことを確かめる
 

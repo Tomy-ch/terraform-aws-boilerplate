@@ -26,7 +26,8 @@ mock_provider "aws" {
 }
 
 variables {
-  project = "tabp"
+  project                      = "tabp"
+  bootstrap_read_principal_arn = "arn:aws:iam::111111111111:role/tabp-admin-ci-plan"
 }
 
 override_resource {
