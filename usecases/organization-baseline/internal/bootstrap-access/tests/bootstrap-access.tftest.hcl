@@ -28,8 +28,9 @@ run "stack_set" {
       && aws_cloudformation_stack_set.this.auto_deployment[0].enabled
       && !aws_cloudformation_stack_set.this.auto_deployment[0].retain_stacks_on_account_removal
       && aws_cloudformation_stack_set.this.managed_execution[0].active
+      && aws_cloudformation_stack_set.this.capabilities == toset(["CAPABILITY_NAMED_IAM"])
     )
-    error_message = "StackSet は role の名前で、service-managed・自動展開・stack を残さない・managed execution にしてください。"
+    error_message = "StackSet は role の名前で、service-managed・自動展開・stack を残さない・managed execution・CAPABILITY_NAMED_IAM にしてください。"
   }
 
   assert {
@@ -87,13 +88,38 @@ run "role" {
     ] == [{ "Fn::Sub" = "arn:$${AWS::Partition}:iam::$${AWS::AccountId}:role/tabp-*-ci-*" }]
     error_message = "CI の role の読み取りは、置き先のアカウントの <project>-*-ci-* の role に限ってください。"
   }
+
+  # kms:ListAliases のほかは、置き先のアカウントの名前の形に限る（organization-baseline/ADR-0203 決定4）。
+  assert {
+    condition = {
+      for s in jsondecode(aws_cloudformation_stack_set.this.template_body).Resources.BootstrapReadRole.Properties.Policies[0].PolicyDocument.Statement : s.Sid => s.Resource if s.Sid != "ReadCiRoles"
+      } == {
+      ListBuckets             = [for b in ["tfstate", "tfplan", "tfapply"] : { "Fn::Sub" = "arn:$${AWS::Partition}:s3:::tabp-*-${b}-$${AWS::AccountId}-*" }]
+      ReadBucketConfiguration = [for b in ["tfstate", "tfplan", "tfapply"] : { "Fn::Sub" = "arn:$${AWS::Partition}:s3:::tabp-*-${b}-$${AWS::AccountId}-*" }]
+      ReadStateKey            = { "Fn::Sub" = "arn:$${AWS::Partition}:kms:$${AWS::Region}:$${AWS::AccountId}:key/*" }
+      ListKeyAliases          = "*"
+      ReadGitHubProvider      = { "Fn::Sub" = "arn:$${AWS::Partition}:iam::$${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com" }
+      ReadCiPolicies          = { "Fn::Sub" = "arn:$${AWS::Partition}:iam::$${AWS::AccountId}:policy/tabp-*-ci-*" }
+    }
+    error_message = "読み取りの Resource を、置き先のアカウントの state-backend と deployment-identity の名前の形に限ってください（kms:ListAliases だけ Resource \"*\"）。"
+  }
 }
 
-run "rejects_path_without_slashes" {
+run "rejects_path_without_leading_slash" {
   command = plan
 
   variables {
-    path = "bootstrap"
+    path = "bootstrap/"
+  }
+
+  expect_failures = [var.path]
+}
+
+run "rejects_path_without_trailing_slash" {
+  command = plan
+
+  variables {
+    path = "/bootstrap"
   }
 
   expect_failures = [var.path]
