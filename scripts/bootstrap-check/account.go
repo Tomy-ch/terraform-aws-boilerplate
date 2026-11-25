@@ -23,8 +23,41 @@ var (
 	// 確認を続けずに検証できないとする。
 	errAWSStart = xerrors.New("aws を起動できません")
 	// errNoProfile は、AWS_PROFILE が空なこと。資格情報を変える環境変数を外し、profile を渡すのは make である。
-	errNoProfile = xerrors.New("AWS_PROFILE が空です。make bootstrap-check-account から起動してください")
+	errNoProfile = xerrors.New("AWS_PROFILE が空です。make bootstrap-check-account か make bootstrap-verify から起動してください")
+	// errStaticCredentials は、profile より優先される資格情報か、profile の読み先を変える指定が環境に在ること。
+	errStaticCredentials = xerrors.New("環境に profile を迂回する資格情報の指定が在ります。make bootstrap-check-account か make bootstrap-verify から起動してください（make が外します）")
+	// errNotReadOnly は、読むだけでない aws の操作を起動しようとしたこと（確認の表の誤り）。
+	errNotReadOnly = xerrors.New("読むだけでない aws の操作は起動しません")
+
+	// staticCredentials は、AWS_PROFILE より優先されるか、profile の読み先を変える環境変数。
+	staticCredentials = []string{
+		"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_ROLE_ARN", "AWS_WEB_IDENTITY_TOKEN_FILE",
+		"AWS_CONTAINER_CREDENTIALS_FULL_URI", "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE",
+	}
+	readOnlyPrefixes = []string{"get-", "list-", "describe-", "head-", "simulate-"}
 )
+
+// awsProfile は、aws に使わせる profile。静的な資格情報が環境に在るか、AWS_PROFILE が空なら、aws を起動せずに止める。
+func awsProfile(getenv func(string) string) (string, error) {
+	var found []string
+
+	for _, k := range staticCredentials {
+		if getenv(k) != "" {
+			found = append(found, k)
+		}
+	}
+
+	if len(found) > 0 {
+		return "", xerrors.Wrapf(errStaticCredentials, "%s", strings.Join(found, "・"))
+	}
+
+	profile := getenv("AWS_PROFILE")
+	if profile == "" {
+		return "", errNoProfile
+	}
+
+	return profile, nil
+}
 
 // awsResult は、aws の1回の起動の結果。err は終了の失敗（*exec.ExitError）か起動の失敗。
 type awsResult struct {
@@ -93,7 +126,12 @@ func newQuery(aws awsFunc, region string) *query {
 	return &query{aws: aws, region: region, cache: map[string]awsResult{}}
 }
 
+// 操作名（args の2番目）が読むだけのもの（get-・list-・describe-・head-・simulate-）でなければ、起動せずに errNotReadOnly。
 func (q *query) call(output string, args ...string) (awsResult, error) {
+	if len(args) < 2 || !slices.ContainsFunc(readOnlyPrefixes, func(p string) bool { return strings.HasPrefix(args[1], p) }) {
+		return awsResult{}, xerrors.Wrapf(errNotReadOnly, "aws %s", strings.Join(args, " "))
+	}
+
 	full := append(append([]string{}, args...), "--output", output, "--region", q.region)
 	key := strings.Join(full, "\x00")
 
@@ -159,14 +197,14 @@ type verdict struct {
 	reason string
 }
 
-type accountCheck struct {
+type check struct {
 	desc string
 	eval func(q *query) (verdict, error)
 }
 
 // expectJSON は、aws の応答が pred を満たせば ok とする確認。
-func expectJSON(desc string, pred func(map[string]any) bool, args ...string) accountCheck {
-	return accountCheck{desc: desc, eval: func(q *query) (verdict, error) {
+func expectJSON(desc string, pred func(map[string]any) bool, args ...string) check {
+	return check{desc: desc, eval: func(q *query) (verdict, error) {
 		v, reason, err := q.object(args...)
 		if err != nil || reason != "" {
 			return verdict{reason: reason}, err
@@ -177,10 +215,10 @@ func expectJSON(desc string, pred func(map[string]any) bool, args ...string) acc
 }
 
 // accountChecks は、アカウントの準備（1-0 から 2-4）の確認の表。user は一時 IAM user の名前。
-func accountChecks(user, project string) []accountCheck {
+func accountChecks(user, project string) []check {
 	tagKey := project + ":bootstrap"
 
-	checks := []accountCheck{
+	checks := []check{
 		expectJSON("1-0 アカウントが Paid plan", func(v map[string]any) bool {
 			return at(v, "accountPlanType") == "PAID"
 		}, "freetier", "get-account-plan-state"),
@@ -225,7 +263,7 @@ func accountChecks(user, project string) []accountCheck {
 		expectJSON("2-2 Cost Anomaly Detection の通知が在る", func(v map[string]any) bool {
 			return arrayLen(at(v, "AnomalySubscriptions")) >= 1
 		}, "ce", "get-anomaly-subscriptions"),
-		accountCheck{desc: "2-4 AWS services monitor に tag " + tagKey + " が在る", eval: func(q *query) (verdict, error) {
+		check{desc: "2-4 AWS services monitor に tag " + tagKey + " が在る", eval: func(q *query) (verdict, error) {
 			arn, reason, err := serviceMonitor(q)
 			if err != nil || reason != "" {
 				return verdict{reason: reason}, err
@@ -233,7 +271,7 @@ func accountChecks(user, project string) []accountCheck {
 
 			return hasTag(q, arn, tagKey)
 		}},
-		accountCheck{desc: "2-4 AWS services monitor の通知に tag " + tagKey + " が在る", eval: func(q *query) (verdict, error) {
+		check{desc: "2-4 AWS services monitor の通知に tag " + tagKey + " が在る", eval: func(q *query) (verdict, error) {
 			monitor, reason, err := serviceMonitor(q)
 			if err != nil || reason != "" {
 				if reason != "" {
@@ -319,9 +357,9 @@ func hasTag(q *query, arn, key string) (verdict, error) {
 
 // checkAccount は、一時 IAM user の資格情報でアカウントの準備を読んで確かめる。
 func checkAccount(o accountOptions, out io.Writer, d deps) error {
-	profile := d.getenv("AWS_PROFILE")
-	if profile == "" {
-		return errNoProfile
+	profile, err := awsProfile(d.getenv)
+	if err != nil {
+		return err
 	}
 
 	q := newQuery(d.aws, o.region)
@@ -347,36 +385,12 @@ func checkAccount(o accountOptions, out io.Writer, d deps) error {
 
 	fmt.Fprintf(out, "# アカウントの準備（profile: %s、user: %s）\n", profile, m[1])
 
-	checks := accountChecks(m[1], o.project)
-	fails := 0
-
-	for _, c := range checks {
-		v, err := c.eval(q)
-		if err != nil {
-			return err
-		}
-
-		switch {
-		case v.ok:
-			fmt.Fprintf(out, "ok  %s\n", c.desc)
-		case v.reason != "":
-			fails++
-
-			fmt.Fprintf(out, "NG  %s（%s）\n", c.desc, v.reason)
-		default:
-			fails++
-
-			fmt.Fprintf(out, "NG  %s\n", c.desc)
-		}
+	var steps []step
+	for _, c := range accountChecks(m[1], o.project) {
+		steps = append(steps, checkStep(c))
 	}
 
-	fmt.Fprintf(out, "# 結果: %d 件のうち NG %d 件\n", len(checks), fails)
-
-	if fails > 0 {
-		return errMismatch
-	}
-
-	return nil
+	return runChecks(q, out, steps)
 }
 
 // at は、JSON の object を keys の順にたどった値。途中が object でなければ nil。
