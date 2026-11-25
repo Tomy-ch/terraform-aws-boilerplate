@@ -351,6 +351,8 @@ func (s *Scanner) Unclosed() int {
 // 開きません。`<!-->` と `<!--->` は空のコメントです。
 func stripComments(text string, open bool) (visible string, stillOpen bool) {
 	var b strings.Builder
+	var runs *backtickRuns
+	line := text
 	for text != "" {
 		if open {
 			_, after, found := strings.Cut(text, commentClose)
@@ -361,7 +363,10 @@ func stripComments(text string, open bool) (visible string, stillOpen bool) {
 			continue
 		}
 		if text[0] == '`' {
-			n, _ := CodeSpan(text)
+			if runs == nil {
+				runs = newBacktickRuns(line)
+			}
+			n, _ := runs.span(len(line) - len(text))
 			b.WriteString(text[:n])
 			text = text[n:]
 			continue
@@ -407,50 +412,69 @@ func cutEmptyComment(rest string) (string, bool) {
 // 無いバッククォートの連なりはただの文字であり、span を作りません。
 func InlineCodes(line string) []string {
 	var out []string
+	runs := newBacktickRuns(line)
 	for i := 0; i < len(line); {
 		if line[i] != '`' {
 			i++
 			continue
 		}
-		open := runLen(line, i)
-		if closeAt, ok := findClose(line, i+open, open); ok {
-			out = append(out, strings.TrimSpace(line[i+open:closeAt]))
-			i = closeAt + open
-			continue
+		n, closed := runs.span(i)
+		if closed {
+			open := runLen(line, i)
+			out = append(out, strings.TrimSpace(line[i+open:i+n-open]))
 		}
-		i += open
+		i += n
 	}
 	return out
 }
 
-// CodeSpan は、s の先頭のバッククォートの並びが開く inline code span の、閉じの並びまでを含めた長さを返します。
-// 閉じの規則は InlineCodes と同じで、長さの違う並びは読み飛ばします。閉じが無ければ、開きの並びの長さと false を
-// 返します（その並びはただの文字です）。s がバッククォートで始まらなければ 0 と false です。
-func CodeSpan(s string) (n int, closed bool) {
-	open := runLen(s, 0)
+// backtickRuns は、行のバッククォートの並びの始まりを、並びの長さごとに昇順で持ちます。閉じを探す位置を呼ぶたびに
+// 減らさなければ、1行を読み終えるまでの手間は行の長さに比例します。
+type backtickRuns struct {
+	line   string
+	starts map[int][]int
+	next   map[int]int
+}
+
+func newBacktickRuns(line string) *backtickRuns {
+	r := &backtickRuns{line: line, starts: map[int][]int{}, next: map[int]int{}}
+	for i := 0; i < len(line); {
+		if line[i] != '`' {
+			i++
+			continue
+		}
+		n := runLen(line, i)
+		r.starts[n] = append(r.starts[n], i)
+		i += n
+	}
+	return r
+}
+
+// closeAt は、from 以降で始まる、ちょうど n 個のバッククォートの並びの位置を返します。
+func (r *backtickRuns) closeAt(from, n int) (int, bool) {
+	starts, k := r.starts[n], r.next[n]
+	for k < len(starts) && starts[k] < from {
+		k++
+	}
+	r.next[n] = k
+	if k == len(starts) {
+		return 0, false
+	}
+	return starts[k], true
+}
+
+// span は、位置 at から始まるバッククォートの並びが開く inline code span の、閉じの並びまでを含めた長さを返します。
+// 長さの違う並びは読み飛ばします。閉じが無ければ、開きの並びの長さと false を返します（その並びはただの文字です）。
+// at がバッククォートでなければ 0 と false です。
+func (r *backtickRuns) span(at int) (n int, closed bool) {
+	open := runLen(r.line, at)
 	if open == 0 {
 		return 0, false
 	}
-	if closeAt, ok := findClose(s, open, open); ok {
-		return closeAt + open, true
+	if closeAt, ok := r.closeAt(at+open, open); ok {
+		return closeAt + open - at, true
 	}
 	return open, false
-}
-
-// findClose は、from 以降で、ちょうど want 個のバッククォートが並ぶ位置を返します。
-func findClose(line string, from, want int) (int, bool) {
-	for j := from; j < len(line); {
-		if line[j] != '`' {
-			j++
-			continue
-		}
-		n := runLen(line, j)
-		if n == want {
-			return j, true
-		}
-		j += n
-	}
-	return 0, false
 }
 
 func runLen(line string, i int) int {

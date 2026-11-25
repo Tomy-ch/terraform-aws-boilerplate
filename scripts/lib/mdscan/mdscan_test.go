@@ -10,6 +10,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// unclosedRuns は、長さの違う閉じないバッククォートの並びを count 個並べた行です。
+func unclosedRuns(count int) string {
+	var b strings.Builder
+	for k := 1; k <= count; k++ {
+		b.WriteString(strings.Repeat("`", k))
+		b.WriteString("a")
+	}
+	return b.String()
+}
+
 func TestLines(t *testing.T) {
 	t.Parallel()
 
@@ -677,6 +687,16 @@ func Test_stripComments(t *testing.T) {
 			assert.Equal(t, c.stillOpen, stillOpen)
 		})
 	}
+
+	t.Run("長さの違う閉じない並びが多い行も、行の長さに比例する手間で読む", func(t *testing.T) {
+		t.Parallel()
+		line := unclosedRuns(4000)
+		start := time.Now()
+		got, stillOpen := stripComments(line, false)
+		assert.Less(t, time.Since(start), time.Second)
+		assert.Equal(t, line, got)
+		assert.False(t, stillOpen)
+	})
 }
 
 func Test_cutEmptyComment(t *testing.T) {
@@ -729,33 +749,35 @@ func TestInlineCodes(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("長さの違う閉じない並びが多い行も、行の長さに比例する手間で読む", func(t *testing.T) {
+		t.Parallel()
+		line := unclosedRuns(4000)
+		start := time.Now()
+		got := InlineCodes(line)
+		assert.Less(t, time.Since(start), time.Second)
+		assert.Empty(t, got)
+	})
 }
 
-func TestCodeSpan(t *testing.T) {
+func Test_newBacktickRuns(t *testing.T) {
 	t.Parallel()
 
 	for name, c := range map[string]struct {
-		s      string
-		n      int
-		closed bool
+		line string
+		want map[int][]int
 	}{
-		"同じ長さの閉じまでを返す":      {"`a` b", 3, true},
-		"長さの違う並びを読み飛ばして閉じる": {"`a``b` c", 6, true},
-		"2つの並びは2つの並びで閉じる":   {"``a`b`` c", 7, true},
-		"閉じが無ければ開きの並びだけを返す": {"`a``b", 1, false},
-		"バッククォートで始まらなければ0":  {"a`b`", 0, false},
-		"空": {"", 0, false},
+		"並びを長さごとに昇順で持つ": {"`a``b`c```", map[int][]int{1: {0, 5}, 2: {2}, 3: {7}}},
+		"バッククォートが無ければ空": {"abc", map[int][]int{}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			n, closed := CodeSpan(c.s)
-			assert.Equal(t, c.n, n)
-			assert.Equal(t, c.closed, closed)
+			assert.Equal(t, c.want, newBacktickRuns(c.line).starts)
 		})
 	}
 }
 
-func Test_findClose(t *testing.T) {
+func Test_backtickRuns_closeAt(t *testing.T) {
 	t.Parallel()
 
 	t.Run("正常系", func(t *testing.T) {
@@ -778,13 +800,54 @@ func Test_findClose(t *testing.T) {
 		for name, tt := range tests {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
-				got, ok := findClose(tt.line, tt.from, tt.wantWant)
+				got, ok := newBacktickRuns(tt.line).closeAt(tt.from, tt.wantWant)
 				assert.Equal(t, tt.wantOK, ok)
 				if tt.wantOK {
 					assert.Equal(t, tt.want, got)
 				}
 			})
 		}
+	})
+
+	t.Run("探す位置を進めれば、手前の並びを返さない", func(t *testing.T) {
+		t.Parallel()
+		r := newBacktickRuns("`a`b`c")
+		first, ok := r.closeAt(1, 1)
+		require.True(t, ok)
+		second, ok := r.closeAt(first+1, 1)
+		require.True(t, ok)
+		assert.Equal(t, []int{2, 4}, []int{first, second})
+	})
+}
+
+func Test_backtickRuns_span(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		s      string
+		n      int
+		closed bool
+	}{
+		"同じ長さの閉じまでを返す":      {"`a` b", 3, true},
+		"長さの違う並びを読み飛ばして閉じる": {"`a``b` c", 6, true},
+		"2つの並びは2つの並びで閉じる":   {"``a`b`` c", 7, true},
+		"閉じが無ければ開きの並びだけを返す": {"`a``b", 1, false},
+		"バッククォートで始まらなければ0":  {"a`b`", 0, false},
+		"空": {"", 0, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			n, closed := newBacktickRuns(c.s).span(0)
+			assert.Equal(t, c.n, n)
+			assert.Equal(t, c.closed, closed)
+		})
+	}
+
+	t.Run("途中の位置から開く", func(t *testing.T) {
+		t.Parallel()
+		n, closed := newBacktickRuns("a\\``b` c").span(3)
+		assert.Equal(t, 3, n)
+		assert.True(t, closed)
 	})
 }
 
