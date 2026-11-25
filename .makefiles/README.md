@@ -76,7 +76,7 @@ Dockerfile と compose の検査、image digest の固定。
 
 ### `github/`
 
-workflow と action の検査、commit message、egress の SSOT、action と runner の固定、ベースブランチの解決。
+workflow と action の検査、commit message、egress の SSOT、action と runner の固定、ベースブランチの解決。commit message の範囲の判定は `scripts/commit-range` が持つ。
 
 ### `github/operation/`
 
