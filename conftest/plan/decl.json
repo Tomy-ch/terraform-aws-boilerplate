@@ -11,6 +11,8 @@
       "chatbot:CreateSlackChannelConfiguration",
       "chatbot:DescribeSlackChannelConfigurations",
       "cloudformation:CreateStackSet",
+      "cloudtrail:DeregisterOrganizationDelegatedAdmin",
+      "cloudtrail:RegisterOrganizationDelegatedAdmin",
       "cloudwatch:DescribeAlarmsForMetric",
       "cloudwatch:GetMetricData",
       "cloudwatch:GetMetricStatistics",
@@ -28,6 +30,9 @@
       "ecr:GetAuthorizationToken",
       "elasticmapreduce:GetBlockPublicAccessConfiguration",
       "elasticmapreduce:PutBlockPublicAccessConfiguration",
+      "guardduty:DisableOrganizationAdminAccount",
+      "guardduty:EnableOrganizationAdminAccount",
+      "guardduty:ListOrganizationAdminAccounts",
       "iam:DeleteAccountPasswordPolicy",
       "iam:DisableOrganizationsRootCredentialsManagement",
       "iam:DisableOrganizationsRootSessions",
@@ -36,6 +41,9 @@
       "iam:GetAccountPasswordPolicy",
       "iam:ListOrganizationsFeatures",
       "iam:UpdateAccountPasswordPolicy",
+      "inspector2:DisableDelegatedAdminAccount",
+      "inspector2:EnableDelegatedAdminAccount",
+      "inspector2:ListDelegatedAdminAccounts",
       "kms:CreateKey",
       "kms:ListAliases",
       "logs:DescribeLogGroups",
@@ -47,6 +55,7 @@
       "organizations:EnableAWSServiceAccess",
       "organizations:ListAWSServiceAccessForOrganization",
       "organizations:ListAccounts",
+      "organizations:ListDelegatedAdministrators",
       "organizations:ListRoots",
       "s3:GetAccountPublicAccessBlock",
       "s3:PutAccountPublicAccessBlock"
@@ -294,7 +303,8 @@
         "output_bucket_policy_statements": 5,
         "managed_policies": [
           "module.deployment_identity.module.github_oidc.aws_iam_policy.manage",
-          "module.deployment_identity.module.github_oidc.aws_iam_policy.governance[0]"
+          "module.deployment_identity.module.github_oidc.aws_iam_policy.governance[0]",
+          "module.deployment_identity.module.github_oidc.aws_iam_policy.governance_2[0]"
         ]
       },
       "customer_managed_policies": [
