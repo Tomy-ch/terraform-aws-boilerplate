@@ -301,7 +301,7 @@ func permissionSections(n names, sk, skReason string) []section {
 	mp := n.policyARN(ai + "-manage")
 	mbp := n.policyARN(ai + "-members")
 	// 管理アカウントの OrganizationAccountAccessRole の ARN。引き受けの Resource がアカウントの wildcard へ広がったことを見つける。
-	// 立ち上げの中のメンバーの引き受けは、アカウントを入力に持たないので確かめない（Policy Test の PLAN-BA-* が見る）。
+	// 立ち上げの中のメンバーの引き受けは、アカウントを入力に持たないので確かめない（Policy Test の PLAN-ASSUME-* が見る）。
 	oaar := iam + ":role/OrganizationAccountAccessRole"
 	bg := iam + ":role/break-glass/" + n.project + "-break-glass"
 	admin := "arn:aws:iam::aws:policy/AdministratorAccess"

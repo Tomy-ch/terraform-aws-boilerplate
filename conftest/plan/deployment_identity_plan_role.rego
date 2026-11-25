@@ -1,7 +1,7 @@
 # deployment-identity の plan の role の権限（ADR-0602 決定13、deployment-identity/ADR-0201 決定8・17）。
 package plan.deployment_identity_plan_role
 
-import data.plan.deployment_identity_bootstrap_assume as ba
+import data.plan.deployment_identity_bootstrap_assume as bootstrap_assume
 import data.plan.lib
 
 cfg := object.get(object.get(data.policy_plan, "deployment_identity", {}), "plan_role", {})
@@ -179,13 +179,13 @@ deny contains msg if {
 	msg := sprintf("[PLAN-ROLE-02] %s: plan の role の Allow に変更系の Action %s があります（ADR-0602 決定13）", [a.path, action])
 }
 
-# メンバーの立ち上げの読み取りの role の引き受けは、書き込みを与えない（organization-baseline/ADR-0203）。形は PLAN-BA-01 が見る。
+# メンバーの立ち上げの読み取りの role の引き受けは、書き込みを与えない（organization-baseline/ADR-0203）。形は PLAN-ASSUME-01 が見る。
 bootstrap_read_assume(s, "sts:assumerole") if {
 	resources := lib.as_array(object.get(s, "Resource", []))
 	count(resources) > 0
 	every r in resources {
 		is_string(r)
-		regex.match(ba.bootstrap_read_role_arn, r)
+		regex.match(bootstrap_assume.bootstrap_read_role_arn, r)
 	}
 }
 

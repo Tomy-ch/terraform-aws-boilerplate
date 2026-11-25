@@ -206,7 +206,7 @@ boundary は role に1つしか付かず、文書は 6,144 文字が上限であ
 - Unit Test: `internal/github-oidc/tests/permissions.tftest.hcl` が、決定17 の policy と boundary の文書を完全一致で（boundary の Deny は apply の role の Deny の文と同じであることも）、長さを入力の境界で 6,144 文字以下に確かめる
 - Policy Test（`make tf-policy`、`plan.deployment_identity_workload_policy`。`PLAN-AWP-*`）: 決定13・14 の IAM の書き込みの Resource と条件（宣言した service-linked role の作成と、そのサービスへの `iam:PassRole`、`account_iam_writes` に宣言した Resource `"*"` のアカウントの設定の書き込みを含む）、決定17 の3つの policy の名前、決定15 の boundary の Deny の一致。宣言は `conftest/plan/decl.json` の `deployment_identity.workload`
 - Policy Test（`make tf-policy`、`plan.deployment_identity_region_deny`。`PLAN-REGION-*`）: plan と apply の role の Allow のうち、ARN の region を `*` にしたものの Action が、同じ role の inline policy の、条件 `StringNotEquals` の `aws:RequestedRegion` だけを持つ Resource `"*"` の Deny に含まれ、その Deny のリージョンが `conftest/plan/decl.json` の `default_regions.aws` と一致すること（決定13、repository-wide/ADR-0209 決定4）。resource-level 権限を持たない Action が Deny に含まれることは、Unit Test（`permissions.tftest.hcl` の `baseline_arns_follow_data_sources`）が見る
-- Policy Test（`make tf-policy`、`plan.deployment_identity_bootstrap_assume`。`PLAN-BA-*`）: 決定22 の保証。`plan.deployment_identity_plan_role` の `PLAN-ROLE-02` は、`sts:AssumeRole` を立ち上げの読み取りの role の ARN に限るときだけ通す
+- Policy Test（`make tf-policy`、`plan.deployment_identity_bootstrap_assume`。`PLAN-ASSUME-*`）: 決定22 の保証。`plan.deployment_identity_plan_role` の `PLAN-ROLE-02` は、`sts:AssumeRole` を立ち上げの読み取りの role の ARN に限るときだけ通す
 - Policy Test（`make tf-policy`、`plan.workload_role_boundary`。`PLAN-WRB-*`）: 宣言した usecase の module の role が、その usecase の boundary を持つこと（決定14・15）
 - Policy Test（`make tf-policy`、`PLAN-IAM-04`）: KMS の暗号操作の Allow が、宣言した boundary の文書の `kms:ViaService` の条件を持つ文のほかに無いこと（決定16）
 

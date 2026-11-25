@@ -24,14 +24,14 @@ well_formed_declaration if {
 
 deny contains msg if {
 	not well_formed_declaration
-	msg := "[PLAN-BA-00] 宣言 deployment_identity.plan_role.policy と deployment_identity.bootstrap_assume.apply_identity_policy が、空でない address ではありません"
+	msg := "[PLAN-ASSUME-00] 宣言 deployment_identity.plan_role.policy と deployment_identity.bootstrap_assume.apply_identity_policy が、空でない address ではありません"
 }
 
 deny contains msg if {
 	well_formed_declaration
 	some a in [plan_policy, apply_identity_policy]
 	count({r | some r in lib.readable; r.document.address == a}) == 0
-	msg := sprintf("[PLAN-BA-00] 宣言した引き受けの policy %s が入力にありません", [a])
+	msg := sprintf("[PLAN-ASSUME-00] 宣言した引き受けの policy %s が入力にありません", [a])
 }
 
 # deployment-identity の CI の role の権限の文書。信頼条件（aws_iam_role の assume_role_policy）は含めない。
@@ -83,7 +83,7 @@ deny contains msg if {
 	some x in assume_statements
 	x.document.address == plan_policy
 	not plan_assume_shape(x.statement)
-	msg := sprintf("[PLAN-BA-01] %s: plan の role の引き受けが、Action を sts:AssumeRole だけにし、Resource をメンバーの立ち上げの読み取りの role（/bootstrap/<project>-bootstrap-read）の ARN だけにする形ではありません", [x.document.path])
+	msg := sprintf("[PLAN-ASSUME-01] %s: plan の role の引き受けが、Action を sts:AssumeRole だけにし、Resource をメンバーの立ち上げの読み取りの role（/bootstrap/<project>-bootstrap-read）の ARN だけにする形ではありません", [x.document.path])
 }
 
 plan_assume_shape(s) if {
@@ -95,7 +95,7 @@ deny contains msg if {
 	some x in assume_statements
 	x.document.address == apply_identity_policy
 	not apply_identity_assume_shape(x.statement)
-	msg := sprintf("[PLAN-BA-02] %s: apply-identity の role の引き受けが、Action を sts:AssumeRole だけにし、Resource をメンバーの OrganizationAccountAccessRole の ARN だけにする形ではありません", [x.document.path])
+	msg := sprintf("[PLAN-ASSUME-02] %s: apply-identity の role の引き受けが、Action を sts:AssumeRole だけにし、Resource をメンバーの OrganizationAccountAccessRole の ARN だけにする形ではありません", [x.document.path])
 }
 
 apply_identity_assume_shape(s) if {
@@ -106,7 +106,7 @@ apply_identity_assume_shape(s) if {
 deny contains msg if {
 	some x in assume_statements
 	not x.document.address in {plan_policy, apply_identity_policy}
-	msg := sprintf("[PLAN-BA-03] %s: %s が sts:AssumeRole・sts:TagSession・sts:SetSourceIdentity のどれかを許します。メンバーの引き受けは、plan の role の inline policy と %s だけに置いてください", [x.document.path, x.document.address, apply_identity_policy])
+	msg := sprintf("[PLAN-ASSUME-03] %s: %s が sts:AssumeRole・sts:TagSession・sts:SetSourceIdentity のどれかを許します。メンバーの引き受けは、plan の role の inline policy と %s だけに置いてください", [x.document.path, x.document.address, apply_identity_policy])
 }
 
 accounts(address, pattern) := {regex.find_all_string_submatch_n(pattern, r, 1)[0][1] |
@@ -124,12 +124,12 @@ apply_identity_accounts := accounts(apply_identity_policy, access_role_arn)
 # 2つの role の引き受け先は、同じ入力 bootstrap_member_account_ids から組む。
 deny contains msg if {
 	plan_accounts != apply_identity_accounts
-	msg := sprintf("[PLAN-BA-04] plan の role の引き受け先のアカウント %v と、apply-identity の role の引き受け先のアカウント %v が一致しません", [sort(plan_accounts), sort(apply_identity_accounts)])
+	msg := sprintf("[PLAN-ASSUME-04] plan の role の引き受け先のアカウント %v と、apply-identity の role の引き受け先のアカウント %v が一致しません", [sort(plan_accounts), sort(apply_identity_accounts)])
 }
 
-# 入力は reference の plan で、立ち上げの中のアカウントを持つ。引き受けが無ければ、BA-01 から BA-04 は何も見ていない。
+# 入力は reference の plan で、立ち上げの中のアカウントを持つ。引き受けが無ければ、ASSUME-01 から ASSUME-04 は何も見ていない。
 deny contains msg if {
 	well_formed_declaration
 	count(plan_accounts) == 0
-	msg := "[PLAN-BA-05] 入力に、plan の role の立ち上げの読み取りの role の引き受けがありません。reference の bootstrap_member_account_ids にアカウントを入れてください"
+	msg := "[PLAN-ASSUME-05] 入力に、plan の role の立ち上げの読み取りの role の引き受けがありません。reference の bootstrap_member_account_ids にアカウントを入れてください"
 }
