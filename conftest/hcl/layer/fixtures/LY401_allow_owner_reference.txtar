@@ -1,0 +1,4 @@
+-- usecases/account-baseline/reference/main.tf --
+resource "aws_s3_account_public_access_block" "this" {
+  block_public_acls = true
+}

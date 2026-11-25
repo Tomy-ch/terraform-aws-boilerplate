@@ -105,7 +105,7 @@ var (
 
 // tool は宣言の 1 行。backend は解決後の値で、短縮名なら mise registry が決める。
 type tool struct {
-	key     string // 宣言に書かれたキーそのもの
+	key     string
 	version string
 	backend string // 例: aqua:owner/repo, go:module, npm:pkg, pypi:pkg, core:go
 	file    string // 宣言元のパス。注釈を宣言した場所へ付けるために持つ
@@ -156,7 +156,7 @@ func main() {
 	}
 }
 
-// run は mise.toml の宣言を cooldown に照らして報告します。gate で違反が残った場合はエラーを
+// run はツールの宣言を cooldown に照らして報告します。gate で違反が残った場合はエラーを
 // 返し、終了コードへの変換は呼び出し側に委ねます。
 // client は上流への問い合わせ手段、now は窓と期限の基準時刻で、差し替えられるよう引数で受けます。
 func run(args []string, client *http.Client, now time.Time) error {
@@ -301,7 +301,7 @@ func parseTools(content []byte) ([]tool, error) {
 }
 
 func declarationPaths() []string {
-	return []string{miseFile, tflintFile}
+	return []string{miseFile, tflintFile, semgrepFile}
 }
 
 // readDeclarations は作業ツリーの宣言ファイルを読む。
@@ -326,8 +326,11 @@ func parseDeclarations(decls []declaration) ([]tool, error) {
 	var tools []tool
 	for _, d := range decls {
 		parse := parseTools
-		if filepath.Base(d.path) == tflintFile {
+		switch filepath.Base(d.path) {
+		case tflintFile:
 			parse = parseTflintPlugins
+		case filepath.Base(semgrepFile):
+			parse = parseSemgrepRules
 		}
 		parsed, err := parse(d.content)
 		if err != nil {
@@ -468,7 +471,7 @@ func firstBackend(registryOutput []byte, name string) (string, error) {
 
 func windowFor(backend string) int {
 	switch backendKind(backend) {
-	case "github":
+	case "github", "commit":
 		return releaseWindowDays
 	default:
 		return registryWindowDays
@@ -480,6 +483,8 @@ func backendKind(backend string) string {
 	switch name {
 	case "aqua", "ubi", "github":
 		return "github"
+	case "github-commit":
+		return "commit"
 	case "go":
 		return "go"
 	case "npm":
@@ -544,6 +549,16 @@ func publishedAt(ctx context.Context, client *http.Client, t tool) (time.Time, e
 		}
 
 		return time.Time{}, err
+	case "commit":
+		info, err := githubCommit(ctx, client, ref, t.version)
+		if err != nil {
+			return time.Time{}, err
+		}
+		if branchErr := verifyOnDefaultBranch(ctx, client, ref, t.version); branchErr != nil {
+			return time.Time{}, branchErr
+		}
+
+		return info.at, nil
 	case "go":
 		return goModuleAt(ctx, client, ref, t.version)
 	case "npm":

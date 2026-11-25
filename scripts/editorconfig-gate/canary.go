@@ -5,16 +5,24 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
 // marker は、範囲を開く無効化の印です。
 const marker = "editorconfig-" + "checker-" + "disable"
 
-// tabYAML は、tab で字下げした YAML です。.editorconfig は YAML に space を宣言します。
+const canaryFile = "canary.yaml"
+
+// nonASCIIFile は、check-canary が canaryFile と同じ違反を置く、非 ASCII の名前のファイルです。core.quotepath=false
+// が editorconfig-checker の git に届かなければ、このファイルは黙って走査から外れます。
+const nonASCIIFile = "nested/deep/ünï.yaml"
+
+// tabYAML は、.editorconfig が YAML に宣言する space に反する字下げです。
 const tabYAML = "a:\n\tb: c\n"
 
 const (
@@ -22,10 +30,10 @@ const (
 	checkerConfigName = ".editorconfig-checker.json"
 )
 
-// canarySpec は、canary の fixture に置くファイルと判定です。
 type canarySpec struct {
 	files map[string]string
-	judge func(r result) (bool, string)
+	step  string
+	judge func(r toolrun.Result) (bool, string)
 	ok    string
 }
 
@@ -36,32 +44,87 @@ type fixturePaths struct {
 
 func runCheckCanary(p fixturePaths, w io.Writer, tool toolFunc, env []string) error {
 	return runCanary("check-canary", canarySpec{
-		files: map[string]string{"canary.yaml": tabYAML},
+		files: map[string]string{canaryFile: tabYAML, nonASCIIFile: tabYAML},
+		step:  stepCheck,
 		judge: judgeCheck,
-		ok:    "tab で字下げした YAML で落ちました",
+		ok:    "tab で字下げした YAML で落ち、非 ASCII の名前のファイルも検査しました",
 	}, p, w, tool, env)
 }
 
 func runDirectiveCanary(p fixturePaths, w io.Writer, tool toolFunc, env []string) error {
 	return runCanary("directive-canary", canarySpec{
-		files: map[string]string{"canary.yaml": "# " + marker + "\n" + tabYAML, "control.yaml": tabYAML},
+		files: map[string]string{canaryFile: "# " + marker + "\n" + tabYAML, "control.yaml": tabYAML},
+		step:  stepCheck,
 		judge: judgeDirective,
 		ok:    "閉じない印の後ろは検査されませんでした（editorconfig-directive-lint の前提どおり）",
 	}, p, w, tool, env)
 }
 
-// runCanary は、fixture を建ててその中のリポジトリで editorconfig-checker を走らせ、spec.judge で判定します。
+// excludeDir と excludeControl は、exclude-canary が宣言した除外の名前と対照を置く入れ子のディレクトリと、対照の名前
+// です。対照は宣言に無く、既定の除外にも当たらない名前です。
+const (
+	excludeDir             = "nested/deep"
+	excludeControl         = "control.txt"
+	excludeControlNonASCII = "cöntrol.txt"
+)
+
+func runExcludeCanary(p fixturePaths, w io.Writer, tool toolFunc, env []string) error {
+	return runCanary("exclude-canary", canarySpec{
+		files: excludeCanaryFiles(),
+		step:  stepDryRun,
+		judge: judgeExclude,
+		ok:    "宣言した除外の名前はどの深さでも走査の対象から外れ、対照は対象に入りました",
+	}, p, w, tool, env)
+}
+
+func excludeCanaryFiles() map[string]string {
+	files := map[string]string{path.Join(excludeDir, excludeControl): "x\n", path.Join(excludeDir, excludeControlNonASCII): "x\n"}
+	for _, n := range excludedNames {
+		files[path.Join(excludeDir, n)] = "x\n"
+	}
+
+	return files
+}
+
+// judgeExclude は、0 で終わり、-dry-run の stdout が対照を載せ、宣言した除外の名前を1つも載せなければ成り立ちます。
+func judgeExclude(r toolrun.Result) (bool, string) {
+	if r.Code != 0 {
+		return false, fmt.Sprintf("-dry-run が rc=%d で終わりました", r.Code)
+	}
+	listed := map[string]bool{}
+	for _, p := range dryRunPaths(r.Stdout) {
+		listed[p] = true
+	}
+	if !listed[path.Join(excludeDir, excludeControl)] {
+		return false, "対照が -dry-run に載りませんでした。列挙が働いていません"
+	}
+	if !listed[path.Join(excludeDir, excludeControlNonASCII)] {
+		return false, "非 ASCII の名前の対照が -dry-run に載りませんでした。core.quotepath=false が git に届いていません"
+	}
+	var leaked []string
+	for _, n := range excludedNames {
+		if listed[path.Join(excludeDir, n)] {
+			leaked = append(leaked, n)
+		}
+	}
+	if len(leaked) > 0 {
+		return false, fmt.Sprintf("宣言した除外 %q が -dry-run に載りました。editorconfig-checker の既定の除外を読んで excludedNames を見直す", leaked)
+	}
+
+	return true, ""
+}
+
 func runCanary(name string, spec canarySpec, p fixturePaths, w io.Writer, tool toolFunc, env []string) error {
 	if err := buildFixture(p.work, p.editorconfig, p.checkerConfig, spec.files); err != nil {
 		return err
 	}
 	defer func() { _ = os.RemoveAll(p.work) }()
-	r, err := runInFixture(p.work, env, tool)
+	r, err := runInFixture(p.work, env, tool, spec.step)
 	if err != nil {
 		return err
 	}
 	if ok, reason := spec.judge(r); !ok {
-		fmt.Fprintf(w, "--- editorconfig-checker（rc=%d）:\n%s\n", r.code, r.combined)
+		fmt.Fprintf(w, "--- editorconfig-checker（rc=%d）:\n%s\n", r.Code, r.Combined)
 
 		return xerrors.Wrap(errCanary, reason)
 	}
@@ -70,7 +133,7 @@ func runCanary(name string, spec canarySpec, p fixturePaths, w io.Writer, tool t
 	return nil
 }
 
-// buildFixture は、work を作り直し、2つの設定の複写と files を置きます。.editorconfig が無い・空なら errRead、
+// buildFixture は、work を作り直し、2つの設定の複写と files（work からの相対パス）を置きます。.editorconfig が無い・空なら errRead、
 // .editorconfig-checker.json が `{}` でなければ errScope です。
 func buildFixture(work, editorconfig, checkerConfig string, files map[string]string) error {
 	ec, err := os.ReadFile(filepath.Clean(editorconfig))
@@ -95,7 +158,11 @@ func buildFixture(work, editorconfig, checkerConfig string, files map[string]str
 		all[name] = body
 	}
 	for name, body := range all {
-		if err := os.WriteFile(filepath.Join(work, name), []byte(body), 0o600); err != nil {
+		p := filepath.Join(work, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+			return xerrors.Wrapf(errRead, "%v", err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
 			return xerrors.Wrapf(errRead, "%v", err)
 		}
 	}
@@ -103,52 +170,64 @@ func buildFixture(work, editorconfig, checkerConfig string, files map[string]str
 	return nil
 }
 
-// runInFixture は、work にリポジトリを建ててファイルを追跡させ、引数なしの editorconfig-checker を走らせます。
-func runInFixture(work string, env []string, tool toolFunc) (result, error) {
+func runInFixture(work string, env []string, tool toolFunc, step string) (toolrun.Result, error) {
 	for _, step := range []string{stepGitInit, stepGitAdd} {
-		r, err := runTool(tool(work, env, step))
+		r, err := toolrun.Run(tool(work, env, step))
 		if err != nil {
 			return r, err
 		}
-		if r.code != 0 {
-			return r, xerrors.Wrapf(errTool, "fixture の %s が rc=%d で終わりました\n%s", step, r.code, r.combined)
+		if r.Code != 0 {
+			return r, xerrors.Wrapf(errTool, "fixture の %s が rc=%d で終わりました\n%s", step, r.Code, r.Combined)
 		}
 	}
 
-	return runTool(tool(work, env, stepCheck))
+	return toolrun.Run(tool(work, checkerEnv(env), step))
 }
 
-// judgeCheck は、0 以外で終わり、出力が canary.yaml の後に字下げの違反を名指していれば成り立ちます。
-func judgeCheck(r result) (bool, string) {
-	out := stripANSI(r.combined)
+// judgeCheck は、0 以外で終わり、出力が canaryFile と nonASCIIFile の両方に字下げの違反を名指していれば成り立ちます。
+func judgeCheck(r toolrun.Result) (bool, string) {
+	flagged := flaggedFiles(stripANSI(r.Combined))
 	switch {
-	case r.code == 0:
+	case r.Code == 0:
 		return false, "tab で字下げした YAML で落ちませんでした"
-	case containsInOrder(out, "canary.yaml", "wrong indent"):
+	case flagged[canaryFile] && flagged[nonASCIIFile]:
 		return true, ""
+	case flagged[canaryFile]:
+		return false, "非 ASCII の名前のファイルを検査しませんでした。core.quotepath=false が git に届いていません"
 	default:
-		return false, fmt.Sprintf("想定外の失敗です (rc=%d)", r.code)
+		return false, fmt.Sprintf("想定外の失敗です (rc=%d)", r.Code)
 	}
+}
+
+// flaggedFiles は、editorconfig-checker の出力（字下げの無い `<パス>:` の見出しと、その下の字下げした違反の行）
+// から、字下げの違反を持つパスを返します。
+func flaggedFiles(out string) map[string]bool {
+	flagged := map[string]bool{}
+	current := ""
+	for _, line := range strings.Split(out, "\n") {
+		switch {
+		case line != "" && line[0] != ' ' && line[0] != '\t' && strings.HasSuffix(line, ":"):
+			current = strings.TrimSuffix(line, ":")
+		case current != "" && strings.Contains(line, "wrong indent"):
+			flagged[current] = true
+		}
+	}
+
+	return flagged
 }
 
 // judgeDirective は、0 以外で終わり、出力が印の無い対照（control.yaml）だけを名指していれば成り立ちます。
 // 印を置いた canary.yaml の違反が出れば、閉じない印の後ろも検査されています。
-func judgeDirective(r result) (bool, string) {
-	out := stripANSI(r.combined)
+func judgeDirective(r toolrun.Result) (bool, string) {
+	out := stripANSI(r.Combined)
 	switch {
-	case r.code == 0:
+	case r.Code == 0:
 		return false, "印の無い対照の違反でも落ちませんでした。走査が働いていません"
-	case strings.Contains(out, "canary.yaml"):
+	case strings.Contains(out, canaryFile):
 		return false, "閉じない印の後ろの違反を検査しました。editorconfig-directive-lint の分類を見直す"
 	case strings.Contains(out, "control.yaml"):
 		return true, ""
 	default:
-		return false, fmt.Sprintf("想定外の失敗です (rc=%d)", r.code)
+		return false, fmt.Sprintf("想定外の失敗です (rc=%d)", r.Code)
 	}
-}
-
-func containsInOrder(s, first, second string) bool {
-	_, after, ok := strings.Cut(s, first)
-
-	return ok && strings.Contains(after, second)
 }

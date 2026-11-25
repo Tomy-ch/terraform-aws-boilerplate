@@ -21,8 +21,21 @@ import (
 
 var actionFilenames = []string{"action.yml", "action.yaml"}
 
+// actionsDir は root からの相対で composite action 定義を置くディレクトリ。
+const actionsDir = ".github/actions"
+
 // workflowPatterns は root からの相対で workflow 定義を指すパターン。
 var workflowPatterns = []string{".github/workflows/*.yaml", ".github/workflows/*.yml"}
+
+// Patterns は Collect が集めるファイル集合を、root からの相対の glob で返す。`**` は任意の深さの
+// ディレクトリを表す。走査範囲を別の宣言（hook の glob）と突き合わせる側が読む。
+func Patterns() []string {
+	patterns := slices.Clone(workflowPatterns)
+	for _, name := range actionFilenames {
+		patterns = append(patterns, actionsDir+"/**/"+name)
+	}
+	return patterns
+}
 
 // Collect は workflow 定義とリポジトリ内 composite action 定義のパスを名前順で返す。
 // `.github/actions` が無いリポジトリは空として扱い、それ以外の走査失敗は握り潰さず返す。
@@ -36,8 +49,7 @@ func Collect(root string) ([]string, error) {
 		files = append(files, m...)
 	}
 
-	actionsDir := filepath.Join(root, ".github", "actions")
-	err := filepath.WalkDir(actionsDir, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(filepath.Join(root, filepath.FromSlash(actionsDir)), func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}

@@ -1,28 +1,31 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"io"
 	"os/exec"
 	"regexp"
-	"sync"
+	"strings"
 
-	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 )
 
-// toolFunc は、ディレクトリ dir で段 step の道具を起動するコマンドを作ります。テストは差し替えます。
-type toolFunc func(dir string, env []string, step string) *exec.Cmd
+type toolFunc = toolrun.Func
 
-// 段の名前。command が引数を固定で持ちます。
 const (
-	stepGitInit = "git-init"
-	stepGitAdd  = "git-add"
-	stepCheck   = "check"
-	stepDryRun  = "dry-run"
+	stepGitInit   = "git-init"
+	stepGitAdd    = "git-add"
+	stepCheck     = "check"
+	stepDryRun    = "dry-run"
+	stepScan      = "scan"
+	stepLsFiles   = "ls-files"
+	stepLsDeleted = "ls-deleted"
 )
 
-// command は toolFunc の実物です。引数は段ごとに固定です。fixture の git は hook を起動しません。
+// command は toolFunc の実物です。引数は段ごとに固定です。git は hook を起動しません。
+//
+// editorconfig-checker は GITHUB_ACTIONS=true で出力を github-actions の形（`::error file=...`）へ替えます。出力を
+// 読んで判定する canary（stepCheck）と -dry-run は -format default で形を固定します。本走査（stepScan）は出力を
+// 写して終了コードだけで判定するので形を固定せず、GitHub Actions では違反が注釈として出ます。
 func command(dir string, env []string, step string) *exec.Cmd {
 	ctx := context.Background()
 	var cmd *exec.Cmd
@@ -31,8 +34,14 @@ func command(dir string, env []string, step string) *exec.Cmd {
 		cmd = exec.CommandContext(ctx, "git", "-c", "core.hooksPath=/dev/null", "init", "-q")
 	case stepGitAdd:
 		cmd = exec.CommandContext(ctx, "git", "-c", "core.hooksPath=/dev/null", "add", "-A")
+	case stepCheck:
+		cmd = exec.CommandContext(ctx, "editorconfig-checker", "-format", "default")
 	case stepDryRun:
-		cmd = exec.CommandContext(ctx, "editorconfig-checker", "-dry-run")
+		cmd = exec.CommandContext(ctx, "editorconfig-checker", "-format", "default", "-dry-run")
+	case stepLsFiles:
+		cmd = exec.CommandContext(ctx, "git", "-c", "core.hooksPath=/dev/null", "ls-files", "-z", "--stage")
+	case stepLsDeleted:
+		cmd = exec.CommandContext(ctx, "git", "-c", "core.hooksPath=/dev/null", "ls-files", "-z", "--deleted")
 	default:
 		cmd = exec.CommandContext(ctx, "editorconfig-checker")
 	}
@@ -42,55 +51,25 @@ func command(dir string, env []string, step string) *exec.Cmd {
 	return cmd
 }
 
-// result は、道具の stdout、stdout と stderr を出た順に束ねたもの、終了コードです。
-type result struct {
-	stdout   string
-	combined string
-	code     int
-}
+// quotePathConfig は、editorconfig-checker が起動する git に core.quotepath=false を渡す env です。git が引用した
+// パス（非 ASCII の名前）を、editorconfig-checker は黙って走査から外します。
+var quotePathConfig = []string{"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=core.quotepath", "GIT_CONFIG_VALUE_0=false"}
 
-// runTool は cmd を走らせます。起動できない、またはシグナルで終わったときは errTool です。0 以外の終了コードは
-// エラーにせず result で返し、判定は呼び出し側が持ちます。
-func runTool(cmd *exec.Cmd) (result, error) {
-	var stdout bytes.Buffer
-	combined := &lockedBuffer{}
-	cmd.Stdout = io.MultiWriter(&stdout, combined)
-	cmd.Stderr = combined
-	err := cmd.Run()
-	r := result{stdout: stdout.String(), combined: combined.String()}
-	if err == nil {
-		return r, nil
+// checkerEnv は、env から受け継いだ git の設定の変数（GIT_CONFIG_COUNT・GIT_CONFIG_KEY_<n>・GIT_CONFIG_VALUE_<n>・
+// GIT_CONFIG_PARAMETERS）を外し、quotePathConfig を足した写しを返します。GIT_CONFIG_PARAMETERS は
+// GIT_CONFIG_COUNT に勝つので、残せば core.quotepath を上書きできます。
+func checkerEnv(env []string) []string {
+	kept := make([]string, 0, len(env)+len(quotePathConfig))
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if name == "GIT_CONFIG_COUNT" || name == "GIT_CONFIG_PARAMETERS" ||
+			strings.HasPrefix(name, "GIT_CONFIG_KEY_") || strings.HasPrefix(name, "GIT_CONFIG_VALUE_") {
+			continue
+		}
+		kept = append(kept, kv)
 	}
-	var exit *exec.ExitError
-	if !xerrors.As(err, &exit) {
-		return r, xerrors.Wrapf(errTool, "%s: %v", cmd.Path, err)
-	}
-	if exit.ExitCode() < 0 {
-		return r, xerrors.Wrapf(errTool, "%s がシグナルで終わりました: %v\n%s", cmd.Path, err, r.combined)
-	}
-	r.code = exit.ExitCode()
 
-	return r, nil
-}
-
-// lockedBuffer は、stdout と stderr を別々の goroutine から受ける束ね先です。
-type lockedBuffer struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
-}
-
-func (b *lockedBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	return b.buf.Write(p)
-}
-
-func (b *lockedBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	return b.buf.String()
+	return append(kept, quotePathConfig...)
 }
 
 // ansiRe は、editorconfig-checker が出力に付ける色の制御列です。

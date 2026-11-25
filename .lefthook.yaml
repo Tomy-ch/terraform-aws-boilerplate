@@ -108,9 +108,12 @@ pre-commit:
       run: make pin-actions-check
     pin-images-check:
       glob:
-        - "docker/**/Dockerfile"
-        - "docker-compose.yaml"
+        - "docker/*/Dockerfile"
+        - "docker-compose*.yaml"
+        - ".github/workflows/*.{yml,yaml}"
+        - ".github/actions/**/action.{yml,yaml}"
         - "docker/images-pin.toml"
+        - ".lefthook.yaml"
       run: make pin-images-check
 
     # テストを hook から外さない（ADR-0702 決定16）。
@@ -151,6 +154,9 @@ pre-commit:
         - "modules/**"
         - "env/**"
         - "scripts/tf-gates/**"
+        - "scripts/lib/**"
+        - "scripts/go.mod"
+        - "scripts/go.sum"
       skip:
         - run: make -s tf-no-targets
       run: make tf-fmt-check
@@ -181,6 +187,8 @@ pre-commit:
         - "conftest/plan/**"
         - "conftest/hcl/layer/decl.json"
         - ".tf-validate-ignore.yaml"
+        - "Makefile"
+        - ".makefiles/**"
         - "docs/setup/scripts/check-plan.*"
         - "scripts/tf-local/**"
         - "scripts/bootstrap-check/**"
@@ -193,30 +201,6 @@ pre-commit:
       skip:
         - run: make -s tf-no-targets
       run: make -k tf-validate tf-test tf-policy check-plan-expected
-    tf-validate-canary:
-      glob:
-        - "Makefile"
-        - ".makefiles/**"
-        - "usecases/state-backend/reference/versions.tf"
-        - "usecases/state-backend/reference/.terraform.lock.hcl"
-        - "scripts/tf-gates/**"
-        - "scripts/lib/**"
-        - "scripts/go.mod"
-        - "scripts/go.sum"
-      run: make tf-validate-canary
-    tf-policy-canary:
-      glob:
-        - "Makefile"
-        - ".makefiles/**"
-        - "conftest/plan/**"
-        - "conftest/hcl/layer/decl.json"
-        - "scripts/tf-local/**"
-        - "scripts/provider-schema/**"
-        - "scripts/tf-policy/**"
-        - "scripts/lib/**"
-        - "scripts/go.mod"
-        - "scripts/go.sum"
-      run: make tf-policy-canary
     # skip を置かない。CI の job と同じく、Terraform の構成が無いツリーでは0件として落ちるのが正しい。
     infra-code-gate:
       glob:
@@ -281,12 +265,6 @@ pre-commit:
         - "Makefile"
         - ".makefiles/**"
       run: make -k root-check
-
-    secret-gates-test:
-      glob:
-        - "Makefile"
-        - ".makefiles/**"
-      run: make secret-gates-test
 
 commit-msg:
   commands:

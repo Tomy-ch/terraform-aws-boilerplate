@@ -8,6 +8,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun/tooltest"
 )
 
 const hiddenHit = "./.hidden/canary.txt:1:1: error: `" + misspelled + "` should be `the`\n"
@@ -19,15 +22,15 @@ func Test_runCanary(t *testing.T) {
 
 	t.Run("隠しディレクトリの誤綴りで rc=2、.github/ を走査していれば通り、fixture を消す", func(t *testing.T) {
 		t.Parallel()
-		f := newFake(t)
-		f.set(stepScan, "out", hiddenHit)
-		f.set(stepScan, "rc", "2")
-		f.set(stepFiles, "out", "./README.md\n./.github/workflows/x.yaml\n")
+		f := tooltest.New(t)
+		f.Set(stepScan, "out", hiddenHit)
+		f.Set(stepScan, "rc", "2")
+		f.Set(stepFiles, "out", "./README.md\n./.github/workflows/x.yaml\n")
 		work := filepath.Join(t.TempDir(), "work")
 		var out bytes.Buffer
-		require.NoError(t, runCanary(work, canaryConfig, &out, f.tool()))
+		require.NoError(t, runCanary(work, canaryConfig, &out, f.Tool()))
 		assert.Contains(t, out.String(), "✅ typos canary")
-		calls := f.calls()
+		calls := f.Calls()
 		require.Len(t, calls, 2)
 		workReal, err := filepath.EvalSymlinks(filepath.Dir(work))
 		require.NoError(t, err)
@@ -49,17 +52,17 @@ func Test_runCanary(t *testing.T) {
 	for name, c := range degenerate {
 		t.Run(name+"なら errCanary で、成功を出さない", func(t *testing.T) {
 			t.Parallel()
-			f := newFake(t)
-			f.set(stepScan, "out", c.scanOut)
-			f.set(stepFiles, "out", c.filesOut)
+			f := tooltest.New(t)
+			f.Set(stepScan, "out", c.scanOut)
+			f.Set(stepFiles, "out", c.filesOut)
 			if c.scanRC != "" {
-				f.set(stepScan, "rc", c.scanRC)
+				f.Set(stepScan, "rc", c.scanRC)
 			}
 			if c.filesRC != "" {
-				f.set(stepFiles, "rc", c.filesRC)
+				f.Set(stepFiles, "rc", c.filesRC)
 			}
 			var out bytes.Buffer
-			err := runCanary(filepath.Join(t.TempDir(), "w"), canaryConfig, &out, f.tool())
+			err := runCanary(filepath.Join(t.TempDir(), "w"), canaryConfig, &out, f.Tool())
 			require.ErrorIs(t, err, errCanary)
 			assert.Contains(t, err.Error(), c.want)
 			assert.NotContains(t, out.String(), "✅")
@@ -68,14 +71,14 @@ func Test_runCanary(t *testing.T) {
 
 	t.Run("両方が不成立なら、両方の理由と、各段の stdout・stderr・rc の見出しを出す", func(t *testing.T) {
 		t.Parallel()
-		f := newFake(t)
-		f.set(stepScan, "out", "SCAN-STDOUT\n")
-		f.set(stepScan, "err", "SCAN-STDERR-ONLY\n")
-		f.set(stepScan, "rc", "1")
-		f.set(stepFiles, "out", "FILES-STDOUT\n")
-		f.set(stepFiles, "err", "FILES-STDERR-ONLY\n")
+		f := tooltest.New(t)
+		f.Set(stepScan, "out", "SCAN-STDOUT\n")
+		f.Set(stepScan, "err", "SCAN-STDERR-ONLY\n")
+		f.Set(stepScan, "rc", "1")
+		f.Set(stepFiles, "out", "FILES-STDOUT\n")
+		f.Set(stepFiles, "err", "FILES-STDERR-ONLY\n")
 		var out bytes.Buffer
-		err := runCanary(filepath.Join(t.TempDir(), "w"), canaryConfig, &out, f.tool())
+		err := runCanary(filepath.Join(t.TempDir(), "w"), canaryConfig, &out, f.Tool())
 		require.ErrorIs(t, err, errCanary)
 		assert.Contains(t, err.Error(), "隠しディレクトリの誤綴りで落ちませんでした")
 		assert.Contains(t, err.Error(), "走査の対象に .github/ が入っていません")
@@ -86,33 +89,33 @@ func Test_runCanary(t *testing.T) {
 
 	t.Run("canary の走査だけがシグナルで終われば、--files を起動せずに errTool", func(t *testing.T) {
 		t.Parallel()
-		f := newFake(t)
-		f.set(stepScan, "kill", "")
-		f.set(stepFiles, "out", "./.github/x\n")
-		require.ErrorIs(t, runCanary(filepath.Join(t.TempDir(), "w"), canaryConfig, &bytes.Buffer{}, f.tool()), errTool)
-		assert.Len(t, f.calls(), 1)
+		f := tooltest.New(t)
+		f.Set(stepScan, "kill", "")
+		f.Set(stepFiles, "out", "./.github/x\n")
+		require.ErrorIs(t, runCanary(filepath.Join(t.TempDir(), "w"), canaryConfig, &bytes.Buffer{}, f.Tool()), errTool)
+		assert.Len(t, f.Calls(), 1)
 	})
 
 	t.Run("道具を起動できなければ errTool", func(t *testing.T) {
 		t.Parallel()
-		require.ErrorIs(t, runCanary(filepath.Join(t.TempDir(), "w"), canaryConfig, &bytes.Buffer{}, missingTool), errTool)
+		require.ErrorIs(t, runCanary(filepath.Join(t.TempDir(), "w"), canaryConfig, &bytes.Buffer{}, tooltest.Missing), errTool)
 	})
 
 	t.Run("--files を起動できなければ errTool", func(t *testing.T) {
 		t.Parallel()
-		f := newFake(t)
-		f.set(stepScan, "out", hiddenHit)
-		f.set(stepScan, "rc", "2")
-		f.set(stepFiles, "kill", "")
-		require.ErrorIs(t, runCanary(filepath.Join(t.TempDir(), "w"), canaryConfig, &bytes.Buffer{}, f.tool()), errTool)
+		f := tooltest.New(t)
+		f.Set(stepScan, "out", hiddenHit)
+		f.Set(stepScan, "rc", "2")
+		f.Set(stepFiles, "kill", "")
+		require.ErrorIs(t, runCanary(filepath.Join(t.TempDir(), "w"), canaryConfig, &bytes.Buffer{}, f.Tool()), errTool)
 	})
 
 	t.Run("fixture を置けなければ道具を起動せずに errRead", func(t *testing.T) {
 		t.Parallel()
-		f := newFake(t)
+		f := tooltest.New(t)
 		file := writeFile(t, filepath.Join(t.TempDir(), "f"), "")
-		require.ErrorIs(t, runCanary(filepath.Join(file, "w"), canaryConfig, &bytes.Buffer{}, f.tool()), errRead)
-		assert.Empty(t, f.calls())
+		require.ErrorIs(t, runCanary(filepath.Join(file, "w"), canaryConfig, &bytes.Buffer{}, f.Tool()), errRead)
+		assert.Empty(t, f.Calls())
 	})
 }
 
@@ -168,17 +171,17 @@ func Test_judgeHidden(t *testing.T) {
 	t.Parallel()
 
 	for name, c := range map[string]struct {
-		r    result
+		r    toolrun.Result
 		want bool
 	}{
-		"rc=2・パス・語で成り立つ": {result{combined: hiddenHit, code: 2}, true},
-		"絶対パスの形でも成り立つ":   {result{combined: "/w/.hidden/canary.txt:1:1: error: `" + misspelled + "`", code: 2}, true},
-		"rc=0 は成り立たない":   {result{combined: hiddenHit}, false},
-		"rc=1 は成り立たない":   {result{combined: hiddenHit, code: 1}, false},
-		"rc=78（設定を読めない）": {result{combined: hiddenHit, code: 78}, false},
-		"出力が空":           {result{code: 2}, false},
-		"パスだけ":           {result{combined: "./.hidden/canary.txt", code: 2}, false},
-		"語だけ":            {result{combined: misspelled, code: 2}, false},
+		"rc=2・パス・語で成り立つ": {toolrun.Result{Combined: hiddenHit, Code: 2}, true},
+		"絶対パスの形でも成り立つ":   {toolrun.Result{Combined: "/w/.hidden/canary.txt:1:1: error: `" + misspelled + "`", Code: 2}, true},
+		"rc=0 は成り立たない":   {toolrun.Result{Combined: hiddenHit}, false},
+		"rc=1 は成り立たない":   {toolrun.Result{Combined: hiddenHit, Code: 1}, false},
+		"rc=78（設定を読めない）": {toolrun.Result{Combined: hiddenHit, Code: 78}, false},
+		"出力が空":           {toolrun.Result{Code: 2}, false},
+		"パスだけ":           {toolrun.Result{Combined: "./.hidden/canary.txt", Code: 2}, false},
+		"語だけ":            {toolrun.Result{Combined: misspelled, Code: 2}, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

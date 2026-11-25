@@ -33,6 +33,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -42,10 +43,16 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lockfile"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/yamlblock"
+	"gopkg.in/yaml.v3"
 )
 
 const (
-	lockFile        = "docker/images-pin.toml"
+	lockFile          = "docker/images-pin.toml"
+	dockerfilePattern = "docker/*/Dockerfile"
+	composePattern    = "docker-compose*.yaml"
+	// hookFile と hookCommand は、走査範囲を写す pre-commit の項目の在処。
+	hookFile        = ".lefthook.yaml"
+	hookCommand     = "pin-images-check"
 	filePerm        = 0o644
 	inspectTimeout  = 60 * time.Second
 	hoursPerDay     = 24
@@ -120,6 +127,9 @@ var (
 	errNoStepBack     = xerrors.New("退行先の無い出来立て image は採用できません")
 	errLooseRef       = xerrors.New("固定対象として解釈できない image 参照があります")
 	errMissingRewrite = xerrors.New("書き換え対象に内容の対応が無いパスがあります")
+	errHookConfig     = xerrors.New(hookFile + " を解釈できません")
+	errHookMissing    = xerrors.New(hookFile + " の pre-commit に " + hookCommand + " がありません")
+	errHookUncovered  = xerrors.New(hookCommand + " の glob が走査対象のパターンを覆っていません")
 )
 
 // target は走査対象のファイルと、その参照行を捕捉する正規表現（prefix/ref/suffix の 3 グループ）。
@@ -187,6 +197,9 @@ func run(args []string, wd func() (string, error)) error {
 	case "apply":
 		return applyOrCheck(root, targets, false)
 	case "check":
+		if err := validateHookCoverage(root); err != nil {
+			return err
+		}
 		return applyOrCheck(root, targets, true)
 	default:
 		return errUsage
@@ -202,11 +215,11 @@ func run(args []string, wd func() (string, error)) error {
 // 重ならない。uses: owner/repo@<sha> は pin-actions の担当で、ファイル集合そのものは ghfiles が
 // 両者へ与える。
 func targetFiles(root string) ([]target, error) {
-	dockerfiles, err := globFiles(root, "docker/*/Dockerfile")
+	dockerfiles, err := globFiles(root, dockerfilePattern)
 	if err != nil {
 		return nil, err
 	}
-	compose, err := globFiles(root, "docker-compose*.yaml")
+	compose, err := globFiles(root, composePattern)
 	if err != nil {
 		return nil, err
 	}
@@ -229,6 +242,138 @@ func targetFiles(root string) ([]target, error) {
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].path < targets[j].path })
 	return targets, nil
+}
+
+// scannedPatterns は check の判定が読むファイルの集合を、root からの相対の glob で返す。走査対象
+// （targetFiles）と lockfile と hookFile である。
+func scannedPatterns() []string {
+	return append([]string{dockerfilePattern, composePattern, lockFile, hookFile}, ghfiles.Patterns()...)
+}
+
+// validateHookCoverage は、pre-commit の pin-images-check の glob が scannedPatterns を覆うかを
+// 検める。覆うとは、各パターンが glob の候補（波括弧の展開後）のどれかと文字列として一致すること
+// である。一致を要求するのは、glob 同士の包含を判定すると glob の方言（lefthook の `**` が0階層に
+// 一致するか）に依存するためである。覆わない候補が在ると、その範囲だけを変えた commit で hook が
+// 起動しない。
+func validateHookCoverage(root string) error {
+	globs, err := hookGlobs(root)
+	if err != nil {
+		return err
+	}
+	var uncovered []string
+	for _, p := range scannedPatterns() {
+		if !slices.Contains(globs, p) {
+			uncovered = append(uncovered, p)
+		}
+	}
+	if len(uncovered) > 0 {
+		return xerrors.Wrap(errHookUncovered, strings.Join(uncovered, ", "))
+	}
+	return nil
+}
+
+// hookGlobs は hookFile の pre-commit.commands の hookCommand が持つ glob を、波括弧を展開して
+// 返す。glob は文字列と文字列の列のどちらでも書ける。glob が無ければ空を返す。
+func hookGlobs(root string) ([]string, error) {
+	data, err := readHookFile(root)
+	if err != nil {
+		return nil, xerrors.Join(errHookConfig, err)
+	}
+	var cfg struct {
+		PreCommit struct {
+			Commands map[string]struct {
+				Glob yaml.Node `yaml:"glob"`
+			} `yaml:"commands"`
+		} `yaml:"pre-commit"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, xerrors.Join(errHookConfig, err)
+	}
+	cmd, ok := cfg.PreCommit.Commands[hookCommand]
+	if !ok {
+		return nil, errHookMissing
+	}
+
+	var raw []string
+	switch cmd.Glob.Kind {
+	case 0:
+	case yaml.ScalarNode:
+		raw = []string{cmd.Glob.Value}
+	case yaml.SequenceNode:
+		for _, n := range cmd.Glob.Content {
+			if n.Kind != yaml.ScalarNode {
+				return nil, xerrors.Wrapf(errHookConfig, "%s の glob の %d 行目が文字列ではありません", hookCommand, n.Line)
+			}
+			raw = append(raw, n.Value)
+		}
+	default:
+		return nil, xerrors.Wrapf(errHookConfig, "%s の glob が文字列でも列でもありません", hookCommand)
+	}
+
+	var globs []string
+	for _, g := range raw {
+		expanded, err := expandBraces(g)
+		if err != nil {
+			return nil, err
+		}
+		globs = append(globs, expanded...)
+	}
+	return globs, nil
+}
+
+// readHookFile は root の下の hookFile を、root の外へ出ずに読む。
+func readHookFile(root string) ([]byte, error) {
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, xerrors.Wrap(err, "open root")
+	}
+	defer func() { _ = r.Close() }()
+	return r.ReadFile(hookFile)
+}
+
+// expandBraces は glob の `{a,b}` を候補ごとに展開する。入れ子と複数の組を扱う。対応の取れない
+// 波括弧はエラーにする —— 展開できない glob を文字列のまま比べると、覆っているかを判定できない。
+func expandBraces(glob string) ([]string, error) {
+	open := strings.IndexByte(glob, '{')
+	if open < 0 {
+		if strings.IndexByte(glob, '}') >= 0 {
+			return nil, xerrors.Wrap(errHookConfig, "波括弧の対応が取れません: "+glob)
+		}
+		return []string{glob}, nil
+	}
+	if strings.IndexByte(glob[:open], '}') >= 0 {
+		return nil, xerrors.Wrap(errHookConfig, "波括弧の対応が取れません: "+glob)
+	}
+
+	var alts []string
+	depth, start := 0, open+1
+	for i := open; i < len(glob); i++ {
+		switch glob[i] {
+		case '{':
+			depth++
+		case ',':
+			if depth == 1 {
+				alts = append(alts, glob[start:i])
+				start = i + 1
+			}
+		case '}':
+			depth--
+			if depth > 0 {
+				continue
+			}
+			alts = append(alts, glob[start:i])
+			var out []string
+			for _, a := range alts {
+				expanded, err := expandBraces(glob[:open] + a + glob[i+1:])
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, expanded...)
+			}
+			return out, nil
+		}
+	}
+	return nil, xerrors.Wrap(errHookConfig, "波括弧の対応が取れません: "+glob)
 }
 
 // detectLooseRefs は固定対象として解釈できない参照の行番号を返す。

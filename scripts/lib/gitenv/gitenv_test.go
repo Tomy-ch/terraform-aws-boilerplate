@@ -25,6 +25,14 @@ func TestEnv(t *testing.T) {
 		assert.Contains(t, got, "GIT_AUTHOR_NAME=a")
 	})
 
+	t.Run("実物の git が一覧を返せなければ（壊れた .gitconfig）ErrNames", func(t *testing.T) {
+		t.Parallel()
+		home := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(home, ".gitconfig"), []byte("[broken\n"), 0o600))
+		_, err := Env([]string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "XDG_CONFIG_HOME=" + home})
+		require.ErrorIs(t, err, ErrNames)
+	})
+
 	t.Run("外側のリポジトリを指す GIT_DIR を外し、外側を書き換えない", func(t *testing.T) {
 		t.Parallel()
 		outer := t.TempDir()

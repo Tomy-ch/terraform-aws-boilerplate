@@ -24,10 +24,10 @@ state を細かく分ける利点は、誤った apply と state の破損の範
 ### root の単位
 
 2. 1つの env の root を、identity root と workload root の2つとする。これ以外の root を env に置かない。
-3. identity root は、bootstrap の構成物と統制の構成物（ADR-0602 決定1）を持つ usecase だけを呼び、apply-identity の role で apply する。統制の構成物を持つ usecase（`organization-baseline`）を呼ぶのは、管理アカウントの identity root だけである。
+3. identity root は、bootstrap の構成物と統制の構成物（ADR-0602 決定1）を持つ usecase だけを呼び、apply-identity の role で apply する。統制の構成物を持つ usecase（`organization-baseline`）を呼ぶのは、管理アカウントの identity root だけである。アカウントの前提の構成物（ADR-0602 決定1）も identity root が持ち、bootstrap の構成物を持つ usecase に置く。それを前提にする workload root の usecase と同じ apply で作ると成り立たないからである。
 4. workload root は、identity root が呼ぶもの以外のすべての usecase を呼び、apply の role で apply する。identity root と workload root の間の受け渡しは、root をまたぐ受け渡し（ADR-0102 決定16）である。
 5. workload root は `env/<env>/` の直下の `*.tf` とし、identity root は `env/<env>/identity/` の直下の `*.tf` とする。provider の依存の lock（`.terraform.lock.hcl`）は root ごとに持つ（ADR-0205 決定9）。
-6. 管理アカウントの identity root は、メンバーアカウントを立ち上げる間に限り、そのメンバーアカウントの bootstrap の構成物も呼ぶ。その state は管理アカウントの Bucket に置く。立ち上げの後、メンバーアカウントの identity root が `import` block で取り込み、管理アカウントの identity root は `removed` block（`destroy = false`）で手放す。取り込みは、state を書く前に plan で突合する（ADR-0602 決定6・8）。管理アカウントの identity root の `removed` block は、メンバーアカウントの identity root の plan が変更なしを示した後に apply する。この経路は ADR-0602 決定9 の cross-account access であり、ADR-0301 決定18 に従う。
+6. 管理アカウントの identity root は、メンバーアカウントを立ち上げる間に限り、そのメンバーアカウントの bootstrap の構成物とアカウントの前提の構成物も呼ぶ。その state は管理アカウントの Bucket に置く。立ち上げの後、メンバーアカウントの identity root が `import` block で取り込み、管理アカウントの identity root は `removed` block（`destroy = false`）で手放す。取り込みは、state を書く前に plan で突合する（ADR-0602 決定6・8）。管理アカウントの identity root の `removed` block は、メンバーアカウントの identity root の plan が変更なしを示した後に apply する。この経路は ADR-0602 決定9 の cross-account access であり、ADR-0301 決定18 に従う。
 
 ### state と lock
 
