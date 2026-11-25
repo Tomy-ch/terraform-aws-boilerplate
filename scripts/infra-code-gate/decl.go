@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"go/parser"
+	"go/token"
 	"io"
 	"io/fs"
 	"os"
@@ -13,6 +15,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/adrdoc"
@@ -30,19 +33,21 @@ const (
 )
 
 // codeownerTargets は、code owner の宣言が持たなければならない対象です（ADR-0103 決定14）。
-// 検出の job を実行する workflow は gateWorkflows が、本リポジトリ所有の項目が指すソースの所在は宣言が足します。
+// 検出の道具とそれが import するパッケージは goTargets が、検出の job を実行する workflow は gateWorkflows が、
+// 本リポジトリ所有の項目が指すソースの所在は宣言が足します。
 var codeownerTargets = []string{
 	"conftest/hcl/",
-	"scripts/infra-code-gate/",
-	"scripts/hcl-input/",
-	"scripts/hcl-tally/",
-	"scripts/lib/adrdoc/",
-	"scripts/tf-job-lint/",
 	".makefiles/terraform/infra-code.mk",
 	".makefiles/terraform/hcl-input.mk",
 	".github/settings/branch-protection.json",
 	".github/CODEOWNERS",
 }
+
+// detectionTools は、検出の検査を実装する Go のパッケージのディレクトリです。
+var detectionTools = []string{"scripts/infra-code-gate", "scripts/hcl-input", "scripts/hcl-tally", "scripts/tf-job-lint"}
+
+// goModPath は、検出の道具が属するモジュールの宣言です。
+const goModPath = "scripts/go.mod"
 
 // requiredHeadings は、本リポジトリ所有の項目が参照する ADR が持つ見出しです（ADR-0103 決定13）。
 var requiredHeadings = []string{
@@ -66,6 +71,7 @@ var (
 	errDeclShape    = xerrors.New("宣言を解釈できません")
 	errDuplicateKey = xerrors.New("宣言に同じキーが2回現れます")
 	errCodeowners   = xerrors.New("code owner の宣言に解釈できない行があります")
+	errGoSource     = xerrors.New("検出の道具の Go のソースを読めません")
 )
 
 type document struct {
@@ -148,8 +154,13 @@ func runDecl(args []string, repo string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	targets := ownedTargets(d, workflows)
-	missing, err := checkTargets(repo, *codeownersPath, append(slices.Clone(codeownerTargets), workflows...))
+	goDirs, err := goTargets(repo, detectionTools)
+	if err != nil {
+		return err
+	}
+	derived := slices.Concat(goDirs, workflows)
+	targets := ownedTargets(d, derived)
+	missing, err := checkTargets(repo, *codeownersPath, append(slices.Clone(codeownerTargets), derived...))
 	if err != nil {
 		return err
 	}
@@ -435,14 +446,110 @@ func checkADR(repo, id string) ([]string, error) {
 	return msgs, nil
 }
 
-func ownedTargets(d *declaration, workflows []string) []string {
-	targets := append(slices.Clone(codeownerTargets), workflows...)
+func ownedTargets(d *declaration, derived []string) []string {
+	targets := append(slices.Clone(codeownerTargets), derived...)
 	for _, it := range d.Allowlist {
 		if it.Owner == "repository" && it.Source != "" {
 			targets = append(targets, it.Source)
 		}
 	}
 	return targets
+}
+
+// goTargets は、roots と、roots がテストを含めて推移的に import する同じモジュールのパッケージのディレクトリを、
+// 末尾に `/` を付けて昇順で返します。どの道具の振る舞いも、それが import するパッケージで変わるためです。Go の
+// ソースを持たないディレクトリ、解釈できないソース、モジュールの宣言の無いことはエラーにします。
+func goTargets(repo string, roots []string) ([]string, error) {
+	root, err := os.OpenRoot(repo)
+	if err != nil {
+		return nil, xerrors.Wrapf(err, "%s を開く", repo)
+	}
+	defer func() { _ = root.Close() }()
+	fsys := root.FS()
+	module, err := modulePath(fsys)
+	if err != nil {
+		return nil, err
+	}
+	modDir := path.Dir(goModPath)
+	seen := map[string]bool{}
+	queue := slices.Clone(roots)
+	for _, r := range roots {
+		seen[r] = true
+	}
+	for len(queue) > 0 {
+		dir := queue[0]
+		queue = queue[1:]
+		imports, err := dirImports(fsys, dir)
+		if err != nil {
+			return nil, err
+		}
+		for _, imp := range imports {
+			rest, ok := strings.CutPrefix(imp, module+"/")
+			if !ok {
+				continue
+			}
+			if dep := path.Join(modDir, rest); !seen[dep] {
+				seen[dep] = true
+				queue = append(queue, dep)
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for dir := range seen {
+		out = append(out, dir+"/")
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// modulePath は、goModPath の module 行のパスを返します。
+func modulePath(fsys fs.FS) (string, error) {
+	raw, err := fs.ReadFile(fsys, goModPath)
+	if err != nil {
+		return "", xerrors.Wrapf(errGoSource, "%s: %v", goModPath, err)
+	}
+	for _, l := range strings.Split(string(raw), "\n") {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(l), "module "); ok && strings.TrimSpace(rest) != "" {
+			return strings.TrimSpace(rest), nil
+		}
+	}
+	return "", xerrors.Wrapf(errGoSource, "%s に module 行がありません", goModPath)
+}
+
+// dirImports は、dir の直下の Go のソース（テストを含む）が import するパスを返します。
+func dirImports(fsys fs.FS, dir string) ([]string, error) {
+	entries, err := fs.ReadDir(fsys, dir)
+	if err != nil {
+		return nil, xerrors.Wrapf(errGoSource, "%s: %v", dir, err)
+	}
+	var out []string
+	files := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
+			continue
+		}
+		files++
+		p := path.Join(dir, e.Name())
+		src, err := fs.ReadFile(fsys, p)
+		if err != nil {
+			return nil, xerrors.Wrapf(errGoSource, "%s: %v", p, err)
+		}
+		f, err := parser.ParseFile(token.NewFileSet(), p, src, parser.ImportsOnly)
+		if err != nil {
+			return nil, xerrors.Wrapf(errGoSource, "%s: %v", p, err)
+		}
+		for _, imp := range f.Imports {
+			v, err := strconv.Unquote(imp.Path.Value)
+			if err != nil {
+				return nil, xerrors.Wrapf(errGoSource, "%s: %v", p, err)
+			}
+			out = append(out, v)
+		}
+	}
+	if files == 0 {
+		return nil, xerrors.Wrapf(errGoSource, "%s に Go のソースがありません", dir)
+	}
+	return out, nil
 }
 
 // checkTargets は、code owner の対象が実在することを検査します。末尾が `/` の対象はディレクトリ、それ以外は通常の
