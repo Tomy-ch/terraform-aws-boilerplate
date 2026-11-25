@@ -23,6 +23,7 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/mdscan"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/requiredchecks"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
+	"golang.org/x/mod/modfile"
 )
 
 const (
@@ -461,7 +462,7 @@ func ownedTargets(d *declaration, derived []string) []string {
 func goTargets(repo string, roots []string) ([]string, error) {
 	root, err := os.OpenRoot(repo)
 	if err != nil {
-		return nil, xerrors.Wrapf(err, "%s を開く", repo)
+		return nil, xerrors.Wrapf(errGoSource, "%s を開く: %v", repo, err)
 	}
 	defer func() { _ = root.Close() }()
 	fsys := root.FS()
@@ -483,15 +484,22 @@ func goTargets(repo string, roots []string) ([]string, error) {
 			return nil, err
 		}
 		for _, imp := range imports {
-			rest, ok := strings.CutPrefix(imp, module+"/")
-			if !ok {
-				continue
+			dep := modDir
+			if imp != module {
+				rest, ok := strings.CutPrefix(imp, module+"/")
+				if !ok {
+					continue
+				}
+				dep = path.Join(modDir, rest)
 			}
-			if dep := path.Join(modDir, rest); !seen[dep] {
+			if !seen[dep] {
 				seen[dep] = true
 				queue = append(queue, dep)
 			}
 		}
+	}
+	if len(seen) == len(roots) {
+		return nil, xerrors.Wrapf(errGoSource, "%s の import に module %s のパッケージがありません", strings.Join(roots, "・"), module)
 	}
 	out := make([]string, 0, len(seen))
 	for dir := range seen {
@@ -507,12 +515,14 @@ func modulePath(fsys fs.FS) (string, error) {
 	if err != nil {
 		return "", xerrors.Wrapf(errGoSource, "%s: %v", goModPath, err)
 	}
-	for _, l := range strings.Split(string(raw), "\n") {
-		if rest, ok := strings.CutPrefix(strings.TrimSpace(l), "module "); ok && strings.TrimSpace(rest) != "" {
-			return strings.TrimSpace(rest), nil
-		}
+	f, err := modfile.ParseLax(goModPath, raw, nil)
+	if err != nil {
+		return "", xerrors.Wrapf(errGoSource, "%v", err)
 	}
-	return "", xerrors.Wrapf(errGoSource, "%s に module 行がありません", goModPath)
+	if f.Module == nil || f.Module.Mod.Path == "" {
+		return "", xerrors.Wrapf(errGoSource, "%s に module 行がありません", goModPath)
+	}
+	return f.Module.Mod.Path, nil
 }
 
 // dirImports は、dir の直下の Go のソース（テストを含む）が import するパスを返します。
@@ -538,6 +548,7 @@ func dirImports(fsys fs.FS, dir string) ([]string, error) {
 			return nil, xerrors.Wrapf(errGoSource, "%s: %v", p, err)
 		}
 		for _, imp := range f.Imports {
+			// ParseFile が受けた文字列リテラルなので外れないが、外れたら import を1つ落として読むより止める。
 			v, err := strconv.Unquote(imp.Path.Value)
 			if err != nil {
 				return nil, xerrors.Wrapf(errGoSource, "%s: %v", p, err)
