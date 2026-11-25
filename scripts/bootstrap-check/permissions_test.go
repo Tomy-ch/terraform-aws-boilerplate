@@ -148,21 +148,25 @@ var (
 		"apply $topic: 2 件が implicitDeny",
 		"apply $wk: 1 件が implicitDeny",
 		"apply $slr: 1 件が allowed",
-		"apply arn:aws:config:ap-northeast-1:123456789012:configuration-recorder/tabp-admin/abc: 3 件が allowed",
-		"apply arn:aws:config:ap-northeast-1:123456789012:configuration-recorder/tabp-admin/abc: 2 件が implicitDeny",
-		"apply arn:aws:access-analyzer:ap-northeast-1:123456789012:analyzer/tabp-admin-external: 2 件が allowed",
-		"apply arn:aws:access-analyzer:ap-northeast-1:123456789012:analyzer/tabp-admin-external: 1 件が implicitDeny",
+		"apply arn:aws:config:ap-northeast-1:123456789012:configuration-recorder/tabp-admin/abc [aws:RequestedRegion=ap-northeast-1]: 3 件が allowed",
+		"apply arn:aws:config:af-south-1:123456789012:configuration-recorder/tabp-admin/abc [aws:RequestedRegion=af-south-1]: 2 件が explicitDeny",
+		"apply arn:aws:config:ap-northeast-1:123456789012:configuration-recorder/tabp-admin/abc [aws:RequestedRegion=ap-northeast-1]: 2 件が implicitDeny",
+		"apply arn:aws:access-analyzer:ap-northeast-1:123456789012:analyzer/tabp-admin-external [aws:RequestedRegion=ap-northeast-1]: 2 件が allowed",
+		"apply arn:aws:access-analyzer:ap-northeast-1:123456789012:analyzer/tabp-admin-external [aws:RequestedRegion=ap-northeast-1]: 1 件が implicitDeny",
 		"apply $iam:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig [iam:PassedToService=config.amazonaws.com]: 1 件が allowed",
 		"apply $iam:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig [iam:AWSServiceName=config.amazonaws.com]: 1 件が allowed",
 		"apply $iam:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig: 1 件が implicitDeny",
-		"apply * [ec2:Region=ap-northeast-1]: 2 件が allowed",
-		"apply * [ec2:Region=ap-northeast-1]: 1 件が implicitDeny",
-		"apply * [ec2:Region=us-west-2]: 1 件が implicitDeny",
-		"apply *: 4 件が allowed",
-		"apply *: 2 件が implicitDeny",
-		"plan arn:aws:config:ap-northeast-1:123456789012:configuration-recorder/tabp-admin/abc: 2 件が allowed",
-		"plan arn:aws:access-analyzer:ap-northeast-1:123456789012:analyzer/tabp-admin-external: 1 件が allowed",
-		"plan arn:aws:access-analyzer:ap-northeast-1:123456789012:analyzer/tabp-admin-external: 1 件が implicitDeny",
+		"apply * [ec2:Region=ap-northeast-1; aws:RequestedRegion=ap-northeast-1]: 2 件が allowed",
+		"apply * [ec2:Region=ap-northeast-1; aws:RequestedRegion=ap-northeast-1]: 1 件が implicitDeny",
+		"apply * [ec2:Region=af-south-1; aws:RequestedRegion=af-south-1]: 1 件が explicitDeny",
+		"apply * [aws:RequestedRegion=ap-northeast-1]: 3 件が allowed",
+		"apply * [aws:RequestedRegion=af-south-1]: 2 件が explicitDeny",
+		"apply *: 1 件が allowed",
+		"apply * [aws:RequestedRegion=ap-northeast-1]: 2 件が implicitDeny",
+		"plan arn:aws:config:ap-northeast-1:123456789012:configuration-recorder/tabp-admin/abc [aws:RequestedRegion=ap-northeast-1]: 2 件が allowed",
+		"plan arn:aws:config:af-south-1:123456789012:configuration-recorder/tabp-admin/abc [aws:RequestedRegion=af-south-1]: 1 件が explicitDeny",
+		"plan arn:aws:access-analyzer:ap-northeast-1:123456789012:analyzer/tabp-admin-external [aws:RequestedRegion=ap-northeast-1]: 1 件が allowed",
+		"plan arn:aws:access-analyzer:ap-northeast-1:123456789012:analyzer/tabp-admin-external [aws:RequestedRegion=ap-northeast-1]: 1 件が implicitDeny",
 	}
 	permBudgetsDescs = []string{
 		"plan $budget: 2 件が allowed",
@@ -219,7 +223,7 @@ const (
 	// permissions の件数。条件つきの確認の有無で変わる。
 	permissionsBase     = 110
 	governanceGated     = 23
-	workloadGatedCount  = 24
+	workloadGatedCount  = 28
 	budgetsGatedCount   = 4
 	outputPolicyCount   = 13
 	governanceAbsent    = "  統制の policy がまだ付いていないので、作成と設定の権限は確かめない（統制の policy を作って付ける apply の後にもう一度走らせる）"
@@ -397,21 +401,25 @@ var permRowActions = []string{
 	"sns:DeleteTopic sns:Subscribe",
 	"kms:ScheduleKeyDeletion",
 	"iam:GetRole",
-	"config:PutConfigurationRecorder config:StartConfigurationRecorder config:DescribeConfigurationRecorders",
-	"config:DeleteConfigurationRecorder config:StopConfigurationRecorder",
-	"access-analyzer:CreateAnalyzer access-analyzer:GetAnalyzer",
-	"access-analyzer:DeleteAnalyzer",
+	"config:PutConfigurationRecorder config:StartConfigurationRecorder config:DescribeConfigurationRecorders ; aws:RequestedRegion = ap-northeast-1 (string)",
+	"config:PutConfigurationRecorder config:DescribeConfigurationRecorders ; aws:RequestedRegion = af-south-1 (string)",
+	"config:DeleteConfigurationRecorder config:StopConfigurationRecorder ; aws:RequestedRegion = ap-northeast-1 (string)",
+	"access-analyzer:CreateAnalyzer access-analyzer:GetAnalyzer ; aws:RequestedRegion = ap-northeast-1 (string)",
+	"access-analyzer:DeleteAnalyzer ; aws:RequestedRegion = ap-northeast-1 (string)",
 	"iam:PassRole ; iam:PassedToService = config.amazonaws.com (string)",
 	"iam:CreateServiceLinkedRole ; iam:AWSServiceName = config.amazonaws.com (string)",
 	"iam:DeleteServiceLinkedRole",
-	"ec2:EnableEbsEncryptionByDefault ec2:ModifyVpcBlockPublicAccessOptions ; ec2:Region = ap-northeast-1 (string)",
-	"ec2:DisableEbsEncryptionByDefault ; ec2:Region = ap-northeast-1 (string)",
-	"ec2:EnableEbsEncryptionByDefault ; ec2:Region = us-west-2 (string)",
-	"s3:PutAccountPublicAccessBlock config:PutDeliveryChannel config:PutRetentionConfiguration elasticmapreduce:PutBlockPublicAccessConfiguration",
-	"config:DeleteDeliveryChannel config:DeleteRetentionConfiguration",
-	"config:DescribeConfigurationRecorders config:DescribeConfigurationRecorderStatus",
-	"access-analyzer:GetAnalyzer",
-	"access-analyzer:CreateAnalyzer",
+	"ec2:EnableEbsEncryptionByDefault ec2:ModifyVpcBlockPublicAccessOptions ; ec2:Region = ap-northeast-1 (string) ; aws:RequestedRegion = ap-northeast-1 (string)",
+	"ec2:DisableEbsEncryptionByDefault ; ec2:Region = ap-northeast-1 (string) ; aws:RequestedRegion = ap-northeast-1 (string)",
+	"ec2:EnableEbsEncryptionByDefault ; ec2:Region = af-south-1 (string) ; aws:RequestedRegion = af-south-1 (string)",
+	"config:PutDeliveryChannel config:PutRetentionConfiguration elasticmapreduce:PutBlockPublicAccessConfiguration ; aws:RequestedRegion = ap-northeast-1 (string)",
+	"config:PutDeliveryChannel elasticmapreduce:PutBlockPublicAccessConfiguration ; aws:RequestedRegion = af-south-1 (string)",
+	"s3:PutAccountPublicAccessBlock",
+	"config:DeleteDeliveryChannel config:DeleteRetentionConfiguration ; aws:RequestedRegion = ap-northeast-1 (string)",
+	"config:DescribeConfigurationRecorders config:DescribeConfigurationRecorderStatus ; aws:RequestedRegion = ap-northeast-1 (string)",
+	"config:DescribeConfigurationRecorders ; aws:RequestedRegion = af-south-1 (string)",
+	"access-analyzer:GetAnalyzer ; aws:RequestedRegion = ap-northeast-1 (string)",
+	"access-analyzer:CreateAnalyzer ; aws:RequestedRegion = ap-northeast-1 (string)",
 	// budgets と Cost Anomaly Detection
 	"budgets:ViewBudget budgets:ListTagsForResource",
 	"ce:GetAnomalyMonitors ce:ListTagsForResource",
@@ -1046,7 +1054,7 @@ func Test_permissionSections(t *testing.T) {
 			return got[i]
 		}
 
-		t.Run("及ばない region の SNS と ec2 の行に eu-west-1 を使う", func(t *testing.T) {
+		t.Run("及ばない region の SNS の行に eu-west-1 を使う", func(t *testing.T) {
 			t.Parallel()
 
 			workload := byHeading(t, "# workload の権限の policy と permissions boundary")
@@ -1054,8 +1062,6 @@ func Test_permissionSections(t *testing.T) {
 			assert.True(t, slices.ContainsFunc(workload.rows, func(r simRow) bool {
 				return r.want == implicitDeny && r.resource == "arn:aws:sns:eu-west-1:123456789012:tabp-admin-ops-notification"
 			}))
-			assert.Contains(t, workload.gated, simRow{want: implicitDeny, role: "apply", resource: "*",
-				context: []string{"ContextKeyName=ec2:Region,ContextKeyValues=eu-west-1,ContextKeyType=string"}, actions: []string{"ec2:EnableEbsEncryptionByDefault"}})
 		})
 
 		t.Run("stack instance の行は、TargetRegion の一覧を us-west-2 と eu-west-1 で組み、stackset の ARN に us-west-2 を持つ", func(t *testing.T) {
@@ -1237,9 +1243,9 @@ func Test_permissionsSteps(t *testing.T) {
 		result                      string
 	}{
 		"条件つきの確認がすべて走る": {governanceAttached, workloadAttached, nil, nil, nil, permissionsBase + governanceGated + workloadGatedCount + budgetsGatedCount,
-			"# 結果: 161 件のうち NG 0 件"},
+			"# 結果: 165 件のうち NG 0 件"},
 		"統制の policy が付いていない": {noneAttached, workloadAttached, []string{governanceAbsent}, nil, nil, permissionsBase + workloadGatedCount + budgetsGatedCount,
-			"# 結果: 138 件のうち NG 0 件（確かめていない区分 1）"},
+			"# 結果: 142 件のうち NG 0 件（確かめていない区分 1）"},
 		"workload の policy が付いていない": {governanceAttached, noneAttached, nil, []string{workloadAbsent}, []string{budgetsAbsent},
 			permissionsBase + governanceGated, "# 結果: 133 件のうち NG 0 件（確かめていない区分 2）"},
 		"どちらも付いていない": {noneAttached, noneAttached, []string{governanceAbsent}, []string{workloadAbsent}, []string{budgetsAbsent}, permissionsBase,

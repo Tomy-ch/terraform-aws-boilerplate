@@ -9,6 +9,11 @@ default decl := null
 
 decl := data.policy_plan.account_baseline
 
+# リージョンの集合は repository-wide/ADR-0209 の写し（data.policy_plan.default_regions。正は modules/default-regions）。
+default region_list := null
+
+region_list := data.policy_plan.default_regions.aws
+
 regional_keys := {"ebs_encryption", "analyzer", "emr_block_public_access", "ssm_service_setting", "vpc_block_public_access"}
 
 config_keys := {"recorder", "delivery", "status", "retention"}
@@ -21,9 +26,9 @@ strings_of(obj) if {
 }
 
 well_formed_decl if {
-	is_array(decl.regions)
-	count(decl.regions) > 0
-	every r in decl.regions {
+	is_array(region_list)
+	count(region_list) > 0
+	every r in region_list {
 		is_string(r)
 	}
 	strings_of(decl.regional)
@@ -54,7 +59,7 @@ well_formed_owners if {
 	}
 }
 
-regions := {r | some r in decl.regions}
+regions := {r | some r in region_list}
 
 regional_types := [t | some t in decl.regional]
 
@@ -94,7 +99,7 @@ config_instances contains {"path": c.path, "instance": instance_of(c.rc.address)
 
 deny contains msg if {
 	not well_formed_decl
-	msg := "[PLAN-ACB-00] 宣言 account_baseline の regions・regional・config・public_access_block・password_policy_keys が無いか、形が違います"
+	msg := "[PLAN-ACB-00] 宣言 default_regions の aws か、account_baseline の regional・config・public_access_block・password_policy_keys が無いか、形が違います"
 }
 
 deny contains msg if {
@@ -105,7 +110,7 @@ deny contains msg if {
 # アカウントかリージョンに1つの型を持ち主の外が宣言しないことは LY401 が見る。宣言の型が singletons に持ち主
 # account-baseline として無ければ、LY401 はその型を見ない。analyzer は名前で区別する resource、recorder の status は
 # attachment 型（recorder の持ち主に LY301 で縛られる）なので除く。
-singleton_types := {decl.regional[k] | some k in regional_keys - {"analyzer"}} | {decl.config[k] | some k in config_keys - {"status"}} | {decl.public_access_block}
+singleton_types := ({decl.regional[k] | some k in (regional_keys - {"analyzer"})} | {decl.config[k] | some k in (config_keys - {"status"})}) | {decl.public_access_block}
 
 owned_by_baseline(type) if "account-baseline" in data.layer_decl.singletons[type]
 

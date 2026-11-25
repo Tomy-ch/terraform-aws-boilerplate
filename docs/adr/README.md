@@ -35,6 +35,7 @@
 | [0206](0206-official-implementations-as-reference.md) | 公式実装を参照実装（Knowledge Source）として利用する | Accepted |
 | [0207](0207-default-value-policy.md) | 設定値は公式ベストプラクティスを根拠に決定し、利用者へ公開しない | Accepted |
 | [0208](0208-us-east-1-resources-by-region-argument.md) | us-east-1 にしか置けない資源は、resource の region 引数で置く | Accepted |
+| [0209](0209-default-regions-for-regional-controls.md) | リージョンごとの安全側の設定は partition の既定で有効な全リージョンに置き、CI の経路をその集合に合わせる | Accepted |
 
 ### 03 セキュリティ
 

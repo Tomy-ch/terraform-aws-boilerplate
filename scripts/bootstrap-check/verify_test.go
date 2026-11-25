@@ -736,7 +736,7 @@ func Test_checkVerify(t *testing.T) {
 		{verifyOptions{stage: "before-apply"}, "# 結果: 21 件のうち NG 21 件"},
 		{verifyOptions{stage: "stage4"}, "# 結果: 24 件のうち NG 22 件"},
 		{verifyOptions{stage: "stage4", executor: "bob"}, "# 結果: 24 件のうち NG 23 件"},
-		{verifyOptions{stage: "permissions"}, "# 結果: 161 件のうち NG 89 件"},
+		{verifyOptions{stage: "permissions"}, "# 結果: 165 件のうち NG 92 件"},
 		{verifyOptions{stage: "stage5"}, "# 結果: 5 件のうち NG 4 件"},
 		{verifyOptions{stage: "output-policy", policySource: "live"}, "# 結果: 13 件のうち NG 7 件"},
 		{verifyOptions{stage: "output-policy", policySource: "reference", referenceDir: testReferenceDir}, "# 結果: 13 件のうち NG 7 件"},
