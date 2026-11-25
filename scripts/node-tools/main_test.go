@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -234,7 +235,7 @@ func Test_exitCode(t *testing.T) {
 
 	t.Run("中断は 130 で終わる", func(t *testing.T) {
 		t.Parallel()
-		assert.Equal(t, 130, exitCode(fmt.Errorf("x: %w", errInterrupted)))
+		assert.Equal(t, 130, exitCode(xerrors.Wrap(errInterrupted, "x")))
 	})
 	for name, c := range map[string]struct {
 		err  error
