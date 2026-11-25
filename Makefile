@@ -4,7 +4,6 @@
 include .makefiles/runner.mk
 include .makefiles/versions.mk
 include .makefiles/host-tools.mk
-include .makefiles/git-isolation.mk
 
 # GitHub関連
 include .makefiles/github/operation/release-branch.mk

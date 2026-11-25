@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-// misspelled は canary の誤綴りの語です。
 const misspelled = "t" + "eh"
 
 const hiddenFile = ".hidden/canary.txt"
@@ -28,21 +28,21 @@ func runCanary(work string, cfg []byte, w io.Writer, tool toolFunc) error {
 	defer func() { _ = os.RemoveAll(work) }()
 
 	var failed []string
-	scan, err := runTool(tool(work, os.Environ(), stepScan))
+	scan, err := toolrun.Run(tool(work, os.Environ(), stepScan))
 	if err != nil {
 		return err
 	}
 	if !judgeHidden(scan) {
 		failed = append(failed, "隠しディレクトリの誤綴りで落ちませんでした")
-		fmt.Fprintf(w, "--- typos --format brief（rc=%d）:\n%s\n", scan.code, scan.combined)
+		fmt.Fprintf(w, "--- typos --format brief（rc=%d）:\n%s\n", scan.Code, scan.Combined)
 	}
-	files, err := runTool(tool(".", os.Environ(), stepFiles))
+	files, err := toolrun.Run(tool(".", os.Environ(), stepFiles))
 	if err != nil {
 		return err
 	}
-	if files.code != 0 || !scansGitHubDir(files.stdout) {
+	if files.Code != 0 || !scansGitHubDir(files.Stdout) {
 		failed = append(failed, "走査の対象に .github/ が入っていません")
-		fmt.Fprintf(w, "--- typos --files（rc=%d）:\n%s\n", files.code, files.combined)
+		fmt.Fprintf(w, "--- typos --files（rc=%d）:\n%s\n", files.Code, files.Combined)
 	}
 	if len(failed) > 0 {
 		return xerrors.Wrap(errCanary, strings.Join(failed, "。"))
@@ -87,8 +87,8 @@ func buildFixture(work string, cfg []byte) error {
 
 // judgeHidden は、typos が誤綴りを見つけた終了コードで終わり、出力が隠しディレクトリのファイルと語を名指して
 // いれば true です。
-func judgeHidden(r result) bool {
-	return r.code == typosFound && strings.Contains(r.combined, hiddenFile) && strings.Contains(r.combined, misspelled)
+func judgeHidden(r toolrun.Result) bool {
+	return r.Code == typosFound && strings.Contains(r.Combined, hiddenFile) && strings.Contains(r.Combined, misspelled)
 }
 
 // scansGitHubDir は、typos --files の出力（1行1パス）に、リポジトリ直下の .github/ の下のファイルがあれば true です。

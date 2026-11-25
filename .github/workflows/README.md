@@ -628,6 +628,7 @@ job の先頭に並んでいないこと、steps を持つ job に bullfrog が�
 | --- | --- | --- |
 | `base` | GitHub API / web / codeload、`objects` / `raw` / `release-assets.githubusercontent.com`、`*.actions.githubusercontent.com`、結果と cache の置き場のうち bullfrog の agent が既定で許さない番号の `productionresultssa<N>.blob.core.windows.net`（足し方は宣言のコメント）。IP は `127.0.0.100`（理由と外す条件は宣言のコメント。IP はドメインの判定を経ずに通すので、宣言の検査が `127.0.0.0/8` の外を拒む） | **すべての job に暗黙に適用される。** `classes` に書かない |
 | `mise` | mise 自身の配布元と、`mise.toml` が解決するすべての backend —— aqua / GitHub releases、Go の toolchain と module proxy、node の配布元、npm レジストリ（npm の道具を lockfile から入れる pnpm と、`npm:` の宣言の公開時刻を引く tool-cooldown が使う）、および Sigstore（mise が artifact attestation を検証する） | 道具を導入するすべての job |
+| `go` | mise が Go の版の一覧を引く先、Go の toolchain の配布元、module proxy（`mise` の部分集合） | Go だけを入れて `scripts/` の道具をビルドし、他の道具を入れない job（Checkov / KICS / Semgrep） |
 | `terraform` | Terraform Registry と provider の配布元 | Terraform を実行する job（[ADR-0205](../../docs/adr/0205-module-dependency-policy.md) により外部 module は引かない） |
 | `trivy` | 脆弱性 DB と checks バンドルの OCI の配布元 | Trivy を実行する job |
 | `docker-hub` | Docker Hub の registry・認証・layer の配布元（R2 と S3 は Docker Hub の Bucket のホストだけ） | 上流のイメージで道具を実行する job（Checkov / KICS / Semgrep）、docker/tools のイメージを組む job（Versions Check） |
@@ -661,8 +662,12 @@ Terraform を実行する種別の入口も呼べば、その job は型の宛�
 `type` の宛先の region の集合が、その `type` に当たる型のブロックを置く region の集合（ブロックの `region`
 引数のリテラル。持たないブロックは、辿る aws の provider のただ 1 つの `region`）と一致しなければ落ち、
 ブロックの `region` 引数（`action` は `config` の中）が region の形のリテラルでなくても、`action` の `region` を
-読めない形（`config` の外の `region`、2 つ以上の `config`、dynamic の `config`）でも落ちる。AWS が region を固定した global のサービスの宛先は、
-`scripts/egress` の閉じた一覧が突き合わせから外す。job の外（`jobs:` より前の `env:` など）に入口の名前が在っても落ちる。
+読めない形（`config` の外の `region`、2 つ以上の `config`、dynamic の `config`）でも落ちる。`region = each.key` だけは、
+ブロックの `for_each` を module の呼び出しの文脈で解いた集合の各 region として読み、解けない形・空の集合・region の形でない
+要素で落ちる（解ける形は `scripts/README.md` の `egress/` の行）。region の集合の宛先は、宣言の `region_set` の集合と
+宛先の `{<set>}` で書く（`[region_set.<name>]` の `regions = ["us-east-1", ...]` と、宛先の `"ec2.{<name>}.amazonaws.com"`。
+1つの宛先に `{}` は1つで、どの宛先も使わない集合は落ちる）。`usecases/*/reference` の root も辿り、ブロックの `region` を解けなければ落ちる（宛先は求めない）。
+AWS が region を固定した global のサービスの宛先は、`scripts/egress` の閉じた一覧が突き合わせから外す。job の外（`jobs:` より前の `env:` など）に入口の名前が在っても落ちる。
 新しい AWS のサービスの型を足す変更は、その `type` と、クラスへの宛先の追加を同じ変更に含める。
 Terraform を実行する job を足す変更は、その root の `root` の宣言を同じ変更に含める。接頭辞の `type` は、
 当たる型がすべて同じ宛先を呼ぶと言える範囲に限る —— 同じサービス名の下で別の endpoint を呼ぶ型

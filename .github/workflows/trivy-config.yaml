@@ -1,14 +1,11 @@
 name: Config Scan
 
 # Trivy misconfiguration scanning for Terraform and Dockerfiles, kept out of
-# trivy-fs.yaml on purpose. The two share a tool and nothing else: this one has a
-# different target (Terraform and Dockerfiles, not dependency manifests), a
-# different path filter, and a different gate (a misconfiguration blocks here: it is
-# introduced by the change under review, whereas a dependency finding is inherited
-# from an upstream advisory and is reported, then gated at release time). Folding it
-# into the dependency scan would also break that workflow's summary, which counts
-# .Results[].Vulnerabilities and would have to start distinguishing .Misconfigurations
-# from it.
+# trivy-fs.yaml on purpose: a misconfiguration is introduced by the change under review and
+# blocks here, whereas a dependency finding is inherited from an upstream advisory, reported,
+# and gated at release time. Folding it into the dependency scan would also break that
+# workflow's summary, which counts .Results[].Vulnerabilities and would have to start
+# distinguishing .Misconfigurations from it.
 #
 # docker-compose files are NOT covered: Trivy ships no compose checks. hadolint
 # (docker-lint.yaml) lints the Dockerfiles for style and correctness; this workflow
@@ -26,6 +23,12 @@ on:
     paths:
       - '.github/workflows/trivy-config.yaml'
       - '.makefiles/security/trivy.mk'
+      - '.makefiles/terraform/gates.mk'
+      - '.makefiles/runner.mk'
+      - 'scripts/iac-scan/**'
+      - 'scripts/lib/**'
+      - 'scripts/go.mod'
+      - 'scripts/go.sum'
       - '.trivyignore.yaml'
       - '.github/actions/setup-mise/**'
       - 'mise.toml'
@@ -115,6 +118,12 @@ jobs:
             relevant:
               - '.github/workflows/trivy-config.yaml'
               - '.makefiles/security/trivy.mk'
+              - '.makefiles/terraform/gates.mk'
+              - '.makefiles/runner.mk'
+              - 'scripts/iac-scan/**'
+              - 'scripts/lib/**'
+              - 'scripts/go.mod'
+              - 'scripts/go.sum'
               - '.trivyignore.yaml'
               - '.github/actions/setup-mise/**'
               - 'mise.toml'
@@ -229,7 +238,7 @@ jobs:
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
-          tools: aqua:aquasecurity/trivy
+          tools: go aqua:aquasecurity/trivy
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # The gate exits non-zero on a finding, which would skip the summary below; the exit

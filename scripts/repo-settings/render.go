@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"reflect"
 	"strconv"
 	"strings"
@@ -165,7 +166,7 @@ type rulesetRule struct {
 	Parameters map[string]any `json:"parameters"`
 }
 
-// checkRuleset は保護設定の宣言が ADR-0603 決定22・23 の Static Analysis の項目を満たすかを見ます。
+// checkRuleset は保護設定の宣言が ADR-0603 決定21-23 の Static Analysis の項目を満たすかを見ます。
 // enforcement・target・exclude も見る —— どれを緩めても、決定22 の bypass と同じく全ルールが外れる。
 // githubActionsAppID は、GitHub Actions の app の ID（`gh api /apps/github-actions`）。
 const githubActionsAppID = 15368
@@ -248,6 +249,9 @@ func checkRuleset(src []byte) error {
 		}
 		if !reflect.DeepEqual(pr["allowed_merge_methods"], []any{"merge"}) {
 			problems = append(problems, `pull_request の allowed_merge_methods が ["merge"] ではありません`)
+		}
+		if n, ok := pr["required_approving_review_count"].(float64); !ok || n != math.Trunc(n) || n < 1 {
+			problems = append(problems, "pull_request の required_approving_review_count が1以上の整数ではありません")
 		}
 	}
 	if len(problems) > 0 {

@@ -1,34 +1,8 @@
-// gitleaks-count は、gitleaks が走査したと報告した commit の数を、git が独立に数えた数と
-// 突き合わせます（ADR-0702 決定15）。
-//
-// 解いている問題:
-//
-// **gitleaks は git を読めなくても「0 commits scanned」で 0 を返す。** 走査した数を独立に数えた数と
-// 比べなければ、何も見なかった走査が所見なしの走査として通ります。
-//
-// gitleaks が数えるのは、走査の断片を1つ以上出した commit です。断片を出すのは、削除されていない
-// ファイルの hunk と、削除されていないアーカイブのバイナリだけです。空の commit、削除だけ・
-// mode の変更だけ・行の変わらない rename だけの commit は数えません。この規則は gitleaksVersion の
-// 版のソース（detect/detect.go の addCommit と sources/git.go の Fragments）から読んだものです。
-//
-// 期待値は `git log --numstat` から次の2つに分けて数えます。
-//
-//   - 必ず数える commit: 削除されていないテキストのファイルで、1行以上が変わったものを持つ
-//   - 数えるかを git の出力から決められない commit: それ以外で、削除されていないバイナリか、
-//     行の変わらない rename・copy を持つ。アーカイブかどうかは gitleaks がファイル名で判じ、
-//     rename として読むかは gitleaks を走らせる側の git の設定が決める
-//
-// 走査した数が、必ず数える数以上、両者の和以下であることを求めます。下限を割れば gitleaks が
-// 範囲を読み落としており、上限を超えれば範囲の取り違えか数え方の変化です。
 package main
 
 import (
 	"bytes"
-	"flag"
 	"fmt"
-	"log"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -40,8 +14,6 @@ import (
 const gitleaksVersion = "8.30.1"
 
 var (
-	errUsage    = xerrors.New("引数が不正です")
-	errRead     = xerrors.New("入力を読み取れません")
 	errNoCount  = xerrors.New("走査した commit の数を gitleaks の出力から読めません")
 	errNumstat  = xerrors.New("git log --numstat の出力を解釈できません")
 	errMismatch = xerrors.New("走査した commit の数が git の数えた数と合いません。git を読めていないか、範囲を取り違えています")
@@ -51,53 +23,47 @@ var scannedPattern = regexp.MustCompile(`(?:^|[^0-9])([0-9]+) commits scanned`)
 
 const commitHeader = "commit "
 
-func main() {
-	log.SetFlags(0)
-	if err := run(os.Args[1:]); err != nil {
-		log.Printf("❌ gitleaks-count: %v", err)
-		os.Exit(2)
-	}
-}
-
-func run(args []string) error {
-	fs := flag.NewFlagSet("gitleaks-count", flag.ContinueOnError)
-	logPath := fs.String("log", "", "gitleaks の標準出力と標準エラー")
-	numstatPath := fs.String("numstat", "", "走査と同じ範囲の git log --no-merges -M --diff-filter=d --format='commit %H' --numstat -z の出力")
-	minimum := fs.Int("min", 0, "-numstat を渡さないときの、走査した数の下限（1以上）")
-	if err := fs.Parse(args); err != nil {
-		return xerrors.Wrap(errUsage, err.Error())
-	}
-	if fs.NArg() > 0 || *logPath == "" || (*numstatPath == "") == (*minimum < 1) {
-		return xerrors.Wrap(errUsage, "-log と、-numstat か -min のどちらか1つを渡す")
-	}
-
-	out, err := os.ReadFile(filepath.Clean(*logPath))
-	if err != nil {
-		return xerrors.Wrap(errRead, err.Error())
-	}
-	n, err := scanned(string(out))
+// runCount は、gitleaks の出力 out から走査した commit の数を読み、git が独立に数えた数と突き合わせます
+// （ADR-0702 決定15）。**gitleaks は git を読めなくても「0 commits scanned」で 0 を返す**ので、走査した数を
+// 比べなければ、何も見なかった走査が所見なしの走査として通ります。
+//
+// minimum が1以上なら、走査した数がそれ以上であることだけを求めます（全履歴の走査。ref の数え方が
+// git rev-list と揃わない）。0 なら、numstat（走査と同じ範囲の numstatArgs の出力）から数えた範囲に入ることを
+// 求めます。
+//
+// gitleaks が数えるのは、走査の断片を1つ以上出した commit です。断片を出すのは、削除されていない
+// ファイルの hunk と、削除されていないアーカイブのバイナリだけです。空の commit、削除だけ・
+// mode の変更だけ・行の変わらない rename だけの commit は数えません。この規則は gitleaksVersion の
+// 版のソース（detect/detect.go の addCommit と sources/git.go の Fragments）から読んだものです。
+// 期待値は次の2つに分けて数えます。
+//
+//   - 必ず数える commit: 削除されていないテキストのファイルで、1行以上が変わったものを持つ
+//   - 数えるかを git の出力から決められない commit: それ以外で、削除されていないバイナリか、
+//     行の変わらない rename・copy を持つ。アーカイブかどうかは gitleaks がファイル名で判じ、
+//     rename として読むかは gitleaks を走らせる側の git の設定が決める
+//
+// 走査した数が、必ず数える数以上、両者の和以下であることを求めます。下限を割れば gitleaks が
+// 範囲を読み落としており、上限を超えれば範囲の取り違えか数え方の変化です。
+func runCount(out string, numstat []byte, minimum int) error {
+	n, err := scanned(out)
 	if err != nil {
 		return err
 	}
-
-	if *numstatPath == "" {
-		if n < *minimum {
-			return xerrors.Wrapf(errMismatch, "走査 %d 件、下限 %d 件", n, *minimum)
+	if minimum > 0 {
+		if n < minimum {
+			return xerrors.Wrapf(errMismatch, "走査 %d 件、下限 %d 件", n, minimum)
 		}
+
 		return nil
 	}
-
-	raw, err := os.ReadFile(filepath.Clean(*numstatPath))
-	if err != nil {
-		return xerrors.Wrap(errRead, err.Error())
-	}
-	must, maybe, err := expected(raw)
+	must, maybe, err := expected(numstat)
 	if err != nil {
 		return err
 	}
 	if n < must || n > must+maybe {
 		return xerrors.Wrapf(errMismatch, "走査 %d 件、git の数えた範囲 %d-%d 件", n, must, must+maybe)
 	}
+
 	return nil
 }
 

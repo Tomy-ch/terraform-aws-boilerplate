@@ -31,8 +31,8 @@ const declOK = `{"infra_code_decl": {` +
 	`"providers": {"registry.terraform.io/hashicorp/aws": {"command_blocks": []}},` +
 	`"languages": {"python": {"contexts": ["python-test"]}},` +
 	`"allowlist": [` +
-	`{"id": "usecases/x/internal/fn#resource.aws_lambda_function.f", "owner": "repository", "source": "usecases/x/internal/fn/src", "language": "python", "adr": "x/fn-runtime"},` +
-	`{"id": "usecases/x#resource.aws_lambda_function.g", "owner": "external", "repository": "github.com/org/app"}` +
+	`{"id": "usecases/x/internal/fn#resource.aws_lambda_function.f", "owner": "repository", "source": "usecases/x/internal/fn/src", "language": "python", "adr": "x/fn-runtime", "reasons": ["type"]},` +
+	`{"id": "usecases/x#resource.aws_lambda_function.g", "owner": "external", "repository": "github.com/org/app", "reasons": ["type", "provisioner"]}` +
 	`]}}`
 
 const rulesetOK = `{"rules": [{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "infra-code-gate"}, {"context": "python-test"}]}}]}`
@@ -64,6 +64,15 @@ func buildRepo(t *testing.T) string {
 	writeFile(t, filepath.Join(repo, "usecases/x/docs/adr/0001-fn-runtime.md"), acceptedADR)
 	for name, body := range gateWorkflowFixtures {
 		writeFile(t, filepath.Join(repo, ".github/workflows", name), body)
+	}
+	for _, target := range codeownerTargets {
+		if strings.HasSuffix(target, "/") {
+			require.NoError(t, os.MkdirAll(filepath.Join(repo, target), 0o750))
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(repo, target)); err != nil {
+			writeFile(t, filepath.Join(repo, target), "x")
+		}
 	}
 	return repo
 }
@@ -139,6 +148,13 @@ func Test_runDecl(t *testing.T) {
 				want: errViolations,
 				msg:  ".github/workflows/terraform-unlock.yaml に当たる行がありません",
 			},
+			"code owner の対象の path が実在しなければ違反": {
+				mutate: func(t *testing.T, repo string) {
+					require.NoError(t, os.RemoveAll(filepath.Join(repo, "scripts/hcl-tally")))
+				},
+				want: errViolations,
+				msg:  "対象 scripts/hcl-tally/ が実在しません",
+			},
 			"ADR が Accepted でなければ違反": {
 				mutate: func(t *testing.T, repo string) {
 					writeFile(t, filepath.Join(repo, "usecases/x/docs/adr/0001-fn-runtime.md"), strings.Replace(acceptedADR, "Accepted", "Proposed", 1))
@@ -178,6 +194,7 @@ func Test_readDeclaration(t *testing.T) {
 		require.NoError(t, err)
 		assert.Len(t, d.Types, 2)
 		assert.Len(t, d.Allowlist, 2)
+		assert.Equal(t, []string{"type", "provisioner"}, d.Allowlist[1].Reasons)
 	})
 
 	t.Run("異常系", func(t *testing.T) {
@@ -190,6 +207,7 @@ func Test_readDeclaration(t *testing.T) {
 		}{
 			"未知のキーはエラー":                {content: `{"infra_code_decl": {"types": {"resource.a": {"executes_code": false}}, "extra": 1}}`, want: errDeclShape},
 			"項目の未知のキーもエラー":             {content: `{"infra_code_decl": {"types": {"resource.a": {"executes_code": false, "x": 1}}}}`, want: errDeclShape},
+			"許可リストの項目の未知のキーもエラー":       {content: `{"infra_code_decl": {"types": {"resource.a": {"executes_code": false}}, "allowlist": [{"id": "a", "reason": ["type"]}]}}`, want: errDeclShape},
 			"重複したキーはエラー":               {content: `{"infra_code_decl": {"types": {"resource.a": {"executes_code": false}, "resource.a": {"executes_code": true}}}}`, want: errDuplicateKey},
 			"infra_code_decl が無ければエラー": {content: `{}`, want: errDeclShape},
 			"型の分類が0行なら0件のエラー":          {content: `{"infra_code_decl": {"types": {}}}`, want: errNoInput},
@@ -594,6 +612,127 @@ func Test_checkCodeowners(t *testing.T) {
 			assert.Equal(t, tt.want, checkCodeowners("CODEOWNERS", tt.rules, []string{"conftest/hcl/"}))
 		})
 	}
+}
+
+func Test_checkTargets(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+		repo := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(repo, "conftest/hcl"), 0o750))
+		writeFile(t, filepath.Join(repo, ".github/CODEOWNERS"), "x")
+		got, err := checkTargets(repo, "CODEOWNERS", []string{"conftest/hcl/", ".github/CODEOWNERS"})
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		tests := map[string]struct {
+			prepare func(t *testing.T, repo string)
+			target  string
+			want    string
+		}{
+			"ディレクトリの対象が無い": {
+				prepare: func(*testing.T, string) {},
+				target:  "conftest/hcl/",
+				want:    "対象 conftest/hcl/ が実在しません（ADR-0103 決定14）",
+			},
+			"ファイルの対象が無い": {
+				prepare: func(*testing.T, string) {},
+				target:  ".github/CODEOWNERS",
+				want:    "対象 .github/CODEOWNERS が実在しません（ADR-0103 決定14）",
+			},
+			"ディレクトリの対象がファイル": {
+				prepare: func(t *testing.T, repo string) { writeFile(t, filepath.Join(repo, "conftest/hcl"), "x") },
+				target:  "conftest/hcl/",
+				want:    "対象 conftest/hcl/ はディレクトリではありません（ADR-0103 決定14）",
+			},
+			"ファイルの対象がディレクトリ": {
+				prepare: func(t *testing.T, repo string) {
+					require.NoError(t, os.MkdirAll(filepath.Join(repo, ".github/CODEOWNERS"), 0o750))
+				},
+				target: ".github/CODEOWNERS",
+				want:   "対象 .github/CODEOWNERS は通常のファイルではありません（ADR-0103 決定14）",
+			},
+			"ディレクトリの対象が symlink": {
+				prepare: func(t *testing.T, repo string) {
+					require.NoError(t, os.MkdirAll(filepath.Join(repo, "real"), 0o750))
+					require.NoError(t, os.MkdirAll(filepath.Join(repo, "conftest"), 0o750))
+					require.NoError(t, os.Symlink(filepath.Join(repo, "real"), filepath.Join(repo, "conftest/hcl")))
+				},
+				target: "conftest/hcl/",
+				want:   "対象 conftest/hcl/ はディレクトリではありません（ADR-0103 決定14）",
+			},
+			"ファイルの対象が symlink": {
+				prepare: func(t *testing.T, repo string) {
+					writeFile(t, filepath.Join(repo, "real"), "x")
+					require.NoError(t, os.MkdirAll(filepath.Join(repo, ".github"), 0o750))
+					require.NoError(t, os.Symlink(filepath.Join(repo, "real"), filepath.Join(repo, ".github/CODEOWNERS")))
+				},
+				target: ".github/CODEOWNERS",
+				want:   "対象 .github/CODEOWNERS は通常のファイルではありません（ADR-0103 決定14）",
+			},
+		}
+		for name, tt := range tests {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				repo := t.TempDir()
+				tt.prepare(t, repo)
+				got, err := checkTargets(repo, "CODEOWNERS", []string{tt.target})
+				require.NoError(t, err)
+				assert.Equal(t, []lintreport.Finding{{File: "CODEOWNERS", Line: 1, Message: tt.want}}, got)
+			})
+		}
+	})
+
+	t.Run("リポジトリの root を開けなければエラー", func(t *testing.T) {
+		t.Parallel()
+		_, err := checkTargets(filepath.Join(t.TempDir(), "missing"), "CODEOWNERS", []string{"conftest/hcl/"})
+		require.ErrorIs(t, err, os.ErrNotExist)
+	})
+
+	t.Run("確かめられない対象は所見でなくエラー", func(t *testing.T) {
+		t.Parallel()
+
+		tests := map[string]func(t *testing.T, repo string){
+			"親がファイル": func(t *testing.T, repo string) { writeFile(t, filepath.Join(repo, "conftest"), "x") },
+			"親が root の外への symlink": func(t *testing.T, repo string) {
+				outside := t.TempDir()
+				require.NoError(t, os.MkdirAll(filepath.Join(outside, "hcl"), 0o750))
+				require.NoError(t, os.Symlink(outside, filepath.Join(repo, "conftest")))
+			},
+		}
+		for name, prepare := range tests {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				repo := t.TempDir()
+				prepare(t, repo)
+				got, err := checkTargets(repo, "CODEOWNERS", []string{"conftest/hcl/"})
+				require.Error(t, err)
+				require.NotErrorIs(t, err, os.ErrNotExist)
+				assert.Contains(t, err.Error(), "conftest/hcl/ の確認")
+				assert.Nil(t, got)
+			})
+		}
+	})
+
+	t.Run("固定の対象はファイルとディレクトリの両方を持つ", func(t *testing.T) {
+		t.Parallel()
+		require.NotEmpty(t, codeownerTargets)
+		var dirs, files int
+		for _, target := range codeownerTargets {
+			if strings.HasSuffix(target, "/") {
+				dirs++
+			} else {
+				files++
+			}
+		}
+		assert.Positive(t, dirs)
+		assert.Positive(t, files)
+	})
 }
 
 func Test_codeownersMatch(t *testing.T) {

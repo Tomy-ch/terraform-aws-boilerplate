@@ -17,6 +17,8 @@ workload_address := sprintf("%saws_iam_policy.workload", [g])
 
 read_address := sprintf("%saws_iam_policy.workload_read", [g])
 
+policy_2_address := sprintf("%saws_iam_policy.workload_2", [g])
+
 boundary_address := sprintf("%saws_iam_policy.boundary[\"ops-notification\"]", [g])
 
 apply_address := sprintf("%saws_iam_role_policy.this[\"apply\"]", [g])
@@ -37,6 +39,15 @@ valid_workload := [
 	{"Effect": "Allow", "Action": "sns:CreateTopic", "Resource": "arn:aws:sns:ap-northeast-1:123456789012:tabp-admin-*"},
 ]
 
+config_slr := sprintf("%s:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig", [iam])
+
+valid_policy_2 := [
+	{"Effect": "Allow", "Action": "iam:CreateServiceLinkedRole", "Resource": config_slr, "Condition": {"StringEquals": {"iam:AWSServiceName": "config.amazonaws.com"}}},
+	{"Effect": "Allow", "Action": "iam:PassRole", "Resource": config_slr, "Condition": {"StringEquals": {"iam:PassedToService": "config.amazonaws.com"}}},
+	{"Effect": "Allow", "Action": "iam:UpdateAccountPasswordPolicy", "Resource": "*"},
+	{"Effect": "Allow", "Action": "config:PutDeliveryChannel", "Resource": "*"},
+]
+
 valid_read := [{"Effect": "Allow", "Action": ["sns:GetTopicAttributes"], "Resource": ["arn:aws:sns:ap-northeast-1:123456789012:tabp-admin-*", "arn:aws:sns:us-east-1:123456789012:tabp-admin-*"]}]
 
 bootstrap_denies := [
@@ -54,11 +65,13 @@ workload_rc(workload) := res("aws_iam_policy", workload_address, {"name": "tabp-
 
 read_rc(read) := res("aws_iam_policy", read_address, {"name": "tabp-admin-ci-apply-workload-read", "arn": sprintf("%s:policy/tabp-admin-ci-apply-workload-read", [iam]), "policy": json.marshal({"Statement": read})})
 
+policy_2_rc(statements) := res("aws_iam_policy", policy_2_address, {"name": "tabp-admin-ci-apply-workload-2", "arn": sprintf("%s:policy/tabp-admin-ci-apply-workload-2", [iam]), "policy": json.marshal({"Statement": statements})})
+
 boundary_rc(boundary) := res("aws_iam_policy", boundary_address, {"name": "tabp-admin-ci-boundary-ops-notification", "arn": boundary_arn, "policy": json.marshal({"Statement": boundary})})
 
 apply_rc(apply) := res("aws_iam_role_policy", apply_address, {"name": "apply", "role": "tabp-admin-ci-apply", "policy": json.marshal({"Statement": apply})})
 
-world(workload, boundary, apply) := [workload_rc(workload), read_rc(valid_read), boundary_rc(boundary), apply_rc(apply)]
+world(workload, boundary, apply) := [workload_rc(workload), read_rc(valid_read), policy_2_rc(valid_policy_2), boundary_rc(boundary), apply_rc(apply)]
 
 valid_boundary := array.concat(boundary_allow, bootstrap_denies)
 
@@ -71,10 +84,12 @@ decl := {
 	"workload": {
 		"policy": workload_address,
 		"read_policy": read_address,
+		"policy_2": policy_2_address,
 		"boundaries": {"ops-notification": boundary_address},
 		"usecase_iam_prefixes": ["ops-"],
-		"service_linked_roles": ["management.chatbot.amazonaws.com"],
+		"service_linked_roles": ["config.amazonaws.com", "management.chatbot.amazonaws.com"],
 		"passed_to_services": ["chatbot.amazonaws.com", "scheduler.amazonaws.com"],
+		"account_iam_writes": ["iam:UpdateAccountPasswordPolicy"],
 		"apply_only_denies": ["DenyBoundaryRemoval"],
 	},
 }
@@ -121,6 +136,19 @@ test_violation_declaration_malformed if {
 		[{"op": "replace", "path": "/workload/service_linked_roles", "value": [""]}],
 		[{"op": "replace", "path": "/workload/passed_to_services", "value": []}],
 		[{"op": "add", "path": "/workload/extra", "value": 1}],
+		[{"op": "remove", "path": "/workload/policy_2"}],
+		[{"op": "replace", "path": "/workload/policy_2", "value": ""}],
+		[{"op": "replace", "path": "/workload/policy_2", "value": workload_address}],
+		[{"op": "replace", "path": "/workload/policy_2", "value": read_address}],
+		[{"op": "remove", "path": "/workload/account_iam_writes"}],
+		[{"op": "replace", "path": "/workload/account_iam_writes", "value": "iam:UpdateAccountPasswordPolicy"}],
+		[{"op": "replace", "path": "/workload/account_iam_writes", "value": ["iam:*"]}],
+		[{"op": "replace", "path": "/workload/account_iam_writes", "value": ["iam:Update*"]}],
+		[{"op": "replace", "path": "/workload/account_iam_writes", "value": ["s3:PutAccountPublicAccessBlock"]}],
+		[{"op": "replace", "path": "/workload/account_iam_writes", "value": ["iam:PutRolePolicy"]}],
+		[{"op": "replace", "path": "/workload/account_iam_writes", "value": ["iam:CreateUser"]}],
+		[{"op": "replace", "path": "/workload/account_iam_writes", "value": ["iam:GetAccountPasswordPolicy"]}],
+		[{"op": "replace", "path": "/workload/account_iam_writes", "value": [1]}],
 		[{"op": "remove", "path": "/apply_role"}],
 	] {
 		fixture.has(malformed, messages_for(valid_world, json.patch(decl, patch)))
@@ -128,7 +156,7 @@ test_violation_declaration_malformed if {
 }
 
 test_violation_input_missing if {
-	every address in [workload_address, read_address, boundary_address, apply_address] {
+	every address in [workload_address, read_address, policy_2_address, boundary_address, apply_address] {
 		fixture.has(sprintf("[PLAN-AWP-00] %s が入力にありません", [address]), messages_for(without(valid_world, address), decl))
 	}
 }
@@ -162,7 +190,7 @@ test_violation_read_policy_unknown_arn if {
 
 test_violation_read_policy_same_as_policy if {
 	d := json.patch(decl, [{"op": "replace", "path": "/workload/read_policy", "value": workload_address}])
-	fixture.has(sprintf("[PLAN-AWP-00] %s の名前", [workload_address]), messages_for(valid_world, d))
+	fixture.has(malformed, messages_for(valid_world, d))
 }
 
 test_violation_read_policy_malformed_declaration if {
@@ -404,4 +432,65 @@ test_violation_boundary_removal_deny_shape if {
 test_pass_boundary_removal_deny_forms if {
 	s := {"Sid": "DenyBoundaryRemoval", "Effect": "Deny", "Action": ["IAM:DeleteRolePermissionsBoundary"], "Resource": ["*"]}
 	count(messages_for(world(valid_workload, valid_boundary, array.concat(bootstrap_denies, [s])), decl)) == 0
+}
+
+# --- 3つ目の policy（account-baseline の管理。deployment-identity/ADR-0201 決定17・21）---
+
+messages_2(statements) := messages_for(array.concat(without(valid_world, policy_2_address), [policy_2_rc(statements)]), decl)
+
+test_violation_policy_2_name if {
+	bad := res("aws_iam_policy", policy_2_address, {"name": "tabp-admin-ci-apply-workload-3", "arn": sprintf("%s:policy/tabp-admin-ci-apply-workload-3", [iam]), "policy": json.marshal({"Statement": valid_policy_2})})
+	fixture.has(sprintf("[PLAN-AWP-00] %s の名前", [policy_2_address]), messages_for(array.concat(without(valid_world, policy_2_address), [bad]), decl))
+}
+
+test_violation_policy_2_unknown_arn if {
+	bad := json.patch(policy_2_rc(valid_policy_2), [{"op": "remove", "path": "/change/after/arn"}])
+	fixture.has(sprintf("[PLAN-AWP-00] %s の ARN が plan で決まっていません", [policy_2_address]), messages_for(array.concat(without(valid_world, policy_2_address), [bad]), decl))
+}
+
+# 3つ目の policy の文が workload_allows に入らないと、IAM の書き込みの検査は付いた policy を見ずに緑になる。
+test_violation_iam_write_in_policy_2 if {
+	s := {"Effect": "Allow", "Action": "iam:PutRolePolicy", "Resource": sprintf("%s:role/tabp-admin-ci-apply", [iam])}
+	fixture.has(sprintf("[PLAN-AWP-01] p.json: %s の Allow が iam:putrolepolicy", [policy_2_address]), messages_2(array.concat(valid_policy_2, [s])))
+}
+
+test_violation_account_iam_write_outside_declaration if {
+	every s in [
+		{"Effect": "Allow", "Action": "iam:DeleteAccountPasswordPolicy", "Resource": "*"},
+		{"Effect": "Allow", "Action": "iam:EnableOrganizationsRootSessions", "Resource": "*"},
+		{"Effect": "Allow", "Action": "iam:UpdateAccountPasswordPolicy", "Resource": sprintf("%s:role/tabp-admin-ci-apply", [iam])},
+	] {
+		fixture.has(sprintf("[PLAN-AWP-01] p.json: %s の Allow が", [policy_2_address]), messages_2(array.concat(valid_policy_2, [s])))
+	}
+	d := json.patch(decl, [{"op": "replace", "path": "/workload/account_iam_writes", "value": []}])
+	fixture.has(sprintf("[PLAN-AWP-01] p.json: %s の Allow が iam:updateaccountpasswordpolicy を * に許しています", [policy_2_address]), messages_for(valid_world, d))
+}
+
+test_violation_pass_service_linked_role_outside_declaration if {
+	every s in [
+		{"Effect": "Allow", "Action": "iam:PassRole", "Resource": config_slr},
+		{"Effect": "Allow", "Action": "iam:PassRole", "Resource": config_slr, "Condition": {"StringEquals": {"iam:PassedToService": "scheduler.amazonaws.com"}}},
+		{"Effect": "Allow", "Action": "iam:PassRole", "Resource": config_slr, "Condition": {"StringEquals": {"iam:AWSServiceName": "config.amazonaws.com"}}},
+		{"Effect": "Allow", "Action": "iam:PassRole", "Resource": sprintf("%s:role/aws-service-role/config.amazonaws.com/*", [iam]), "Condition": {"StringEquals": {"iam:PassedToService": "config.amazonaws.com"}}},
+	] {
+		fixture.has(sprintf("[PLAN-AWP-01] p.json: %s の Allow が iam:passrole", [policy_2_address]), messages_2(replace(valid_policy_2, 1, s)))
+	}
+	d := json.patch(decl, [{"op": "replace", "path": "/workload/service_linked_roles", "value": ["management.chatbot.amazonaws.com"]}])
+	fixture.has(sprintf("[PLAN-AWP-01] p.json: %s の Allow が iam:passrole", [policy_2_address]), messages_for(valid_world, d))
+}
+
+# service-linked role を渡す文の免除が、usecase の role を同じサービスへ渡す文に及ばないこと。
+test_violation_pass_usecase_role_to_slr_service if {
+	every s in [
+		{"Effect": "Allow", "Action": "iam:PassRole", "Resource": [ops_roles], "Condition": {"StringEquals": {"iam:PassedToService": "config.amazonaws.com"}}},
+		{"Effect": "Allow", "Action": "iam:PassRole", "Resource": [config_slr, ops_roles], "Condition": {"StringEquals": {"iam:PassedToService": "config.amazonaws.com"}}},
+	] {
+		fixture.has(sprintf("[PLAN-AWP-03] p.json: %s の Allow が iam:PassRole", [policy_2_address]), messages_2(array.concat(valid_policy_2, [s])))
+	}
+}
+
+# Resource の無い文は免除の every を空で満たす。免除が count で外れることを固定する。
+test_violation_pass_role_without_resource_not_exempt if {
+	s := {"Effect": "Allow", "Action": "iam:PassRole", "Resource": [], "Condition": {"StringEquals": {"iam:PassedToService": "config.amazonaws.com"}}}
+	fixture.has(sprintf("[PLAN-AWP-03] p.json: %s の Allow が iam:PassRole", [policy_2_address]), messages_2(array.concat(valid_policy_2, [s])))
 }
