@@ -465,6 +465,8 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
    make bootstrap-verify STAGE=output-policy POLICY_SOURCE=reference
    ```
 
+   reference の plan は、`make tf-policy` の出力の置き場から読む。そこの `plans.txt` に state-backend の plan が無ければ（`make tf-policy` を走らせていないか、state-backend の plan が落ちた）、評価せずに NG にする。
+
    `NG 0 件` で終了コード 0 であることを確かめ、出力を Pull Request に記録する。違えば merge しない。
 
 #### lock の解除を用意して試す
