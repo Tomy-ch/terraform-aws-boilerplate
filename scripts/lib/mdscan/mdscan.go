@@ -148,7 +148,6 @@ type lineView struct {
 	ready   bool
 }
 
-// thematicBreakAt は、line[p:] が区切り線かを返します。
 func (v *lineView) thematicBreakAt(p int) bool {
 	if p >= len(v.line) {
 		return false
@@ -252,7 +251,6 @@ func expandTabs(text string) string {
 	return sb.String()
 }
 
-// indentOf は、行頭の空白の数を返します。
 func indentOf(s string) int {
 	return len(s) - len(strings.TrimLeft(s, " "))
 }
@@ -407,9 +405,8 @@ func cutEmptyComment(rest string) (string, bool) {
 
 // InlineCodes は、行に含まれる inline code span の中身を、現れた順に返します。
 //
-// 開きと閉じの長さが**同じ**ものだけを対にします（CommonMark）。これにより、中身に
-// バッククォートを含む span（“ `foo` “ のような形）を1つとして取り出せます。閉じが
-// 無いバッククォートの連なりはただの文字であり、span を作りません。
+// 開きと閉じの長さが**同じ**ものだけを対にします（CommonMark）。中身にバッククォートを含む span も1つとして
+// 取り出します。閉じが無いバッククォートの連なりはただの文字であり、span を作りません。
 func InlineCodes(line string) []string {
 	var out []string
 	runs := newBacktickRuns(line)
@@ -428,8 +425,9 @@ func InlineCodes(line string) []string {
 	return out
 }
 
-// backtickRuns は、行のバッククォートの並びの始まりを、並びの長さごとに昇順で持ちます。閉じを探す位置を呼ぶたびに
-// 減らさなければ、1行を読み終えるまでの手間は行の長さに比例します。
+// backtickRuns は、行のバッククォートの並びの始まりを、並びの長さごとに昇順で持ちます。
+// span / closeAt の位置は呼ぶたびに増やしてください。走査済みの始まりを読み飛ばして進めるので、戻すと見えなくなります。
+// その代わり、1行を読み終えるまでの手間は行の長さに比例します。
 type backtickRuns struct {
 	line   string
 	starts map[int][]int

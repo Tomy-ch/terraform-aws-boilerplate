@@ -46,7 +46,6 @@ var codeownerTargets = []string{
 // detectionTools は、検出の検査を実装する Go のパッケージのディレクトリです。
 var detectionTools = []string{"scripts/infra-code-gate", "scripts/hcl-input", "scripts/hcl-tally", "scripts/tf-job-lint"}
 
-// goModPath は、検出の道具が属するモジュールの宣言です。
 const goModPath = "scripts/go.mod"
 
 // requiredHeadings は、本リポジトリ所有の項目が参照する ADR が持つ見出しです（ADR-0103 決定13）。
