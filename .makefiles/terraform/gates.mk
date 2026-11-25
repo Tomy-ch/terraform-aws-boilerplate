@@ -18,7 +18,7 @@ export TF_PLUGIN_CACHE_DIR ?= $(CURDIR)/tmp/terraform-plugin-cache
 # plugin の置き場の階層は OS / arch を含まないので、経路ごとに分ける。
 TFLINT_PLUGIN_DIR_REL = tmp/tflint-plugins/$(RUNNER_MODE)
 # 資格情報を持つ手元でも、持たない CI と同じ条件で走らせる（ADR-0401 決定6）。SDK が資格情報を
-# 読む環境変数は名前を列挙しきれないので、AWS_ で始まるものをすべて外してから与える。tf-gates は同じ環境を自分で組む。
+# 読む環境変数は名前を列挙しきれないので、AWS_ で始まるものをすべて外してから与える。Go の道具は lib/tfexec で同じ環境を自分で組む。
 AWS_ENV_UNSET = $$(env | sed -n 's/^\(AWS_[A-Za-z0-9_]*\)=.*/-u \1/p')
 TF_ENV = env $(AWS_ENV_UNSET) \
 	AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_CONFIG_FILE=/dev/null AWS_EC2_METADATA_DISABLED=true CHECKPOINT_DISABLE=1

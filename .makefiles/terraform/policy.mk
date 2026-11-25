@@ -10,7 +10,7 @@
 
 POLICY_PLAN_DIR = conftest/plan
 POLICY_PLAN_DECL = conftest/plan/decl.json
-# 決定17 の引数の一部は、ADR-0102 決定18 の宣言（層の検査の宣言）から導く（conftest/plan/README.md の「入力」）。
+# ADR-0402 決定17 の引数の一部は、ADR-0102 決定18 の宣言（層の検査の宣言）から導く（conftest/plan/README.md の「入力」）。
 POLICY_LAYER_DECL = conftest/hcl/layer/decl.json
 CONFTEST_BIN ?= conftest
 # conftest はツールランナーの中で走り、リポジトリは /app に mount される。パスは相対で渡す。
@@ -22,16 +22,15 @@ tf-policy: tf-init
 	@mkdir -p $(TF_POLICY_INPUT)
 	-@$(GO_TOOL) $(CONFTEST_BIN) verify --policy $(POLICY_PLAN_DIR) --data $(POLICY_PLAN_DECL) --data $(POLICY_LAYER_DECL) -o json > $(TF_POLICY_INPUT)/verify.json
 	@$(call RUN_SCRIPT,tf-policy,verify-result -policy $(POLICY_PLAN_DIR) -report $(TF_POLICY_INPUT)/verify.json)
-	@$(TF_ENV) $(call RUN_SCRIPT_HOST,tf-policy,plan -base "$(TF_BASE)" -data "$(TF_GATES_DATA)" -out "$(TF_POLICY_INPUT)/run")
+	@$(call RUN_SCRIPT_HOST,tf-policy,plan -base "$(TF_BASE)" -data "$(TF_GATES_DATA)" -out "$(TF_POLICY_INPUT)/run")
 	@$(call RUN_SCRIPT,tf-policy,extract -out "$(TF_POLICY_INPUT)/run" -decl $(POLICY_PLAN_DECL))
 	@$(call RUN_SCRIPT,provider-schema,plan-deprecated -out "$(TF_POLICY_INPUT)/provider-schema.json" -list "$(TF_POLICY_INPUT)/run/plans.txt")
 	-@$(GO_TOOL) $(CONFTEST_BIN) test --combine --all-namespaces --no-color -o json --policy $(POLICY_PLAN_DIR) --data $(POLICY_PLAN_DECL) --data $(POLICY_LAYER_DECL) \
 		--data "$(TF_POLICY_INPUT)/provider-schema.json" "$(TF_POLICY_INPUT)/run/inputs" > "$(TF_POLICY_INPUT)/result.json"
 	@$(call RUN_SCRIPT,tf-local,policy-result -policy $(POLICY_PLAN_DIR) $(TF_POLICY_INPUT)/result.json)
 
-# canary は実物の terraform・Conftest・mock provider で Policy Test の段を通しで走らせる（scripts/tf-policy の canary）。
-# terraform と Conftest はホストの PATH のものを起動する。provider-schema はビルドした置き場を PATH の先頭に置いて
-# 起動させる。aws の fixture は state-backend の reference の版の AWS Provider を使い、plugin cache に無ければ取得する。
+# terraform と Conftest はホストの PATH のものを起動する。aws の fixture は state-backend の reference の版の
+# AWS Provider を使い、plugin cache に無ければ取得する。
 TF_POLICY_CANARY_DIR = tmp/tf-policy-canary
 
 .PHONY: tf-policy-canary ## tf-policy が違反の無い入力で通り、実物の Conftest が評価しない規則・件数のずれ・違反・unknown の文書・書いた inline の引数・宣言と schema のずれで落ちることを検査
