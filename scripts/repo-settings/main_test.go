@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cooldown"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 )
 
@@ -312,6 +314,7 @@ func Test_readDeclarations(t *testing.T) {
 		assert.Equal(t, 1, decl.marks)
 		assert.Equal(t, 1, decl.exprs)
 		assert.Equal(t, 2, decl.dependabotLabels)
+		assert.Equal(t, 4, decl.dependabotCooldowns)
 	})
 
 	cases := []struct {
@@ -334,6 +337,12 @@ func Test_readDeclarations(t *testing.T) {
 		{"Dependabot のラベルが labels.json に無ければ失敗する", func(root string) {
 			writeFile(t, root, labelsFile, `[{"name": "bug", "color": "d73a4a"}]`)
 		}, errDependabotLabels},
+		{"Dependabot の cooldown が窓を下回れば失敗する", func(root string) {
+			short := strings.Replace(dependabotFixture,
+				fmt.Sprintf("default-days: %d", cooldown.PinWindowDays), fmt.Sprintf("default-days: %d", cooldown.PinWindowDays-1), 1)
+			require.NotEqual(t, dependabotFixture, short, "置き換えが空振りすると窓ちょうどのまま検査が通る")
+			writeFile(t, root, dependabotFile, short)
+		}, errDependabotCooldown},
 		{"dependabot.yml が無ければ失敗する", func(root string) {
 			require.NoError(t, os.Remove(filepath.Join(root, dependabotFile)))
 		}, os.ErrNotExist},
@@ -588,7 +597,7 @@ func Test_applyOrCheck(t *testing.T) {
 		require.NoError(t, err)
 		// 書き込みは rename なので、書けば別のファイルになる。
 		assert.True(t, os.SameFile(before, after))
-		assert.Equal(t, "✅ repo-settings: 保護対象 3 件、environment 6 件、Private Vulnerability Reporting の宣言（enabled=true）、apply の workflow 1 件、分岐の集合の印 1 件（workflow 1 件）、ref を比べる式の検査 1 件、labels.json にある Dependabot のラベル 2 件。生成する区間は宣言どおりです\n", out.String())
+		assert.Equal(t, "✅ repo-settings: 保護対象 3 件、environment 6 件、Private Vulnerability Reporting の宣言（enabled=true）、apply の workflow 1 件、分岐の集合の印 1 件（workflow 1 件）、ref を比べる式の検査 1 件、labels.json にある Dependabot のラベル 2 件、窓を下回らない Dependabot の cooldown 4 件。生成する区間は宣言どおりです\n", out.String())
 	})
 
 	t.Run("check はずれを報せ、書かない", func(t *testing.T) {
