@@ -1,7 +1,9 @@
 package mdscan
 
 import (
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -121,6 +123,70 @@ func TestLines(t *testing.T) {
 				content: "本文\n1. b\n\n     ```\n     中\n     ```\n外",
 				want:    []Line{{Number: 1, Text: "本文"}, {Number: 2, Text: "1. b"}, {Number: 3}, {Number: 7, Text: "外"}},
 			},
+			"項目の中のフェンスの空行はフェンスを閉じない": {
+				content: "- a\n\n  ```\n  x\n\n  y\n  ```\n外",
+				want:    []Line{{Number: 1, Text: "- a"}, {Number: 2}, {Number: 8, Text: "外"}},
+			},
+			"区切り線は項目を閉じ、後ろの空白4つの ``` はフェンスではない": {
+				content: "- a\n---\n\n    ```\n中",
+				want:    []Line{{Number: 1, Text: "- a"}, {Number: 2, Text: "---"}, {Number: 3}, {Number: 4, Text: "    ```"}, {Number: 5, Text: "中"}},
+			},
+			"ATX 見出しは項目を閉じる": {
+				content: "- a\n# h\n\n    ```\n中",
+				want:    []Line{{Number: 1, Text: "- a"}, {Number: 2, Text: "# h"}, {Number: 3}, {Number: 4, Text: "    ```"}, {Number: 5, Text: "中"}},
+			},
+			"引用は項目を閉じる": {
+				content: "- a\n> q\n\n    ```\n中",
+				want:    []Line{{Number: 1, Text: "- a"}, {Number: 2, Text: "> q"}, {Number: 3}, {Number: 4, Text: "    ```"}, {Number: 5, Text: "中"}},
+			},
+			"種類1-6 の HTML ブロックは項目を閉じる": {
+				content: "- a\n<div>\n\n    ```\n中",
+				want:    []Line{{Number: 1, Text: "- a"}, {Number: 2, Text: "<div>"}, {Number: 3}, {Number: 4, Text: "    ```"}, {Number: 5, Text: "中"}},
+			},
+			"種類7 の HTML は遅延した続きの行で、項目の中のフェンスを読む": {
+				content: "- a\n<b>x\n    ```\n    y\n    ```",
+				want:    []Line{{Number: 1, Text: "- a"}, {Number: 2, Text: "<b>x"}},
+			},
+			"setext の下線は段落を終え、後ろの 2. は項目を開く": {
+				content: "本文\n===\n2. b\n\n     ```\n中",
+				want:    []Line{{Number: 1, Text: "本文"}, {Number: 2, Text: "==="}, {Number: 3, Text: "2. b"}, {Number: 4}, {Number: 6, Text: "中"}},
+			},
+			"印だけの項目は中身の行が続けば空行の後も続く": {
+				content: "-\n  foo\n\n     ```\n中",
+				want:    []Line{{Number: 1, Text: "-"}, {Number: 2, Text: "  foo"}, {Number: 3}, {Number: 5, Text: "中"}},
+			},
+			"段落の続きの字下げした行と遅延した行の後も項目は続く": {
+				content: "- a\n      x\nlazy\n  ```\n中\n外",
+				want:    []Line{{Number: 1, Text: "- a"}, {Number: 2, Text: "      x"}, {Number: 3, Text: "lazy"}, {Number: 5, Text: "中"}, {Number: 6, Text: "外"}},
+			},
+			"印の後ろの ``` は項目の中のフェンスを開く": {
+				content: "- ```\n  中\n  ```\n外",
+				want:    []Line{{Number: 4, Text: "外"}},
+			},
+			"1行に入れ子の印が並べば、内側の項目の中身の桁から数える": {
+				content: "- - a\n\n    ```\n    中\n    ```\n外",
+				want:    []Line{{Number: 1, Text: "- - a"}, {Number: 2}, {Number: 6, Text: "外"}},
+			},
+			"項目の外へ出る 2. は段落の中でも項目を開く": {
+				content: "- a\n2. b\n\n      ```\n中",
+				want:    []Line{{Number: 1, Text: "- a"}, {Number: 2, Text: "2. b"}, {Number: 3}, {Number: 5, Text: "中"}},
+			},
+			"項目の外の ``` は項目の中のフェンスを閉じ、新しいフェンスを開く": {
+				content: "- a\n  ```\n  x\n```\n中\n```\n外",
+				want:    []Line{{Number: 1, Text: "- a"}, {Number: 7, Text: "外"}},
+			},
+			"タブの後ろの箇条書きは中身の桁を4にする": {
+				content: "-\ta\n\n\t```\n\t中\n\t```\n外",
+				want:    []Line{{Number: 1, Text: "-\ta"}, {Number: 2}, {Number: 6, Text: "外"}},
+			},
+			"タブの後ろの番号付きは中身の桁を4にする": {
+				content: "1.\ta\n\n\t```\n\t中\n\t```\n外",
+				want:    []Line{{Number: 1, Text: "1.\ta"}, {Number: 2}, {Number: 6, Text: "外"}},
+			},
+			"中身の桁より1つ浅い行はフェンスを閉じ、その行を返す": {
+				content: "- a\n  ```\n  中\n b\n後ろ",
+				want:    []Line{{Number: 1, Text: "- a"}, {Number: 4, Text: " b"}, {Number: 5, Text: "後ろ"}},
+			},
 			"閉じられないフェンスは以降をすべて飲み込む": {
 				content: "外\n```\n中\n中2",
 				want:    []Line{{Number: 1, Text: "外"}},
@@ -177,6 +243,17 @@ func TestBlocks_Next(t *testing.T) {
 			assert.Equal(t, c.wantIn, in)
 		})
 	}
+
+	t.Run("1行に並ぶ印は上限までだけ項目として開き、残りを段落として読む", func(t *testing.T) {
+		t.Parallel()
+		var b Blocks
+		start := time.Now()
+		in := b.Next(strings.Repeat("- ", 20000) + "x")
+		assert.Less(t, time.Since(start), time.Second)
+		assert.False(t, in)
+		assert.Len(t, b.items, maxNested)
+		assert.True(t, b.paragraph)
+	})
 }
 
 func Test_fenceMarker(t *testing.T) {
@@ -239,6 +316,8 @@ func Test_listMarker(t *testing.T) {
 		"印の後ろが空白だけでも空の項目":    {"+   ", 0, 2, true, true},
 		"印の直後に空白が無ければ項目ではない": {"-a", 0, 0, false, false},
 		"10桁の番号は項目ではない":      {"1234567890. a", 0, 0, false, false},
+		"3桁の番号":              {"123. a", 0, 5, false, true},
+		"9桁の番号":              {"123456789. a", 0, 11, false, true},
 		"印で始まらない":            {"a", 0, 0, false, false},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -259,11 +338,13 @@ func Test_canInterrupt(t *testing.T) {
 		empty bool
 		want  bool
 	}{
-		"箇条書きは遮る":         {"- a", false, true},
-		"1 で始まる番号は遮る":     {"1. a", false, true},
-		"0 を前に置いた 1 も遮る":  {"01. a", false, true},
-		"1 以外で始まる番号は遮らない": {"2. a", false, false},
-		"空の項目は遮らない":       {"-", true, false},
+		"箇条書きは遮る":          {"- a", false, true},
+		"1 で始まる番号は遮る":      {"1. a", false, true},
+		"0 を前に置いた 1 も遮る":   {"01. a", false, true},
+		"1 以外で始まる番号は遮らない":  {"2. a", false, false},
+		"空の項目は遮らない":        {"-", true, false},
+		"10 で始まる番号は遮らない":   {"10. a", false, false},
+		"0 を2つ前に置いた 1 も遮る": {"001. a", false, true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -283,6 +364,8 @@ func Test_expandTabs(t *testing.T) {
 		"行頭のタブは4桁":         {"\tx", "    x"},
 		"空白の後のタブは次の4の倍数まで": {"  \tx", "    x"},
 		"桁4のタブは桁8まで":       {"-   \tx", "-       x"},
+		"続くタブは4桁ずつ":        {"\t\tx", "        x"},
+		"文字の間のタブも次の4の倍数まで": {"a\tb\tc", "a   b   c"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -320,6 +403,14 @@ func TestVisibleLines(t *testing.T) {
 			content string
 			want    []Line
 		}{
+			"空の入力では1行の空文字を返す": {
+				content: "",
+				want:    []Line{{Number: 1}},
+			},
+			"複数行のコメントの間も項目は続き、後ろのフェンスを項目の中で読む": {
+				content: "- a\n  <!--\n  x\n  -->\n\n  ```\n  中\n  ```\n外",
+				want:    []Line{{Number: 1, Text: "- a"}, {Number: 2, Text: "  "}, {Number: 3}, {Number: 4}, {Number: 5}, {Number: 9, Text: "外"}},
+			},
 			"コメントもフェンスも無ければ全行を返す": {
 				content: "一\n二",
 				want:    []Line{{Number: 1, Text: "一"}, {Number: 2, Text: "二"}},
@@ -461,7 +552,7 @@ func TestScanner_Unclosed(t *testing.T) {
 	}
 }
 
-func TestStripComments(t *testing.T) {
+func Test_stripComments(t *testing.T) {
 	t.Parallel()
 
 	for name, c := range map[string]struct {
@@ -491,10 +582,12 @@ func TestStripComments(t *testing.T) {
 		"<!--> は空のコメント":                        {"a<!-->b", false, "ab", false},
 		"<!---> は空のコメント":                       {"a<!--->b", false, "ab", false},
 		"<!----> は閉じたコメント":                     {"a<!---->b", false, "ab", false},
+		"行末のバックスラッシュは文字":                       {"a\\", false, "a\\", false},
+		"バックスラッシュだけの行":                         {"\\", false, "\\", false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			got, stillOpen := StripComments(c.text, c.open)
+			got, stillOpen := stripComments(c.text, c.open)
 			assert.Equal(t, c.want, got)
 			assert.Equal(t, c.stillOpen, stillOpen)
 		})

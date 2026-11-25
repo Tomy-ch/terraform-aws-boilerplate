@@ -20,6 +20,8 @@ import (
 const (
 	commentOpen  = "<!--"
 	commentClose = "-->"
+	// maxNested は、1行の中で開く入れ子の項目の上限です。超えた残りは段落の文として読みます。
+	maxNested = 32
 	// maxIndent は、フェンスの区切りが持てる字下げの空白の数です。4つ目からは字下げしたコードブロックです。
 	maxIndent = 3
 )
@@ -99,14 +101,14 @@ func (b *Blocks) Next(text string) bool {
 	if matched > 0 {
 		base = b.items[matched-1].col
 	}
-	for {
+	for opened := 0; ; opened++ {
 		rest := line[base:]
 		rel := indentOf(rest)
 		body := rest[rel:]
 		allMatched := matched == len(b.items)
 		switch {
 		case rel > maxIndent:
-			if !b.paragraph || (!allMatched && !lazy) {
+			if !b.paragraph {
 				b.items, b.paragraph = b.items[:matched], false
 			}
 			return false
@@ -123,7 +125,8 @@ func (b *Blocks) Next(text string) bool {
 			b.items, b.paragraph = b.items[:matched], false
 			return false
 		}
-		if col, empty, ok := listMarker(body, base+rel); ok && (!b.paragraph || !allMatched || canInterrupt(body, empty)) {
+		if col, empty, ok := listMarker(body, base+rel); ok && opened < maxNested &&
+			(!b.paragraph || !allMatched || canInterrupt(body, empty)) {
 			b.items = append(b.items[:matched], listItem{col: col, empty: empty})
 			matched, base, lazy, b.paragraph = matched+1, col, false, false
 			if empty {
@@ -140,11 +143,16 @@ func (b *Blocks) Next(text string) bool {
 }
 
 var (
-	listStart       = regexp.MustCompile(`^([-+*]|([0-9]{1,9})[.)])( *)(.*)$`)
+	listStart       = regexp.MustCompile(`^([-+*]|([0-9]{1,9})[.)])( *)`)
 	thematicBreak   = regexp.MustCompile(`^((\*[ \t]*){3,}|(-[ \t]*){3,}|(_[ \t]*){3,})$`)
 	setextUnderline = regexp.MustCompile(`^(=+|-+)[ \t]*$`)
-	// interrupter は、段落を遮り、遅延した続きの行にならない行の頭（ATX 見出し・引用・HTML ブロック）です。
-	interrupter = regexp.MustCompile(`^(#{1,6}([ \t]|$)|>|<)`)
+	// interrupter は、段落を遮り、遅延した続きの行にならない行の頭（ATX 見出し・引用と、CommonMark の種類1-6 の
+	// HTML ブロック）です。
+	interrupter = regexp.MustCompile(`(?i)^(#{1,6}([ \t]|$)|>|<(script|pre|style|textarea)([ \t>]|$)|<!--|<\?|<![a-z]|<!\[CDATA\[|` +
+		`</?(address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|` +
+		`fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|` +
+		`menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|` +
+		`track|ul)([ \t>]|/>|$))`)
 )
 
 // listMarker は、body（字下げを除いた行）が一覧の項目を開くなら、中身の桁と、印の後ろが空かを返します。at は印の桁
@@ -154,7 +162,7 @@ func listMarker(body string, at int) (col int, empty, ok bool) {
 	if m == nil {
 		return 0, false, false
 	}
-	width, spaces, content := len(m[1]), len(m[3]), m[4]
+	width, spaces, content := len(m[1]), len(m[3]), body[len(m[0]):]
 	switch {
 	case strings.TrimSpace(content) == "":
 		return at + width + 1, true, true
@@ -269,7 +277,7 @@ func (s *Scanner) Next(l Line) Scanned {
 		}
 	}
 	inComment := s.openedAt != 0
-	visible, open := StripComments(l.Text, inComment)
+	visible, open := stripComments(l.Text, inComment)
 	switch {
 	case !open:
 		s.openedAt = 0
@@ -285,10 +293,10 @@ func (s *Scanner) Unclosed() int {
 	return s.openedAt
 }
 
-// StripComments は、1行から HTML コメントの部分を除いた文字と、行末でコメントが開いたままかを返します。open は、
+// stripComments は、1行から HTML コメントの部分を除いた文字と、行末でコメントが開いたままかを返します。open は、
 // 行の頭でコメントが開いているかです。inline code の中の `<!--` と、バックスラッシュで逃がした `<` はコメントを
 // 開きません。`<!-->` と `<!--->` は空のコメントです。
-func StripComments(text string, open bool) (visible string, stillOpen bool) {
+func stripComments(text string, open bool) (visible string, stillOpen bool) {
 	var b strings.Builder
 	for text != "" {
 		if open {
