@@ -419,23 +419,32 @@ permissions() {
     sim implicitDeny apply "$wk" kms:ScheduleKeyDeletion
     sim allowed apply "$slr" iam:GetRole
     # account-baseline の構成物（決定13・17）。削除と停止は与えず、password policy の更新は admin で拒む（決定5）。
+    # リージョンごとの構成物は repository-wide/ADR-0209 の集合に限る。集合の外は opt-in の af-south-1 で見る。
+    local optin=af-south-1
     local rec="arn:aws:config:${REGION}:${ACCOUNT_ID}:configuration-recorder/tabp-admin/abc" an="arn:aws:access-analyzer:${REGION}:${ACCOUNT_ID}:analyzer/tabp-admin-external"
-    local cslr="arn:aws:iam::${ACCOUNT_ID}:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig" regctx="ContextKeyName=ec2:Region,ContextKeyValues=${REGION},ContextKeyType=string"
-    sim allowed apply "$rec" config:PutConfigurationRecorder config:StartConfigurationRecorder config:DescribeConfigurationRecorders
-    sim implicitDeny apply "$rec" config:DeleteConfigurationRecorder config:StopConfigurationRecorder
-    sim allowed apply "$an" access-analyzer:CreateAnalyzer access-analyzer:GetAnalyzer
-    sim implicitDeny apply "$an" access-analyzer:DeleteAnalyzer
+    local rec_out="arn:aws:config:${optin}:${ACCOUNT_ID}:configuration-recorder/tabp-admin/abc"
+    local cslr="arn:aws:iam::${ACCOUNT_ID}:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig"
+    local inctx="ContextKeyName=aws:RequestedRegion,ContextKeyValues=${REGION},ContextKeyType=string" outctx="ContextKeyName=aws:RequestedRegion,ContextKeyValues=${optin},ContextKeyType=string"
+    local regctx="ContextKeyName=ec2:Region,ContextKeyValues=${REGION},ContextKeyType=string" optctx="ContextKeyName=ec2:Region,ContextKeyValues=${optin},ContextKeyType=string"
+    sim allowed apply "$rec" --context "$inctx" config:PutConfigurationRecorder config:StartConfigurationRecorder config:DescribeConfigurationRecorders
+    sim explicitDeny apply "$rec_out" --context "$outctx" config:PutConfigurationRecorder config:DescribeConfigurationRecorders
+    sim implicitDeny apply "$rec" --context "$inctx" config:DeleteConfigurationRecorder config:StopConfigurationRecorder
+    sim allowed apply "$an" --context "$inctx" access-analyzer:CreateAnalyzer access-analyzer:GetAnalyzer
+    sim implicitDeny apply "$an" --context "$inctx" access-analyzer:DeleteAnalyzer
     sim allowed apply "$cslr" --context "ContextKeyName=iam:PassedToService,ContextKeyValues=config.amazonaws.com,ContextKeyType=string" iam:PassRole
     sim allowed apply "$cslr" --context "ContextKeyName=iam:AWSServiceName,ContextKeyValues=config.amazonaws.com,ContextKeyType=string" iam:CreateServiceLinkedRole
     sim implicitDeny apply "$cslr" iam:DeleteServiceLinkedRole
-    sim allowed apply "*" --context "$regctx" ec2:EnableEbsEncryptionByDefault ec2:ModifyVpcBlockPublicAccessOptions
-    sim implicitDeny apply "*" --context "$regctx" ec2:DisableEbsEncryptionByDefault
-    sim implicitDeny apply "*" --context "ContextKeyName=ec2:Region,ContextKeyValues=${other_region},ContextKeyType=string" ec2:EnableEbsEncryptionByDefault
-    sim allowed apply "*" s3:PutAccountPublicAccessBlock config:PutDeliveryChannel config:PutRetentionConfiguration elasticmapreduce:PutBlockPublicAccessConfiguration
-    sim implicitDeny apply "*" config:DeleteDeliveryChannel config:DeleteRetentionConfiguration
-    sim allowed plan "$rec" config:DescribeConfigurationRecorders config:DescribeConfigurationRecorderStatus
-    sim allowed plan "$an" access-analyzer:GetAnalyzer
-    sim implicitDeny plan "$an" access-analyzer:CreateAnalyzer
+    sim allowed apply "*" --context "$regctx" --context "$inctx" ec2:EnableEbsEncryptionByDefault ec2:ModifyVpcBlockPublicAccessOptions
+    sim implicitDeny apply "*" --context "$regctx" --context "$inctx" ec2:DisableEbsEncryptionByDefault
+    sim explicitDeny apply "*" --context "$optctx" --context "$outctx" ec2:EnableEbsEncryptionByDefault
+    sim allowed apply "*" --context "$inctx" config:PutDeliveryChannel config:PutRetentionConfiguration elasticmapreduce:PutBlockPublicAccessConfiguration
+    sim explicitDeny apply "*" --context "$outctx" config:PutDeliveryChannel elasticmapreduce:PutBlockPublicAccessConfiguration
+    sim allowed apply "*" s3:PutAccountPublicAccessBlock
+    sim implicitDeny apply "*" --context "$inctx" config:DeleteDeliveryChannel config:DeleteRetentionConfiguration
+    sim allowed plan "$rec" --context "$inctx" config:DescribeConfigurationRecorders config:DescribeConfigurationRecorderStatus
+    sim explicitDeny plan "$rec_out" --context "$outctx" config:DescribeConfigurationRecorders
+    sim allowed plan "$an" --context "$inctx" access-analyzer:GetAnalyzer
+    sim implicitDeny plan "$an" --context "$inctx" access-analyzer:CreateAnalyzer
   elif [[ -z $attached || $attached == None ]]; then
     echo "  workload の3つの policy がまだ付いていないので、apply の role の workload の権限は確かめない（3つの policy を作って付ける apply の後にもう一度走らせる）"
   else

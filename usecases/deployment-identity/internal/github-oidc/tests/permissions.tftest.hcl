@@ -298,6 +298,13 @@ run "policies" {
         ]
         Resource = ["arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-break-glass:*"]
       },
+      {
+        Sid       = "DenyBaselineOutsideRegions"
+        Effect    = "Deny"
+        Action    = ["access-analyzer:GetAnalyzer", "config:DescribeConfigurationRecorderStatus", "config:DescribeConfigurationRecorders", "config:DescribeDeliveryChannels", "config:DescribeRetentionConfigurations", "ec2:DescribeRegions", "ec2:DescribeVpcBlockPublicAccessOptions", "ec2:GetEbsEncryptionByDefault", "elasticmapreduce:GetBlockPublicAccessConfiguration", "ssm:GetServiceSetting"]
+        Resource  = "*"
+        Condition = { StringNotEquals = { "aws:RequestedRegion" = ["ap-northeast-1", "ap-northeast-2", "ap-northeast-3", "ap-south-1", "ap-southeast-1", "ap-southeast-2", "ca-central-1", "eu-central-1", "eu-north-1", "eu-west-1", "eu-west-2", "eu-west-3", "sa-east-1", "us-east-1", "us-east-2", "us-west-1", "us-west-2"] } }
+      },
     ]
     error_message = "plan の role の権限が、state と2つの Bucket の設定と identity root の resource と state の鍵の読み取りと、plan の出力の書き込みだけになっていません。"
   }
@@ -491,6 +498,13 @@ run "policies" {
         Action    = ["ce:DeleteAnomalyMonitor", "ce:DeleteAnomalySubscription", "ce:UntagResource", "ce:UpdateAnomalyMonitor", "ce:UpdateAnomalySubscription"]
         Resource  = ["arn:aws:ce::123456789012:anomalymonitor/*", "arn:aws:ce::123456789012:anomalysubscription/*"]
         Condition = { Null = { "aws:ResourceTag/tabp:bootstrap" = "false" } }
+      },
+      {
+        Sid       = "DenyBaselineOutsideRegions"
+        Effect    = "Deny"
+        Action    = ["access-analyzer:CreateAnalyzer", "access-analyzer:GetAnalyzer", "config:DescribeConfigurationRecorderStatus", "config:DescribeConfigurationRecorders", "config:DescribeDeliveryChannels", "config:DescribeRetentionConfigurations", "config:PutConfigurationRecorder", "config:PutDeliveryChannel", "config:PutRetentionConfiguration", "config:StartConfigurationRecorder", "ec2:DescribeRegions", "ec2:DescribeVpcBlockPublicAccessOptions", "ec2:EnableEbsEncryptionByDefault", "ec2:GetEbsEncryptionByDefault", "ec2:ModifyVpcBlockPublicAccessOptions", "elasticmapreduce:GetBlockPublicAccessConfiguration", "elasticmapreduce:PutBlockPublicAccessConfiguration", "ssm:GetServiceSetting", "ssm:UpdateServiceSetting"]
+        Resource  = "*"
+        Condition = { StringNotEquals = { "aws:RequestedRegion" = ["ap-northeast-1", "ap-northeast-2", "ap-northeast-3", "ap-south-1", "ap-southeast-1", "ap-southeast-2", "ca-central-1", "eu-central-1", "eu-north-1", "eu-west-1", "eu-west-2", "eu-west-3", "sa-east-1", "us-east-1", "us-east-2", "us-west-1", "us-west-2"] } }
       },
     ]
     error_message = "apply の role の権限が、init の前の暗号化の設定と alias の一覧と、workload の state と lock の読み書きと、apply の出力の書き込みと、bootstrap の構成物・identity の state・3つの Bucket・plan の出力・apply の出力の書き込みのほか・state の鍵の変更と、tag を持つ bootstrap の異常検知の変更の拒否になっていません。"
@@ -977,36 +991,29 @@ run "policies" {
       },
       { Sid = "ReadAlternateContact", Effect = "Allow", Action = "account:GetAlternateContact", Resource = "arn:aws:account::123456789012:account" },
       { Sid = "ReadConfigServiceLinkedRole", Effect = "Allow", Action = "iam:GetRole", Resource = "arn:aws:iam::123456789012:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig" },
+      { Sid = "ReadAccountPublicAccessBlock", Effect = "Allow", Action = "s3:GetAccountPublicAccessBlock", Resource = "*" },
+      { Sid = "ReadPasswordPolicy", Effect = "Allow", Action = "iam:GetAccountPasswordPolicy", Resource = "*" },
       {
         Sid      = "ReadConfigRecorders"
         Effect   = "Allow"
         Action   = ["config:DescribeConfigurationRecorderStatus", "config:DescribeConfigurationRecorders"]
-        Resource = ["arn:aws:config:ap-northeast-1:123456789012:configuration-recorder/tabp-admin/*", "arn:aws:config:us-east-1:123456789012:configuration-recorder/tabp-admin/*"]
+        Resource = "arn:aws:config:*:123456789012:configuration-recorder/tabp-admin/*"
       },
-      {
-        Sid      = "ReadAnalyzers"
-        Effect   = "Allow"
-        Action   = "access-analyzer:GetAnalyzer"
-        Resource = ["arn:aws:access-analyzer:ap-northeast-1:123456789012:analyzer/tabp-admin-external", "arn:aws:access-analyzer:us-east-1:123456789012:analyzer/tabp-admin-external"]
-      },
+      { Sid = "ReadAnalyzers", Effect = "Allow", Action = "access-analyzer:GetAnalyzer", Resource = "arn:aws:access-analyzer:*:123456789012:analyzer/tabp-admin-external" },
       {
         Sid    = "ReadSsmServiceSettings"
         Effect = "Allow"
         Action = "ssm:GetServiceSetting"
         Resource = [
-          "arn:aws:ssm:ap-northeast-1:123456789012:servicesetting/ssm/documents/console/public-sharing-permission",
-          "arn:aws:ssm:ap-northeast-1:123456789012:servicesetting/ssm/automation/customer-script-log-destination",
-          "arn:aws:ssm:us-east-1:123456789012:servicesetting/ssm/documents/console/public-sharing-permission",
-          "arn:aws:ssm:us-east-1:123456789012:servicesetting/ssm/automation/customer-script-log-destination",
+          "arn:aws:ssm:*:123456789012:servicesetting/ssm/documents/console/public-sharing-permission",
+          "arn:aws:ssm:*:123456789012:servicesetting/ssm/automation/customer-script-log-destination",
         ]
       },
-      { Sid = "ReadAccountPublicAccessBlock", Effect = "Allow", Action = "s3:GetAccountPublicAccessBlock", Resource = "*" },
-      { Sid = "ReadPasswordPolicy", Effect = "Allow", Action = "iam:GetAccountPasswordPolicy", Resource = "*" },
       { Sid = "ReadDeliveryChannels", Effect = "Allow", Action = "config:DescribeDeliveryChannels", Resource = "*" },
       { Sid = "ReadRetentionConfigurations", Effect = "Allow", Action = "config:DescribeRetentionConfigurations", Resource = "*" },
-      { Sid = "ReadEbsEncryptionByDefault", Effect = "Allow", Action = "ec2:GetEbsEncryptionByDefault", Resource = "*", Condition = { StringEquals = { "ec2:Region" = ["ap-northeast-1", "us-east-1"] } } },
-      { Sid = "DescribeRegions", Effect = "Allow", Action = "ec2:DescribeRegions", Resource = "*", Condition = { StringEquals = { "ec2:Region" = ["ap-northeast-1", "us-east-1"] } } },
-      { Sid = "ReadVpcBlockPublicAccess", Effect = "Allow", Action = "ec2:DescribeVpcBlockPublicAccessOptions", Resource = "*", Condition = { StringEquals = { "ec2:Region" = ["ap-northeast-1", "us-east-1"] } } },
+      { Sid = "ReadEbsEncryptionByDefault", Effect = "Allow", Action = "ec2:GetEbsEncryptionByDefault", Resource = "*", Condition = { StringEquals = { "ec2:Region" = ["ap-northeast-1", "ap-northeast-2", "ap-northeast-3", "ap-south-1", "ap-southeast-1", "ap-southeast-2", "ca-central-1", "eu-central-1", "eu-north-1", "eu-west-1", "eu-west-2", "eu-west-3", "sa-east-1", "us-east-1", "us-east-2", "us-west-1", "us-west-2"] } } },
+      { Sid = "DescribeRegions", Effect = "Allow", Action = "ec2:DescribeRegions", Resource = "*", Condition = { StringEquals = { "ec2:Region" = ["ap-northeast-1", "ap-northeast-2", "ap-northeast-3", "ap-south-1", "ap-southeast-1", "ap-southeast-2", "ca-central-1", "eu-central-1", "eu-north-1", "eu-west-1", "eu-west-2", "eu-west-3", "sa-east-1", "us-east-1", "us-east-2", "us-west-1", "us-west-2"] } } },
+      { Sid = "ReadVpcBlockPublicAccess", Effect = "Allow", Action = "ec2:DescribeVpcBlockPublicAccessOptions", Resource = "*", Condition = { StringEquals = { "ec2:Region" = ["ap-northeast-1", "ap-northeast-2", "ap-northeast-3", "ap-south-1", "ap-southeast-1", "ap-southeast-2", "ca-central-1", "eu-central-1", "eu-north-1", "eu-west-1", "eu-west-2", "eu-west-3", "sa-east-1", "us-east-1", "us-east-2", "us-west-1", "us-west-2"] } } },
       { Sid = "ReadEmrBlockPublicAccess", Effect = "Allow", Action = "elasticmapreduce:GetBlockPublicAccessConfiguration", Resource = "*" },
     ]
     error_message = "workload の読み取りの policy が、workload の usecase と account-baseline の読み取りの文になっていません。"
@@ -1043,34 +1050,27 @@ run "policies" {
         Resource  = "arn:aws:iam::123456789012:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig"
         Condition = { StringEquals = { "iam:PassedToService" = "config.amazonaws.com" } }
       },
+      { Sid = "PutAccountPublicAccessBlock", Effect = "Allow", Action = "s3:PutAccountPublicAccessBlock", Resource = "*" },
       {
         Sid      = "ManageConfigRecorders"
         Effect   = "Allow"
         Action   = ["config:PutConfigurationRecorder", "config:StartConfigurationRecorder"]
-        Resource = ["arn:aws:config:ap-northeast-1:123456789012:configuration-recorder/tabp-admin/*", "arn:aws:config:us-east-1:123456789012:configuration-recorder/tabp-admin/*"]
+        Resource = "arn:aws:config:*:123456789012:configuration-recorder/tabp-admin/*"
       },
-      {
-        Sid      = "CreateAnalyzers"
-        Effect   = "Allow"
-        Action   = "access-analyzer:CreateAnalyzer"
-        Resource = ["arn:aws:access-analyzer:ap-northeast-1:123456789012:analyzer/tabp-admin-external", "arn:aws:access-analyzer:us-east-1:123456789012:analyzer/tabp-admin-external"]
-      },
+      { Sid = "CreateAnalyzers", Effect = "Allow", Action = "access-analyzer:CreateAnalyzer", Resource = "arn:aws:access-analyzer:*:123456789012:analyzer/tabp-admin-external" },
       {
         Sid    = "UpdateSsmServiceSettings"
         Effect = "Allow"
         Action = "ssm:UpdateServiceSetting"
         Resource = [
-          "arn:aws:ssm:ap-northeast-1:123456789012:servicesetting/ssm/documents/console/public-sharing-permission",
-          "arn:aws:ssm:ap-northeast-1:123456789012:servicesetting/ssm/automation/customer-script-log-destination",
-          "arn:aws:ssm:us-east-1:123456789012:servicesetting/ssm/documents/console/public-sharing-permission",
-          "arn:aws:ssm:us-east-1:123456789012:servicesetting/ssm/automation/customer-script-log-destination",
+          "arn:aws:ssm:*:123456789012:servicesetting/ssm/documents/console/public-sharing-permission",
+          "arn:aws:ssm:*:123456789012:servicesetting/ssm/automation/customer-script-log-destination",
         ]
       },
-      { Sid = "PutAccountPublicAccessBlock", Effect = "Allow", Action = "s3:PutAccountPublicAccessBlock", Resource = "*" },
       { Sid = "PutDeliveryChannels", Effect = "Allow", Action = "config:PutDeliveryChannel", Resource = "*" },
       { Sid = "PutRetentionConfigurations", Effect = "Allow", Action = "config:PutRetentionConfiguration", Resource = "*" },
-      { Sid = "EnableEbsEncryptionByDefault", Effect = "Allow", Action = "ec2:EnableEbsEncryptionByDefault", Resource = "*", Condition = { StringEquals = { "ec2:Region" = ["ap-northeast-1", "us-east-1"] } } },
-      { Sid = "ModifyVpcBlockPublicAccess", Effect = "Allow", Action = "ec2:ModifyVpcBlockPublicAccessOptions", Resource = "*", Condition = { StringEquals = { "ec2:Region" = ["ap-northeast-1", "us-east-1"] } } },
+      { Sid = "EnableEbsEncryptionByDefault", Effect = "Allow", Action = "ec2:EnableEbsEncryptionByDefault", Resource = "*", Condition = { StringEquals = { "ec2:Region" = ["ap-northeast-1", "ap-northeast-2", "ap-northeast-3", "ap-south-1", "ap-southeast-1", "ap-southeast-2", "ca-central-1", "eu-central-1", "eu-north-1", "eu-west-1", "eu-west-2", "eu-west-3", "sa-east-1", "us-east-1", "us-east-2", "us-west-1", "us-west-2"] } } },
+      { Sid = "ModifyVpcBlockPublicAccess", Effect = "Allow", Action = "ec2:ModifyVpcBlockPublicAccessOptions", Resource = "*", Condition = { StringEquals = { "ec2:Region" = ["ap-northeast-1", "ap-northeast-2", "ap-northeast-3", "ap-south-1", "ap-southeast-1", "ap-southeast-2", "ca-central-1", "eu-central-1", "eu-north-1", "eu-west-1", "eu-west-2", "eu-west-3", "sa-east-1", "us-east-1", "us-east-2", "us-west-1", "us-west-2"] } } },
       { Sid = "PutEmrBlockPublicAccess", Effect = "Allow", Action = "elasticmapreduce:PutBlockPublicAccessConfiguration", Resource = "*" },
     ]
     error_message = "apply の role の account-baseline の管理の policy が、決めた Action・Resource・条件の文になっていません。"
@@ -1238,7 +1238,7 @@ run "policies" {
         { Sid = "GetMetricWidgetImage", Effect = "Allow", Action = "cloudwatch:GetMetricWidgetImage", Resource = "*" },
         { Sid = "ListMetrics", Effect = "Allow", Action = "cloudwatch:ListMetrics", Resource = "*" },
       ],
-      [for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s if s.Effect == "Deny" && !contains(["DenyBoundaryRemoval", "DenyLockoutSafetyBypass", "DenyBootstrapAnomalyDetectionChange"], s.Sid)],
+      [for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s if s.Effect == "Deny" && !contains(["DenyBoundaryRemoval", "DenyLockoutSafetyBypass", "DenyBootstrapAnomalyDetectionChange", "DenyBaselineOutsideRegions"], s.Sid)],
     )
     error_message = "ops-notification の boundary の文書が、心拍と Chatbot の role の要る Allow と、apply の role の bootstrap の Deny になっていません。"
   }
@@ -2344,29 +2344,19 @@ run "role_arns_follow_data_sources" {
     error_message = "apply の role の break-glass の Deny の pattern が、partition・アカウントから組まれていません。"
   }
 
-  # account-baseline の構成物の ARN（決定13）。
+  # 集合を持たない partition では、リージョンごとの文も Deny も置かない（repository-wide/ADR-0209 決定4）。アカウントに1つの設定の文は残す。
   assert {
-    condition = { for st in concat(jsondecode(aws_iam_policy.workload_2.policy).Statement, jsondecode(aws_iam_policy.workload_read.policy).Statement) : st.Sid => st.Resource if contains(["PutAlternateContact", "CreateConfigServiceLinkedRole", "CreateAnalyzerServiceLinkedRole", "PassConfigServiceLinkedRole", "ManageConfigRecorders", "CreateAnalyzers", "UpdateSsmServiceSettings", "ReadAlternateContact", "ReadConfigServiceLinkedRole", "ReadConfigRecorders", "ReadAnalyzers", "ReadSsmServiceSettings"], st.Sid) } == {
-      PutAlternateContact             = "arn:aws-us-gov:account::210987654321:account"
-      CreateConfigServiceLinkedRole   = "arn:aws-us-gov:iam::210987654321:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig"
-      CreateAnalyzerServiceLinkedRole = "arn:aws-us-gov:iam::210987654321:role/aws-service-role/access-analyzer.amazonaws.com/AWSServiceRoleForAccessAnalyzer"
-      PassConfigServiceLinkedRole     = "arn:aws-us-gov:iam::210987654321:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig"
-      ManageConfigRecorders           = ["arn:aws-us-gov:config:us-gov-west-1:210987654321:configuration-recorder/t4bp-dev/*"]
-      CreateAnalyzers                 = ["arn:aws-us-gov:access-analyzer:us-gov-west-1:210987654321:analyzer/t4bp-dev-external"]
-      UpdateSsmServiceSettings        = ["arn:aws-us-gov:ssm:us-gov-west-1:210987654321:servicesetting/ssm/documents/console/public-sharing-permission", "arn:aws-us-gov:ssm:us-gov-west-1:210987654321:servicesetting/ssm/automation/customer-script-log-destination"]
-      ReadAlternateContact            = "arn:aws-us-gov:account::210987654321:account"
-      ReadConfigServiceLinkedRole     = "arn:aws-us-gov:iam::210987654321:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig"
-      ReadConfigRecorders             = ["arn:aws-us-gov:config:us-gov-west-1:210987654321:configuration-recorder/t4bp-dev/*"]
-      ReadAnalyzers                   = ["arn:aws-us-gov:access-analyzer:us-gov-west-1:210987654321:analyzer/t4bp-dev-external"]
-      ReadSsmServiceSettings          = ["arn:aws-us-gov:ssm:us-gov-west-1:210987654321:servicesetting/ssm/documents/console/public-sharing-permission", "arn:aws-us-gov:ssm:us-gov-west-1:210987654321:servicesetting/ssm/automation/customer-script-log-destination"]
-    }
-    error_message = "account-baseline の構成物の Resource が、partition・リージョン・アカウント・name_prefix から組まれていません。"
+    condition = [for p in [aws_iam_policy.workload_2.policy, aws_iam_policy.workload_read.policy, aws_iam_role_policy.this["plan"].policy, aws_iam_role_policy.this["apply"].policy] : [
+      for st in jsondecode(p).Statement : st.Sid if contains(["ManageConfigRecorders", "PutDeliveryChannels", "ReadConfigRecorders", "ReadEmrBlockPublicAccess", "DenyBaselineOutsideRegions"], st.Sid)
+    ]] == [[], [], [], []]
+    error_message = "集合を持たない partition に、account-baseline のリージョンごとの文か DenyBaselineOutsideRegions があります。"
   }
 
   assert {
-    condition     = one([for st in jsondecode(aws_iam_policy.workload_2.policy).Statement : st.Condition if st.Sid == "EnableEbsEncryptionByDefault"]) == { StringEquals = { "ec2:Region" = ["us-gov-west-1"] } }
-    error_message = "EC2 の Action の ec2:Region の条件が、provider のリージョンから組まれていないか、aws の外で us-east-1 を足しています。"
+    condition     = [for st in jsondecode(aws_iam_policy.workload_2.policy).Statement : st.Sid] == ["PutAlternateContact", "CreateConfigServiceLinkedRole", "CreateAnalyzerServiceLinkedRole", "PassConfigServiceLinkedRole", "PutAccountPublicAccessBlock"]
+    error_message = "集合を持たない partition の workload-2 が、アカウントに1つの設定の文だけになっていません（空の policy を作らない）。"
   }
+
 }
 
 run "chatbot_slr_absent_outside_aws" {
@@ -2515,7 +2505,7 @@ run "no_governance_in_dev" {
   }
 
   assert {
-    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases", "ReadCiPolicies"]
+    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases", "ReadCiPolicies", "DenyBaselineOutsideRegions"]
     error_message = "dev の plan の role に、統制の構成物の読み取りが入っています。"
   }
 
@@ -2568,6 +2558,7 @@ run "no_governance_in_dev" {
       "DenyBoundaryRemoval",
       "DenyLockoutSafetyBypass",
       "DenyBootstrapAnomalyDetectionChange",
+      "DenyBaselineOutsideRegions",
     ]
     error_message = "dev の apply の role の文が、統制の構成物と break-glass の変更の Deny を含む一覧になっていません。"
   }
@@ -2646,7 +2637,7 @@ run "no_governance_in_security" {
   }
 
   assert {
-    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases", "ReadCiPolicies"]
+    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases", "ReadCiPolicies", "DenyBaselineOutsideRegions"]
     error_message = "security の plan の role に、統制の構成物の読み取りが入っています。"
   }
 
@@ -2699,6 +2690,7 @@ run "no_governance_in_security" {
       "DenyBoundaryRemoval",
       "DenyLockoutSafetyBypass",
       "DenyBootstrapAnomalyDetectionChange",
+      "DenyBaselineOutsideRegions",
     ]
     error_message = "security の apply の role の文が、統制の構成物と break-glass の変更の Deny を含む一覧になっていません。"
   }
@@ -2759,7 +2751,7 @@ run "no_governance_in_log_archive" {
   }
 
   assert {
-    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases", "ReadCiPolicies"]
+    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases", "ReadCiPolicies", "DenyBaselineOutsideRegions"]
     error_message = "log-archive の plan の role に、統制の構成物の読み取りが入っています。"
   }
 
@@ -2812,6 +2804,7 @@ run "no_governance_in_log_archive" {
       "DenyBoundaryRemoval",
       "DenyLockoutSafetyBypass",
       "DenyBootstrapAnomalyDetectionChange",
+      "DenyBaselineOutsideRegions",
     ]
     error_message = "log-archive の apply の role の文が、統制の構成物と break-glass の変更の Deny を含む一覧になっていません。"
   }
@@ -3198,4 +3191,52 @@ run "rejects_name_prefix_with_uppercase_project" {
   }
 
   expect_failures = [var.name_prefix]
+}
+
+run "baseline_arns_follow_data_sources" {
+  command = apply
+
+  variables {
+    name_prefix   = "t4bp-dev"
+    state_key_arn = "arn:aws:kms:eu-west-1:210987654321:key/abcdef01-2345-6789-abcd-ef0123456789"
+    break_glass_arns = [
+      "arn:aws:iam::210987654321:user/break-glass/break-glass-1",
+      "arn:aws:iam::210987654321:user/break-glass/break-glass-2",
+      "arn:aws:iam::210987654321:group/break-glass/break-glass",
+      "arn:aws:iam::210987654321:role/break-glass/tabp-break-glass",
+    ]
+  }
+
+  override_data {
+    target = data.aws_region.current
+    values = { region = "eu-west-1" }
+  }
+  override_data {
+    target = data.aws_caller_identity.current
+    values = { account_id = "210987654321" }
+  }
+
+  # account-baseline の構成物の ARN（deployment-identity/ADR-0201 決定13）。region は `*` で、集合は Deny が持つ。
+  assert {
+    condition = { for st in concat(jsondecode(aws_iam_policy.workload_2.policy).Statement, jsondecode(aws_iam_policy.workload_read.policy).Statement) : st.Sid => st.Resource if contains(["PutAlternateContact", "CreateConfigServiceLinkedRole", "CreateAnalyzerServiceLinkedRole", "ManageConfigRecorders", "CreateAnalyzers", "UpdateSsmServiceSettings", "ReadConfigRecorders", "ReadAnalyzers"], st.Sid) } == {
+      PutAlternateContact             = "arn:aws:account::210987654321:account"
+      CreateConfigServiceLinkedRole   = "arn:aws:iam::210987654321:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig"
+      CreateAnalyzerServiceLinkedRole = "arn:aws:iam::210987654321:role/aws-service-role/access-analyzer.amazonaws.com/AWSServiceRoleForAccessAnalyzer"
+      ManageConfigRecorders           = "arn:aws:config:*:210987654321:configuration-recorder/t4bp-dev/*"
+      CreateAnalyzers                 = "arn:aws:access-analyzer:*:210987654321:analyzer/t4bp-dev-external"
+      UpdateSsmServiceSettings        = ["arn:aws:ssm:*:210987654321:servicesetting/ssm/documents/console/public-sharing-permission", "arn:aws:ssm:*:210987654321:servicesetting/ssm/automation/customer-script-log-destination"]
+      ReadConfigRecorders             = "arn:aws:config:*:210987654321:configuration-recorder/t4bp-dev/*"
+      ReadAnalyzers                   = "arn:aws:access-analyzer:*:210987654321:analyzer/t4bp-dev-external"
+    }
+    error_message = "account-baseline の構成物の Resource が、partition・アカウント・name_prefix から組まれていないか、region が * ではありません。"
+  }
+
+  # Deny の Action は、リージョンごとの Allow の Action と一致する（repository-wide/ADR-0301 決定11 の但し書き）。
+  assert {
+    condition = [for role in ["plan", "apply"] : toset(flatten([for st in jsondecode(aws_iam_role_policy.this[role].policy).Statement : st.Action if st.Sid == "DenyBaselineOutsideRegions"]))] == [
+      toset(flatten([for st in jsondecode(aws_iam_policy.workload_read.policy).Statement : st.Action if contains(["ReadConfigRecorders", "ReadAnalyzers", "ReadSsmServiceSettings", "ReadDeliveryChannels", "ReadRetentionConfigurations", "ReadEbsEncryptionByDefault", "DescribeRegions", "ReadVpcBlockPublicAccess", "ReadEmrBlockPublicAccess"], st.Sid)])),
+      toset(flatten([for st in concat(jsondecode(aws_iam_policy.workload_read.policy).Statement, jsondecode(aws_iam_policy.workload_2.policy).Statement) : st.Action if contains(["ReadConfigRecorders", "ReadAnalyzers", "ReadSsmServiceSettings", "ReadDeliveryChannels", "ReadRetentionConfigurations", "ReadEbsEncryptionByDefault", "DescribeRegions", "ReadVpcBlockPublicAccess", "ReadEmrBlockPublicAccess", "ManageConfigRecorders", "CreateAnalyzers", "UpdateSsmServiceSettings", "PutDeliveryChannels", "PutRetentionConfigurations", "EnableEbsEncryptionByDefault", "ModifyVpcBlockPublicAccess", "PutEmrBlockPublicAccess"], st.Sid)])),
+    ]
+    error_message = "DenyBaselineOutsideRegions の Action が、plan と apply の role のリージョンごとの account-baseline の Allow の Action と一致しません。"
+  }
 }
