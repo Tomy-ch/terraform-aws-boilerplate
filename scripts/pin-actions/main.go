@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/atomicwrite"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cooldown"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/ghfiles"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lockfile"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
@@ -72,22 +73,14 @@ var lockFormat = lockfile.Format{
 }
 
 var (
-	// errUsage は、サブコマンドが無いか未知の場合のエラー。
-	errUsage = xerrors.New("usage: pin-actions <resolve|apply|check>")
-	// errGitHubAPIStatus は、GitHub API が想定外の HTTP ステータスを返した場合のエラー。
-	errGitHubAPIStatus = xerrors.New("unexpected GitHub API status")
-	// errRefNotFound は、指定 ref が upstream に見つからなかった場合のエラー。
-	errRefNotFound = xerrors.New("ref が見つかりません")
-	// errRefDateUnavailable は、解決先の経過日数を判定できる日時が一つも得られなかった場合のエラー。
+	errUsage              = xerrors.New("usage: pin-actions <resolve|apply|check>")
+	errGitHubAPIStatus    = xerrors.New("unexpected GitHub API status")
+	errRefNotFound        = xerrors.New("ref が見つかりません")
 	errRefDateUnavailable = xerrors.New("解決先の日時を取得できません")
-	// errLooseUses は、厳密パターンで解釈できない記法の外部アクション参照を検出した場合のエラー。
-	errLooseUses = xerrors.New("固定対象として解釈できない記法の uses: があります")
-	// errLockOrphanKey は、lockfile にあるがどの uses: からも参照されないエントリがあった場合のエラー。
-	errLockOrphanKey = xerrors.New("lockfile に参照されていないエントリがあります")
-	// errLockMissingKey は、uses: の参照が lockfile に登録されていない場合のエラー。
-	errLockMissingKey = xerrors.New("lockfile に未登録の参照があります")
-	// errPinDrift は、check で未固定・古い参照を検出した場合のエラー。
-	errPinDrift = xerrors.New("未固定/古い参照があります")
+	errLooseUses          = xerrors.New("固定対象として解釈できない記法の uses: があります")
+	errLockOrphanKey      = xerrors.New("lockfile に参照されていないエントリがあります")
+	errLockMissingKey     = xerrors.New("lockfile に未登録の参照があります")
+	errPinDrift           = xerrors.New("未固定/古い参照があります")
 )
 
 // ref はアクション参照 1 件。repo は owner/repo、sub はサブパス（codeql-action/init 等）、tag は固定対象の版。
@@ -119,9 +112,6 @@ func main() {
 	}
 }
 
-// run は、サブコマンドを解釈して固定処理へ振り分けます。
-// wd は走査の基点となるディレクトリの取得手段、apiBase は経過日数の問い合わせ先となる
-// GitHub API のルート URL で、どちらも差し替えられるよう引数で受けます。
 func run(args []string, wd func() (string, error), apiBase string) error {
 	if len(args) == 0 {
 		return errUsage
@@ -140,7 +130,7 @@ func run(args []string, wd func() (string, error), apiBase string) error {
 	switch args[0] {
 	case "resolve":
 		fs := flag.NewFlagSet("resolve", flag.ContinueOnError)
-		minAge := fs.Int("min-age-days", 0, "N 日未満のコミットは quarantine（0 で無効）")
+		minAge := fs.Int("min-age-days", cooldown.PinWindowDays, "N 日未満のコミットは quarantine（0 で無効）")
 		if err := fs.Parse(args[1:]); err != nil {
 			// usage は flag が既に出力している。
 			if xerrors.Is(err, flag.ErrHelp) {
@@ -268,7 +258,6 @@ func looseUsesValue(rest string) (string, bool) {
 }
 
 // resolve は走査対象の参照を SHA へ解決して lockfile を書き直す。
-// apiBase は経過日数を問い合わせる GitHub API のルート URL（本番は githubAPIBase）。
 func resolve(root, apiBase string, files []string, minAgeDays int) error {
 	keys, err := collectKeys(root, files)
 	if err != nil {
@@ -358,7 +347,7 @@ func quarantine(ageFn func() (int, error), key, candidate string, minAgeDays int
 }
 
 // refAgeDays は解決先の経過日数を返す。tag に対応する Release の published_at と sha の commit 日時を
-// 常に両方取得し、新しい方から算出する。apiBase は GitHub API のルート URL（本番は githubAPIBase）。
+// 常に両方取得し、新しい方から算出する。
 // Release が無い（404）ときは commit 日時のみで算出し、それ以外の非 200 はエラーにする。
 func refAgeDays(ctx context.Context, apiBase, repo, tag, sha string) (int, error) {
 	var release struct {

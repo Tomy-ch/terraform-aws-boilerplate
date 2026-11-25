@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"os/exec"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/gitrev"
 )
 
 // toolFunc は、ディレクトリ dir で段 step の道具を起動するコマンドを作ります。rev は範囲の段だけが使う、
@@ -65,14 +67,14 @@ func command(dir string, env []string, step, rev string) *exec.Cmd {
 	ctx := context.Background()
 	var cmd *exec.Cmd
 	ranged := step == stepNumstatRange || step == stepGitleaksRange || step == stepTrufflehogRange || step == stepTrufflehogRangeJSON
-	if ranged && !isHash(rev) {
+	if ranged && !gitrev.IsHash(rev) {
 		step = ""
 	}
 	switch step {
 	case stepResolve:
 		cmd = exec.CommandContext(ctx, "git", "-c", "core.hooksPath=/dev/null", "cat-file", "--batch-check=%(objectname) %(objecttype)")
 	case stepNumstatRange:
-		//nolint:gosec // G204: rev は resolveFrom が git で commit へ解決し、isHash で確かめた完全な sha だけ（上の分岐）
+		//nolint:gosec // G204: rev は resolveFrom が git で commit へ解決し、gitrev.IsHash で確かめた完全な sha だけ（上の分岐）
 		cmd = exec.CommandContext(ctx, "git", "-c", "core.hooksPath=/dev/null", "log", "--no-merges", "-M", "--diff-filter=d", "--format=commit %H", "--numstat", "-z", rev+"..HEAD")
 	case stepNumstatHead:
 		cmd = exec.CommandContext(ctx, "git", "-c", "core.hooksPath=/dev/null", "log", "--no-merges", "-M", "--diff-filter=d", "--format=commit %H", "--numstat", "-z", "HEAD")
@@ -87,15 +89,15 @@ func command(dir string, env []string, step, rev string) *exec.Cmd {
 	case stepCommitCanary:
 		cmd = exec.CommandContext(ctx, "git", "-c", "core.hooksPath=/dev/null", "-c", "user.name=canary", "-c", "user.email=canary@example.invalid", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "canary")
 	case stepGitleaksRange:
-		//nolint:gosec // G204: rev は resolveFrom が git で commit へ解決し、isHash で確かめた完全な sha だけ（上の分岐）
+		//nolint:gosec // G204: rev は resolveFrom が git で commit へ解決し、gitrev.IsHash で確かめた完全な sha だけ（上の分岐）
 		cmd = exec.CommandContext(ctx, "gitleaks", "git", "--redact", "--no-banner", "--ignore-gitleaks-allow", "--config", gitleaksConfig, "--gitleaks-ignore-path", ".", "--report-format", "json", "--report-path", "-", "--log-opts="+rev+"..HEAD", ".")
 	case stepGitleaksHistory:
 		cmd = exec.CommandContext(ctx, "gitleaks", "git", "--redact", "--no-banner", "--ignore-gitleaks-allow", "--config", gitleaksConfig, "--gitleaks-ignore-path", ".", "--report-format", "json", "--report-path", "-", ".")
 	case stepTrufflehogRange:
-		//nolint:gosec // G204: rev は resolveFrom が git で commit へ解決し、isHash で確かめた完全な sha だけ（上の分岐）
+		//nolint:gosec // G204: rev は resolveFrom が git で commit へ解決し、gitrev.IsHash で確かめた完全な sha だけ（上の分岐）
 		cmd = exec.CommandContext(ctx, "trufflehog", "git", "file://.", "--since-commit", rev, "--branch", "HEAD", "--no-verification", "--no-update", "--fail", "--fail-on-scan-errors", "--no-ignore-tag", "--results=verified,unverified,unknown", "--exclude-paths="+trufflehogRangeExclude)
 	case stepTrufflehogRangeJSON:
-		//nolint:gosec // G204: rev は resolveFrom が git で commit へ解決し、isHash で確かめた完全な sha だけ（上の分岐）
+		//nolint:gosec // G204: rev は resolveFrom が git で commit へ解決し、gitrev.IsHash で確かめた完全な sha だけ（上の分岐）
 		cmd = exec.CommandContext(ctx, "trufflehog", "git", "file://.", "--since-commit", rev, "--branch", "HEAD", "--no-verification", "--no-update", "--fail", "--fail-on-scan-errors", "--no-ignore-tag", "--results=verified,unverified,unknown", "--exclude-paths="+trufflehogRangeExclude, "--json")
 	case stepTrufflehogHistory:
 		cmd = exec.CommandContext(ctx, "trufflehog", "git", "file://.", "--no-verification", "--no-update", "--fail", "--fail-on-scan-errors", "--no-ignore-tag", "--results=verified,unverified,unknown", "--exclude-paths="+trufflehogHistoryExclude)
