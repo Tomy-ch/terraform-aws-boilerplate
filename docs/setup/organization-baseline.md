@@ -103,7 +103,7 @@ StackSet か stack instance の作成で昇格の apply が失敗したときは
    1. `organization_admin` の資格情報で `env/admin/identity` を `terraform init` し、失敗した resource の tainted を外す（`terraform untaint 'module.organization_baseline.module.break_glass.aws_cloudformation_stack_instances.this'`。StackSet が失敗したなら `aws_cloudformation_stack_set.this` も）
    2. 原因を Pull Request で直して昇格する。コードの変更が要らなければ、この手順は無い
    3. 失敗したアカウントへ配り直す。tainted を外した state は作成が済んだ形で残るので、昇格の apply は配り直さない。`organization_admin` の資格情報で CloudFormation の「StackSets」の `<project>-break-glass` を開き、「アクション」の「StackSet の詳細を編集」を、テンプレートとパラメータを変えずに最後まで進めて送る。失敗の後の instance の状態は `OUTDATED` で、この操作がその作成をやり直す（[Retrying failed stack creation or update operations](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stacksets-troubleshooting.html)）。テンプレートを変えないので、Terraform の宣言とずれない
-   4. すべてのメンバーアカウントの stack instance が `CURRENT` であることを確かめる。残っていれば、原因を見て手順3.3 を繰り返す。対象は `aws cloudformation list-stack-instances --stack-set-name <project>-break-glass --call-as SELF --query 'Summaries[?Status!='CURRENT'].[Account,Status,StackInstanceStatus.DetailedStatus,StatusReason]'` で見る。role の用意に失敗したアカウントの instance は、失敗ではなく飛ばされた（skipped）として残る
+   4. すべてのメンバーアカウントの stack instance が `CURRENT` であることを確かめる。残っていれば、原因を見て手順3.3 を繰り返す。対象は `aws cloudformation list-stack-instances --stack-set-name <project>-break-glass --call-as SELF --query "Summaries[?Status!='CURRENT'].[Account,Status,StackInstanceStatus.DetailedStatus,StatusReason]"` で見る。role の用意に失敗したアカウントの instance は、失敗ではなく飛ばされた（skipped）として残る
 4. どちらも、昇格の前に CI の plan が作り直しを示さないことを確かめる
 
 ### 3.6 break-glass を試す（毎月）
