@@ -3508,3 +3508,14 @@ run "bootstrap_assume_per_account" {
     error_message = "apply-identity の引き受けの Resource が、アカウントごとの OrganizationAccountAccessRole の ARN 1つずつになっていません。"
   }
 }
+
+# 内部の module は名前を検証しない。StackSet の名前の precondition が、root の validation が緩んだときの守りになる。
+run "rejects_bootstrap_read_role_name_with_underscore_in_admin" {
+  command = plan
+
+  variables {
+    bootstrap_read_role = { name = "tabp_bootstrap_read", path = "/bootstrap/" }
+  }
+
+  expect_failures = [aws_iam_role_policy.apply_identity]
+}

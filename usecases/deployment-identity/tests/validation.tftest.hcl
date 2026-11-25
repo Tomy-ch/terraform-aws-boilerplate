@@ -761,3 +761,33 @@ run "rejects_bootstrap_account_unknown_env" {
 
   expect_failures = [var.bootstrap_member_account_ids]
 }
+
+run "rejects_bootstrap_read_role_path_with_wildcard" {
+  command = plan
+
+  variables {
+    bootstrap_read_role = { name = "tabp-bootstrap-read", path = "/boot*/" }
+  }
+
+  expect_failures = [var.bootstrap_read_role]
+}
+
+run "rejects_bootstrap_read_role_path_without_leading_slash" {
+  command = plan
+
+  variables {
+    bootstrap_read_role = { name = "tabp-bootstrap-read", path = "bootstrap/" }
+  }
+
+  expect_failures = [var.bootstrap_read_role]
+}
+
+run "rejects_empty_bootstrap_read_role_name" {
+  command = plan
+
+  variables {
+    bootstrap_read_role = { name = "", path = "/bootstrap/" }
+  }
+
+  expect_failures = [var.bootstrap_read_role]
+}

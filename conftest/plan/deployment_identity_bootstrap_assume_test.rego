@@ -164,7 +164,16 @@ test_violation_other_ci_policy_session_actions if {
 	}
 }
 
-test_violation_plan_assume_with_tag_session if {
-	s := object.union(assume([read_role]), {"Action": ["sts:AssumeRole", "sts:TagSession"]})
-	fixture.has("[PLAN-BA-01]", messages([plan_doc([s]), members_doc([assume([access_role])])]))
+test_violation_session_actions_alone_in_declared_policies if {
+	every action in ["sts:TagSession", "sts:SetSourceIdentity"] {
+		s := object.union(assume([read_role]), {"Action": action})
+		fixture.has("[PLAN-BA-01]", messages([plan_doc([assume([read_role]), s]), members_doc([assume([access_role])])]))
+		t := object.union(assume([access_role]), {"Action": action})
+		fixture.has("[PLAN-BA-02]", messages([plan_doc([assume([read_role])]), members_doc([assume([access_role]), t])]))
+	}
+}
+
+test_violation_other_ci_policy_not_action_excludes_only_assume_role if {
+	other := other_doc("module.deployment_identity.module.g.aws_iam_policy.manage", [{"Effect": "Allow", "NotAction": ["sts:AssumeRole"], "Resource": "*"}])
+	fixture.has("[PLAN-BA-03]", messages(array.concat(valid, [other])))
 }

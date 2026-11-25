@@ -112,6 +112,10 @@ var (
 		"apply-identity $rst: 2 件が allowed",
 		"apply-identity $rss: 1 件が allowed",
 		"apply-identity $rss: 1 件が implicitDeny",
+		"apply-identity $zss: 2 件が implicitDeny",
+		"apply-identity $zst: 2 件が implicitDeny",
+		"apply-identity $zss: 1 件が implicitDeny",
+		"apply-identity $zst: 1 件が implicitDeny",
 	}
 	permSLRDescs = []string{
 		"apply-identity $slr [iam:AWSServiceName=management.chatbot.amazonaws.com]: 1 件が allowed",
@@ -232,11 +236,11 @@ var (
 const (
 	// permissions の件数。条件つきの確認の有無で変わる。
 	permissionsBase     = 116
-	governanceGated     = 27
+	governanceGated     = 31
 	workloadGatedCount  = 28
 	budgetsGatedCount   = 4
 	outputPolicyCount   = 13
-	governanceAbsent    = "  統制の policy がまだ付いていないので、作成と設定の権限は確かめない（統制の policy を作って付ける apply の後にもう一度走らせる）"
+	governanceAbsent    = "  統制の policy とメンバーの role の policy がまだ付いていないので、作成と設定の権限は確かめない（2つの policy を作って付ける apply の後にもう一度走らせる）"
 	workloadAbsent      = "  workload の3つの policy がまだ付いていないので、apply の role の workload の権限は確かめない（3つの policy を作って付ける apply の後にもう一度走らせる）"
 	budgetsAbsent       = "  workload の3つの policy がまだ付いていないので、apply の role の budgets と Cost Anomaly Detection の作成と変更の権限は確かめない（3つの policy を作って付ける apply の後にもう一度走らせる）"
 	budgetsUnknown      = "  apply の role の managed policy を確かめられないので（上の NG）、apply の role の budgets と Cost Anomaly Detection の作成と変更の権限は確かめない"
@@ -273,9 +277,11 @@ var permExpand = strings.NewReplacer(
 	"$ss", "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-break-glass:00000000-0000-0000-0000-0000000000b0",
 	"$st", "arn:aws:cloudformation::123456789012:stackset-target/tabp-break-glass:00000000-0000-0000-0000-0000000000b0/r-abcd",
 	"$ty", "arn:aws:cloudformation:*::type/resource/AWS-IAM-Role",
-	"$rss", "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-bootstrap-read:00000000-0000-0000-0000-0000000000b0",
-	"$rst", "arn:aws:cloudformation::123456789012:stackset-target/tabp-bootstrap-read:00000000-0000-0000-0000-0000000000b0/r-abcd",
-	"$oaar", "arn:aws:iam::123456789012:role/OrganizationAccountAccessRole",
+	"$rss", "arn:aws:cloudformation:ap-northeast-1:"+testAccount+":stackset/tabp-bootstrap-read:00000000-0000-0000-0000-0000000000b0",
+	"$rst", "arn:aws:cloudformation::"+testAccount+":stackset-target/tabp-bootstrap-read:00000000-0000-0000-0000-0000000000b0/r-abcd",
+	"$oaar", "arn:aws:iam::"+testAccount+":role/OrganizationAccountAccessRole",
+	"$zss", "arn:aws:cloudformation:ap-northeast-1:"+testAccount+":stackset/tabp-bootstrap-read-x:00000000-0000-0000-0000-0000000000b0",
+	"$zst", "arn:aws:cloudformation::"+testAccount+":stackset-target/tabp-bootstrap-read-x:00000000-0000-0000-0000-0000000000b0/r-abcd",
 	"$xss", "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-other:00000000-0000-0000-0000-0000000000b0",
 	"$xst", "arn:aws:cloudformation::123456789012:stackset-target/tabp-other:00000000-0000-0000-0000-0000000000b0/r-abcd",
 	"$yss", "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-break-glass-x:00000000-0000-0000-0000-0000000000b0",
@@ -382,6 +388,10 @@ var permRowActions = []string{
 	"cloudformation:CreateStackInstances cloudformation:UpdateStackInstances",
 	"cloudformation:UpdateStackSet",
 	"cloudformation:DeleteStackInstances",
+	"cloudformation:CreateStackInstances cloudformation:UpdateStackInstances",
+	"cloudformation:CreateStackInstances cloudformation:UpdateStackInstances",
+	"cloudformation:UpdateStackSet",
+	"cloudformation:UpdateStackSet",
 	// Chatbot の service-linked role
 	"iam:CreateServiceLinkedRole ; iam:AWSServiceName = management.chatbot.amazonaws.com (string)",
 	"iam:CreateServiceLinkedRole ; iam:AWSServiceName = config.amazonaws.com (string)",
@@ -847,12 +857,13 @@ func Test_governanceGate(t *testing.T) {
 		r     awsResult
 		state gateState
 	}{
-		"統制の policy が付いていれば attached": {okResult(governanceAttached), gateAttached},
-		"統制の policy だけでも attached":    {okResult(`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-governance"}]}`), gateAttached},
-		"付いていなければ absent":             {okResult(noneAttached), gateAbsent},
-		"manage だけなら absent":          {okResult(`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-manage"}]}`), gateAbsent},
-		"一覧が配列でなければ unknown":          {okResult(`{"AttachedPolicies":{"PolicyName":"tabp-admin-ci-apply-identity-governance"}}`), gateUnknown},
-		"空の応答なら unknown":              {okResult(""), gateUnknown},
+		"統制とメンバーの role の policy が付いていれば attached": {okResult(governanceAttached), gateAttached},
+		"統制の policy だけなら unknown":                 {okResult(`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-governance"}]}`), gateUnknown},
+		"メンバーの role の policy だけなら unknown":        {okResult(`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-members"}]}`), gateUnknown},
+		"付いていなければ absent":                         {okResult(noneAttached), gateAbsent},
+		"manage だけなら absent":                      {okResult(`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-manage"}]}`), gateAbsent},
+		"一覧が配列でなければ unknown":                      {okResult(`{"AttachedPolicies":{"PolicyName":"tabp-admin-ci-apply-identity-governance"}}`), gateUnknown},
+		"空の応答なら unknown":                          {okResult(""), gateUnknown},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -873,7 +884,7 @@ func Test_governanceGate(t *testing.T) {
 		assert.Equal(t, gateUnknown, g.state)
 
 		v, _ := g.ng.eval(nil)
-		assert.Equal(t, "apply-identity: list-attached-role-policies を読めないので、統制の policy が付いているかを決められない", g.ng.desc)
+		assert.Equal(t, "apply-identity: list-attached-role-policies を読めないので、統制の policy とメンバーの role の policy が付いているかを決められない", g.ng.desc)
 		assert.Equal(t, verdict{reason: "呼び出しが失敗: denied"}, v)
 	})
 
@@ -1099,8 +1110,10 @@ func Test_permissionSections(t *testing.T) {
 			xst := "arn:aws:cloudformation::123456789012:stackset-target/tabp-other:00000000-0000-0000-0000-0000000000b0/r-abcd"
 			yss := "arn:aws:cloudformation:us-west-2:123456789012:stackset/tabp-break-glass-x:00000000-0000-0000-0000-0000000000b0"
 			yst := "arn:aws:cloudformation::123456789012:stackset-target/tabp-break-glass-x:00000000-0000-0000-0000-0000000000b0/r-abcd"
-			rss := "arn:aws:cloudformation:us-west-2:123456789012:stackset/tabp-bootstrap-read:00000000-0000-0000-0000-0000000000b0"
-			rst := "arn:aws:cloudformation::123456789012:stackset-target/tabp-bootstrap-read:00000000-0000-0000-0000-0000000000b0/r-abcd"
+			rss := "arn:aws:cloudformation:us-west-2:" + testAccount + ":stackset/tabp-bootstrap-read:00000000-0000-0000-0000-0000000000b0"
+			rst := "arn:aws:cloudformation::" + testAccount + ":stackset-target/tabp-bootstrap-read:00000000-0000-0000-0000-0000000000b0/r-abcd"
+			zss := "arn:aws:cloudformation:us-west-2:" + testAccount + ":stackset/tabp-bootstrap-read-x:00000000-0000-0000-0000-0000000000b0"
+			zst := "arn:aws:cloudformation::" + testAccount + ":stackset-target/tabp-bootstrap-read-x:00000000-0000-0000-0000-0000000000b0/r-abcd"
 
 			var rows []row
 
@@ -1125,7 +1138,7 @@ func Test_permissionSections(t *testing.T) {
 				{allowed, ty, "us-west-2"}, {allowed, ty, "us-west-2,us-west-2"},
 				{implicitDeny, ty, "us-west-2,eu-west-1"}, {implicitDeny, ty, "eu-west-1"}, {implicitDeny, ty, ""},
 				{implicitDeny, xss, ""}, {implicitDeny, xst, ""}, {implicitDeny, yss, ""}, {implicitDeny, yst, ""},
-				{allowed, rss, ""}, {allowed, rst, ""},
+				{allowed, rss, ""}, {allowed, rst, ""}, {implicitDeny, zss, ""}, {implicitDeny, zst, ""},
 			}, rows)
 		})
 	})
@@ -1199,8 +1212,10 @@ func Test_stackInstanceRows(t *testing.T) {
 	xst := "arn:aws:cloudformation::123456789012:stackset-target/tabp-other:00000000-0000-0000-0000-0000000000b0/r-abcd"
 	yss := "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-break-glass-x:00000000-0000-0000-0000-0000000000b0"
 	yst := "arn:aws:cloudformation::123456789012:stackset-target/tabp-break-glass-x:00000000-0000-0000-0000-0000000000b0/r-abcd"
-	rss := "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-bootstrap-read:00000000-0000-0000-0000-0000000000b0"
-	rst := "arn:aws:cloudformation::123456789012:stackset-target/tabp-bootstrap-read:00000000-0000-0000-0000-0000000000b0/r-abcd"
+	rss := "arn:aws:cloudformation:ap-northeast-1:" + testAccount + ":stackset/tabp-bootstrap-read:00000000-0000-0000-0000-0000000000b0"
+	rst := "arn:aws:cloudformation::" + testAccount + ":stackset-target/tabp-bootstrap-read:00000000-0000-0000-0000-0000000000b0/r-abcd"
+	zss := "arn:aws:cloudformation:ap-northeast-1:" + testAccount + ":stackset/tabp-bootstrap-read-x:00000000-0000-0000-0000-0000000000b0"
+	zst := "arn:aws:cloudformation::" + testAccount + ":stackset-target/tabp-bootstrap-read-x:00000000-0000-0000-0000-0000000000b0/r-abcd"
 	inst := []string{"cloudformation:CreateStackInstances", "cloudformation:UpdateStackInstances"}
 	tr := func(v string) []string {
 		return []string{"ContextKeyName=cloudformation:TargetRegion,ContextKeyValues=" + v + ",ContextKeyType=stringList"}
@@ -1239,6 +1254,10 @@ func Test_stackInstanceRows(t *testing.T) {
 			row(allowed, rst, nil, inst...),
 			row(allowed, rss, nil, "cloudformation:UpdateStackSet"),
 			row(implicitDeny, rss, nil, "cloudformation:DeleteStackInstances"),
+			row(implicitDeny, zss, nil, inst...),
+			row(implicitDeny, zst, nil, inst...),
+			row(implicitDeny, zss, nil, "cloudformation:UpdateStackSet"),
+			row(implicitDeny, zst, nil, "cloudformation:UpdateStackSet"),
 		}, rows)
 	})
 
@@ -1276,11 +1295,11 @@ func Test_permissionsSteps(t *testing.T) {
 		result                      string
 	}{
 		"条件つきの確認がすべて走る": {governanceAttached, workloadAttached, nil, nil, nil, permissionsBase + governanceGated + workloadGatedCount + budgetsGatedCount,
-			"# 結果: 175 件のうち NG 0 件"},
+			"# 結果: 179 件のうち NG 0 件"},
 		"統制の policy が付いていない": {noneAttached, workloadAttached, []string{governanceAbsent}, nil, nil, permissionsBase + workloadGatedCount + budgetsGatedCount,
 			"# 結果: 148 件のうち NG 0 件（確かめていない区分 1）"},
 		"workload の policy が付いていない": {governanceAttached, noneAttached, nil, []string{workloadAbsent}, []string{budgetsAbsent},
-			permissionsBase + governanceGated, "# 結果: 143 件のうち NG 0 件（確かめていない区分 2）"},
+			permissionsBase + governanceGated, "# 結果: 147 件のうち NG 0 件（確かめていない区分 2）"},
 		"どちらも付いていない": {noneAttached, noneAttached, []string{governanceAbsent}, []string{workloadAbsent}, []string{budgetsAbsent}, permissionsBase,
 			"# 結果: 116 件のうち NG 0 件（確かめていない区分 3）"},
 	} {
@@ -1302,7 +1321,7 @@ func Test_permissionsSteps(t *testing.T) {
 
 		require.ErrorIs(t, err, errMismatch)
 		assert.Equal(t, append(permExpected(
-			[]string{"NG  apply-identity: list-attached-role-policies を読めないので、統制の policy が付いているかを決められない（呼び出しが失敗: denied）"},
+			[]string{"NG  apply-identity: list-attached-role-policies を読めないので、統制の policy とメンバーの role の policy が付いているかを決められない（呼び出しが失敗: denied）"},
 			[]string{"NG  apply: list-attached-role-policies を読めないので、workload の3つの policy が付いているかを決められない（呼び出しが失敗: denied）"},
 			[]string{budgetsUnknown},
 		), "# 結果: "+strconv.Itoa(permissionsBase+2)+" 件のうち NG 2 件（確かめていない区分 1）"), lines)
