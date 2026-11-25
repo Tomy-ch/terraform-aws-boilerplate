@@ -1,14 +1,11 @@
 name: Config Scan
 
 # Trivy misconfiguration scanning for Terraform and Dockerfiles, kept out of
-# trivy-fs.yaml on purpose. The two share a tool and nothing else: this one has a
-# different target (Terraform and Dockerfiles, not dependency manifests), a
-# different path filter, and a different gate (a misconfiguration blocks here: it is
-# introduced by the change under review, whereas a dependency finding is inherited
-# from an upstream advisory and is reported, then gated at release time). Folding it
-# into the dependency scan would also break that workflow's summary, which counts
-# .Results[].Vulnerabilities and would have to start distinguishing .Misconfigurations
-# from it.
+# trivy-fs.yaml on purpose: a misconfiguration is introduced by the change under review and
+# blocks here, whereas a dependency finding is inherited from an upstream advisory, reported,
+# and gated at release time. Folding it into the dependency scan would also break that
+# workflow's summary, which counts .Results[].Vulnerabilities and would have to start
+# distinguishing .Misconfigurations from it.
 #
 # docker-compose files are NOT covered: Trivy ships no compose checks. hadolint
 # (docker-lint.yaml) lints the Dockerfiles for style and correctness; this workflow
@@ -26,6 +23,12 @@ on:
     paths:
       - '.github/workflows/trivy-config.yaml'
       - '.makefiles/security/trivy.mk'
+      - '.makefiles/terraform/gates.mk'
+      - '.makefiles/runner.mk'
+      - 'scripts/iac-scan/**'
+      - 'scripts/lib/**'
+      - 'scripts/go.mod'
+      - 'scripts/go.sum'
       - '.trivyignore.yaml'
       - '.github/actions/setup-mise/**'
       - 'mise.toml'
@@ -56,6 +59,28 @@ jobs:
       relevant: ${{ steps.filter.outputs.relevant }}
     steps:
       - name: Harden the runner
+        id: harden-runner
+        continue-on-error: true
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+      - name: Harden the runner (retry)
+        if: steps.harden-runner.outcome != 'success'
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
         with:
           egress-policy: block
@@ -93,6 +118,12 @@ jobs:
             relevant:
               - '.github/workflows/trivy-config.yaml'
               - '.makefiles/security/trivy.mk'
+              - '.makefiles/terraform/gates.mk'
+              - '.makefiles/runner.mk'
+              - 'scripts/iac-scan/**'
+              - 'scripts/lib/**'
+              - 'scripts/go.mod'
+              - 'scripts/go.sum'
               - '.trivyignore.yaml'
               - '.github/actions/setup-mise/**'
               - 'mise.toml'
@@ -116,6 +147,49 @@ jobs:
 
     steps:
       - name: Harden the runner
+        id: harden-runner
+        continue-on-error: true
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
+            mirror.gcr.io
+            ghcr.io
+            pkg-containers.githubusercontent.com
+      - name: Harden the runner (retry)
+        if: steps.harden-runner.outcome != 'success'
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
         with:
           egress-policy: block
@@ -164,7 +238,7 @@ jobs:
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
-          tools: aqua:aquasecurity/trivy
+          tools: go aqua:aquasecurity/trivy
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # The gate exits non-zero on a finding, which would skip the summary below; the exit

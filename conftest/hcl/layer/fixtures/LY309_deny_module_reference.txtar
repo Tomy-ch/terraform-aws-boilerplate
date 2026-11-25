@@ -1,0 +1,15 @@
+-- modules/m/main.tf --
+resource "aws_iam_role" "r" {
+  name = "r"
+}
+module "p" {
+  source = "../p"
+}
+resource "aws_iam_role_policy_attachment" "a" {
+  role       = aws_iam_role.r.name
+  policy_arn = module.p.arn
+}
+-- modules/p/main.tf --
+resource "aws_iam_policy" "p" {
+  policy = "{}"
+}

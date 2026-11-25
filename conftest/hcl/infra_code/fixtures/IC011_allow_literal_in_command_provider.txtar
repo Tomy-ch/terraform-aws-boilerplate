@@ -1,0 +1,13 @@
+-- m/providers.tf --
+provider "runner" {
+  host = "x"
+  settings = { port = 443 }
+}
+-- m/versions.tf --
+terraform {
+  required_providers {
+    runner = {
+      source = "example/runner"
+    }
+  }
+}

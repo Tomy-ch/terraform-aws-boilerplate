@@ -27,7 +27,9 @@ self_manage := {"Effect": "Allow", "Action": ["iam:ChangePassword", "iam:EnableM
 
 password_policy := {"Effect": "Allow", "Action": "iam:GetAccountPasswordPolicy", "Resource": "*"}
 
-long_term_credentials_deny := {"Effect": "Deny", "Action": ["iam:CreateAccessKey"], "Resource": "*"}
+long_term_credential_actions := ["iam:CreateAccessKey", "iam:CreateServiceSpecificCredential", "iam:UploadSSHPublicKey", "iam:UploadSigningCertificate"]
+
+long_term_credentials_deny := {"Effect": "Deny", "Action": long_term_credential_actions, "Resource": "*"}
 
 deactivate := {"Effect": "Allow", "Action": "iam:DeactivateMFADevice", "Resource": "arn:aws:iam::111111111111:user/break-glass/${aws:username}", "Condition": mfa}
 
@@ -59,6 +61,7 @@ member_template(resources) := json.marshal({"AWSTemplateFormatVersion": "2010-09
 
 stack_set(model, auto, resources) := change("module.b.aws_cloudformation_stack_set.this", "aws_cloudformation_stack_set", {
 	"name": "tabp-break-glass",
+	"description": "Break-glass role for member accounts",
 	"permission_model": model,
 	"auto_deployment": [{"enabled": auto, "retain_stacks_on_account_removal": false}],
 	"template_body": member_template(resources),
@@ -119,6 +122,24 @@ test_violation_three_users if {
 	fixture.has("[PLAN-BG-01]", p.deny) with input as inp with data.policy_plan as {"organization_baseline": d}
 }
 
+users_not_two := "[PLAN-BG-01] break-glass の IAM user の宣言がちょうど2つではありません"
+
+test_violation_one_user if {
+	d := {"break_glass": object.union(decl.break_glass, {"users": [decl.break_glass.users[0]]})}
+	users_not_two in p.deny with input as valid with data.policy_plan as {"organization_baseline": d}
+}
+
+test_violation_no_users if {
+	d := {"break_glass": object.union(decl.break_glass, {"users": []})}
+	users_not_two in p.deny with input as valid with data.policy_plan as {"organization_baseline": d}
+}
+
+test_violation_break_glass_declaration_absent if {
+	msgs := p.deny with input as valid with data.policy_plan as {"organization_baseline": {"organization": decl.organization}}
+	users_not_two in msgs
+	count(msgs) > 0
+}
+
 test_violation_access_key if {
 	key := change("module.b.aws_iam_access_key.this", "aws_iam_access_key", {"user": "break-glass-1"})
 	inp := fixture.plan(array.concat(rcs(valid_group, trust(user_arns), [admin]), [key]))
@@ -143,9 +164,137 @@ test_violation_deactivate_mfa_without_mfa if {
 	fixture.has("[PLAN-BG-02]", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
 }
 
+not_denied(action) := sprintf("[PLAN-BG-02] break-glass の group が %s を、条件なしで全 Resource について拒んでいません", [lower(action)])
+
+group_messages(group) := msgs if {
+	msgs := p.deny with input as fixture.plan(rcs(group, trust(user_arns), [admin])) with data.policy_plan as {"organization_baseline": decl}
+}
+
+with_deny(statements) := array.concat([assume, self_manage, deactivate, password_policy], statements)
+
 test_violation_access_key_not_denied if {
-	inp := fixture.plan(rcs([assume, self_manage, password_policy], trust(user_arns), [admin]))
-	fixture.has("[PLAN-BG-02] break-glass の group が iam:CreateAccessKey を拒んでいません", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
+	msgs := group_messages([assume, self_manage, password_policy])
+	every a in long_term_credential_actions {
+		not_denied(a) in msgs
+	}
+}
+
+test_violation_long_term_credential_deny_with_condition if {
+	conditioned := object.union(long_term_credentials_deny, {"Condition": {"StringEquals": {"aws:username": "nobody"}}})
+	msgs := group_messages(with_deny([conditioned]))
+	every a in long_term_credential_actions {
+		not_denied(a) in msgs
+	}
+}
+
+test_violation_long_term_credential_deny_with_empty_condition if {
+	msgs := group_messages(with_deny([object.union(long_term_credentials_deny, {"Condition": {}})]))
+	every a in long_term_credential_actions {
+		not_denied(a) in msgs
+	}
+}
+
+bg02(msgs) := {m | some m in msgs; startswith(m, "[PLAN-BG-02]")}
+
+without_action(i) := bg02(group_messages(with_deny([object.union(long_term_credentials_deny, {"Action": array.concat(array.slice(long_term_credential_actions, 0, i), array.slice(long_term_credential_actions, i + 1, count(long_term_credential_actions)))})])))
+
+test_violation_create_access_key_missing if {
+	without_action(0) == {not_denied("iam:CreateAccessKey")}
+}
+
+test_violation_create_service_specific_credential_missing if {
+	without_action(1) == {not_denied("iam:CreateServiceSpecificCredential")}
+}
+
+test_violation_upload_ssh_public_key_missing if {
+	without_action(2) == {not_denied("iam:UploadSSHPublicKey")}
+}
+
+test_violation_upload_signing_certificate_missing if {
+	without_action(3) == {not_denied("iam:UploadSigningCertificate")}
+}
+
+test_violation_long_term_credential_deny_partial_wildcard if {
+	msgs := group_messages(with_deny([{"Effect": "Deny", "Action": "iam:Create*", "Resource": "*"}]))
+	bg02(msgs) == {not_denied("iam:UploadSSHPublicKey"), not_denied("iam:UploadSigningCertificate")}
+}
+
+test_pass_long_term_credential_deny_service_wildcard if {
+	not fixture.has("[PLAN-BG-02]", group_messages(with_deny([{"Effect": "Deny", "Action": "iam:*", "Resource": "*"}])))
+}
+
+test_pass_long_term_credential_deny_all_actions if {
+	not fixture.has("[PLAN-BG-02]", group_messages(with_deny([{"Effect": "Deny", "Action": "*", "Resource": "*"}])))
+}
+
+test_pass_long_term_credential_deny_single_character_wildcard if {
+	actions := ["iam:CreateAccessKe?", "iam:CreateServiceSpecificCredentia?", "iam:UploadSSHPublicKe?", "iam:UploadSigning?ertificate"]
+	not fixture.has("[PLAN-BG-02]", group_messages(with_deny([{"Effect": "Deny", "Action": actions, "Resource": "*"}])))
+}
+
+test_violation_long_term_credential_deny_without_resource if {
+	msgs := group_messages(with_deny([object.remove(long_term_credentials_deny, ["Resource"])]))
+	every a in long_term_credential_actions {
+		not_denied(a) in msgs
+	}
+}
+
+test_violation_long_term_credential_deny_not_resource if {
+	statement := object.union(object.remove(long_term_credentials_deny, ["Resource"]), {"NotResource": "arn:aws:iam::111111111111:user/other"})
+	msgs := group_messages(with_deny([statement]))
+	every a in long_term_credential_actions {
+		not_denied(a) in msgs
+	}
+}
+
+test_violation_long_term_credential_deny_not_action if {
+	statement := {"Effect": "Deny", "NotAction": "s3:*", "Resource": "*"}
+	msgs := group_messages(with_deny([statement]))
+	every a in long_term_credential_actions {
+		not_denied(a) in msgs
+	}
+}
+
+test_violation_long_term_credential_deny_narrowed_resource if {
+	narrowed := object.union(long_term_credentials_deny, {"Resource": "arn:aws:iam::111111111111:user/break-glass/break-glass-1"})
+	msgs := group_messages(with_deny([narrowed]))
+	every a in long_term_credential_actions {
+		not_denied(a) in msgs
+	}
+}
+
+test_violation_long_term_credential_deny_partial_resource if {
+	partial := object.union(long_term_credentials_deny, {"Resource": ["*", "arn:aws:iam::111111111111:user/break-glass/break-glass-1"]})
+	msgs := group_messages(with_deny([partial]))
+	every a in long_term_credential_actions {
+		not_denied(a) in msgs
+	}
+}
+
+test_violation_long_term_credential_allow_does_not_count if {
+	allow := object.union(long_term_credentials_deny, {"Effect": "Allow"})
+	msgs := group_messages(with_deny([allow]))
+	every a in long_term_credential_actions {
+		not_denied(a) in msgs
+	}
+}
+
+test_pass_long_term_credential_deny_split_and_cased if {
+	first := {"Effect": "Deny", "Action": "IAM:CREATEACCESSKEY", "Resource": "*"}
+	second := {"Effect": "Deny", "Action": ["iam:createservicespecificcredential", "iam:UploadSshPublicKey", "iam:UploadSigningCertificate"], "Resource": ["*"]}
+	msgs := group_messages(with_deny([first, second]))
+	not fixture.has("[PLAN-BG-02]", msgs)
+}
+
+test_pass_long_term_credential_deny_wildcard if {
+	msgs := group_messages(with_deny([{"Effect": "Deny", "Action": ["iam:Create*", "iam:Upload*"], "Resource": "*"}]))
+	not fixture.has("[PLAN-BG-02]", msgs)
+}
+
+test_pass_long_term_credential_conditioned_deny_beside_unconditioned if {
+	conditioned := object.union(long_term_credentials_deny, {"Condition": {"Bool": {"aws:MultiFactorAuthPresent": "false"}}})
+	msgs := group_messages(with_deny([conditioned, long_term_credentials_deny]))
+	not fixture.has("[PLAN-BG-02]", msgs)
 }
 
 test_violation_trust_other_principal if {
@@ -173,6 +322,13 @@ test_violation_break_glass_extra_managed_policy if {
 test_violation_group_policy_without_statement if {
 	inp := fixture.plan([user(1, user_arns[0]), user(2, user_arns[1]), change("module.b.aws_iam_group_policy.this", "aws_iam_group_policy", {"policy": "{}"}), role(trust(user_arns)), attachments([admin])])
 	fixture.has("[PLAN-BG-02] break-glass の group の policy が文を持ちません", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_violation_group_policy_without_statement_denies_nothing if {
+	msgs := group_messages([])
+	every a in long_term_credential_actions {
+		not_denied(a) in msgs
+	}
 }
 
 test_violation_group_allow_not_action if {
@@ -320,6 +476,23 @@ test_violation_member_template_empty_resources if {
 	fixture.has(template_violation, member_messages(member_rcs(stack_set("SERVICE_MANAGED", true, {}))))
 }
 
+description_violation := "[PLAN-BG-05] メンバーの break-glass の StackSet の description"
+
+test_violation_member_stack_set_description_not_ascii if {
+	set := json.patch(valid_stack_set, [{"op": "replace", "path": "/change/after/description", "value": "メンバーアカウントの break-glass の role"}])
+	fixture.has(description_violation, member_messages(member_rcs(set)))
+}
+
+test_violation_member_stack_set_description_control_character if {
+	set := json.patch(valid_stack_set, [{"op": "replace", "path": "/change/after/description", "value": "Break-glass\nrole"}])
+	fixture.has(description_violation, member_messages(member_rcs(set)))
+}
+
+test_pass_member_stack_set_without_description if {
+	set := json.patch(valid_stack_set, [{"op": "remove", "path": "/change/after/description"}])
+	not fixture.has(description_violation, member_messages(member_rcs(set)))
+}
+
 test_violation_member_stack_set_auto_deployment_missing if {
 	set := json.patch(valid_stack_set, [{"op": "replace", "path": "/change/after/auto_deployment", "value": []}])
 	fixture.has("[PLAN-BG-05] メンバーの break-glass の StackSet が、service-managed", member_messages(member_rcs(set)))
@@ -348,6 +521,33 @@ test_violation_member_instances_with_accounts if {
 test_violation_member_instances_without_stack_set_name if {
 	inst := instances_with({"deployment_targets": [{"organizational_unit_ids": ["r-exam"], "accounts": null}]})
 	fixture.has("[PLAN-BG-05] メンバーの break-glass の stack instance が、break-glass の StackSet を名指していません", member_messages(member_rcs_with(valid_stack_set, inst)))
+}
+
+undeclared_instances := {"organization": decl.organization, "break_glass": object.remove(decl.break_glass, ["stack_instances"])}
+
+undeclared_message := "[PLAN-BG-00] break-glass の stack instance の宣言が無いのに"
+
+test_pass_undeclared_stack_instances_absent if {
+	rcs := [x | some x in member_rcs(valid_stack_set); x.type != "aws_cloudformation_stack_instances"]
+	msgs := p.deny with input as fixture.plan(rcs) with data.policy_plan as {"organization_baseline": undeclared_instances}
+	count(msgs) == 0
+}
+
+test_violation_empty_stack_instances_declaration if {
+	empty := {"organization": decl.organization, "break_glass": object.union(decl.break_glass, {"stack_instances": ""})}
+	rcs := [x | some x in member_rcs(valid_stack_set); x.type != "aws_cloudformation_stack_instances"]
+	msgs := p.deny with input as fixture.plan(rcs) with data.policy_plan as {"organization_baseline": empty}
+	fixture.has("[PLAN-BG-00] 宣言した break-glass の ", msgs)
+}
+
+test_no_undeclared_message_without_break_glass_declaration if {
+	msgs := p.deny with input as fixture.plan(member_rcs(valid_stack_set)) with data.policy_plan as {"organization_baseline": {"organization": decl.organization}}
+	count([m | some m in msgs; startswith(m, undeclared_message)]) == 0
+}
+
+test_violation_undeclared_stack_instances_present if {
+	msgs := p.deny with input as fixture.plan(member_rcs(valid_stack_set)) with data.policy_plan as {"organization_baseline": undeclared_instances}
+	fixture.has("[PLAN-BG-00] break-glass の stack instance の宣言が無いのに、module.b.aws_cloudformation_stack_instances.this が入力にあります", msgs)
 }
 
 test_violation_declared_stack_instances_missing if {

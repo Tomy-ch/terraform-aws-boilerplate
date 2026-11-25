@@ -596,6 +596,13 @@ Go には `min-release-age` に相当するものが無い。`go get` に「新�
 
 このディレクトリのすべての job は、最初の step で `bullfrogsec/bullfrog` を `egress-policy: block`・
 `dns-policy: allowed-domains-only`・`enable-sudo: false` で、自分の `allowed-domains` とともに開始する。
+最初の step（`id: harden-runner`、`continue-on-error: true`）が落ちたときだけ、同じ設定の2番目の step
+（`if: steps.harden-runner.outcome != 'success'`）がやり直し、2番目が落ちれば job は落ちる。bullfrog は agent の
+取得とパッケージの導入を再試行せず、配布元の一時的なエラーで必須の job を落とすためである。
+再試行が成功するのは、agent が準備の印（`/var/run/bullfrog/agent-ready`）を書いたときだけである。本体が
+agent を起動した後で落ちた場合も、再試行は sudo を外された後なら導入で落ち、そうでなければ既に動く agent の
+印で成功する —— どちらでも、通信制限の無いまま job が進むことはない（v0.11.1 の `action/src/main.ts` で確かめた。
+版を上げる Pull Request は確かめ直す。ADR-0702 決定23）。
 外向きの接続と名前解決を一覧に照らし、それ以外を拒む —— 侵害された action や道具のダウンロードが、
 その job に用の無い宛先へ持ち出せない。sudo を外すのは、sudo が残る job では step の中から通信制限
 そのものを外せるからである。決定と受け入れた限界は [ADR-0702](../../docs/adr/0702-repository-operations-substrate.md)
@@ -607,9 +614,9 @@ bullfrog は checkout の**前**に走らなければならない —— checkou
 それを守ることが目的だからである。括り出すと、塞ぐために置いた窓が開く。
 
 **固定されていないのは一覧の出所の方である。** [`.github/egress.toml`](../egress.toml) が SSOT で、
-`make egress-apply` が各 job の `with:` を丸ごと書き、`make egress-check` がずれで落ちる。step が
-`name` / `uses` / `with` 以外のキー（`if:` や `continue-on-error:`）を持つこと、job の最初の step で
-ないこと、steps を持つ job に bullfrog が無いこと、steps を読み取れない job（`steps:` は4桁、step は
+`make egress-apply` が各 job の先頭の2つの step を `uses:` を除いて丸ごと書き、`make egress-check` がずれで
+落ちる。step が `name` / `id` / `continue-on-error` / `if` / `uses` / `with` 以外のキーを持つこと、2つの step が
+job の先頭に並んでいないこと、steps を持つ job に bullfrog が無いこと、steps を読み取れない job（`steps:` は4桁、step は
 6桁のハイフンで始める）も、同じ検査が拒む。拒む条件の一覧は
 [`scripts/README.md`](../../scripts/README.md) の `egress/` の行が持つ。
 
@@ -621,6 +628,7 @@ bullfrog は checkout の**前**に走らなければならない —— checkou
 | --- | --- | --- |
 | `base` | GitHub API / web / codeload、`objects` / `raw` / `release-assets.githubusercontent.com`、`*.actions.githubusercontent.com`、結果と cache の置き場のうち bullfrog の agent が既定で許さない番号の `productionresultssa<N>.blob.core.windows.net`（足し方は宣言のコメント）。IP は `127.0.0.100`（理由と外す条件は宣言のコメント。IP はドメインの判定を経ずに通すので、宣言の検査が `127.0.0.0/8` の外を拒む） | **すべての job に暗黙に適用される。** `classes` に書かない |
 | `mise` | mise 自身の配布元と、`mise.toml` が解決するすべての backend —— aqua / GitHub releases、Go の toolchain と module proxy、node の配布元、npm レジストリ（npm の道具を lockfile から入れる pnpm と、`npm:` の宣言の公開時刻を引く tool-cooldown が使う）、および Sigstore（mise が artifact attestation を検証する） | 道具を導入するすべての job |
+| `go` | mise が Go の版の一覧を引く先、Go の toolchain の配布元、module proxy（`mise` の部分集合） | Go だけを入れて `scripts/` の道具をビルドし、他の道具を入れない job（Checkov / KICS / Semgrep） |
 | `terraform` | Terraform Registry と provider の配布元 | Terraform を実行する job（[ADR-0205](../../docs/adr/0205-module-dependency-policy.md) により外部 module は引かない） |
 | `trivy` | 脆弱性 DB と checks バンドルの OCI の配布元 | Trivy を実行する job |
 | `docker-hub` | Docker Hub の registry・認証・layer の配布元（R2 と S3 は Docker Hub の Bucket のホストだけ） | 上流のイメージで道具を実行する job（Checkov / KICS / Semgrep）、docker/tools のイメージを組む job（Versions Check） |
@@ -654,8 +662,12 @@ Terraform を実行する種別の入口も呼べば、その job は型の宛�
 `type` の宛先の region の集合が、その `type` に当たる型のブロックを置く region の集合（ブロックの `region`
 引数のリテラル。持たないブロックは、辿る aws の provider のただ 1 つの `region`）と一致しなければ落ち、
 ブロックの `region` 引数（`action` は `config` の中）が region の形のリテラルでなくても、`action` の `region` を
-読めない形（`config` の外の `region`、2 つ以上の `config`、dynamic の `config`）でも落ちる。AWS が region を固定した global のサービスの宛先は、
-`scripts/egress` の閉じた一覧が突き合わせから外す。job の外（`jobs:` より前の `env:` など）に入口の名前が在っても落ちる。
+読めない形（`config` の外の `region`、2 つ以上の `config`、dynamic の `config`）でも落ちる。`region = each.key` だけは、
+ブロックの `for_each` を module の呼び出しの文脈で解いた集合の各 region として読み、解けない形・空の集合・region の形でない
+要素で落ちる（解ける形は `scripts/README.md` の `egress/` の行）。region の集合の宛先は、宣言の `region_set` の集合と
+宛先の `{<set>}` で書く（`[region_set.<name>]` の `regions = ["us-east-1", ...]` と、宛先の `"ec2.{<name>}.amazonaws.com"`。
+1つの宛先に `{}` は1つで、どの宛先も使わない集合は落ちる）。`usecases/*/reference` の root も辿り、ブロックの `region` を解けなければ落ちる（宛先は求めない）。
+AWS が region を固定した global のサービスの宛先は、`scripts/egress` の閉じた一覧が突き合わせから外す。job の外（`jobs:` より前の `env:` など）に入口の名前が在っても落ちる。
 新しい AWS のサービスの型を足す変更は、その `type` と、クラスへの宛先の追加を同じ変更に含める。
 Terraform を実行する job を足す変更は、その root の `root` の宣言を同じ変更に含める。接頭辞の `type` は、
 当たる型がすべて同じ宛先を呼ぶと言える範囲に限る —— 同じサービス名の下で別の endpoint を呼ぶ型

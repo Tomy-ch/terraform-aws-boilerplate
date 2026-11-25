@@ -10,10 +10,10 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-// missingShown は、走査の対象から外れた追跡ファイルを表示する上限です。
 const missingShown = 20
 
 // expectedExcludes は、本走査の対象から外れてよい追跡ファイルのパターン（gitignore の形）です。.typos.toml の
@@ -21,7 +21,8 @@ const missingShown = 20
 var expectedExcludes = []string{".git/", "**/.terraform.lock.hcl", "scripts/go.sum"}
 
 // runCoverage は、設定 cfg の extend-exclude が expectedExcludes と集合として一致し、本走査の対象（typos --files）が、
-// git の追跡ファイルから expectedExcludes に当たるものと設定 config 自身を除いたものを覆っていることを確かめます。
+// git の追跡ファイルから作業ツリーから消えたもの・expectedExcludes に当たるもの・設定 config 自身を除いたものを
+// 覆っていることを確かめます。
 // config はリポジトリ直下からの相対パスです。
 func runCoverage(config string, cfg []byte, w io.Writer, tool toolFunc, env envFunc) error {
 	declared, err := extendExcludes(string(cfg))
@@ -37,25 +38,36 @@ func runCoverage(config string, cfg []byte, w io.Writer, tool toolFunc, env envF
 		return xerrors.Wrapf(errTool, "%v", err)
 	}
 
-	scanned, err := runTool(tool(".", os.Environ(), stepFiles))
+	scanned, err := toolrun.Run(tool(".", os.Environ(), stepFiles))
 	if err != nil {
 		return err
 	}
-	if scanned.code != 0 {
-		return xerrors.Wrapf(errTool, "typos --files が rc=%d で終わりました\n%s", scanned.code, scanned.combined)
+	if scanned.Code != 0 {
+		return xerrors.Wrapf(errTool, "typos --files が rc=%d で終わりました\n%s", scanned.Code, scanned.Combined)
 	}
-	listed, err := runTool(tool(".", gitEnv, stepLsFiles))
+	listed, err := gitList(tool, gitEnv, stepLsFiles)
 	if err != nil {
 		return err
 	}
-	if listed.code != 0 {
-		return xerrors.Wrapf(errTool, "git ls-files が rc=%d で終わりました\n%s", listed.code, listed.combined)
+	deleted, err := gitList(tool, gitEnv, stepLsDeleted)
+	if err != nil {
+		return err
+	}
+	gone := map[string]bool{}
+	for _, p := range strings.Split(deleted, "\x00") {
+		gone[p] = true
 	}
 
 	self := filepath.ToSlash(filepath.Clean(config))
 	var want []string
-	for _, p := range strings.Split(listed.stdout, "\x00") {
+	nGone := 0
+	for _, p := range strings.Split(listed, "\x00") {
 		if p == "" || p == self {
+			continue
+		}
+		if gone[p] {
+			nGone++
+
 			continue
 		}
 		hit, err := excluded(p, patterns)
@@ -69,7 +81,7 @@ func runCoverage(config string, cfg []byte, w io.Writer, tool toolFunc, env envF
 	if len(want) == 0 {
 		return xerrors.Wrap(errNoInput, "追跡ファイルの一覧が0件です")
 	}
-	missing := missingFiles(scanned.stdout, want)
+	missing := missingFiles(scanned.Stdout, want)
 	if len(missing) > 0 {
 		fmt.Fprintln(w, "❌ typos: 追跡ファイルが走査対象から外れています:")
 		for _, p := range missing[:min(len(missing), missingShown)] {
@@ -78,9 +90,22 @@ func runCoverage(config string, cfg []byte, w io.Writer, tool toolFunc, env envF
 
 		return xerrors.Wrapf(errUncovered, "%d 件", len(missing))
 	}
-	fmt.Fprintf(w, "✅ typos coverage: 追跡ファイル %d 件がすべて走査の対象です\n", len(want))
+	fmt.Fprintf(w, "✅ typos coverage: 追跡ファイル %d 件がすべて走査の対象です（作業ツリーから消えた %d 件を引いた）\n", len(want), nGone)
 
 	return nil
+}
+
+// gitList は、リポジトリ直下で段 step の git を起動し、stdout を返します。0 でない終了コードは errTool です。
+func gitList(tool toolFunc, env []string, step string) (string, error) {
+	r, err := toolrun.Run(tool(".", env, step))
+	if err != nil {
+		return "", err
+	}
+	if r.Code != 0 {
+		return "", xerrors.Wrapf(errTool, "git の %s が rc=%d で終わりました\n%s", step, r.Code, r.Combined)
+	}
+
+	return r.Stdout, nil
 }
 
 // sameExcludes は、declared と expected が重複を除いて同じ集合なら nil、そうでなければ両方を名指した errExcludes です。
@@ -141,11 +166,8 @@ func extendExcludes(cfg string) ([]string, error) {
 		if m == nil {
 			continue
 		}
-		if (m[1] == "" && section != "files") || (m[1] != "" && section != "") {
-			return nil, xerrors.Wrapf(errRead, "%d 行目: [files] の外の extend-exclude は解釈しません", i+1)
-		}
-		if found {
-			return nil, xerrors.Wrapf(errRead, "%d 行目: extend-exclude が重複しています", i+1)
+		if err := checkExcludeLine(i+1, m[1], section, found); err != nil {
+			return nil, err
 		}
 		found = true
 		rhs := strings.TrimSpace(m[2])
@@ -160,6 +182,19 @@ func extendExcludes(cfg string) ([]string, error) {
 	}
 
 	return parseStringArray(value.String())
+}
+
+// checkExcludeLine は、line 行目の extend-exclude が [files] の中に在り、重複していないことを確かめます。prefix は
+// キーの前置き（`files.` か空）、section はその行が在る節（直下は空）、found は既に見つけたかです。外れれば errRead です。
+func checkExcludeLine(line int, prefix, section string, found bool) error {
+	if (prefix == "" && section != "files") || (prefix != "" && section != "") {
+		return xerrors.Wrapf(errRead, "%d 行目: [files] の外の extend-exclude は解釈しません", line)
+	}
+	if found {
+		return xerrors.Wrapf(errRead, "%d 行目: extend-exclude が重複しています", line)
+	}
+
+	return nil
 }
 
 func stripComment(line string) string {

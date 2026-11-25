@@ -77,6 +77,14 @@ func Test_run(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
+		t.Run("region は backend.tf の region を1行で出す", func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+			require.NoError(t, run([]string{"region", rootWith(t, backendOK, providersOK)}, &out, testDeps(nil)))
+			assert.Equal(t, "ap-northeast-1\n", out.String())
+		})
+
 		t.Run("env-unset は外す名前を1行で出す", func(t *testing.T) {
 			t.Parallel()
 
@@ -128,6 +136,8 @@ func Test_run(t *testing.T) {
 		cases := map[string][]string{
 			"引数が無ければ失敗する":             nil,
 			"知らないサブコマンドは失敗する":         {"apply"},
+			"region に root が無ければ失敗する": {"region"},
+			"region に余分な引数があれば失敗する":   {"region", "a", "b"},
 			"env-unset に引数があれば失敗する":   {"env-unset", "x"},
 			"plan-header に引数があれば失敗する": {"plan-header", "x"},
 		}
@@ -140,6 +150,15 @@ func Test_run(t *testing.T) {
 				assert.Empty(t, out.String())
 			})
 		}
+
+		t.Run("region を決められなければ何も出力しない", func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+			root := rootWith(t, backendOK, "provider \"aws\" {\n  region = \"us-east-1\"\n}\n")
+			require.ErrorIs(t, run([]string{"region", root}, &out, testDeps(nil)), errRegionMismatch)
+			assert.Empty(t, out.String())
+		})
 
 		t.Run("外す変数の名前が不正なら何も出力しない", func(t *testing.T) {
 			t.Parallel()
