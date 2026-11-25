@@ -126,7 +126,7 @@ CI（OIDC で role を assume しての plan と apply）。
 `terraform show` は `env -i` で起動して資格情報を渡さない。`PARTIAL` は make の引数でだけ渡せる。
 `bootstrap-check-account` は、`aws-login` と同じく `tf-local env-unset` の変数を外し、bootstrap の profile と
 identity root の region で `scripts/bootstrap-check account` を起動する。`bootstrap-verify` も同じ形で
-`scripts/bootstrap-check verify` を起動し、`STAGE` と、空でなければ `BOOTSTRAP_EXECUTOR`・`POLICY_SOURCE` を渡す。
+`scripts/bootstrap-check verify` を起動し、`STAGE` と、空でなければ `BOOTSTRAP_EXECUTOR`・`POLICY_SOURCE` を渡す。`POLICY_SOURCE=reference` のときは、`make tf-policy` の出力の置き場（`-out`）も `-reference-dir` で渡す。
 aws の起動は bootstrap-check が持つ。
 
 ### 直下

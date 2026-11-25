@@ -267,6 +267,22 @@ func Test_run(t *testing.T) {
 		assert.True(t, strings.HasSuffix(out.String(), "# 結果: 4 件のうち NG 1 件\n"))
 	})
 
+	t.Run("verify の output-policy の reference は、-reference-dir に渡した置き場から plan を読む", func(t *testing.T) {
+		t.Parallel()
+
+		var out bytes.Buffer
+
+		f := &fakeAWS{t: t, responses: map[string]awsResult{stsAccountKey: okResult(testAccount)}, handler: permissiveHandler}
+		d := verifyDeps(f, map[string]string{"x/y/plans.txt": "x/y/runs/state-backend.jsonl\n", "x/y/inputs/state-backend.json": referencePlanJSON(t)})
+
+		err := run([]string{"verify", "-stage", "output-policy", "-project", testProject, "-region", testRegion,
+			"-policy-source", "reference", "-reference-dir", "x/y"}, &out, d)
+
+		require.ErrorIs(t, err, errMismatch)
+		assert.NotContains(t, out.String(), "plans.txt")
+		assert.True(t, strings.HasSuffix(out.String(), "# 結果: 13 件のうち NG 7 件\n"), out.String())
+	})
+
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 

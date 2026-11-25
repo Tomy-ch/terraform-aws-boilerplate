@@ -96,6 +96,9 @@ ADR-0401 は検証レイヤーを定義したが、検証がどの時点で実�
     | resource type | 属性 | 発火側が行う操作 |
     | --- | --- | --- |
     | `aws_ecs_service` | `task_definition` | 成果物の版を差し替えた Task 定義の revision の登録と、Service の更新 |
+    | `aws_organizations_organization` | `aws_service_access_principals` | 各サービスの側で組織への信頼アクセスを有効にする（人。organization-baseline/ADR-0001） |
+
+    `aws_organizations_organization` の行の操作は人が行い、決定21-23 は当たらない。有効にしたサービスの一覧は、Terraform が宣言しない。
 
 21. 除いた属性が指す先の中身は、Terraform が宣言する。発火側が登録する revision は、Terraform が最後に登録した revision から、成果物の版（コンテナイメージの digest）だけを差し替えたものとする。決定20 の一覧を使う use-case は、元にする revision の識別子を出力として発火側へ渡し、Terraform の宣言の変更が実行中の Service へ届く経路（発火側の次の更新）を、公開契約として README に持つ。
 22. 発火側の資格情報は、決定20 の操作と、成果物の push と、デプロイの前のスキャン結果の読み取りに要るものに限る。Task 定義へ渡せる Role を当該 use-case の Task Role と Execution Role に限り、渡し先を ECS のタスクに限る。Service の更新を当該 use-case の Service に限る。
