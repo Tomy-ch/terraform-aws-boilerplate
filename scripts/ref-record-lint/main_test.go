@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -14,6 +15,7 @@ import (
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lintreport"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/mdscan"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -60,6 +62,14 @@ func validTree() map[string]string {
 
 func fixedLister(names []string, err error) listFunc {
 	return func(string) ([]string, error) { return names, err }
+}
+
+// lineOf は、body の中で sub が最初に現れる行の番号を返す。
+func lineOf(t *testing.T, body, sub string) string {
+	t.Helper()
+	i := strings.Index(body, sub)
+	require.NotEqual(t, -1, i, sub)
+	return strconv.Itoa(strings.Count(body[:i], "\n") + 1)
 }
 
 func lines(body string) []mdscan.Line {
@@ -112,15 +122,22 @@ func Test_run(t *testing.T) {
 		assert.Contains(t, out.String(), "usecases 2 件 / modules 1 件の README")
 	})
 
-	t.Run("違反があれば errViolations で、ファイルと行を出す", func(t *testing.T) {
+	t.Run("違反があれば errViolations で、件数とファイルと行をファイルの順に出す", func(t *testing.T) {
 		t.Parallel()
 		files := validTree()
-		files["modules/m/README.md"] = readmeWith(strings.Replace(validSection, "- 知見 B: 理由", "- 知見 B", 1))
+		files["usecases/b/README.md"] = readmeWith(strings.Replace(validSection, "- 知見 B: 理由", "- 知見 B", 1))
+		files["modules/m/README.md"] = readmeWith(strings.Replace(validSection, "参照日: 2026-11-19", "参照日: 2026-13-19", 1))
 		root, tracked := buildTree(t, files)
 		var out bytes.Buffer
 		err := run([]string{"-root", root}, &out, fixedLister(tracked, nil))
 		require.ErrorIs(t, err, errViolations)
-		assert.Contains(t, out.String(), "modules/m/README.md")
+		got := out.String()
+		assert.True(t, strings.HasPrefix(got, "❌ ref-record-lint: 2 件の違反\n"), got)
+		modules := strings.Index(got, "  modules/m/README.md\n    :"+lineOf(t, files["modules/m/README.md"], "参照日: ")+"  ")
+		usecases := strings.Index(got, "  usecases/b/README.md\n    :"+lineOf(t, files["usecases/b/README.md"], "- 知見 B")+"  ")
+		require.NotEqual(t, -1, modules, got)
+		require.NotEqual(t, -1, usecases, got)
+		assert.Less(t, modules, usecases, "ファイルの名前の順に出す")
 	})
 
 	t.Run("README が無い対象は違反になる", func(t *testing.T) {
@@ -158,6 +175,14 @@ func Test_run(t *testing.T) {
 		err := run([]string{"-root", root}, &bytes.Buffer{}, fixedLister(tracked, nil))
 		require.ErrorIs(t, err, errCountMismatch)
 		assert.Contains(t, err.Error(), "untracked")
+	})
+
+	t.Run("追跡にだけ在る対象があれば errCountMismatch で名指す", func(t *testing.T) {
+		t.Parallel()
+		root, tracked := buildTree(t, validTree())
+		err := run([]string{"-root", root}, &bytes.Buffer{}, fixedLister(append(tracked, "usecases/ghost/README.md"), nil))
+		require.ErrorIs(t, err, errCountMismatch)
+		assert.Contains(t, err.Error(), `追跡にだけ在る ["ghost"]`)
 	})
 
 	t.Run("追跡ファイルの一覧を得られなければ errUnreadable", func(t *testing.T) {
@@ -222,10 +247,15 @@ func Test_gitFiles(t *testing.T) {
 		require.ErrorIs(t, err, boom)
 	})
 
-	t.Run("リポジトリでなければエラーを返す", func(t *testing.T) {
+	t.Run("リポジトリでなければ、git の失敗を返す", func(t *testing.T) {
 		t.Parallel()
-		_, err := gitFiles(t.TempDir(), gitEnv)
-		require.Error(t, err)
+		dir := t.TempDir()
+		_, err := gitFiles(dir, func() ([]string, error) {
+			env, err := gitEnv()
+			return append(env, "GIT_CEILING_DIRECTORIES="+filepath.Dir(dir)), err
+		})
+		var exit *exec.ExitError
+		require.ErrorAs(t, err, &exit, "git を起動し、git が失敗した")
 	})
 }
 
@@ -322,9 +352,10 @@ func Test_compareSets(t *testing.T) {
 		dirs, tracked []string
 		want          string
 	}{
-		"ディレクトリにだけ在る": {[]string{"a", "b"}, []string{"a"}, `"b"`},
-		"追跡にだけ在る":     {[]string{"a"}, []string{"a", "c"}, `"c"`},
-		"追跡が0件":       {[]string{"a"}, nil, `"a"`},
+		"ディレクトリにだけ在る": {[]string{"a", "b"}, []string{"a"}, `ディレクトリにだけ在る ["b"]、追跡にだけ在る []`},
+		"追跡にだけ在る":     {[]string{"a"}, []string{"a", "c"}, `ディレクトリにだけ在る []、追跡にだけ在る ["c"]`},
+		"追跡が0件":       {[]string{"a"}, nil, `ディレクトリにだけ在る ["a"]、追跡にだけ在る []`},
+		"件数が同じで名前が違う": {[]string{"a", "b"}, []string{"a", "c"}, `ディレクトリにだけ在る ["b"]、追跡にだけ在る ["c"]`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -365,6 +396,26 @@ func Test_checkTarget(t *testing.T) {
 	t.Run("README がディレクトリなら errUnreadable", func(t *testing.T) {
 		t.Parallel()
 		root, _ := buildTree(t, map[string]string{"usecases/a/README.md/x": ""})
+		_, err := checkTarget(root, "usecases/a/README.md")
+		require.ErrorIs(t, err, errUnreadable)
+	})
+
+	t.Run("README を Lstat できなければ errUnreadable", func(t *testing.T) {
+		t.Parallel()
+		testenv.RequireNonRoot(t, "root はディレクトリの権限を無視する")
+		root, _ := buildTree(t, map[string]string{"usecases/a/README.md": readmeWith(validSection)})
+		dir := filepath.Join(root, "usecases", "a")
+		require.NoError(t, os.Chmod(dir, 0o000))
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o750) })
+		_, err := checkTarget(root, "usecases/a/README.md")
+		require.ErrorIs(t, err, errUnreadable)
+	})
+
+	t.Run("README を読めなければ errUnreadable", func(t *testing.T) {
+		t.Parallel()
+		testenv.RequireNonRoot(t, "root はファイルの権限を無視する")
+		root, _ := buildTree(t, map[string]string{"usecases/a/README.md": readmeWith(validSection)})
+		require.NoError(t, os.Chmod(filepath.Join(root, "usecases", "a", "README.md"), 0o000))
 		_, err := checkTarget(root, "usecases/a/README.md")
 		require.ErrorIs(t, err, errUnreadable)
 	})
