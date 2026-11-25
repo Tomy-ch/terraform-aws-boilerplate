@@ -12,7 +12,7 @@
 
 ## 現在の配線状態
 
-**Terraform の実装は、ユースケースの `usecases/state-backend/` と `usecases/deployment-identity/`（bootstrap の段1-4 の分）と `usecases/finops/`・`usecases/network-foundation/`・`usecases/dns-zone/`・`usecases/audit-evidence/`・`usecases/ops-notification/`・`usecases/image-registry/`・`usecases/organization-baseline/`・`usecases/account-baseline/`、管理アカウントの identity root の `env/admin/identity/` と workload root の `env/admin/`、一般 module の `modules/s3/`・`modules/kms/`・`modules/log-group/`・`modules/vended-log-group/`・`modules/sns/`・`modules/vpc/` だけである。** 決定（`docs/adr/`）と、それを守る機構
+**Terraform の実装は、ユースケースの `usecases/state-backend/` と `usecases/deployment-identity/`（bootstrap の段1-4 の分）と `usecases/finops/`・`usecases/network-foundation/`・`usecases/dns-zone/`・`usecases/audit-evidence/`・`usecases/ops-notification/`・`usecases/image-registry/`・`usecases/organization-baseline/`・`usecases/account-baseline/`、管理アカウントの identity root の `env/admin/identity/` と workload root の `env/admin/`、一般 module の `modules/s3/`・`modules/kms/`・`modules/log-group/`・`modules/vended-log-group/`・`modules/sns/`・`modules/vpc/`・`modules/default-regions/` だけである。** 決定（`docs/adr/`）と、それを守る機構
 （`.github/` / `.makefiles/` / `scripts/` / `docker/`）は配線済みである。次はいずれも未配線とする。
 
 - `usecases/` / `env/` —— `state-backend`・`deployment-identity`・`organization-baseline`・`finops`・`network-foundation`・`dns-zone`・`audit-evidence`・`ops-notification`・`image-registry`・`account-baseline` と管理アカウントの identity root と workload root のほかに、ユースケースと環境が無い。`network-foundation`・`dns-zone`・`audit-evidence`・`image-registry`・`account-baseline` を呼ぶ env は無い
