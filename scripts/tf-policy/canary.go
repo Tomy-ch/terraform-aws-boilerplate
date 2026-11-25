@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -86,8 +87,8 @@ func runCanary(args []string, w io.Writer, tool toolFunc, root string) error {
 	if err != nil {
 		return xerrors.Wrapf(errRead, "%s: %v", *planDecl, err)
 	}
-	if err := os.RemoveAll(workAbs); err != nil {
-		return xerrors.Wrapf(err, "%s の削除", workAbs)
+	if _, err := workdir.Recreate(root, *work); err != nil {
+		return xerrors.Wrapf(err, "%s の作り直し", workAbs)
 	}
 	layerRaw, err := os.ReadFile(filepath.Clean(*layerDecl))
 	if err != nil {
@@ -132,7 +133,6 @@ func runCanary(args []string, w io.Writer, tool toolFunc, root string) error {
 	return nil
 }
 
-// planCanary は、root をリポジトリ直下として runCanary を走らせる canary です。
 func planCanary(root string) canaryFunc {
 	return func(args []string, w io.Writer, tool toolFunc) error { return runCanary(args, w, tool, root) }
 }
@@ -371,7 +371,7 @@ func policyChain(dir, data string, tool toolFunc, verified map[string][]byte) (s
 	report, ok := verified[key]
 	if !ok {
 		var buf bytes.Buffer
-		verify := tool(dir, env, stepVerify)
+		verify := tool(context.Background(), dir, env, stepVerify)
 		verify.Stdout, verify.Stderr = &buf, &out
 		if _, err := toolrun.Exec(verify); err != nil {
 			return out.String(), xerrors.Wrap(err, "conftest verify")
@@ -392,7 +392,7 @@ func policyChain(dir, data string, tool toolFunc, verified map[string][]byte) (s
 		return out.String(), err
 	}
 	for _, r := range roots {
-		cmd := tool(r.path, tfexec.Env(os.Environ(), "TF_DATA_DIR="+tfexec.DataDir(data, r.rel)), stepInit)
+		cmd := tool(context.Background(), r.path, tfexec.Env(os.Environ(), "TF_DATA_DIR="+tfexec.DataDir(data, r.rel)), stepInit)
 		cmd.Stdout, cmd.Stderr = &out, &out
 		code, err := toolrun.Exec(cmd)
 		if err != nil {
@@ -417,7 +417,7 @@ func policyChain(dir, data string, tool toolFunc, verified map[string][]byte) (s
 	if _, err := extractAll(outDir, want, &out); err != nil {
 		return out.String(), err
 	}
-	deprecated := tool(dir, env, stepDeprecated)
+	deprecated := tool(context.Background(), dir, env, stepDeprecated)
 	deprecated.Stdout, deprecated.Stderr = &out, &out
 	code, err := toolrun.Exec(deprecated)
 	if err != nil {
@@ -427,7 +427,7 @@ func policyChain(dir, data string, tool toolFunc, verified map[string][]byte) (s
 		return out.String(), xerrors.Wrapf(errFailed, "非推奨の引数を取り出せません: exit status %d", code)
 	}
 	var result bytes.Buffer
-	test := tool(dir, env, stepConftest)
+	test := tool(context.Background(), dir, env, stepConftest)
 	test.Stdout, test.Stderr = &result, &out
 	if _, err := toolrun.Exec(test); err != nil {
 		return out.String(), xerrors.Wrap(err, "conftest test")

@@ -296,23 +296,46 @@ Billing and Cost Management コンソール →「Cost Explorer」→「Launch C
 
 #### 適用前の準備
 
-**事前に管理者が行うこと**: `make apply-environments` で environment を作り、`admin-plan` に secret を置く（値は管理アカウントの ID）。
+**事前に管理者が行うこと**: デフォルトブランチを checkout した手元で、次を順に行う。
 
-```bash
-gh secret set AWS_ACCOUNT_ID --env admin-plan
-```
+- デフォルトブランチがリリース線（`release/` で始まる）であることを確かめる。`production` のままなら、最初のリリース線を切ってから進む。`admin` はデフォルトブランチの先頭から作られ、デフォルトブランチがリリース線でない間は `admin` へ昇格できない
+
+  ```bash
+  gh repo view --json defaultBranchRef --jq .defaultBranchRef.name
+  ```
+
+- environment を宣言から適用する。apply 系と lock の解除の environment は、デプロイブランチ `admin` だけを許す。次の `admin` の作成より前に行う
+
+  ```bash
+  make apply-environments
+  ```
+
+- デプロイブランチ `admin` を、デフォルトブランチの先頭から作る。既に在れば失敗する。`admin` が無い間は、その名前のブランチを作った主体が apply 系の environment に届くので、段4 の apply より前に作る
+
+  ```bash
+  make create-deploy-branch DEPLOY_ENV=admin
+  ```
+
+  作成の push は `terraform-apply.yaml` を起動する。その run は、`apply-admin-identity` の `Refuse stale commits` の step で secret の不在により落ちる（apply 系の secret は段5 で置き、CI の role は段4 の apply まで無い）。この赤は想定どおりである。**この run を再実行しない**。再実行は作成の時点の commit を apply しようとする。`admin` の最初の apply は、段5 でリリース線から `admin` への最初の Pull Request を merge した run が行う
+
+- `admin-plan` に secret を置く（値は管理アカウントの ID）
+
+  ```bash
+  gh secret set AWS_ACCOUNT_ID --env admin-plan
+  ```
 
 1. Pull Request の head を checkout する。`git status` が空であることを確かめ、`git rev-parse HEAD` を控える
 
 2. [段1 の手順1](#段1-state-bucket-を作る) のブロックを実行する
 
-3. 作るものがまだ無いことを確かめる
+3. 作るものがまだ無く、デプロイブランチ `admin` が在ることを確かめる
 
    ```bash
    make bootstrap-verify STAGE=before-apply
+   make deploy-branch-exists DEPLOY_ENV=admin
    ```
 
-   `NG 0 件` で終了コード 0 なら次へ。NG があれば**止まり**、誰がなぜ作ったかを確かめる。`import` で取り込まない。
+   `bootstrap-verify` が `NG 0 件` で終了コード 0、`deploy-branch-exists` が終了コード 0 なら次へ。`bootstrap-verify` に NG があれば**止まり**、誰がなぜ作ったかを確かめる。`import` で取り込まない。`deploy-branch-exists` が失敗すれば apply せず、[適用前の準備](#適用前の準備)の `admin` の作成に戻る。
 
 #### plan と承認
 
@@ -390,7 +413,7 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
 
 | 工程 | 手順 | 完了条件 |
 | --- | --- | --- |
-| [CI の apply を有効にする](#ci-の-apply-を有効にする) | 1・2 | `admin` の最初の run が緑で、`apply-admin-identity` が `No changes.` |
+| [CI の apply を有効にする](#ci-の-apply-を有効にする) | 1・2 | リリース線から `admin` への最初の Pull Request の merge の run が緑で、`apply-admin-identity` が `No changes.` |
 | [段5 の変更を適用する](#段5-の変更を適用する) | 3・4 | 各変更の後の再実行が `No changes.` |
 | [lock の解除を用意して試す](#lock-の解除を用意して試す) | 5・6 | `Terraform Lock Hold` が残した lock を `Terraform Unlock` が外し、その後の apply の run が緑で `No changes.` |
 
@@ -399,19 +422,13 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
 #### CI の apply を有効にする
 
 1. 管理者が、デフォルトブランチを checkout した手元で、次を順に行う
-   1. デフォルトブランチがリリース線（`release/` で始まる）であることを確かめる。`production` のままなら、最初のリリース線を切ってから進む。デフォルトブランチがリリース線でない間は、`admin` へ昇格できない
-
-      ```bash
-      gh repo view --json defaultBranchRef --jq .defaultBranchRef.name
-      ```
-
-   2. environment を宣言から適用する。apply 系と lock の解除の environment は、デプロイブランチ `admin` だけを許す
+   1. environment を宣言から適用し直す。段4 の[適用前の準備](#適用前の準備)で適用済みで、その後に宣言が変わっていれば実態を宣言へ揃える
 
       ```bash
       make apply-environments
       ```
 
-   3. secret を置く（値は管理アカウントの ID）。`admin-apply` と `admin-unlock` は workload root の apply と lock の解除の job が読む
+   2. secret を置く（値は管理アカウントの ID）。`admin-apply` と `admin-unlock` は workload root の apply と lock の解除の job が読む
 
       ```bash
       gh secret set AWS_ACCOUNT_ID --env admin-apply-identity
@@ -419,14 +436,9 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
       gh secret set AWS_ACCOUNT_ID --env admin-unlock
       ```
 
-   4. 管理アカウントで Slack の workspace を認可し、team ID と channel ID を `env/admin/main.tf` に書いた変更をリリース線へ merge しておく。最初の run が workload root を apply するからである。手順は [`ops-notification.md`](ops-notification.md)
-   5. デプロイブランチ `admin` を、デフォルトブランチの先頭から作る。既に在れば失敗する
+   3. 管理アカウントで Slack の workspace を認可し、team ID と channel ID を `env/admin/main.tf` に書いた変更をリリース線へ merge しておく。最初の run が workload root を apply するからである。手順は [`ops-notification.md`](ops-notification.md)
 
-      ```bash
-      make create-deploy-branch DEPLOY_ENV=admin
-      ```
-
-2. `admin` の最初の run で、次をすべて確かめる。作成の push で run が起きなければ、リリース線から `admin` への最初の Pull Request の merge の run がそれに当たる。run の URL を issue に残す（アカウント ID を載せない）
+2. リリース線から `admin` への最初の Pull Request を開き、`deploy-source-check` を含む必須検査が緑になってから merge する（[段5 の変更を適用する](#段5-の変更を適用する)の手順3 の 2 と同じ操作）。その merge の run を `admin` の最初の run とし、次をすべて確かめる。段4 の準備で `admin` を作った push の run（secret の不在で落ちたもの）はこれに当たらない。run の URL を issue に残す（アカウント ID を載せない）
    - `apply-infra-code-gate`・`apply-resource-order-check`・`apply-layer-check`・`apply-root-check`・`apply-admin-identity`・`apply-admin-workload` が緑
    - `apply-admin-identity` のログの plan の要約が `No changes.`。`apply-admin-workload` は workload root の resource を作る
    - Policy の違反が無い
@@ -451,7 +463,7 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
 
    > **重要**: 手順4 で `No changes.` を確かめる前に、次の変更を昇格しない。
 
-4. 権限を足す変更では、足した Action と期待の判定を、同じ変更で `scripts/bootstrap-check` の `permissionSections` に足す。Condition を持つ Action は、条件キーを `simCtx` の context で与える。apply の後に実行する
+4. 権限を足す変更では、足した Action と期待の判定を、同じ変更で `scripts/bootstrap-check` の `permissionSections` に足す。Condition を持つ Action は、条件キーを `simCtx` の context で与える。一覧を受ける条件キー（Service Authorization Reference の型が `ArrayOfString`）は、`ctxList` で `stringList` として与える。apply の後に実行する
 
    ```bash
    make bootstrap-verify STAGE=permissions
@@ -464,6 +476,8 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
    ```bash
    make bootstrap-verify STAGE=output-policy POLICY_SOURCE=reference
    ```
+
+   reference の plan は、`make tf-policy` の出力の置き場から読む。そこの `plans.txt` に state-backend の plan が無ければ（`make tf-policy` を走らせていないか、state-backend の plan が落ちた）、評価せずに NG にする。
 
    `NG 0 件` で終了コード 0 であることを確かめ、出力を Pull Request に記録する。違えば merge しない。
 
@@ -615,7 +629,7 @@ credential_process = aws configure export-credentials --profile tabp-bootstrap -
 
 | 症状 | 対処 |
 | --- | --- |
-| 拒否の step が secret の不在で落ちた | secret を置き、「Re-run failed jobs」で再実行する |
+| 拒否の step が secret の不在で落ちた | secret を置き、「Re-run failed jobs」で再実行する。段4 の[適用前の準備](#適用前の準備)で `admin` を作った push の run は再実行しない |
 | `admin` の最初の apply が落ちた | 成功した apply が無いので、revert のブランチは用意されない。原因を直す変更をリリース線へ merge して昇格する。戻すなら、リリース線の先頭の上で `git revert -m 1 <失敗した admin の merge>` を行う Pull Request を merge してから昇格する |
 | 昇格の Pull Request で `deploy-source-check` が落ちた | ログの理由を見る。デフォルトブランチがリリース線でない（hotfix の間、最初のリリース線を切る前）なら、デフォルトブランチがリリース線に戻ってから昇格する。到達できない・木が一致しないなら、[`.github/workflows/README.md`](../../.github/workflows/README.md) の「apply の job」に従う |
 | `AccessDenied` で落ち、同じ apply が apply-identity の権限を変えている | CloudTrail で、拒否の時刻が、同じ apply の権限の更新（`PutRolePolicy`・`CreatePolicyVersion`・`AttachRolePolicy`）の成功の直後であれば、IAM の反映の遅れである。「Re-run failed jobs」で走らせ直し、緑になったら、用意された revert のブランチを消す。走らせ直しも同じ `AccessDenied` で落ちるなら、権限の不足である。直す変更を昇格する |

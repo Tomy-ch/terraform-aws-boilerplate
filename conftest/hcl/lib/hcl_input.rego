@@ -604,10 +604,11 @@ well_formed_attr(a, nblocks) if {
 	}
 }
 
-# 参照の列の各参照。層の検査が親を辿るのに読む（根・段・それを含む添字の位置 within）。
+# 参照の列の各参照。層の検査が親を辿るのに読む（根・段・それを含む添字の位置 within・for の条件の中か filter）。
 well_formed_ref(refs, r) if {
 	is_object(r)
-	{k | some k, _ in r} == {"root", "steps", "within"}
+	{k | some k, _ in r} == {"root", "steps", "within", "filter"}
+	is_boolean(r.filter)
 	non_empty_string(r.root)
 	is_array(r.steps)
 	every st in r.steps {

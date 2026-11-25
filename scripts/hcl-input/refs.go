@@ -32,11 +32,13 @@ const (
 
 // ref は、式の中の1つの参照です。Within は、この参照が添字の中に在るとき、その添字を持つ参照
 // （配列の位置）と段（Steps の位置）を、外側から祖先すべて持ちます。Rego が再帰なしで
-// 「どの添字の中か」を1段で判定できるようにするためです。
+// 「どの添字の中か」を1段で判定できるようにするためです。Filter は、この参照が for の条件（if）の
+// 中に在るかです。条件は要素を絞るだけで、要素の値を作りません。
 type ref struct {
 	Root   string   `json:"root"`
 	Steps  []step   `json:"steps"`
 	Within []within `json:"within"`
+	Filter bool     `json:"filter"`
 }
 
 type step struct {
@@ -64,10 +66,12 @@ type walker struct {
 	ranges []hcl.Range
 }
 
-// scope は、歩いている位置の文脈です。within は外側の添字、locals は for の反復変数の名前です。
+// scope は、歩いている位置の文脈です。within は外側の添字、locals は for の反復変数の名前、
+// filter は for の条件の中かです。
 type scope struct {
 	within []within
 	locals map[string]bool
+	filter bool
 }
 
 // walkExpr は、e の参照をソースの順に返します。参照の集合は hclsyntax の Variables() と突き合わせ、
@@ -98,7 +102,7 @@ func (w *walker) walk(e hclsyntax.Expression, sc scope) (int, error) {
 		if err != nil {
 			return -1, xerrors.Wrapf(err, "%s", e.Range())
 		}
-		w.refs = append(w.refs, ref{Root: e.Traversal.RootName(), Steps: steps, Within: append([]within{}, sc.within...)})
+		w.refs = append(w.refs, ref{Root: e.Traversal.RootName(), Steps: steps, Within: append([]within{}, sc.within...), Filter: sc.filter})
 		w.ranges = append(w.ranges, e.Traversal.SourceRange())
 
 		return len(w.refs) - 1, nil
@@ -142,7 +146,7 @@ func (w *walker) walk(e hclsyntax.Expression, sc scope) (int, error) {
 		if err := w.each(sc, e.CollExpr); err != nil {
 			return -1, err
 		}
-		inner := scope{within: sc.within, locals: map[string]bool{}}
+		inner := scope{within: sc.within, locals: map[string]bool{}, filter: sc.filter}
 		for name := range sc.locals {
 			inner.locals[name] = true
 		}
@@ -151,8 +155,13 @@ func (w *walker) walk(e hclsyntax.Expression, sc scope) (int, error) {
 				inner.locals[name] = true
 			}
 		}
+		if err := w.each(inner, e.KeyExpr, e.ValExpr); err != nil {
+			return -1, err
+		}
+		cond := inner
+		cond.filter = true
 
-		return -1, w.each(inner, e.KeyExpr, e.ValExpr, e.CondExpr)
+		return -1, w.each(cond, e.CondExpr)
 	case *hclsyntax.ObjectConsKeyExpr:
 		if !e.ForceNonLiteral && hcl.ExprAsKeyword(e.Wrapped) != "" {
 			return -1, nil

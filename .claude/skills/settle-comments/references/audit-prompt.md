@@ -77,7 +77,7 @@ A compile error, a test case, a `golangci-lint` rule（`errcheck` / `errorlint` 
 `actions-mise-pin-lint` / `pr-comment-secret-lint` / `pr-comment-fence-lint` / `actions-cutoff-lint` /
 `egress-check` / `pin-actions-check` / `pin-images-check` / `go-cooldown-gate` /
 `tool-cooldown-gate` / `shell-lint` / `actions-shellcheck` / `zizmor` / `actionlint` /
-`trivy-config`）, or a terraform-docs generated region — any of these means the fact already has a
+`trivy-config` / `checkov` / `kics` / `semgrep` / `tf-policy`）, or a terraform-docs generated region — any of these means the fact already has a
 guard and the comment is a second copy of it. Verdict **不要**.
 
 **Terraform 側の検査を守り手として名指しするのは、`make help` に在り、`AGENTS.md` *現在の配線状態* が
@@ -273,7 +273,8 @@ a comment left alone.
 ## Out of scope — do not flag
 
 - **Functional / directive comments** — `//go:generate`, `//nolint:...`, `//go:build`, `//go:embed`,
-  `// Code generated ... DO NOT EDIT`, `# tflint-ignore`, `# trivy:ignore`, shebangs,
+  `// Code generated ... DO NOT EDIT`, `# tflint-ignore`, `# trivy:ignore`, `#checkov:skip`,
+  `# kics-scan disable`, `# nosemgrep`, shebangs,
   `.makefiles/` の `##` ヘルプ注記。Not prose; never touch. **抑止に付いた理由と撤回条件も消さない**
   —— ADR-0501 決定13 がそれを要求しており、消せば抑止が理由を失う。
 - **Unresolved TODO / FIXME** — a legitimate marker whose code is not written yet.

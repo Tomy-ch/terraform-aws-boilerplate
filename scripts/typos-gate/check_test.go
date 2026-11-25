@@ -150,11 +150,25 @@ func Test_runCheck(t *testing.T) {
 		require.NoError(t, runCheck([]string{"-work", "tmp/w", "-config", cfg}, new(bytes.Buffer), passingFake(t).Tool(), isolated, root), "対照: 欠けも余りも無ければ通る")
 	})
 
-	t.Run("fixture を root の tmp の下に建て、終わりに消す", func(t *testing.T) {
+	t.Run("canary が落ちても -work を終わりに消す", func(t *testing.T) {
 		t.Parallel()
 		args, root := checkArgs(t)
-		f := passingFake(t)
+		err := runCheck(args, new(bytes.Buffer), tooltest.New(t).Tool(), isolated, root)
+		require.ErrorIs(t, err, errCanary)
+		assert.NoDirExists(t, filepath.Join(root, "tmp", "typos-gate"))
+	})
+
+	t.Run("fixture を root の tmp の下に、前の中身を消して建て、終わりに消す", func(t *testing.T) {
+		t.Parallel()
+		args, root := checkArgs(t)
+		writeFile(t, filepath.Join(root, "tmp", "typos-gate", "stale"), "")
+		f := tooltest.New(t, tooltest.WithPrelude(`if [ "$step" = "`+stepScan+`" ]; then if [ -e stale ]; then echo yes; else echo no; fi > "$ctl/stale.seen"; fi`))
+		f.Set(stepScan, "out", hiddenHit)
+		f.Set(stepScan, "rc", "2")
+		f.Set(stepFiles, "out", "./a.md\n./.github/w.yaml\n")
+		f.Set(stepLsFiles, "out", "a.md\x00.github/w.yaml\x00")
 		require.NoError(t, runCheck(args, new(bytes.Buffer), f.Tool(), isolated, root))
+		assert.Equal(t, "no\n", f.Read("stale.seen"), "canary の起動時に前の中身が残っていない")
 		calls := f.Calls()
 		require.NotEmpty(t, calls)
 		assert.Equal(t, filepath.Join(root, "tmp", "typos-gate")+" "+stepScan+" ", calls[0])

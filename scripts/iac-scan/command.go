@@ -63,8 +63,7 @@ func trivyStep(severity, format string) (scan, convert string, err error) {
 // command は toolFunc の実物です。引数は段ごとに固定で、可変の値は作業ディレクトリと、そこに置いたファイルで渡します。
 // イメージの段だけはリポジトリ直下の docker-compose.yaml を読みます。
 // 知らない段は道具を起動せずに落ちます。
-func command(dir string, env []string, step string) *exec.Cmd {
-	ctx := context.Background()
+func command(ctx context.Context, dir string, env []string, step string, _ ...string) *exec.Cmd {
 	var cmd *exec.Cmd
 	switch step {
 	case stepImageCheckov:

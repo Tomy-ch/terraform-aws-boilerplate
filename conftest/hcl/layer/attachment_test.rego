@@ -70,6 +70,17 @@ test_LY301_deny_variable if {
 	contains(m, "var.bucket")
 }
 
+test_LY301_allow_variable_in_for_condition if {
+	count(with_id(denies(fx("LY301_allow_variable_in_for_condition")), "LY301")) == 0
+}
+
+# 条件だけを外す。値の中の var は、条件を持つ for の中でも落とす。
+test_LY301_deny_variable_in_for_value if {
+	some m in with_id(denies(fx("LY301_deny_variable_in_for_value")), "LY301")
+	contains(m, "var.bucket")
+	not contains(m, "var.skip")
+}
+
 test_LY301_deny_data_source if {
 	some m in with_id(denies(fx("LY301_deny_data_source")), "LY301")
 	contains(m, "data.aws_s3_bucket")

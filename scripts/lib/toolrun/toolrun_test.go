@@ -23,7 +23,7 @@ func TestRun(t *testing.T) {
 		f.Set("s", "out", "O\n")
 		f.Set("s", "err", "E\n")
 		f.Set("s", "rc", "3")
-		r, err := Run(f.Tool()(t.TempDir(), nil, "s"))
+		r, err := Run(f.Tool()(context.Background(), t.TempDir(), nil, "s"))
 		require.NoError(t, err)
 		assert.Equal(t, "O\n", r.Stdout)
 		assert.Contains(t, r.Combined, "O\n")
@@ -35,7 +35,7 @@ func TestRun(t *testing.T) {
 		t.Parallel()
 		f := tooltest.New(t)
 		f.Set("s", "err", "E\n")
-		r, err := Run(f.Tool()(t.TempDir(), nil, "s"))
+		r, err := Run(f.Tool()(context.Background(), t.TempDir(), nil, "s"))
 		require.NoError(t, err)
 		assert.Empty(t, r.Stdout)
 		assert.Equal(t, "E\n", r.Combined)
@@ -44,7 +44,7 @@ func TestRun(t *testing.T) {
 
 	t.Run("起動できなければ ErrTool", func(t *testing.T) {
 		t.Parallel()
-		_, err := Run(tooltest.Missing(t.TempDir(), nil, "s"))
+		_, err := Run(tooltest.Missing(context.Background(), t.TempDir(), nil, "s"))
 		require.ErrorIs(t, err, ErrTool)
 	})
 
@@ -76,7 +76,7 @@ func TestExec(t *testing.T) {
 		f := tooltest.New(t)
 		f.Set("s", "out", "O\n")
 		f.Set("s", "rc", "7")
-		cmd := f.Tool()(t.TempDir(), nil, "s")
+		cmd := f.Tool()(context.Background(), t.TempDir(), nil, "s")
 		var out bytes.Buffer
 		cmd.Stdout = &out
 		code, err := Exec(cmd)
@@ -87,14 +87,14 @@ func TestExec(t *testing.T) {
 
 	t.Run("0 で終われば 0", func(t *testing.T) {
 		t.Parallel()
-		code, err := Exec(tooltest.New(t).Tool()(t.TempDir(), nil, "s"))
+		code, err := Exec(tooltest.New(t).Tool()(context.Background(), t.TempDir(), nil, "s"))
 		require.NoError(t, err)
 		assert.Equal(t, 0, code)
 	})
 
 	t.Run("起動できなければ ErrTool で、道具のパスを名指す", func(t *testing.T) {
 		t.Parallel()
-		cmd := tooltest.Missing(t.TempDir(), nil, "s")
+		cmd := tooltest.Missing(context.Background(), t.TempDir(), nil, "s")
 		_, err := Exec(cmd)
 		require.ErrorIs(t, err, ErrTool)
 		assert.Contains(t, err.Error(), cmd.Path)
@@ -104,7 +104,7 @@ func TestExec(t *testing.T) {
 		t.Parallel()
 		f := tooltest.New(t)
 		f.Set("s", "kill", "")
-		_, err := Exec(f.Tool()(t.TempDir(), nil, "s"))
+		_, err := Exec(f.Tool()(context.Background(), t.TempDir(), nil, "s"))
 		require.ErrorIs(t, err, ErrTool)
 		assert.Contains(t, err.Error(), "シグナル")
 	})
@@ -117,7 +117,7 @@ func Test_classify(t *testing.T) {
 		t.Helper()
 		f := tooltest.New(t)
 		set(f)
-		cmd := f.Tool()(t.TempDir(), nil, step)
+		cmd := f.Tool()(context.Background(), t.TempDir(), nil, step)
 		return cmd, cmd.Run()
 	}
 

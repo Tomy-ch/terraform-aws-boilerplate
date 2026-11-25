@@ -48,3 +48,7 @@ RUN_SCRIPT_HOST = sh -c 'set -eu; mkdir -p $(SCRIPT_BIN); \
 RUN_SCRIPT_HOST_ARGS = sh -c 'set -eu; mkdir -p $(SCRIPT_BIN); \
 	go -C scripts build -o "$$PWD/$(SCRIPT_BIN)/$(1)" ./$(1); \
 	exec "./$(SCRIPT_BIN)/$(1)" "$$@"' $(1)
+
+## literal_value は、変数 $(1) の値を返す。コマンドラインと環境から来た値は make に展開させず字面のまま返す
+## （ref の名前は $ を含みうる）。Makefile の中の既定は展開する。
+literal_value = $(if $(filter command environment,$(firstword $(origin $(1)))),$(value $(1)),$($(1)))

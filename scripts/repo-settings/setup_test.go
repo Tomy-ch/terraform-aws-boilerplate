@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/branchdecl"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -497,6 +498,17 @@ func Test_createDeployBranch(t *testing.T) {
 		assert.Zero(t, requestCount(f))
 	})
 
+	t.Run("branches.json が壊れていれば GitHub に問わずに失敗する", func(t *testing.T) {
+		t.Parallel()
+		broken := t.TempDir()
+		writeFile(t, broken, branchesFile, `{`)
+		f, c := newFakeGitHub(t, map[string]fakeResponse{})
+		err := deployBranchExists(context.Background(), broken, c, repo, "admin", &bytes.Buffer{})
+		require.ErrorIs(t, err, branchdecl.ErrDeclaration)
+		assert.NotErrorIs(t, err, errNoDeployEnv)
+		assert.Zero(t, requestCount(f))
+	})
+
 	t.Run("branches.json が無ければ GitHub に問わずに失敗する", func(t *testing.T) {
 		t.Parallel()
 		f, c := newFakeGitHub(t, map[string]fakeResponse{})
@@ -547,6 +559,79 @@ func Test_createDeployBranch(t *testing.T) {
 		require.ErrorIs(t, err, errHTTP)
 		assert.Contains(t, err.Error(), "422")
 		assert.Len(t, f.writes(), 1)
+	})
+}
+
+func Test_deployBranchExists(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	writeFile(t, root, branchesFile, sourceBranches)
+	branchPath := "GET /repos/o/r/branches/admin"
+
+	t.Run("在れば読み取りだけで成功する", func(t *testing.T) {
+		t.Parallel()
+		f, c := newFakeGitHub(t, map[string]fakeResponse{branchPath: ok(`{"name": "admin"}`)})
+		var out bytes.Buffer
+		require.NoError(t, deployBranchExists(context.Background(), root, c, repo, "admin", &out))
+		assert.Equal(t, 1, requestCount(f))
+		assert.Empty(t, f.writes())
+		assert.Equal(t, "✅ admin は o/r に在ります\n", out.String())
+	})
+
+	t.Run("404 なら errNoDeployBranch", func(t *testing.T) {
+		t.Parallel()
+		f, c := newFakeGitHub(t, map[string]fakeResponse{branchPath: {status: http.StatusNotFound, body: `{"message": "Branch not found"}`}})
+		var out bytes.Buffer
+		err := deployBranchExists(context.Background(), root, c, repo, "admin", &out)
+		require.ErrorIs(t, err, errNoDeployBranch)
+		assert.Contains(t, err.Error(), "admin")
+		assert.Empty(t, out.String())
+		assert.Equal(t, 1, requestCount(f))
+		assert.Empty(t, f.writes())
+	})
+
+	for name, status := range map[string]int{"5xx": http.StatusBadGateway, "403": http.StatusForbidden, "401": http.StatusUnauthorized} {
+		t.Run(name+" なら無いと言わずに errHTTP", func(t *testing.T) {
+			t.Parallel()
+			_, c := newFakeGitHub(t, map[string]fakeResponse{branchPath: {status: status, body: "x"}})
+			var out bytes.Buffer
+			err := deployBranchExists(context.Background(), root, c, repo, "admin", &out)
+			require.ErrorIs(t, err, errHTTP)
+			assert.NotErrorIs(t, err, errNoDeployBranch)
+			assert.Empty(t, out.String())
+		})
+	}
+
+	for name, body := range map[string]string{
+		"JSON でない":        `<html>`,
+		"name が無い":        `{}`,
+		"name が別のブランチを指す": `{"name": "main"}`,
+		"name が文字列でない":    `{"name": 1}`,
+	} {
+		t.Run(name+"応答なら errUnexpectedResponse", func(t *testing.T) {
+			t.Parallel()
+			_, c := newFakeGitHub(t, map[string]fakeResponse{branchPath: ok(body)})
+			var out bytes.Buffer
+			require.ErrorIs(t, deployBranchExists(context.Background(), root, c, repo, "admin", &out), errUnexpectedResponse)
+			assert.Empty(t, out.String())
+		})
+	}
+
+	for name, env := range map[string]string{"宣言に無い env": "prd", "空の env": ""} {
+		t.Run(name+"は GitHub に問わずに errNoDeployEnv", func(t *testing.T) {
+			t.Parallel()
+			f, c := newFakeGitHub(t, map[string]fakeResponse{})
+			require.ErrorIs(t, deployBranchExists(context.Background(), root, c, repo, env, &bytes.Buffer{}), errNoDeployEnv)
+			assert.Zero(t, requestCount(f))
+		})
+	}
+
+	t.Run("branches.json が無ければ GitHub に問わずに失敗する", func(t *testing.T) {
+		t.Parallel()
+		f, c := newFakeGitHub(t, map[string]fakeResponse{})
+		require.ErrorIs(t, deployBranchExists(context.Background(), t.TempDir(), c, repo, "admin", &bytes.Buffer{}), os.ErrNotExist)
+		assert.Zero(t, requestCount(f))
 	})
 }
 
