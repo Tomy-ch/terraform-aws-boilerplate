@@ -1,6 +1,6 @@
 mock_provider "aws" {
   mock_data "aws_ssm_parameter" {
-    defaults = { value = "{\"security\":\"security@example.com\",\"log-archive\":\"log-archive@example.com\"}" }
+    defaults = { value = "{\"security\":\"security@example.com\",\"log-archive\":\"log-archive@example.com\",\"dev\":\"dev@example.com\",\"stg\":\"stg@example.com\",\"prd\":\"prd@example.com\",\"sandbox\":\"sandbox@example.com\"}" }
   }
   mock_data "aws_caller_identity" {
     defaults = { account_id = "111111111111" }

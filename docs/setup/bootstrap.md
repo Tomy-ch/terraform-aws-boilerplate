@@ -196,7 +196,7 @@ Billing and Cost Management コンソール →「Cost Explorer」→「Launch C
 
 #### 2-5. メンバーアカウントのメールを置く
 
-段4 の apply は、security と log-archive のメンバーアカウントも作る。段2 の plan はそのメールを管理アカウントの parameter から読むので、parameter が無いと落ちる。[organization-baseline 手順書](organization-baseline.md#38-メンバーアカウントを作る) の手順1-3 を行う。
+段4 の apply は、メンバーアカウント（security・log-archive・dev・stg・prd・sandbox）も作る。段2 の plan はそのメールを管理アカウントの parameter から読むので、parameter が無いと落ちる。[organization-baseline 手順書](organization-baseline.md#38-メンバーアカウントを作る) の手順1-3 を行う。
 
 ### 段1. state Bucket を作る
 

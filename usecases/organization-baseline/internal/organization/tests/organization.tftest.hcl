@@ -1,6 +1,6 @@
 mock_provider "aws" {
   mock_data "aws_ssm_parameter" {
-    defaults = { value = "{\"security\":\"security@example.com\",\"log-archive\":\"log-archive@example.com\"}" }
+    defaults = { value = "{\"security\":\"security@example.com\",\"log-archive\":\"log-archive@example.com\",\"dev\":\"dev@example.com\",\"stg\":\"stg@example.com\",\"prd\":\"prd@example.com\",\"sandbox\":\"sandbox@example.com\"}" }
   }
   mock_resource "aws_organizations_organization" {
     defaults = {
@@ -15,7 +15,7 @@ variables {
   project               = "tabp"
   break_glass_role_name = "tabp-break-glass"
   break_glass_role_path = "/break-glass/"
-  bootstrapping         = ["security", "log-archive"]
+  bootstrapping         = ["security", "log-archive", "dev", "stg", "prd", "sandbox"]
 }
 
 override_resource {
@@ -30,7 +30,17 @@ override_resource {
 
 override_resource {
   target = aws_organizations_organizational_unit.workloads["Prod"]
-  values = { id = "ou-exam-prod" }
+  values = { id = "ou-exam-prodprod" }
+}
+
+override_resource {
+  target = aws_organizations_organizational_unit.workloads["NonProd"]
+  values = { id = "ou-exam-nonprodx" }
+}
+
+override_resource {
+  target = aws_organizations_organizational_unit.top["Sandbox"]
+  values = { id = "ou-exam-sandboxx" }
 }
 
 override_resource {
@@ -165,7 +175,7 @@ run "policies" {
   }
 
   assert {
-    condition     = jsondecode(aws_organizations_policy.this["data-perimeter-prod-resources"].content).Statement[0].Condition["ForAnyValue:StringLike"]["aws:ResourceOrgPaths"] == "o-exampleorg1/r-exam/ou-exam-workload/ou-exam-prod/*"
+    condition     = jsondecode(aws_organizations_policy.this["data-perimeter-prod-resources"].content).Statement[0].Condition["ForAnyValue:StringLike"]["aws:ResourceOrgPaths"] == "o-exampleorg1/r-exam/ou-exam-workload/ou-exam-prodprod/*"
     error_message = "下位の環境の SCP は Prod の OU の path の resource を拒んでください。"
   }
 
@@ -251,7 +261,7 @@ run "policies" {
       Action    = ["kms:*", "s3:*", "secretsmanager:*"]
       Resource  = "*"
       Condition = {
-        "ForAllValues:StringNotLike" = { "aws:PrincipalOrgPaths" = "o-exampleorg1/r-exam/ou-exam-workload/ou-exam-prod/*" }
+        "ForAllValues:StringNotLike" = { "aws:PrincipalOrgPaths" = "o-exampleorg1/r-exam/ou-exam-workload/ou-exam-prodprod/*" }
         BoolIfExists                 = { "aws:PrincipalIsAWSService" = "false" }
       }
     }
@@ -358,6 +368,10 @@ run "member_accounts" {
     condition = { for k, a in aws_organizations_account.this : k => [a.name, a.email, a.parent_id] } == {
       security      = ["tabp-security", "security@example.com", "ou-exam-security"]
       "log-archive" = ["tabp-log-archive", "log-archive@example.com", "ou-exam-security"]
+      dev           = ["tabp-dev", "dev@example.com", "ou-exam-nonprodx"]
+      stg           = ["tabp-stg", "stg@example.com", "ou-exam-nonprodx"]
+      prd           = ["tabp-prd", "prd@example.com", "ou-exam-prodprod"]
+      sandbox       = ["tabp-sandbox", "sandbox@example.com", "ou-exam-sandboxx"]
     }
     error_message = "メンバーアカウントの名前・メール・所属の OU が、対応表と parameter から組まれていません。"
   }
@@ -368,7 +382,7 @@ run "member_accounts" {
   }
 
   assert {
-    condition     = keys(output.account_ids) == ["log-archive", "security"] && output.bootstrapping_account_ids == output.account_ids
+    condition     = keys(output.account_ids) == ["dev", "log-archive", "prd", "sandbox", "security", "stg"] && output.bootstrapping_account_ids == output.account_ids
     error_message = "account_ids と、すべてが立ち上げ中のときの bootstrapping_account_ids が、作ったアカウントの ID を返していません。"
   }
 
@@ -382,7 +396,7 @@ run "bootstrap_finished" {
   command = apply
 
   variables {
-    bootstrapping = ["log-archive"]
+    bootstrapping = ["log-archive", "dev", "stg", "prd", "sandbox"]
   }
 
   assert {
@@ -391,7 +405,7 @@ run "bootstrap_finished" {
   }
 
   assert {
-    condition     = keys(output.bootstrapping_account_ids) == ["log-archive"]
+    condition     = keys(output.bootstrapping_account_ids) == ["dev", "log-archive", "prd", "sandbox", "stg"]
     error_message = "bootstrapping_account_ids が、立ち上げ中のアカウントだけを返していません。"
   }
 }
@@ -412,7 +426,7 @@ run "emails_must_be_addresses" {
 
   override_data {
     target = data.aws_ssm_parameter.member_account_emails
-    values = { value = "{\"security\":\"security@example.com\",\"log-archive\":\"not-an-address\"}" }
+    values = { value = "{\"security\":\"security@example.com\",\"log-archive\":\"not-an-address\",\"dev\":\"dev@example.com\",\"stg\":\"stg@example.com\",\"prd\":\"prd@example.com\",\"sandbox\":\"sandbox@example.com\"}" }
   }
 
   expect_failures = [aws_organizations_account.this["log-archive"]]

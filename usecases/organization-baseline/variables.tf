@@ -16,12 +16,12 @@ variable "project" {
 }
 
 variable "bootstrapping" {
-  description = "立ち上げ中のメンバーアカウントの env（`security`・`log-archive`）。管理アカウントの identity root がメンバーの `state-backend`・`deployment-identity` を作り終えるまで入れておく。ここに無いアカウントでは `OrganizationAccountAccessRole` の使用を SCP が拒む。"
+  description = "立ち上げ中のメンバーアカウントの env（`security`・`log-archive`・`dev`・`stg`・`prd`・`sandbox`）。管理アカウントの identity root がメンバーの `state-backend`・`deployment-identity` を作り終えるまで入れておく。ここに無いアカウントでは `OrganizationAccountAccessRole` の使用を SCP が拒む。"
   type        = set(string)
   default     = []
 
   validation {
-    condition     = alltrue([for e in var.bootstrapping : contains(["security", "log-archive"], e)])
-    error_message = "bootstrapping はメンバーアカウントの env（security・log-archive）だけにしてください。"
+    condition     = alltrue([for e in var.bootstrapping : contains(["security", "log-archive", "dev", "stg", "prd", "sandbox"], e)])
+    error_message = "bootstrapping はメンバーアカウントの env（security・log-archive・dev・stg・prd・sandbox）だけにしてください。"
   }
 }

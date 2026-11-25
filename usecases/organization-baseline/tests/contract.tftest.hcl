@@ -1,7 +1,7 @@
 # 公開 output の名前と、それが返す値の配線を固定する（repository-wide/ADR-0202 決定4）。
 mock_provider "aws" {
   mock_data "aws_ssm_parameter" {
-    defaults = { value = "{\"security\":\"security@example.com\",\"log-archive\":\"log-archive@example.com\"}" }
+    defaults = { value = "{\"security\":\"security@example.com\",\"log-archive\":\"log-archive@example.com\",\"dev\":\"dev@example.com\",\"stg\":\"stg@example.com\",\"prd\":\"prd@example.com\",\"sandbox\":\"sandbox@example.com\"}" }
   }
   mock_data "aws_caller_identity" {
     defaults = { account_id = "111111111111" }
@@ -53,7 +53,7 @@ run "outputs" {
   }
 
   assert {
-    condition     = output.account_ids == module.organization.account_ids && keys(output.account_ids) == ["log-archive", "security"]
+    condition     = output.account_ids == module.organization.account_ids && keys(output.account_ids) == ["dev", "log-archive", "prd", "sandbox", "security", "stg"]
     error_message = "account_ids が、メンバーアカウントの env から ID への map を返していません。"
   }
 

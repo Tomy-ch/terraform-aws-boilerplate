@@ -19,7 +19,7 @@
 - root の資格情報の中央管理が有効で、この後に作るメンバーアカウントは root の資格情報を持たない
 - 管理アカウントに break-glass の IAM user が2つ在り、それぞれにパスワードとハードウェア MFA が設定されている
 - 管理アカウントの password policy が、14文字以上・24世代の再利用の禁止・4種の文字を求める
-- Security OU にメンバーアカウント security と log-archive が在り、それぞれに break-glass の role が StackSet で置かれている
+- メンバーアカウント security と log-archive が Security OU に、dev と stg が NonProd OU に、prd が Prod OU に、sandbox が Sandbox OU に在り、それぞれに break-glass の role が StackSet で置かれている
 
 ## 3. 手順
 
@@ -136,11 +136,11 @@ declarative policy は、付ける前に account status report で影響を見�
 3. 管理アカウントの資格情報で、メールの parameter を置く。key は対応表の env のすべてで、過不足があると plan が落ちる
 
    ```sh
-   aws ssm put-parameter --region ap-northeast-1 --type String --overwrite --name /<project>/organization-baseline/member-account-emails --value '{"security":"<メール>","log-archive":"<メール>"}'
+   aws ssm put-parameter --region ap-northeast-1 --type String --overwrite --name /<project>/organization-baseline/member-account-emails --value '{"security":"<メール>","log-archive":"<メール>","dev":"<メール>","stg":"<メール>","prd":"<メール>","sandbox":"<メール>"}'
    ```
 
 4. 変更を昇格した後、次を確かめて Pull Request に書く
-   1. `aws organizations list-accounts-for-parent --parent-id <Security の OU の ID>` に、作ったアカウントが `ACTIVE` で在る
+   1. `aws organizations list-accounts-for-parent --parent-id <置いた OU の ID>` に、作ったアカウントが `ACTIVE` で在る
    2. 3.5 の「メンバーアカウントを作る変更が昇格した後」の2つ（stack instance が `CURRENT`、break-glass の role への切り替え）
    3. 次の CI の plan が変更を示さない
 

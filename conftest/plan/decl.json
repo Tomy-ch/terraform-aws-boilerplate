@@ -554,6 +554,22 @@
         "log-archive": {
           "address": "module.organization_baseline.module.organization.aws_organizations_account.this[\"log-archive\"]",
           "ou": "Security"
+        },
+        "dev": {
+          "address": "module.organization_baseline.module.organization.aws_organizations_account.this[\"dev\"]",
+          "ou": "NonProd"
+        },
+        "stg": {
+          "address": "module.organization_baseline.module.organization.aws_organizations_account.this[\"stg\"]",
+          "ou": "NonProd"
+        },
+        "prd": {
+          "address": "module.organization_baseline.module.organization.aws_organizations_account.this[\"prd\"]",
+          "ou": "Prod"
+        },
+        "sandbox": {
+          "address": "module.organization_baseline.module.organization.aws_organizations_account.this[\"sandbox\"]",
+          "ou": "Sandbox"
         }
       },
       "policies": {

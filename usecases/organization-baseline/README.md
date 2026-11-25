@@ -17,7 +17,7 @@ AWS Organizations の組織と OU、SCP・RCP・declarative policy、root の資
 | 入力 | 型 | 意味 |
 | --- | --- | --- |
 | `project` | `string`（英小文字と数字、38文字以内） | policy の名前 `<project>-<policy>` と break-glass の role の名前 `<project>-break-glass` の先頭。SCP はメンバーの state Bucket と CI の role を `deployment-identity`・`state-backend` と同じ token で名指すので、それらと同じ値を渡す。最も長いアカウント名 `<project>-log-archive` を Organizations の上限の50文字に収める |
-| `bootstrapping` | `set(string)`（`security`・`log-archive` のいずれか。既定 `[]`） | 立ち上げ中のメンバーアカウントの env。ここに無いアカウントでは、`OrganizationAccountAccessRole` の使用を SCP（`deny-bootstrap-role`）が拒む。管理アカウントの identity root が、メンバーの `state-backend`・`deployment-identity` を作り終えるまで入れておき、外す PR で立ち上げを閉じる |
+| `bootstrapping` | `set(string)`（`security`・`log-archive`・`dev`・`stg`・`prd`・`sandbox` のいずれか。既定 `[]`） | 立ち上げ中のメンバーアカウントの env。ここに無いアカウントでは、`OrganizationAccountAccessRole` の使用を SCP（`deny-bootstrap-role`）が拒む。管理アカウントの identity root が、メンバーの `state-backend`・`deployment-identity` を作り終えるまで入れておき、外す PR で立ち上げを閉じる |
 
 | 出力 | 使う側 |
 | --- | --- |
@@ -36,7 +36,7 @@ AWS Organizations の組織と OU、SCP・RCP・declarative policy、root の資
 - OU の木: Root の直下に Security・Workloads・Sandbox・PolicyStaging、Workloads の下に Prod・NonProd（[organization-baseline/ADR-0101](docs/adr/0101-organizational-units-and-policies.md)）
 - SCP 10個・RCP 2つ・EC2 の declarative policy 1つと、その付け先。Root には組織からの離脱とアカウントの閉鎖の拒否だけを付け、ほかは PolicyStaging に付ける。最終の付け先は [organization-baseline/ADR-0101](docs/adr/0101-organizational-units-and-policies.md) 決定5-7 が持つ
 - 管理アカウントの break-glass の IAM user 2つ、group とその policy、break-glass の role（`AdministratorAccess`）、IAM の password policy（[organization-baseline/ADR-0201](docs/adr/0201-break-glass.md)）
-- メンバーアカウント security と log-archive（Security OU）。env と OU の対応表は `internal/organization/accounts.tf` の1つの local が持つ。`OrganizationAccountAccessRole`・請求情報への IAM の到達・閉じない削除は書かず、AWS と Provider の既定に任せる（Provider の Read はこの3つを state に書かないので、書くと import の後に作り直しの差分が出る）。名前は `<project>-<env>` で変えない
+- メンバーアカウント security と log-archive（Security OU）、dev と stg（NonProd OU）、prd（Prod OU）、sandbox（Sandbox OU）。env と OU の対応表は `internal/organization/accounts.tf` の1つの local が持つ。`OrganizationAccountAccessRole`・請求情報への IAM の到達・閉じない削除は書かず、AWS と Provider の既定に任せる（Provider の Read はこの3つを state に書かないので、書くと import の後に作り直しの差分が出る）。名前は `<project>-<env>` で変えない
 - 立ち上げを終えたメンバーアカウントに付ける `deny-bootstrap-role`（アカウントごと）
 - メンバーアカウントの break-glass の role を配る CloudFormation の StackSet（service-managed、自動展開）と、組織の Root を対象にした stack instance（[organization-baseline/ADR-0202](docs/adr/0202-member-break-glass-via-stacksets.md)）
 
