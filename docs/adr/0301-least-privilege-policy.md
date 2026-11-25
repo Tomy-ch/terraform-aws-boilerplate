@@ -77,7 +77,7 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
 
 13. ネットワークの既定をdeny とする。必要な通信のみを許可する。
 14. ingressは、可能な限りsource security groupの参照で限定する。CIDRによる許可は、security group参照が不可能な場合に限る。
-15. `0.0.0.0/0` からのingressは、インターネット公開点として設計されたコンポーネント（ロードバランサ、CDN等）に限る。workload本体への直接ingressを許可しない。
+15. `0.0.0.0/0` と `::/0` からのingressは、インターネット公開点として設計されたコンポーネント（ロードバランサ、CDN等）に限る。workload本体への直接ingressを許可しない。
 16. egressについても、ユースケースごとに必要な範囲を定義する。全開放を既定としない。
 17. 利用者が通信経路を追加する必要がある場合は、接続先を意味論的に指定する契約として定義する（ADR-0204 決定7）。
 
@@ -176,11 +176,11 @@ IAM Identity Center の文書の手順である。外部 IdP を前提とし、I
 - Policy Test（必須）: 以下をinvariantとして検証する。
   - policy document の Allow の statement に Action wildcard が存在しないこと
   - Resource wildcard が、許可リストに登録されたaction以外で使用されていないこと。同じ範囲を与える `NotResource` の Allow が無いこと。許可リストに、使われていない action が残っていないこと
-  - `0.0.0.0/0` からのingressが、インターネット公開点として宣言されたresource以外に存在しないこと
+  - `0.0.0.0/0` と `::/0` からのingressが、インターネット公開点として宣言されたresource以外に存在しないこと
   - 暗号化・public access block・secure transport等のSecure by Default設定が有効であること
   - 意味論的権限指定から生成されたActionの集合が、期待集合と完全一致すること
   - KMS Key Policy のアカウントへの委任に暗号操作と `kms:CreateGrant` が無いこと。identity-based policy（role・user・group の inline policy と customer managed policy）の Allow に KMS の暗号操作と `kms:CreateGrant` が無いこと
-  - break-glass の IAM user がちょうど2つで、Terraform がアクセスキーと login profile を持たないこと。IAM user の Allow が break-glass の role の `sts:AssumeRole` と自身の MFA・パスワードの管理に限られ、`iam:CreateAccessKey` を Deny していること
+  - break-glass の IAM user がちょうど2つで、Terraform がアクセスキーと login profile を持たないこと。IAM user の Allow が break-glass の role の `sts:AssumeRole` と自身の MFA・パスワードの管理に限られ、長期の資格情報の作成（`iam:CreateAccessKey`・`iam:CreateServiceSpecificCredential`・`iam:UploadSSHPublicKey`・`iam:UploadSigningCertificate`）を、条件なしで全 Resource について Deny していること
   - break-glass の role の信頼条件が、break-glass の IAM user の ARN と `aws:MultiFactorAuthPresent` を要求すること
   - 決定8・10 の例外（`AdministratorAccess`）が break-glass の role にだけ付いていること
   - SCP の除外が、回復を妨げる拒否についての break-glass の role の ARN に限られること

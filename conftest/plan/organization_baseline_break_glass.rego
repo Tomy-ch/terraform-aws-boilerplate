@@ -1,4 +1,4 @@
-# break-glass の形（ADR-0301 決定19 の検証方法、organization-baseline/ADR-0201。conftest/plan/README.md の
+# break-glass の形（ADR-0301 決定19・20、organization-baseline/ADR-0201。conftest/plan/README.md の
 # plan.organization_baseline_break_glass）。
 package plan.organization_baseline_break_glass
 
@@ -135,17 +135,22 @@ deny contains msg if {
 	msg := "[PLAN-BG-02] break-glass の group の Allow が NotAction を使っています"
 }
 
+long_term_credential_actions := ["iam:createaccesskey", "iam:createservicespecificcredential", "iam:uploadsshpublickey", "iam:uploadsigningcertificate"]
+
 deny contains msg if {
 	body(object.get(bg, "group_policy", ""), "policy")
-	not denies_access_keys
-	msg := "[PLAN-BG-02] break-glass の group が iam:CreateAccessKey を拒んでいません"
+	some a in long_term_credential_actions
+	not denies_unconditionally(a)
+	msg := sprintf("[PLAN-BG-02] break-glass の group が %s を、条件なしで全 Resource について拒んでいません", [a])
 }
 
-denies_access_keys if {
+denies_unconditionally(action) if {
 	some s in group_statements
 	s.Effect == "Deny"
-	"iam:createaccesskey" in lib.lower_all(s.Action)
-	s.Resource == "*"
+	not "Condition" in object.keys(s)
+	{r | some r in lib.as_array(object.get(s, "Resource", []))} == {"*"}
+	some pattern in lib.lower_all(s.Action)
+	lib.iam_match(pattern, action)
 }
 
 deny contains msg if {

@@ -39,6 +39,11 @@ var (
 	// 使うかを読まないので、region ごとの宛先の過不足を判定できない。
 	errRegionNotOne = xerrors.New("root の aws の provider の region が 1 つではありません")
 	errBlockCount   = xerrors.New("Terraform のブロックの件数が字面と解析で一致しません")
+	// errNoReferenceRoots は usecase の reference の root が 1 件も無いエラー。region の解決を事前に見る対象が無い。
+	errNoReferenceRoots = xerrors.New("usecases/*/reference の root が 1 件もありません")
+	// errReferenceMissing は reference の root を持たない usecase のエラー（ADR-0401 決定11）。持たない usecase は、
+	// region の解決の事前の検査から黙って外れる。
+	errReferenceMissing = xerrors.New("reference の root を持たない usecase があります")
 )
 
 var typeBlocks = map[string]bool{"resource": true, "data": true, "ephemeral": true, "action": true}
@@ -139,6 +144,38 @@ func (s *ssot) checkEndpoints(repo string, ran map[string]rootRuns) error {
 	return s.requireRoots()
 }
 
+// checkReferenceRegions は usecase の reference の root を辿り、どのブロックの region も読めることを確かめる。宛先は
+// 求めない。CI の root が usecase を呼ぶ前に、region を解けない形を、その usecase の変更で落とすためである。
+func checkReferenceRegions(repo string) error {
+	dirs, err := filepath.Glob(filepath.Join(repo, "usecases", "*", "reference"))
+	if err != nil {
+		return xerrors.Wrap(err, "glob reference")
+	}
+	if len(dirs) == 0 {
+		return errNoReferenceRoots
+	}
+	usecases, err := filepath.Glob(filepath.Join(repo, "usecases", "*", "*.tf"))
+	if err != nil {
+		return xerrors.Wrap(err, "glob usecases")
+	}
+	has := map[string]bool{}
+	for _, d := range dirs {
+		has[filepath.Dir(d)] = true
+	}
+	for _, f := range usecases {
+		if u := filepath.Dir(f); !has[u] {
+			return xerrors.Wrap(errReferenceMissing, filepath.ToSlash(relTo(repo, u)))
+		}
+	}
+	for _, d := range dirs {
+		rel := filepath.ToSlash(filepath.Join("usecases", filepath.Base(filepath.Dir(d)), "reference"))
+		if _, _, err := collectTypes(repo, rel); err != nil {
+			return xerrors.Wrap(err, "reference "+rel)
+		}
+	}
+	return nil
+}
+
 // requireRoots は、いずれかの type の宛先を許すジョブが、どれかの root に名指されていることを見る。
 // root の宣言だけを起点にすると、宣言し忘れた root を実行するジョブは突き合わせを受けずに通る。
 func (s *ssot) requireRoots() error {
@@ -217,8 +254,13 @@ func collectTypes(repo, root string) (typeRegions, []string, error) {
 		return nil, nil, xerrors.Wrap(err, "open "+repo)
 	}
 	defer func() { _ = r.Close() }()
+	w := newWalker(r, root)
 	found, visited := typeRegions{}, map[string]bool{}
-	if err := walkModule(r, root, found, visited); err != nil {
+	rootMod, err := w.load(root)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := w.walk(&scope{mod: rootMod}, found, visited, map[string]bool{}); err != nil {
 		return nil, nil, err
 	}
 	if len(found) == 0 {
@@ -312,18 +354,38 @@ func providerRegions(repo string, dirs []string) ([]string, error) {
 	defer func() { _ = r.Close() }()
 	found := map[string]bool{}
 	for _, dir := range dirs {
-		files, err := fs.Glob(r.FS(), path.Join(dir, "*.tf"))
-		if err != nil {
-			return nil, xerrors.Wrap(err, "glob "+dir)
-		}
-		for _, f := range files {
-			if err := fileRegions(r, f, found); err != nil {
-				return nil, xerrors.Wrap(err, f)
-			}
+		if err := dirRegions(r, dir, found); err != nil {
+			return nil, err
 		}
 	}
 	if len(found) == 0 {
 		return nil, xerrors.Wrap(errRegionUnknown, "aws の provider がありません")
+	}
+	return sortedKeys(found), nil
+}
+
+// dirRegions は dir の *.tf にある aws の provider の region を found へ足す。
+func dirRegions(repo *os.Root, dir string, found map[string]bool) error {
+	files, err := fs.Glob(repo.FS(), path.Join(dir, "*.tf"))
+	if err != nil {
+		return xerrors.Wrap(err, "glob "+dir)
+	}
+	for _, f := range files {
+		if err := fileRegions(repo, f, found); err != nil {
+			return xerrors.Wrap(err, f)
+		}
+	}
+	return nil
+}
+
+// fileRegionsIn は dir の *.tf にある aws の provider の region を整列して返す。
+func fileRegionsIn(repo *os.Root, dir string) ([]string, error) {
+	found := map[string]bool{}
+	if err := dirRegions(repo, dir, found); err != nil {
+		return nil, err
+	}
+	if len(found) == 0 {
+		return nil, xerrors.Wrap(errRegionUnknown, dir+": aws の provider がありません")
 	}
 	return sortedKeys(found), nil
 }
@@ -367,44 +429,122 @@ func regionLiteral(attr *hclsyntax.Attribute) (string, bool) {
 	return value.AsString(), true
 }
 
-// walkModule は dir の *.tf を読み、型を found へ足し、呼ぶ module へ降りる。dir は repo 直下からの
-// スラッシュ区切りのパス。*.tf.json は読まないので、在れば拒む。symlink は宣言した木の外を読ませるので拒む。
-func walkModule(repo *os.Root, dir string, found typeRegions, visited map[string]bool) error {
-	if visited[dir] {
-		return nil
+// parsedFile は module のディレクトリの 1 つの *.tf の字面と解析の結果。
+type parsedFile struct {
+	name string
+	src  []byte
+	body *hclsyntax.Body
+}
+
+// walker は module のディレクトリを 1 回だけ読み、呼び出しごとに辿る。同じ module を別の引数で呼ぶと、
+// for_each の集合が呼び出しごとに違いうるからである。
+type walker struct {
+	repo   *os.Root
+	files  map[string][]parsedFile
+	mods   map[string]*moduleInfo
+	region regionEvaluator
+}
+
+func newWalker(repo *os.Root, root string) *walker {
+	w := &walker{repo: repo, files: map[string][]parsedFile{}, mods: map[string]*moduleInfo{}}
+	provider := ""
+	w.region = regionEvaluator{
+		load:   w.load,
+		active: map[string]bool{},
+		rootRegion: func() (string, error) {
+			if provider != "" {
+				return provider, nil
+			}
+			regions, err := fileRegionsIn(repo, root)
+			if err != nil {
+				return "", err
+			}
+			if len(regions) != 1 {
+				return "", xerrors.Wrap(errRegionNotOne, strings.Join(regions, ", "))
+			}
+			provider = regions[0]
+			return provider, nil
+		},
 	}
-	visited[dir] = true
-	if err := rejectSymlink(repo, dir); err != nil {
-		return xerrors.Wrap(err, dir)
+	return w
+}
+
+// load は dir の *.tf を読んで解析する。dir は repo 直下からのスラッシュ区切りのパス。*.tf.json は読まないので、
+// 在れば拒む。symlink は宣言した木の外を読ませるので拒む。
+func (w *walker) load(dir string) (*moduleInfo, error) {
+	if m, ok := w.mods[dir]; ok {
+		return m, nil
 	}
-	jsons, err := fs.Glob(repo.FS(), path.Join(dir, "*.tf.json"))
+	if !filepath.IsLocal(dir) {
+		return nil, xerrors.Wrap(errModuleSource, dir+"（リポジトリの外を指します）")
+	}
+	if err := rejectSymlink(w.repo, dir); err != nil {
+		return nil, xerrors.Wrap(err, dir)
+	}
+	jsons, err := fs.Glob(w.repo.FS(), path.Join(dir, "*.tf.json"))
 	if err != nil {
-		return xerrors.Wrap(err, "glob "+dir)
+		return nil, xerrors.Wrap(err, "glob "+dir)
 	}
 	if len(jsons) > 0 {
-		return xerrors.Wrap(errTerraformSyntax, jsons[0]+"（*.tf.json は読めません）")
+		return nil, xerrors.Wrap(errTerraformSyntax, jsons[0]+"（*.tf.json は読めません）")
 	}
-	files, err := fs.Glob(repo.FS(), path.Join(dir, "*.tf"))
+	names, err := fs.Glob(w.repo.FS(), path.Join(dir, "*.tf"))
 	if err != nil {
-		return xerrors.Wrap(err, "glob "+dir)
+		return nil, xerrors.Wrap(err, "glob "+dir)
 	}
-	if len(files) == 0 {
-		return xerrors.Wrap(errNoTerraform, dir)
+	if len(names) == 0 {
+		return nil, xerrors.Wrap(errNoTerraform, dir)
 	}
-	for _, f := range files {
-		if err := rejectSymlink(repo, f); err != nil {
-			return xerrors.Wrap(err, f)
+	var files []parsedFile
+	var bodies []*hclsyntax.Body
+	for _, f := range names {
+		if err := rejectSymlink(w.repo, f); err != nil {
+			return nil, xerrors.Wrap(err, f)
 		}
-		sources, err := scanTerraformFile(repo, f, found)
+		src, err := w.repo.ReadFile(f)
 		if err != nil {
-			return xerrors.Wrap(err, f)
+			return nil, xerrors.Wrap(err, f+": read")
 		}
-		for _, src := range sources {
-			next := path.Join(dir, src)
-			if !filepath.IsLocal(next) {
-				return xerrors.Wrap(errModuleSource, f+": "+src+"（リポジトリの外を指します）")
+		parsed, diags := hclsyntax.ParseConfig(src, f, hcl.InitialPos)
+		if diags.HasErrors() {
+			return nil, xerrors.Wrap(errTerraformSyntax, f+": "+diags.Error())
+		}
+		body, ok := parsed.Body.(*hclsyntax.Body)
+		if !ok {
+			return nil, xerrors.Wrap(errTerraformSyntax, f+": 本体を読めません")
+		}
+		files = append(files, parsedFile{name: f, src: src, body: body})
+		bodies = append(bodies, body)
+	}
+	m, err := readModuleInfo(dir, bodies)
+	if err != nil {
+		return nil, err
+	}
+	w.files[dir], w.mods[dir] = files, m
+	return m, nil
+}
+
+// walk は sc の module の型を found へ足し、呼ぶ module へ呼び出しの文脈ごとに降りる。stack は呼び出しの循環を拒む。
+func (w *walker) walk(sc *scope, found typeRegions, visited, stack map[string]bool) error {
+	dir := sc.mod.dir
+	if stack[dir] {
+		return xerrors.Wrap(errModuleSource, dir+"（module の呼び出しが循環しています）")
+	}
+	stack[dir] = true
+	defer delete(stack, dir)
+	visited[dir] = true
+	for _, f := range w.files[dir] {
+		calls, err := w.scanFile(f, sc, found)
+		if err != nil {
+			return xerrors.Wrap(err, f.name)
+		}
+		for _, name := range calls {
+			call := sc.mod.calls[name]
+			child, err := w.load(path.Join(dir, call.source))
+			if err != nil {
+				return xerrors.Wrap(err, f.name)
 			}
-			if err := walkModule(repo, next, found, visited); err != nil {
+			if err := w.walk(&scope{mod: child, args: call.args, caller: sc}, found, visited, stack); err != nil {
 				return err
 			}
 		}
@@ -433,27 +573,15 @@ func rejectSymlink(repo *os.Root, name string) error {
 	return nil
 }
 
-// scanTerraformFile は 1 ファイルの resource / data / ephemeral / action の型（check の中の data を含む）を
-// found へ足し、module の source を返す。解析で数えたブロックを字面の件数と突き合わせる。
-func scanTerraformFile(repo *os.Root, file string, found typeRegions) ([]string, error) {
-	src, err := repo.ReadFile(file)
-	if err != nil {
-		return nil, xerrors.Wrap(err, "read")
-	}
-	parsed, diags := hclsyntax.ParseConfig(src, file, hcl.InitialPos)
-	if diags.HasErrors() {
-		return nil, xerrors.Wrap(errTerraformSyntax, diags.Error())
-	}
-	body, ok := parsed.Body.(*hclsyntax.Body)
-	if !ok {
-		return nil, xerrors.Wrap(errTerraformSyntax, "本体を読めません")
-	}
-	var sources []string
+// scanFile は 1 ファイルの resource / data / ephemeral / action の型（check の中の data を含む）を found へ足し、
+// module の呼び出しの名前を返す。解析で数えたブロックを字面の件数と突き合わせる。
+func (w *walker) scanFile(f parsedFile, sc *scope, found typeRegions) ([]string, error) {
+	var calls []string
 	counted := 0
-	for _, b := range body.Blocks {
+	for _, b := range f.body.Blocks {
 		switch {
 		case typeBlocks[b.Type]:
-			if err := addType(b, found); err != nil {
+			if err := w.addType(b, sc, found); err != nil {
 				return nil, err
 			}
 			counted++
@@ -462,29 +590,28 @@ func scanTerraformFile(repo *os.Root, file string, found typeRegions) ([]string,
 				if nested.Type != "data" {
 					continue
 				}
-				if err := addType(nested, found); err != nil {
+				if err := w.addType(nested, sc, found); err != nil {
 					return nil, err
 				}
 				counted++
 			}
 		case b.Type == "module":
-			source, err := moduleSource(b.Body)
-			if err != nil {
-				return nil, xerrors.Wrap(err, fmt.Sprintf("%d 行目: module %q", b.TypeRange.Start.Line, strings.Join(b.Labels, ".")))
+			if len(b.Labels) != 1 || sc.mod.calls[b.Labels[0]] == nil {
+				return nil, xerrors.Wrap(errModuleSource, fmt.Sprintf("%d 行目: module %q", b.TypeRange.Start.Line, strings.Join(b.Labels, ".")))
 			}
-			sources = append(sources, source)
+			calls = append(calls, b.Labels[0])
 			counted++
 		}
 	}
-	if lines := len(blockLineRe.FindAllIndex(src, -1)); lines != counted {
+	if lines := len(blockLineRe.FindAllIndex(f.src, -1)); lines != counted {
 		return nil, xerrors.Wrap(errBlockCount, fmt.Sprintf("解析 %d 件 / 字面 %d 件", counted, lines))
 	}
-	return sources, nil
+	return calls, nil
 }
 
-// addType は型を持つブロックのラベルの先頭と、ブロックを置く region（region 引数のリテラル。無ければ空文字列）を
-// found へ足す。
-func addType(b *hclsyntax.Block, found typeRegions) error {
+// addType は型を持つブロックのラベルの先頭と、ブロックを置く region を found へ足す。region は region 引数の
+// リテラルで、無ければ空文字列。`region = each.key` だけは、for_each を解いた集合の各 region とする。
+func (w *walker) addType(b *hclsyntax.Block, sc *scope, found typeRegions) error {
 	if len(b.Labels) != 2 {
 		return xerrors.Wrap(errTerraformSyntax, fmt.Sprintf("%d 行目: %s のラベルが 2 つではありません", b.TypeRange.Start.Line, b.Type))
 	}
@@ -493,16 +620,25 @@ func addType(b *hclsyntax.Block, found typeRegions) error {
 	if err != nil {
 		return xerrors.Wrap(err, at)
 	}
-	region := ""
-	if ok {
-		if region, ok = regionLiteral(attr); !ok {
+	regions := []string{""}
+	switch {
+	case ok && isEachKey(attr.Expr):
+		if regions, err = w.region.forEachRegions(b, sc); err != nil {
+			return xerrors.Wrap(err, at)
+		}
+	case ok:
+		region, literal := regionLiteral(attr)
+		if !literal {
 			return xerrors.Wrap(errBlockRegion, at)
 		}
+		regions = []string{region}
 	}
 	if found[b.Labels[0]] == nil {
 		found[b.Labels[0]] = map[string]bool{}
 	}
-	found[b.Labels[0]][region] = true
+	for _, r := range regions {
+		found[b.Labels[0]][r] = true
+	}
 	return nil
 }
 
