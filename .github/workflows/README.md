@@ -166,7 +166,7 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
   `apply/` の下へ apply-identity の role が置き、workload root なら apply の出力の Bucket へ apply の role が
   置く（ADR-0602 決定13）。Bucket の名前と key を得た後は、plan・Policy・apply の
   どこで失敗しても全文を置いてから失敗する。apply には job の `timeout-minutes` より短い時間
-  （`ci.mk` の `CI_APPLY_TIMEOUT`）で SIGINT を送り、terraform がそれで止まれば全文を置いてから失敗する。
+  （`scripts/tf-local` の `applyTimeout`）で SIGINT を送り、terraform がそれで止まれば全文を置いてから失敗する。
   job の cancel か `timeout-minutes` の到達で止まったときと、置き場への書き込みが失敗したときは、全文を置けない
 - **AWS のアカウント ID は environment `admin-apply-identity` と `admin-apply` の secret `AWS_ACCOUNT_ID` に置く。**
   無ければ拒否の step で失敗する。置いてから「Re-run failed jobs」で再実行する（先頭の commit のままなら通る）
@@ -196,12 +196,12 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
   workflow にまとめる。workflow のファイル名は変えない —— `apply-revert` は最後に成功した run を workflow の
   ファイル名で引くので、改名はその履歴を断つ
 - **workload root の apply の全文は、apply の出力の Bucket に置く。** identity root の全文は plan の出力の
-  Bucket の `apply/` に置く。apply の role は plan の出力の Bucket に書けない（`ci.mk` の `CI_APPLY_OUTPUT_KIND` が選ぶ）
+  Bucket の `apply/` に置く。apply の role は plan の出力の Bucket に書けない（`scripts/tf-local` の `ci-prepare` が選ぶ）
 - job の形（environment、取る role、起動条件、検出・順序の検査・層の検査への依存、拒否の step、terraform の経路、concurrency、
   `run:` と `env:` に置けるもの）は
-  `make oidc-job-lint` が、`CI_APPLY` が plan の失敗・終了コードと JSON の食い違い・Policy の違反と評価の欠け
-  のどれでも apply を呼ばずに非ゼロで終わることは、`scripts/tf-local` の `TestCiRecipes` が偽物の
-  terraform・aws・conftest でレシピを走らせて見る
+  `make oidc-job-lint` が、apply の入口が plan の失敗・終了コードと JSON の食い違い・Policy の違反と評価の欠け
+  のどれでも apply を呼ばずに非ゼロで終わることは、`scripts/tf-local` の段のテストが偽物の
+  terraform・aws・conftest で段を順に起動して見る
 
 保証しないこと:
 
@@ -355,8 +355,8 @@ apply）で戻す。CI は Pull Request を
 作らず、merge もしない。前の commit を apply し直すことはしない。決定は ADR-0601 決定17-19 が持ち、ここは
 その運用の細則を持つ。
 
-- **戻すのは、commit の中身が原因でありうる失敗だけである。** `CI_APPLY`（`.makefiles/terraform/operation/ci.mk`）が
-  失敗した段を apply の job の outputs の `failure` に書き、`scripts/apply-revert` が読む。plan・Policy・apply・
+- **戻すのは、commit の中身が原因でありうる失敗だけである。** apply の入口（`.makefiles/terraform/operation/ci.mk` の `CI_APPLY` が起動する
+  `scripts/tf-local` の段）が失敗した段を apply の job の outputs の `failure` に書き、`scripts/apply-revert` が読む。plan・Policy・apply・
   apply の打ち切りは戻す。init までの準備、plan と apply の lock の取得、apply が終わった後（全文の置き場への
   書き込みを含む）の失敗と、`refuse-stale` の拒否・資格情報の失敗・検出・順序の検査・層の検査の失敗（どれも apply の step に
   届かない）は戻さない。先に失敗した段は、その後に全文を置けなくても書き換えない。

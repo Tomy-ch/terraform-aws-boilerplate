@@ -318,13 +318,22 @@ func replaceSection(src []byte, section string, body []string) []byte {
 	return out.Bytes()
 }
 
-// writeFileAtomic は、同じディレクトリの一時ファイルに 0600 で書いてから置き換えます。
+// writeFileAtomic は、同じディレクトリの一時ファイルに 0600 で書いてから置き換えます。既存のファイルの権限は
+// 引き継ぎません（資格情報と state を書くため）。
 func writeFileAtomic(path string, data []byte) error {
-	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-")
+	r, err := os.OpenRoot(filepath.Dir(path))
 	if err != nil {
 		return err
 	}
-	defer func() { _ = os.Remove(f.Name()) }()
+	defer func() { _ = r.Close() }()
+	name := filepath.Base(path)
+	tmp := "." + name + ".tmp"
+	_ = r.Remove(tmp)
+	f, err := r.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = r.Remove(tmp) }()
 	if _, err := f.Write(data); err != nil {
 		_ = f.Close()
 
@@ -334,7 +343,7 @@ func writeFileAtomic(path string, data []byte) error {
 		return err
 	}
 
-	return os.Rename(f.Name(), path)
+	return r.Rename(tmp, name)
 }
 
 // ciAssumeDenied は、同じ job の OIDC token で、cientry.DeniedRoles の role を1つずつ assume し、すべてが

@@ -3,7 +3,6 @@ package cientry
 import (
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -60,17 +59,6 @@ func replaced(t *testing.T, s, old, repl string) string {
 	return strings.Replace(s, old, repl, 1)
 }
 
-func makeDryRun(t *testing.T, args ...string) string {
-	t.Helper()
-	cmd := exec.CommandContext(t.Context(), "make", append([]string{"-C", repoRoot, "-n", "--no-print-directory"}, args...)...)
-	cmd.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool {
-		return strings.HasPrefix(kv, "MAKEFLAGS=") || strings.HasPrefix(kv, "MFLAGS=") || strings.HasPrefix(kv, "MAKELEVEL=")
-	})
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, string(out))
-	return string(out)
-}
-
 func TestKinds(t *testing.T) {
 	t.Parallel()
 
@@ -96,43 +84,19 @@ func TestKinds(t *testing.T) {
 			assert.Equal(t, Plan, again[0].Name)
 			assert.Equal(t, EventPush, again[1].Events[0])
 		})
+	})
+}
 
-		// 属性の宣言は ci.mk の define の本体の写しである。このケースはレシピを対象とするテストで、ADR-0702 決定25 に反する。
-		// ci.mk の判定を tf-local へ移す変更（#439）で、置き換えと同時に消す。
-		t.Run("実物の ci.mk の入口のレシピが、種別の Terraform と Lock の属性と一致する", func(t *testing.T) {
+func TestRoot_Dir(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("identity は env の下の identity、workload は env の直下", func(t *testing.T) {
 			t.Parallel()
-			const sentinel = "tf-bin-sentinel"
-			entries, err := ParseRepo(repoRoot)
-			require.NoError(t, err)
-			seen := map[string]int{}
-			for _, e := range entries {
-				out := makeDryRun(t, e.Target, "TF_BIN="+sentinel)
-				k := e.Kind
-				assert.Equal(t, k.Terraform, strings.Contains(out, sentinel), e.Target)
-				assert.Equal(t, k.Lock == LockSkip, strings.Contains(out, " plan -lock=false"), e.Target)
-				switch k.Lock {
-				case LockSkip:
-					assert.Contains(t, out, " plan -lock=false -input=false", e.Target)
-					assert.NotContains(t, out, " apply ", e.Target)
-				case LockRelease:
-					assert.NotContains(t, out, "-lock=false", e.Target)
-					assert.Contains(t, out, " plan -input=false", e.Target)
-					assert.Contains(t, out, " apply -input=false", e.Target)
-				case LockKeep:
-					assert.NotContains(t, out, "-lock=false", e.Target)
-					assert.Contains(t, out, " plan -input=false", e.Target)
-					assert.Contains(t, out, "lock-wait", e.Target)
-					assert.NotContains(t, out, " apply ", e.Target)
-				case LockRemove:
-					assert.Contains(t, out, "delete-object", e.Target)
-				default:
-					t.Fatalf("%s: lock の扱い %d を知りません", e.Target, k.Lock)
-				}
-				seen[k.Name]++
-			}
-			for _, k := range Kinds() {
-				require.Positive(t, seen[k.Name], k.Name)
-			}
+			assert.Equal(t, "env/admin/identity", RootIdentity.Dir("admin"))
+			assert.Equal(t, "env/admin", RootWorkload.Dir("admin"))
 		})
 	})
 }

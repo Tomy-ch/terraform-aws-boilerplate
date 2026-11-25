@@ -12,6 +12,7 @@ package cientry
 import (
 	"fmt"
 	"os"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -45,6 +46,15 @@ const (
 	RootIdentity Root = "identity"
 	RootWorkload Root = "workload"
 )
+
+// Dir は、env の root のディレクトリを、リポジトリの直下からの相対パスで返します（ADR-0604 決定5）。
+func (r Root) Dir(env string) string {
+	if r == RootIdentity {
+		return path.Join("env", env, "identity")
+	}
+
+	return path.Join("env", env)
+}
 
 // Lock は入口が state の lock をどう扱うかです。
 type Lock int

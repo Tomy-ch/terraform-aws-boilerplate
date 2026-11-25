@@ -28,10 +28,6 @@ kms=$$($(call TF_LOCAL,state-key -project $(TF_LOCAL_PROJECT) -env $(1) -region 
 endef
 
 CI_PLAN_DIR ?= $(if $(RUNNER_TEMP),$(RUNNER_TEMP),tmp)/ci-plan
-# apply を SIGINT で打ち切るまでの時間。apply の job の timeout-minutes より、init・plan と、打ち切りの後に terraform が
-# state を書いて lock を外し、全文を置くまでの分だけ短くする。job の timeout が先に来ると全文を置けない。
-CI_APPLY_TIMEOUT ?= 20m
-TIMEOUT_BIN ?= timeout
 # lock を残す入口が、plan の全文に lock を取った後の行が現れるのを待つ周期と上限（tf-local lock-wait）。
 CI_HOLD_INTERVAL ?= 200ms
 CI_HOLD_LIMIT ?= 10m
@@ -39,7 +35,41 @@ CI_ROLE ?= plan
 # $(1)=env $(2)=役割。role 名と同じ形にする（tf-local ci-credentials が置く profile の名前）。
 CI_PROFILE = $(TF_LOCAL_PROJECT)-$(1)-ci-$(2)
 
-# CI_PLAN と CI_APPLY が共有する。root の名前（$(1)-$(2)）は、decl.json の allow の鍵と同じになる。
+# 段の state のファイル。root の名前（$(1)-$(2)）は、decl.json の allow の鍵と同じになる。$(1)=env $(2)=root
+CI_STATE = $(CI_PLAN_DIR)/$(1)-$(2).json
+
+# plan と apply の入口の段（tf-local の ci-*）。prepare と init が落ちればそこで止まる。それより後の段は `-` で続け、
+# 前の段の失敗を state で知って何もしない。upload は必ず走り、finish が state の判定で落とす。
+# $(1)=plan|apply $(2)=env $(3)=root
+define CI_STEPS_PLAN
+@mkdir -p "$(CI_PLAN_DIR)"
+-@$(call TF_LOCAL,plan-header) > "$(CI_PLAN_DIR)/$(2)-$(3).header"
+@$(call TF_LOCAL,ci-prepare -mode $(1) -project $(TF_LOCAL_PROJECT) -env $(2) -root $(3) -profile $(TF_LOCAL_PROFILE) -base $(TF_BASE) -header "$(CI_PLAN_DIR)/$(2)-$(3).header" -state "$(call CI_STATE,$(2),$(3))")
+@$(call TF_LOCAL,ci-init -state "$(call CI_STATE,$(2),$(3))")
+-@$(call TF_LOCAL,ci-plan -state "$(call CI_STATE,$(2),$(3))")
+-@$(call TF_LOCAL,ci-policy -state "$(call CI_STATE,$(2),$(3))" -work tmp/ci-policy -policy $(POLICY_PLAN_DIR) -decl $(POLICY_PLAN_DECL) -layer $(POLICY_LAYER_DECL) $(foreach ns,$(CI_POLICY_NAMESPACES),-namespace $(ns)))
+endef
+
+define CI_STEPS_FINISH
+-@$(call TF_LOCAL,ci-upload -state "$(call CI_STATE,$(1),$(2))")
+@$(call TF_LOCAL,ci-finish -state "$(call CI_STATE,$(1),$(2))")
+endef
+
+# $(1)=env $(2)=root。plan は lock を取らず、全文を plan の出力の Bucket に置く。
+define CI_PLAN
+$(call CI_STEPS_PLAN,plan,$(1),$(2))
+$(call CI_STEPS_FINISH,$(1),$(2))
+endef
+
+# $(1)=env $(2)=root。apply する commit で plan し直し、Policy を通った plan だけを apply する（ADR-0601 決定6、
+# ADR-0604 決定11）。変更の無い plan も apply し、経路と lock の取得を毎回同じにする。
+define CI_APPLY
+$(call CI_STEPS_PLAN,apply,$(1),$(2))
+-@$(call TF_LOCAL,ci-apply -state "$(call CI_STATE,$(1),$(2))")
+$(call CI_STEPS_FINISH,$(1),$(2))
+endef
+
+# CI_HOLD が使う。root の名前（$(1)-$(2)）は、decl.json の allow の鍵と同じになる。
 # $(3) が空でなければ、失敗して終わるときに、その時点の段（$$stage）を GITHUB_OUTPUT の failure へ書く。段の名前の
 # 意味は scripts/apply-revert の revertKinds と skipKinds が持つ。
 # $(1)=env $(2)=root $(3)=失敗の段を書くか
@@ -58,70 +88,6 @@ bucket=$$($(call TF_LOCAL,bucket -project $(TF_LOCAL_PROJECT) -env $(1) -region 
 $(call TF_STATE_KEY,$(1),fail); \
 $(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" init -input=false -no-color -lockfile=readonly -backend-config="bucket=$$bucket" $$kms >> "$$out" 2>&1 \
 || { echo "❌ init が失敗しました。全文はランナーの外に出しません" >&2; exit 1; }
-endef
-
-# plan が失敗していれば show も失敗するが、ここでは落とさず、判定は呼び出し側の plan-summary が持つ。
-# $(1)=plan の追加の引数
-define CI_TERRAFORM_PLAN
-rc=0; $(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" plan $(1)-input=false -no-color -detailed-exitcode -out="$$tfplan" >> "$$out" 2>&1 || rc=$$?; \
-echo "plan の終了コード: $$rc"; export rc; \
-$(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" show -json "$$tfplan" > "$$json" 2>> "$$out" || :
-endef
-
-# $$json の plan に CI_POLICY_NAMESPACES の Policy を1つずつ掛け、違反か評価の欠けがあれば $(1) を実行してから
-# 失敗する。rego のファイルは名前空間から `plan.` を除いた名前である。
-# $(1)=失敗する前に実行するコマンド（`;` で終える）
-define CI_POLICY
-$(if $(strip $(CI_POLICY_NAMESPACES)),,$(error CI_POLICY_NAMESPACES が空です)) \
-for ns in $(strip $(CI_POLICY_NAMESPACES)); do export ns; \
-$(GO_TOOL) $(CONFTEST_BIN) test --combine --no-color -o json --namespace "$$ns" --policy $(POLICY_PLAN_DIR) --data $(POLICY_PLAN_DECL) --data $(POLICY_LAYER_DECL) "$$json" > "$$pol" || :; \
-$(call TF_LOCAL,policy-result -namespace "$$ns" -rego "$(POLICY_PLAN_DIR)/$${ns#plan.}.rego" "$$pol") \
-|| { $(1)echo "❌ $$ns の Policy を通りません（理由は上の行）" >&2; exit 1; }; \
-done
-endef
-
-# $(1)=env $(2)=root。plan は lock を取らない（ADR-0604 決定8）。plan が失敗しても、Bucket に書けるなら
-# 全文を置いてから失敗する。
-define CI_PLAN
-$(call CI_PREPARE,$(1),$(2)); export CI_PR GITHUB_RUN_ID GITHUB_RUN_ATTEMPT; \
-plan_bucket=$$($(call TF_LOCAL,bucket -project $(TF_LOCAL_PROJECT) -env $(1) -kind tfplan -region "$$region" -identity "$$identity")); \
-$(call CI_TERRAFORM_PLAN,-lock=false ); \
-key=$$($(call TF_LOCAL,plan-key -pr "$$CI_PR" -run "$$GITHUB_RUN_ID" -attempt "$$GITHUB_RUN_ATTEMPT" -root "$$root")); \
-sha=$$($(call TF_LOCAL,sha256 "$$out")); \
-echo "plan の全文: key=$$key sha256=$$sha"; \
-version=$$($(TF_LOCAL_ENV) $(AWS_BIN) s3api put-object --region "$$region" --bucket "$$plan_bucket" --key "$$key" --body "$$out" \
---checksum-sha256 "$$sha" --expected-bucket-owner "$$account" --query VersionId --output text); \
-echo "plan の全文の版 ID: $$version"; \
-summary=$$($(call TF_LOCAL,plan-summary -exitcode "$$rc" "$$json")) || { echo "❌ 全文は上の key にあります" >&2; exit 1; }; echo "$$summary"; \
-$(call CI_POLICY,); \
-test -z "$${GITHUB_STEP_SUMMARY:-}" || printf '### %s\n\n%s\n\n- key: `%s`\n- sha256: `%s`\n- 版 ID: `%s`\n' "$$root" "$$summary" "$$key" "$$sha" "$$version" >> "$$GITHUB_STEP_SUMMARY"
-endef
-
-# apply の全文を置く Bucket の種類（tfplan か tfapply）。割当は .github/workflows/README.md の「apply の job」。$(1)=root
-CI_APPLY_OUTPUT_KIND = $(if $(filter identity,$(1)),tfplan,$(if $(filter workload,$(1)),tfapply,$(error root が identity か workload ではありません: $(1))))
-
-# $(1)=env $(2)=root。apply する commit で plan し直し、Policy を通った plan だけを apply する（ADR-0601 決定6、
-# ADR-0604 決定11）。plan は lock を取る —— ADR-0604 決定8 の plan は plan の job の plan である。
-# 変更の無い plan も apply し、経路と lock の取得を毎回同じにする。
-# Bucket の名前と key を得た後は、plan・Policy・apply のどこで失敗しても全文を置いてから失敗する。
-define CI_APPLY
-$(call CI_PREPARE,$(1),$(2),failure); export GITHUB_RUN_ID GITHUB_RUN_ATTEMPT; \
-plan_bucket=$$($(call TF_LOCAL,bucket -project $(TF_LOCAL_PROJECT) -env $(1) -kind $(call CI_APPLY_OUTPUT_KIND,$(2)) -region "$$region" -identity "$$identity")); \
-key=$$($(call TF_LOCAL,apply-key -run "$$GITHUB_RUN_ID" -attempt "$$GITHUB_RUN_ATTEMPT" -root "$$root")); \
-upload() { prev=$$stage; test "$$stage" != applied || stage=upload; sha=$$($(call TF_LOCAL,sha256 "$$out")); echo "apply の全文: key=$$key sha256=$$sha"; \
-version=$$($(TF_LOCAL_ENV) $(AWS_BIN) s3api put-object --region "$$region" --bucket "$$plan_bucket" --key "$$key" --body "$$out" \
---checksum-sha256 "$$sha" --expected-bucket-owner "$$account" --query VersionId --output text); \
-echo "apply の全文の版 ID: $$version"; stage=$$prev; }; \
-stage=plan; $(call CI_TERRAFORM_PLAN,); \
-stage=$$($(call TF_LOCAL,failure-kind -step plan -exitcode "$$rc" "$$out")) || stage=plan; \
-summary=$$($(call TF_LOCAL,plan-summary -exitcode "$$rc" "$$json")) || { upload; echo "❌ 全文は上の key にあります" >&2; exit 1; }; echo "$$summary"; \
-stage=policy; $(call CI_POLICY,upload; ); \
-stage=apply; arc=0; $(TIMEOUT_BIN) -s INT $(CI_APPLY_TIMEOUT) $(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" apply -input=false -no-color "$$tfplan" >> "$$out" 2>&1 || arc=$$?; export arc; echo "apply の終了コード: $$arc"; \
-stage=$$($(call TF_LOCAL,failure-kind -step apply -exitcode "$$arc" "$$out")) || stage=apply; \
-upload; \
-result=$$($(call TF_LOCAL,apply-result -exitcode "$$arc")) || { echo "❌ 全文は上の key にあります" >&2; exit 1; }; echo "$$result"; \
-test -z "$${GITHUB_STEP_SUMMARY:-}" || printf '### %s\n\n%s\n\napply が終わりました\n\n- key: `%s`\n- sha256: `%s`\n- 版 ID: `%s`\n' "$$root" "$$summary" "$$key" "$$sha" "$$version" >> "$$GITHUB_STEP_SUMMARY"; \
-test -z "$${GITHUB_OUTPUT:-}" || printf 'plan=%s\n' "$$summary" >> "$$GITHUB_OUTPUT"
 endef
 
 # $(1)=env $(2)=root。apply の job の timeout を超えて残った lock だけを、読んだ版の ETag を条件に消す。
@@ -181,14 +147,12 @@ ci-assume-denied:
 	@$(if $(CI_ENV),,$(error CI_ENV が空です))$(call TF_LOCAL,ci-assume-denied -project $(TF_LOCAL_PROJECT) -env $(CI_ENV) -base $(TF_BASE) -work $(CI_PLAN_DIR))
 
 .PHONY: ci-plan-admin-identity ## [CI] 管理アカウントの identity root を plan し、全文を plan の出力の Bucket に置く
-ci-plan-admin-identity: SHELL := /bin/bash
 ci-plan-admin-identity: CI_POLICY_NAMESPACES := plan.stateful_protection plan.kms_key_policy plan.resource_policy_exclusive
 ci-plan-admin-identity: TF_LOCAL_PROFILE := $(call CI_PROFILE,admin,plan)
 ci-plan-admin-identity:
 	@$(call CI_PLAN,admin,identity)
 
 .PHONY: ci-apply-admin-identity ## [CI] 管理アカウントの identity root を plan し直し、Policy を通った plan を apply する
-ci-apply-admin-identity: SHELL := /bin/bash
 ci-apply-admin-identity: CI_POLICY_NAMESPACES := plan.stateful_protection plan.kms_key_policy plan.resource_policy_exclusive
 ci-apply-admin-identity: TF_LOCAL_PROFILE := $(call CI_PROFILE,admin,apply-identity)
 ci-apply-admin-identity:
@@ -207,14 +171,12 @@ ci-hold-admin-identity:
 	@$(call CI_HOLD,admin,identity)
 
 .PHONY: ci-plan-admin-workload ## [CI] 管理アカウントの workload root を plan し、全文を plan の出力の Bucket に置く
-ci-plan-admin-workload: SHELL := /bin/bash
 ci-plan-admin-workload: CI_POLICY_NAMESPACES := plan.stateful_protection
 ci-plan-admin-workload: TF_LOCAL_PROFILE := $(call CI_PROFILE,admin,plan)
 ci-plan-admin-workload:
 	@$(call CI_PLAN,admin,workload)
 
 .PHONY: ci-apply-admin-workload ## [CI] 管理アカウントの workload root を plan し直し、Policy を通った plan を apply する
-ci-apply-admin-workload: SHELL := /bin/bash
 ci-apply-admin-workload: CI_POLICY_NAMESPACES := plan.stateful_protection
 ci-apply-admin-workload: TF_LOCAL_PROFILE := $(call CI_PROFILE,admin,apply)
 ci-apply-admin-workload:
