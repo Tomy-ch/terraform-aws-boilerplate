@@ -141,6 +141,27 @@ hosts = [
   "chatbot.us-west-2.amazonaws.com",
 ]
 
+# 管理アカウントの identity root の、統制の構成物（organization-baseline）の型の宛先。workload root の job には持たせない。
+# SSM はメンバーアカウントのメールの parameter の読み取り。委任管理者の指定のうち、GuardDuty・Inspector・Security Hub は
+# repository-wide/ADR-0209 の集合の各リージョンに置き、CloudTrail は provider の region の endpoint を呼ぶ。
+[class.aws-governance]
+includes = ["aws"]
+hosts = [
+  "guardduty.{default-regions}.amazonaws.com",
+  "inspector2.{default-regions}.amazonaws.com",
+  "securityhub.{default-regions}.amazonaws.com",
+  "cloudtrail.ap-northeast-1.amazonaws.com",
+  "ssm.ap-northeast-1.amazonaws.com",
+]
+
+# repository-wide/ADR-0209 の集合（modules/default-regions の aws）の写し。ずれると egress-check が落とす。
+[region_set.default-regions]
+regions = [
+  "ap-northeast-1", "ap-northeast-2", "ap-northeast-3", "ap-south-1", "ap-southeast-1", "ap-southeast-2", "ca-central-1",
+  "eu-central-1", "eu-north-1", "eu-west-1", "eu-west-2", "eu-west-3", "sa-east-1", "us-east-1", "us-east-2", "us-west-1",
+  "us-west-2",
+]
+
 # CI が Terraform を実行する root と、その root に触れるジョブ（scripts/README.md の egress/ の行）。
 [root."env/admin/identity"]
 jobs = ["terraform-gates.yaml:plan-admin-identity", "terraform-apply.yaml:apply-admin-identity", "terraform-unlock.yaml:unlock-admin-identity", "terraform-lock-hold.yaml:hold-admin-identity"]
@@ -156,11 +177,21 @@ hosts = ["chatbot.us-west-2.amazonaws.com"]
 [type.aws_caller_identity]
 hosts = ["sts.ap-northeast-1.amazonaws.com"]
 
+# 組織の委任管理者の登録だけを使う。CloudTrail の resource は global だが、provider の region の endpoint を呼ぶ。
+[type.aws_cloudtrail_]
+hosts = ["cloudtrail.ap-northeast-1.amazonaws.com"]
+
 [type.aws_cloudformation_]
 hosts = ["cloudformation.ap-northeast-1.amazonaws.com"]
 
+[type.aws_guardduty_]
+hosts = ["guardduty.{default-regions}.amazonaws.com"]
+
 [type.aws_iam_]
 hosts = ["iam.amazonaws.com"]
+
+[type.aws_inspector2_]
+hosts = ["inspector2.{default-regions}.amazonaws.com"]
 
 [type.aws_kms_]
 hosts = ["kms.ap-northeast-1.amazonaws.com", "kms.us-east-1.amazonaws.com"]
@@ -184,6 +215,12 @@ hosts = [
 
 [type.aws_scheduler_]
 hosts = ["scheduler.ap-northeast-1.amazonaws.com", "scheduler.us-east-1.amazonaws.com"]
+
+[type.aws_securityhub_]
+hosts = ["securityhub.{default-regions}.amazonaws.com"]
+
+[type.aws_ssm_]
+hosts = ["ssm.ap-northeast-1.amazonaws.com"]
 
 [type.aws_sns_]
 hosts = ["sns.ap-northeast-1.amazonaws.com", "sns.us-east-1.amazonaws.com"]
@@ -346,7 +383,7 @@ classes = ["terraform"]
 classes = ["mise"]
 
 [job."terraform-gates.yaml:plan-admin-identity"]
-classes = ["terraform", "aws"]
+classes = ["terraform", "aws-governance"]
 
 [job."terraform-gates.yaml:plan-admin-workload"]
 classes = ["terraform", "aws-notify"]
@@ -367,7 +404,7 @@ classes = ["terraform"]
 classes = ["mise"]
 
 [job."terraform-apply.yaml:apply-admin-identity"]
-classes = ["terraform", "aws"]
+classes = ["terraform", "aws-governance"]
 
 [job."terraform-apply.yaml:apply-admin-workload"]
 classes = ["terraform", "aws-notify"]
@@ -385,7 +422,7 @@ classes = ["mise"]
 
 # 2つの lock を残す job は、apply の job と同じく init と plan の refresh を走らせる。
 [job."terraform-lock-hold.yaml:hold-admin-identity"]
-classes = ["terraform", "aws"]
+classes = ["terraform", "aws-governance"]
 
 [job."terraform-lock-hold.yaml:hold-admin-workload"]
 classes = ["terraform", "aws-notify"]
