@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/mdscan"
 )
 
 func writeFile(t *testing.T, path, content string) {
@@ -142,6 +144,10 @@ func TestHeadings(t *testing.T) {
 			source: "<!-- a --> <!-- b\n## 入出力\n-->\n## 失敗時の扱い\n",
 			want:   []string{"失敗時の扱い"},
 		},
+		"inline code の部分は見出しのテキストから除く": {
+			source: "## 入出力 `x`\n",
+			want:   []string{"入出力"},
+		},
 		"inline code の中の <!-- はコメントを開かない": {
 			source: "`<!--` は使わない\n## 入出力\n",
 			want:   []string{"入出力"},
@@ -158,7 +164,15 @@ func TestHeadings(t *testing.T) {
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tt.want, Headings([]byte(tt.source)))
+			got, err := Headings([]byte(tt.source))
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
 		})
 	}
+
+	t.Run("閉じないコメントはエラーにする", func(t *testing.T) {
+		t.Parallel()
+		_, err := Headings([]byte("## 入出力\n<!-- a\n## 失敗時の扱い\n"))
+		require.ErrorIs(t, err, mdscan.ErrUnclosedComment)
+	})
 }
