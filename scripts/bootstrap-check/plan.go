@@ -53,7 +53,7 @@ func checkPlan(o options, out io.Writer, d deps) error {
 
 	raw, err := d.readFile(d.expected)
 	if err != nil {
-		return fmt.Errorf("%w: %s", errExpectedUnreadable, d.expected)
+		return xerrors.Wrap(errExpectedUnreadable, d.expected)
 	}
 
 	expected, err := parseExpected(raw, d.expected)
@@ -89,7 +89,7 @@ func readInput(path string, d deps) ([]byte, error) {
 	if path == "-" {
 		data, err := io.ReadAll(d.stdin)
 		if err != nil {
-			return nil, fmt.Errorf("%w: 標準入力", errInputUnreadable)
+			return nil, xerrors.Wrap(errInputUnreadable, "標準入力")
 		}
 
 		return data, nil
@@ -97,7 +97,7 @@ func readInput(path string, d deps) ([]byte, error) {
 
 	data, err := d.readFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", errInputUnreadable, path)
+		return nil, xerrors.Wrap(errInputUnreadable, path)
 	}
 
 	return data, nil
@@ -107,12 +107,12 @@ func readInput(path string, d deps) ([]byte, error) {
 func readHeader(path string, d deps) (string, error) {
 	data, err := d.readFile(path)
 	if err != nil {
-		return "", fmt.Errorf("%w: %s", errHeader, path)
+		return "", xerrors.Wrap(errHeader, path)
 	}
 
 	header := strings.TrimSpace(string(data))
 	if !headerPattern.MatchString(header) {
-		return "", fmt.Errorf("%w: %s", errHeader, path)
+		return "", xerrors.Wrap(errHeader, path)
 	}
 
 	return header, nil
@@ -133,11 +133,11 @@ func parseExpected(data []byte, path string) ([]string, error) {
 
 		kind, address, ok := strings.Cut(line, " ")
 		if !ok || !slices.Contains(kinds, kind) || address == "" || address != strings.TrimSpace(address) || strings.ContainsAny(address, "\t\r") {
-			return nil, fmt.Errorf("%w: %s の %d 行目 %q", errExpectedMalformed, path, i+1, line)
+			return nil, xerrors.Wrapf(errExpectedMalformed, "%s の %d 行目 %q", path, i+1, line)
 		}
 
 		if seen[line] {
-			return nil, fmt.Errorf("%w: %s の %d 行目 %q", errExpectedDuplicate, path, i+1, line)
+			return nil, xerrors.Wrapf(errExpectedDuplicate, "%s の %d 行目 %q", path, i+1, line)
 		}
 
 		seen[line] = true
@@ -145,7 +145,7 @@ func parseExpected(data []byte, path string) ([]string, error) {
 	}
 
 	if len(lines) == 0 {
-		return nil, fmt.Errorf("%w: %s", errExpectedEmpty, path)
+		return nil, xerrors.Wrap(errExpectedEmpty, path)
 	}
 
 	sort.Strings(lines)
@@ -382,7 +382,7 @@ func checkMock(o options, data []byte, out io.Writer, d deps) ([]string, error) 
 	}
 
 	if len(test.plans) != 1 {
-		return nil, fmt.Errorf("%w（%d 件。1件を期待）", errMockPlanCount, len(test.plans))
+		return nil, xerrors.Wrapf(errMockPlanCount, "%d 件。1件を期待", len(test.plans))
 	}
 
 	version := test.plans[0].FormatVersion
@@ -397,12 +397,12 @@ func checkMock(o options, data []byte, out io.Writer, d deps) ([]string, error) 
 func testExitFailed(path string, d deps) (bool, error) {
 	data, err := d.readFile(path)
 	if err != nil {
-		return false, fmt.Errorf("%w: %s", errInputUnreadable, path)
+		return false, xerrors.Wrap(errInputUnreadable, path)
 	}
 
 	n, err := strconv.Atoi(strings.TrimSpace(string(data)))
 	if err != nil || n < 0 {
-		return false, fmt.Errorf("%w: %s", errInputUnreadable, path)
+		return false, xerrors.Wrap(errInputUnreadable, path)
 	}
 
 	return n != 0, nil

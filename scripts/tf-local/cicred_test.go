@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -50,8 +53,8 @@ rc=$(pick rc)
 exit "${rc:-0}"
 `
 	require.NoError(t, os.WriteFile(script, []byte(body), 0o600))
-	tool := func(d string, env []string, step string) *exec.Cmd {
-		c := exec.CommandContext(context.Background(), "/bin/sh", script, step)
+	tool := func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
+		c := exec.CommandContext(ctx, "/bin/sh", script, step)
 		c.Dir, c.Env = d, env
 		return c
 	}
@@ -98,7 +101,7 @@ func ciDeps(t *testing.T, tool toolFunc, fetch fetchFunc, extra ...string) (deps
 	home := t.TempDir()
 	var stderr bytes.Buffer
 	return deps{readFile: os.ReadFile, environ: ciEnviron(home, extra...), git: stubGit("", ""), now: time.Now,
-		tool: tool, fetch: fetch, stderr: &stderr}, base, home
+		tool: tool, fetch: fetch, stderr: &stderr, root: t.TempDir()}, base, home
 }
 
 func oidcBody(sub string) string {
@@ -308,25 +311,70 @@ func Test_ciTarget_assumeInput(t *testing.T) {
 	})
 }
 
-func Test_ciWork(t *testing.T) {
+func Test_ciWorkUnder(t *testing.T) {
 	t.Parallel()
 
-	t.Run("親の下に作業ディレクトリを作り、返す関数が消す", func(t *testing.T) {
+	t.Run("root の tmp/ の下の -work の下に作業ディレクトリを作り、返す関数がその子だけを消す", func(t *testing.T) {
 		t.Parallel()
-		parent := filepath.Join(t.TempDir(), "ci-plan")
-		work, cleanup, err := ciWork(parent)
+		root := t.TempDir()
+		work, cleanup, err := ciWorkUnder(root, "tmp/ci-plan", "assume-", io.Discard)
 		require.NoError(t, err)
-		assert.Equal(t, parent, filepath.Dir(work))
+		assert.Equal(t, filepath.Join(root, "tmp", "ci-plan"), filepath.Dir(work))
 		assert.DirExists(t, work)
 		cleanup()
 		assert.NoDirExists(t, work)
+		assert.DirExists(t, filepath.Join(root, "tmp", "ci-plan"))
 	})
 
-	t.Run("親を作れなければ失敗する", func(t *testing.T) {
+	for _, parent := range []string{"", "/abs/ci-plan", "ci-plan", "tmp", "tmp/", "tmp/.", "../x", "tmp/../tmp/x"} {
+		t.Run(parent+" は errUsage で、何も作らない", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			_, _, err := ciWorkUnder(root, parent, "assume-", io.Discard)
+			require.ErrorIs(t, err, errUsage)
+			assert.Equal(t, 2, exitCode(err))
+			entries, err := os.ReadDir(root)
+			require.NoError(t, err)
+			assert.Empty(t, entries)
+		})
+	}
+
+	t.Run("消し残せば作業ディレクトリのパスを含む警告を w へ書き、消せれば何も書かない", func(t *testing.T) {
 		t.Parallel()
-		file := filepath.Join(t.TempDir(), "f")
-		require.NoError(t, os.WriteFile(file, nil, 0o600))
-		_, _, err := ciWork(filepath.Join(file, "x"))
+		testenv.RequireNonRoot(t, "消せないディレクトリを作る")
+		root := t.TempDir()
+		var ok bytes.Buffer
+		_, cleanup, err := ciWorkUnder(root, "tmp/ci-plan", "assume-", &ok)
+		require.NoError(t, err)
+		cleanup()
+		assert.Empty(t, ok.String())
+
+		var warn bytes.Buffer
+		work, cleanup, err := ciWorkUnder(root, "tmp/ci-plan", "assume-", &warn)
+		require.NoError(t, err)
+		sub := filepath.Join(work, "sub")
+		require.NoError(t, os.MkdirAll(sub, 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(sub, "f"), nil, 0o600))
+		require.NoError(t, os.Chmod(sub, 0o500))
+		t.Cleanup(func() { _ = os.Chmod(sub, 0o700) })
+		cleanup()
+		assert.Contains(t, warn.String(), "⚠️ 作業ディレクトリ "+work+" を消せませんでした")
+	})
+
+	t.Run("w が nil でも、消し残したときに落ちない", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		_, cleanup, err := ciWorkUnder(root, "tmp/ci-plan", "assume-", nil)
+		require.NoError(t, err)
+		assert.NotPanics(t, cleanup)
+	})
+
+	t.Run("-work の親を作れなければ失敗する", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "tmp"), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(root, "tmp", "f"), nil, 0o600))
+		_, _, err := ciWorkUnder(root, "tmp/f/x", "assume-", io.Discard)
 		require.Error(t, err)
 	})
 }
@@ -343,7 +391,7 @@ func Test_ciCredentials(t *testing.T) {
 		tool, calls := fakeAssume(t, map[string]string{"default.out": credsJSON})
 		fetch, _ := fakeFetch(oidcBody(immutable), nil)
 		d, base, home := ciDeps(t, tool, fetch)
-		work := filepath.Join(t.TempDir(), "ci-plan")
+		work := "tmp/ci-plan"
 		var out bytes.Buffer
 		got, err := ciCredentials(credArgs(base, work, "-role", "apply-identity"), d, &out)
 		require.NoError(t, err)
@@ -361,7 +409,7 @@ func Test_ciCredentials(t *testing.T) {
 		config, err := os.ReadFile(filepath.Join(home, ".aws", "config"))
 		require.NoError(t, err)
 		assert.Equal(t, "[profile tabp-admin-ci-apply-identity]\nregion = ap-northeast-1\n", string(config))
-		entries, err := os.ReadDir(work)
+		entries, err := os.ReadDir(filepath.Join(d.root, work))
 		require.NoError(t, err)
 		assert.Empty(t, entries, "token を含む input.json が残っています")
 	})
@@ -383,7 +431,7 @@ func Test_ciCredentials(t *testing.T) {
 			tool, calls := fakeAssume(t, c.knobs)
 			fetch, _ := fakeFetch(oidcBody(immutable), c.fetch)
 			d, base, home := ciDeps(t, tool, fetch, c.extra...)
-			work := filepath.Join(t.TempDir(), "ci-plan")
+			work := "tmp/ci-plan"
 			_, err := ciCredentials(credArgs(base, work, "-role", "plan"), d, &bytes.Buffer{})
 			require.ErrorIs(t, err, c.want)
 			assert.Len(t, calls(), c.tries)
@@ -541,10 +589,10 @@ func Test_ciAssumeDenied(t *testing.T) {
 		tool, calls := fakeAssume(t, knobs)
 		fetch, _ := fakeFetch(oidcBody(immutable), nil)
 		d, base, home := ciDeps(t, tool, fetch, extra...)
-		work := filepath.Join(t.TempDir(), "ci-plan")
+		work := "tmp/ci-plan"
 		var out bytes.Buffer
 		got, err := ciAssumeDenied(credArgs(base, work), d, &out)
-		entries, rerr := os.ReadDir(work)
+		entries, rerr := os.ReadDir(filepath.Join(d.root, work))
 		if !os.IsNotExist(rerr) {
 			require.NoError(t, rerr)
 		}
@@ -636,12 +684,13 @@ func Test_runExitCode(t *testing.T) {
 		assert.Equal(t, "e", string(stderr))
 	})
 
-	t.Run("起動できなければ errLocalAWS", func(t *testing.T) {
+	t.Run("起動できなければ ErrTool で、終了コード 2", func(t *testing.T) {
 		t.Parallel()
-		tool := func(string, []string, string) *exec.Cmd {
-			return exec.CommandContext(context.Background(), filepath.Join(t.TempDir(), "none"))
+		tool := func(ctx context.Context, _ string, _ []string, _ string, _ ...string) *exec.Cmd {
+			return exec.CommandContext(ctx, filepath.Join(t.TempDir(), "none"))
 		}
 		_, _, err := runExitCode(tool, t.TempDir(), nil, stepAssumeRole)
-		require.ErrorIs(t, err, errLocalAWS)
+		require.ErrorIs(t, err, toolrun.ErrTool)
+		assert.Equal(t, 2, exitCode(err))
 	})
 }
