@@ -18,8 +18,14 @@ Pull Request の plan は、管理アカウントの plan の role で走る。p
 1. メンバーアカウントの立ち上げの plan に使う読み取りの role `<project>-bootstrap-read`（path `/bootstrap/`）を、管理アカウントの CloudFormation StackSet（permission model は `SERVICE_MANAGED`）で、すべてのメンバーアカウントに配る。自動展開を有効にし、アカウントが組織を離れたときは stack を残さない。managed execution を有効にする。stack instance の対象は組織の Root、region は provider の region だけとする。StackSet の名前は role の名前と同じにする。
 2. break-glass の StackSet（organization-baseline/ADR-0202）に同居させない。role の寿命と、立ち上げの外での扱い（決定5）が違うためである。
 3. 信頼条件は、Principal を管理アカウントの root にし、`aws:PrincipalArn` を管理アカウントの plan の role の ARN に `ArnEquals` で限る。Principal に role の ARN を直接書かない。role を作り直すと、IAM が保存した一意 ID がずれて信頼が壊れるためである。plan の role の ARN は、型付きの入力 `bootstrap_read_principal_arn` で受ける（repository-wide/ADR-0301 決定18）。
-4. 権限は1つの inline policy に、メンバーの `state-backend` と `deployment-identity` の refresh に要る読み取りの Action だけを列挙する（repository-wide/ADR-0301 決定8）。Resource は、置き先のアカウントのそれらの名前の形に限る。state の object（`s3:GetObject`）、鍵の暗号操作、secret の値の読み取りは与えない。管理アカウントの plan の role の inline policy の読みのうち、管理アカウントの構成物（組織、break-glass の user と group、StackSet、メールの parameter、password policy）と state の object にだけ掛かるもののほかを、すべて持つ。除いた Action は `conftest/plan/decl.json` の `organization_baseline.bootstrap_read.management_only_actions` に宣言する。
-5. 立ち上げの外では閉じる。`deny-bootstrap-role` は、`OrganizationAccountAccessRole` とこの role の両方の使用を拒む。`protect-governance-roles` は、StackSets の実行の role（`stacksets-exec-*`）のほかに、この role の変更を拒む（organization-baseline/ADR-0202 決定5 と同じ例外）。管理アカウントの側でこの role の引き受けを許すのは、立ち上げの中のアカウントに限る（deployment-identity の権限。deployment-identity/ADR-0201）。
+4. 権限は1つの inline policy に、メンバーの `state-backend` と `deployment-identity` の refresh に要る S3・KMS・IAM の読み取りの Action だけを列挙する（repository-wide/ADR-0301 決定8）。state の object（`s3:GetObject`）、鍵の暗号操作、secret の値の読み取りは与えない。Resource は置き先のアカウントに限り、根拠は次のとおりである（repository-wide/ADR-0301 決定9・11）。
+   - S3 の Bucket は `<project>-*-{tfstate,tfplan,tfapply}-<アカウント ID>-*` の prefix pattern にする。env の token は Bucket の名前の途中に在り、1つのテンプレートをすべてのメンバーへ配るので、env を名指せない。先頭の project の token と、置き先のアカウント ID で限る
+   - KMS の鍵は `key/*` にする。鍵の ID は作るまで決まらず、テンプレートから参照できない。与えるのは鍵の設定の読み取り（`DescribeKey`・`GetKeyPolicy`・`GetKeyRotationStatus`・`ListResourceTags`）だけで、暗号操作を含まない
+   - `kms:ListAliases` は resource-level の権限を持たないので Resource `"*"` にする（Service Authorization Reference）
+   - IAM の CI の role と policy は `<project>-*-ci-*` の prefix pattern にする。S3 と同じく env を名指せないためである。OIDC provider は固定の ARN にする
+
+   管理アカウントの plan の role の inline policy の読みのうち、管理アカウントの構成物（組織、break-glass の user と group、StackSet、メールの parameter、password policy）と state の object・plan の出力にだけ掛かるもののほかを、すべて持つ。除いた Action は、理由と組にして `conftest/plan/decl.json` の `organization_baseline.bootstrap_read.management_only_actions` に宣言する。
+5. 立ち上げの外では閉じる。`deny-bootstrap-role` は、`OrganizationAccountAccessRole` とこの role の両方の使用を拒む。`protect-governance-roles` は、StackSets の実行の role（`stacksets-exec-*`）のほかに、この role の変更を拒む（organization-baseline/ADR-0202 決定5 と同じ例外）。この usecase が持つのはメンバーの側の拒否だけである。管理アカウントの側で、この role の引き受けをどのアカウントに許すかは `deployment-identity` が決める。
 6. StackSet と stack instance に `prevent_destroy` を付け、`stateful_protection.protected_types` に載せる。
 7. FSBP の CloudFormation.4 から外れる（repository-wide/ADR-0207 決定11 の記録）。
    - 外れる推奨: FSBP の CloudFormation.4（stack に service role が付いていること）
@@ -79,7 +85,7 @@ Pull Request のコードを走らせる job が、立ち上げの間メンバ�
 
 ## 保証範囲
 
-- 保証すること: StackSet が service-managed で自動展開して Root へ置き、テンプレートが1つの role だけを持ち、信頼条件が管理アカウントと1つの role の ARN に限り、inline policy が wildcard の無い読み取りの Action の Allow だけで state の object と鍵の暗号操作を含まないこと。管理アカウントの plan の role の読みのうち、宣言で除いたもののほかをすべて持つこと。`deny-bootstrap-role` がこの role の使用を拒み、`protect-governance-roles` がこの role の変更を拒むこと（Unit Test と `plan.organization_baseline_bootstrap_read` の `PLAN-BR-*`）
+- 保証すること: StackSet が service-managed で自動展開して Root へ置き、テンプレートが1つの inline policy を持つ1つの role だけを持ち、信頼条件が管理アカウントの root と管理アカウントの plan の role の ARN に限り、inline policy が S3・KMS・IAM の wildcard の無い読み取りの Action の Allow だけで、Resource が置き先のアカウントに限られ（`kms:ListAliases` を除く）、state の object と鍵の暗号操作を含まないこと。管理アカウントの plan の role の読みのうち、宣言で除いたもののほかをすべて持つこと。`deny-bootstrap-role` がこの role の使用を拒み、`protect-governance-roles` がこの role の変更を拒むこと（Unit Test と `plan.organization_baseline_bootstrap_read` の `PLAN-BR-*`）
 - 保証しないこと: 列挙した読み取りで、立ち上げの plan が実際に `AccessDenied` 無しで通ること（最初の立ち上げの CI の plan で確かめる）。すべてのメンバーで stack instance が `CURRENT` になること（人の確認。手順書が持つ）
 
 ## 検証方法
@@ -90,7 +96,7 @@ Pull Request のコードを走らせる job が、立ち上げの間メンバ�
 
 ## 影響
 
-管理アカウントに StackSet が1つ増え、メンバーアカウントごとに stack が1つ置かれる。管理アカウントの CI の apply-identity の role は、この StackSet の作成と更新の権限を、plan の role はその読み取りの権限を要する（deployment-identity/ADR-0201）。
+管理アカウントに StackSet が1つ増え、メンバーアカウントごとに stack が1つ置かれる。管理アカウントの CI の apply-identity の role は、この StackSet の作成と更新の権限を、plan の role はその読み取りとこの role の引き受けの権限を要する。それらは `deployment-identity` の権限であり、この ADR は決めない。
 
 ## 見直し条件
 
