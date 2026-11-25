@@ -1,16 +1,6 @@
 // Package main は、Terraform を動かす入口（人の手元の .makefiles/terraform/operation/local.mk と、
-// CI の ci.mk）が aws と terraform に渡す値を組み立てて検証するツール。
+// CI の ci.mk）の段と、それらが使う値を組み立てて検証するツール。
 //
-//	tf-local region <root>
-//	    <root>/backend.tf の backend の region を1行で出す。<root>/providers.tf の provider の
-//	    region と違えば失敗する（Bucket 名の region は provider の region から決まる）
-//	tf-local bucket -project <p> -env <e> [-kind tfstate|tfplan|tfapply] -region <r> -identity <out>
-//	    `aws sts get-caller-identity --query '[Account,Arn]' --output text` の出力から、
-//	    state Bucket の名前を1行で出す
-//	tf-local state-key -project <p> -env <e> -region <r> -identity <out> -aliases <json> -encryption <json> -missing <fail|sse-s3>
-//	    `aws kms list-aliases` と `aws s3api get-bucket-encryption` の JSON から、init に渡す
-//	    `-backend-config=kms_key_id=<state の鍵の ARN>` を1行で出す。Bucket の既定が SSE-KMS で鍵が違えば失敗する。
-//	    alias が無ければ失敗し、-missing sse-s3 で既定が AES256 のときだけ空行を出す
 //	tf-local env-unset
 //	    aws と terraform の振る舞いを呼び出し元の環境変数で変えさせないために外す名前を、
 //	    `env` に渡す `-u <名前>` の並びで出す
@@ -22,31 +12,10 @@
 //	    評価が rego の `deny contains` の数でなければ失敗する。-policy は dir の下の rego を走査して、
 //	    package ごとに突き合わせる
 //
-//	tf-local account -identity <out>
-//	    `aws sts get-caller-identity --query '[Account,Arn]' --output text` の出力から、アカウント ID を1行で出す
-//	tf-local lock-key <root>
-//	    <root>/backend.tf の key から、state の lock file の key を1行で出す
-//	tf-local lock-etag -key <k> [-want absent|present] <list.json>
-//	    `aws s3api list-objects-v2 --no-paginate` の応答から、lock file の ETag を1行で出す。lock が無ければ空行を出す。
-//	    -want absent は lock があれば、-want present は lock が無ければ失敗する
-//	tf-local lock-stale -etag <e> -meta <meta.json> <lock.json>
-//	    `aws s3api get-object` の応答と lock file から、消してよい lock の説明を1行で出す。lock が apply の job の
-//	    timeout と余裕を超えて古くなければ、説明を添えて失敗する
-//	tf-local lock-held -etag <e> -meta <meta.json> <lock.json>
-//	    lock を残す job が残した lock の説明と、lock の解除が消せるようになる時刻を出す。lock の解除が消す形の
-//	    lock でなければ失敗する
-//	tf-local lock-wait -pid <pid> [-interval <d>] [-limit <d>] <全文>
-//	    裏で走る plan の全文に、lock を取った後の行が現れたら held を出す。現れる前に plan が終われば空行を出す。
-//	    どちらも起きずに limit を過ぎたら失敗する
-//
-// 人の手元の入口の段（local-prepare・local-init・local-plan。local.go）と、CI の資格情報の段（ci-credentials・
-// ci-assume-denied。cicred.go）は、1回の起動で1つの目的の道具（aws か terraform）だけを、固定の引数で起動する
-// （ADR-0702 決定3・24）。CI の資格情報の段は、OIDC の token を GitHub Actions から自分で取る。
-// そのほかのサブコマンドは aws も terraform も起動せず、値だけを返す。plan-header だけは git を起動して作業ツリーを
-// 読む。policy-result・lock-key・lock-etag・lock-stale・lock-held・lock-wait は
-// ファイルを読み、lock-stale と lock-held は時刻を読み、lock-wait は pid のプロセスが生きているかを見る。
-// 値を決められない入力はすべて非ゼロで終わり、make はその時点で terraform を呼ばない。
-// make のレシピに分岐を置かず、判断はすべてここのテストで固定する。
+// 入口の段は、1回の起動で1つの目的の道具（aws か terraform か conftest）だけを、固定の引数で起動する
+// （ADR-0702 決定3・24）。人の手元の段は local.go、CI の資格情報の段は cicred.go、plan と apply の段は ciflow.go、
+// lock の解除と lock を残す段は cihold.go が持つ。値を決められない入力はすべて非ゼロで終わり、make はその時点で
+// 後の段を起動しない。make のレシピに分岐を置かず、判断はすべてここのテストで固定する。
 //
 // backend block は式を持てないので、Bucket 名・state の鍵の alias 名・role 名の規則をここに写す。Bucket 名と alias 名の正本は
 // modules/s3 と usecases/state-backend、role 名の正本は usecases/deployment-identity で、写しのずれはテストが
@@ -57,7 +26,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -97,7 +65,7 @@ var (
 	unsetNames    = []string{"TF_WORKSPACE", "TF_DATA_DIR", "TF_CLI_CONFIG_FILE", "TF_REATTACH_PROVIDERS",
 		"ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"}
 
-	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> [-kind tfstate|tfplan|tfapply] -region <r> -identity <out> | state-key ... | env-unset | plan-header | policy-result -namespace <ns> -rego <file> <file> | policy-result -policy <dir> <file> | account -identity <out> | lock-key <root> | lock-etag -key <k> [-want absent|present] <file> | lock-stale -etag <e> -meta <file> <file> | lock-held -etag <e> -meta <file> <file> | lock-wait -pid <pid> [-interval <d>] [-limit <d>] <file> | local-prepare -project <p> -profile <p> -env <e> -root identity|workload -base <dir> [-missing fail|sse-s3] -out <file> | local-init -profile <p> -state <file> | local-plan -profile <p> -env <e> -root <r> -base <dir> -header <file> -log <file> | ci-credentials -project <p> -env <e> -role <r> -base <dir> -work <dir> | ci-assume-denied -project <p> -env <e> -base <dir> -work <dir> | ci-prepare -mode plan|apply -project <p> -env <e> -root <r> -profile <p> -base <dir> -header <file> -state <file> | ci-init|ci-plan|ci-upload|ci-finish -state <file> | ci-policy -state <file> -policy <dir> -decl <file> -layer <file> -namespace <ns>... | ci-apply -state <file> -timeout <d>")
+	errUsage            = xerrors.New("❌ usage: tf-local env-unset | plan-header | policy-result ... | local-prepare|local-init|local-plan ... | ci-credentials|ci-assume-denied ... | ci-prepare|ci-init|ci-plan|ci-policy|ci-apply|ci-upload|ci-finish ... | ci-unlock ... | ci-hold-absent|ci-hold-plan|ci-hold-verify ...")
 	errBackendMissing   = xerrors.New("❌ backend.tf がありません")
 	errProvidersMissing = xerrors.New("❌ providers.tf がありません")
 	errRegionMismatch   = xerrors.New("❌ provider と backend の region が違います")
@@ -136,7 +104,6 @@ var argCounts = map[string]int{
 	"region":      2,
 	"env-unset":   1,
 	"plan-header": 1,
-	"lock-key":    2,
 }
 
 func run(args []string, out io.Writer, d deps) error {
@@ -148,11 +115,6 @@ func run(args []string, out io.Writer, d deps) error {
 		return errUsage
 	}
 
-	arg := ""
-	if len(args) > 1 {
-		arg = args[1]
-	}
-
 	var (
 		value string
 		err   error
@@ -160,29 +122,13 @@ func run(args []string, out io.Writer, d deps) error {
 
 	switch args[0] {
 	case "region":
-		value, err = rootRegion(arg, d.readFile)
-	case "bucket":
-		value, err = runBucket(args[1:])
-	case "state-key":
-		value, err = runStateKey(args[1:])
+		value, err = rootRegion(args[len(args)-1], d.readFile)
 	case "env-unset":
 		value, err = envUnset(d.environ)
 	case "plan-header":
 		value, err = planHeader(d.git)
 	case "policy-result":
 		value, err = runPolicyResult(args[1:], d.readFile)
-	case "account":
-		value, err = runAccount(args[1:])
-	case "lock-key":
-		value, err = lockKey(arg, d.readFile)
-	case "lock-etag":
-		value, err = runLockETag(args[1:], d.readFile)
-	case "lock-stale":
-		value, err = runLockStale(args[1:], d)
-	case "lock-held":
-		value, err = runLockHeld(args[1:], d)
-	case "lock-wait":
-		value, err = runLockWait(args[1:], d)
 	case "local-prepare":
 		value, err = localPrepare(args[1:], d, d.stderr)
 	case "local-init":
@@ -207,6 +153,14 @@ func run(args []string, out io.Writer, d deps) error {
 		value, err = ciUploadStep(args[1:], d, out)
 	case "ci-finish":
 		value, err = ciFinishStep(args[1:], d)
+	case "ci-unlock":
+		value, err = ciUnlockStep(args[1:], d, out)
+	case "ci-hold-absent":
+		value, err = ciHoldAbsentStep(args[1:], d)
+	case "ci-hold-plan":
+		value, err = ciHoldPlanStep(args[1:], d)
+	case "ci-hold-verify":
+		value, err = ciHoldVerifyStep(args[1:], d, out)
 	default:
 		return xerrors.Wrap(errUsage, args[0])
 	}
@@ -218,45 +172,6 @@ func run(args []string, out io.Writer, d deps) error {
 	_, err = fmt.Fprintln(out, value)
 
 	return err
-}
-
-func runBucket(args []string) (string, error) {
-	fs := flag.NewFlagSet("bucket", flag.ContinueOnError)
-	project := fs.String("project", "", "")
-	env := fs.String("env", "", "")
-	kind := fs.String("kind", "tfstate", "")
-	region := fs.String("region", "", "")
-	identity := fs.String("identity", "", "")
-
-	if err := fs.Parse(args); err != nil {
-		return "", xerrors.Wrap(errUsage, err.Error())
-	}
-
-	if fs.NArg() > 0 {
-		return "", xerrors.Wrap(errUsage, strings.Join(fs.Args(), " "))
-	}
-
-	account, err := accountOf(*identity)
-	if err != nil {
-		return "", err
-	}
-
-	return bucketName(*project, *env, *kind, account, *region)
-}
-
-func runAccount(args []string) (string, error) {
-	fs := flag.NewFlagSet("account", flag.ContinueOnError)
-	identity := fs.String("identity", "", "")
-
-	if err := fs.Parse(args); err != nil {
-		return "", xerrors.Wrap(errUsage, err.Error())
-	}
-
-	if fs.NArg() > 0 {
-		return "", errUsage
-	}
-
-	return accountOf(*identity)
 }
 
 // accountOf は、callerAccount の失敗の文から入力の値を落とします。文は CI の公開されるログに出る。
