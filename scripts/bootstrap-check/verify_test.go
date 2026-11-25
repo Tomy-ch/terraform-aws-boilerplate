@@ -109,8 +109,8 @@ func Test_parseVerifyArgs(t *testing.T) {
 			verifyOptions{stage: "stage4", project: "tabp", region: testRegion, executor: "bob"}},
 		"output-policy の既定の出所は live": {append([]string{"-stage", "output-policy"}, base...),
 			verifyOptions{stage: "output-policy", project: "tabp", region: testRegion, policySource: "live"}},
-		"output-policy に reference": {append([]string{"-stage", "output-policy", "-policy-source", "reference"}, base...),
-			verifyOptions{stage: "output-policy", project: "tabp", region: testRegion, policySource: "reference"}},
+		"output-policy に reference と置き場": {append([]string{"-stage", "output-policy", "-policy-source", "reference", "-reference-dir", "tmp/tf-policy/run"}, base...),
+			verifyOptions{stage: "output-policy", project: "tabp", region: testRegion, policySource: "reference", referenceDir: "tmp/tf-policy/run"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -134,16 +134,21 @@ func Test_parseVerifyArgs(t *testing.T) {
 	}
 
 	for name, args := range map[string][]string{
-		"引数なし":                  nil,
-		"stage なし":              base,
-		"知らない stage":            append([]string{"-stage", "stage2"}, base...),
-		"project なし":            {"-stage", "stage1", "-region", testRegion},
-		"region なし":             {"-stage", "stage1", "-project", "tabp"},
-		"余分な引数":                 append(append([]string{"-stage", "stage1"}, base...), "x"),
-		"知らない flag":             append([]string{"-stage", "stage1", "-x"}, base...),
-		"stage4 でない段に実行者":       append([]string{"-stage", "stage5", "-executor", "bob"}, base...),
-		"output-policy でない段に出所": append([]string{"-stage", "stage4", "-policy-source", "live"}, base...),
-		"知らない出所":                append([]string{"-stage", "output-policy", "-policy-source", "x"}, base...),
+		"引数なし":                   nil,
+		"stage なし":               base,
+		"知らない stage":             append([]string{"-stage", "stage2"}, base...),
+		"project なし":             {"-stage", "stage1", "-region", testRegion},
+		"region なし":              {"-stage", "stage1", "-project", "tabp"},
+		"余分な引数":                  append(append([]string{"-stage", "stage1"}, base...), "x"),
+		"知らない flag":              append([]string{"-stage", "stage1", "-x"}, base...),
+		"stage4 でない段に実行者":        append([]string{"-stage", "stage5", "-executor", "bob"}, base...),
+		"output-policy でない段に出所":  append([]string{"-stage", "stage4", "-policy-source", "live"}, base...),
+		"知らない出所":                 append([]string{"-stage", "output-policy", "-policy-source", "x"}, base...),
+		"reference に置き場が無い":      append([]string{"-stage", "output-policy", "-policy-source", "reference"}, base...),
+		"reference に空の置き場":       append([]string{"-stage", "output-policy", "-policy-source", "reference", "-reference-dir", ""}, base...),
+		"live に置き場":              append([]string{"-stage", "output-policy", "-policy-source", "live", "-reference-dir", "tmp/tf-policy/run"}, base...),
+		"出所の既定（live）に置き場":        append([]string{"-stage", "output-policy", "-reference-dir", "tmp/tf-policy/run"}, base...),
+		"output-policy でない段に置き場": append([]string{"-stage", "permissions", "-reference-dir", "tmp/tf-policy/run"}, base...),
 	} {
 		t.Run(name+"は使い方の誤り", func(t *testing.T) {
 			t.Parallel()
@@ -734,14 +739,14 @@ func Test_checkVerify(t *testing.T) {
 		{verifyOptions{stage: "permissions"}, "# 結果: 161 件のうち NG 89 件"},
 		{verifyOptions{stage: "stage5"}, "# 結果: 5 件のうち NG 4 件"},
 		{verifyOptions{stage: "output-policy", policySource: "live"}, "# 結果: 13 件のうち NG 7 件"},
-		{verifyOptions{stage: "output-policy", policySource: "reference"}, "# 結果: 13 件のうち NG 7 件"},
+		{verifyOptions{stage: "output-policy", policySource: "reference", referenceDir: testReferenceDir}, "# 結果: 13 件のうち NG 7 件"},
 	} {
 		o := tc.o
 		t.Run(o.stage+o.executor+o.policySource+" は読むだけの操作（get-・list-・describe-・head-・simulate-）しか呼ばない", func(t *testing.T) {
 			t.Parallel()
 
 			f := &fakeAWS{t: t, responses: map[string]awsResult{stsAccountKey: okResult(testAccount)}, handler: permissiveHandler}
-			d := verifyDeps(f, map[string]string{identityMain: "state_noncurrent_version_retention_days = 90\n", referencePlan: referencePlanJSON(t)})
+			d := verifyDeps(f, map[string]string{identityMain: "state_noncurrent_version_retention_days = 90\n", testReferenceList: testReferenceDir + "/runs/state-backend.jsonl\n", testReferencePlan: referencePlanJSON(t)})
 			o.project, o.region = testProject, testRegion
 
 			lines, err := run(t, o, d)

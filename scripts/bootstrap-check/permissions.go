@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 )
@@ -12,8 +13,8 @@ const (
 	implicitDeny = "implicitDeny"
 	explicitDeny = "explicitDeny"
 
-	// referencePlan は、make tf-policy が書く state-backend の reference の plan（リポジトリの直下からのパス）。
-	referencePlan = "tmp/tf-policy/state-backend.json"
+	// referenceRoot は、make tf-policy の reference の root のうち、出力の Bucket を持つもの。
+	referenceRoot = "state-backend"
 	// referenceAccount は、reference の plan のアカウント ID。実際の ID に置き換えて評価する。
 	referenceAccount = "123456789012"
 )
@@ -642,9 +643,25 @@ func permissionsSteps(q *query, n names) ([]step, error) {
 	return steps, nil
 }
 
-// referencePolicy は、reference の plan の module の出力の Bucket の Bucket Policy の文書。アカウント ID を account に
-// 置き換える。読めなければ理由を返す。
-func referencePolicy(readFile func(string) ([]byte, error), module, account string) (string, string) {
+// referencePolicy は、make tf-policy が dir に書いた reference の plan の、module の出力の Bucket の Bucket Policy の
+// 文書。アカウント ID を account に置き換える。読めなければ理由を返す。
+// dir の plans.txt に referenceRoot の plan が無ければ、inputs に残っているのは今回の出力ではないので読まない。
+func referencePolicy(readFile func(string) ([]byte, error), dir, module, account string) (string, string) {
+	list := filepath.Join(dir, "plans.txt")
+
+	lines, err := readFile(list)
+	if err != nil {
+		return "", list + " を読めない（make tf-policy を走らせてください）: " + err.Error()
+	}
+
+	if !slices.ContainsFunc(strings.Split(string(lines), "\n"), func(l string) bool {
+		return filepath.Base(strings.TrimSpace(l)) == referenceRoot+".jsonl"
+	}) {
+		return "", list + " に " + referenceRoot + " の plan が無い（make tf-policy で " + referenceRoot + " の plan が落ちた）"
+	}
+
+	referencePlan := filepath.Join(dir, "inputs", referenceRoot+".json")
+
 	b, err := readFile(referencePlan)
 	if err != nil {
 		return "", referencePlan + " を読めない: " + err.Error()
@@ -685,7 +702,7 @@ func outputDocument(e verifyEnv, bucket, module string) (string, string, error) 
 
 	if e.source == sourceReference {
 		var reason string
-		if doc, reason = referencePolicy(e.readFile, module, e.n.account); reason != "" {
+		if doc, reason = referencePolicy(e.readFile, e.referenceDir, module, e.n.account); reason != "" {
 			return "", reason, nil
 		}
 	} else {

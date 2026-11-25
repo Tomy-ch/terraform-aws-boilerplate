@@ -1355,6 +1355,28 @@ func Test_permissionsSteps(t *testing.T) {
 	})
 }
 
+// testReferenceDir は、make tf-policy の -out。plans.txt と inputs/ を持つ。
+const testReferenceDir = "tmp/tf-policy/run"
+
+var (
+	testReferenceList = testReferenceDir + "/plans.txt"
+	testReferencePlan = testReferenceDir + "/inputs/state-backend.json"
+)
+
+// referenceFiles は、plans.txt に state-backend の plan を挙げ、inputs に plan を置いた tf-policy の出力を読む。
+func referenceFiles(plan string) func(string) ([]byte, error) {
+	return func(p string) ([]byte, error) {
+		switch p {
+		case testReferenceList:
+			return []byte(testReferenceDir + "/runs/finops.jsonl\n" + testReferenceDir + "/runs/state-backend.jsonl\n"), nil
+		case testReferencePlan:
+			return []byte(plan), nil
+		}
+
+		return nil, os.ErrNotExist
+	}
+}
+
 func referencePlanJSON(t *testing.T) string {
 	t.Helper()
 
@@ -1373,20 +1395,10 @@ func referencePlanJSON(t *testing.T) string {
 func Test_referencePolicy(t *testing.T) {
 	t.Parallel()
 
-	read := func(s string) func(string) ([]byte, error) {
-		return func(p string) ([]byte, error) {
-			if p != referencePlan {
-				return nil, os.ErrNotExist
-			}
-
-			return []byte(s), nil
-		}
-	}
-
 	t.Run("module の文書を読み、アカウント ID を置き換える", func(t *testing.T) {
 		t.Parallel()
 
-		doc, reason := referencePolicy(read(referencePlanJSON(t)), "plan_output", "999999999999")
+		doc, reason := referencePolicy(referenceFiles(referencePlanJSON(t)), testReferenceDir, "plan_output", "999999999999")
 
 		assert.Empty(t, reason)
 		assert.Equal(t, `{"Statement":[{"Effect":"Deny","Principal":"arn:aws:iam::999999999999:root"}]}`, doc)
@@ -1400,34 +1412,98 @@ func Test_referencePolicy(t *testing.T) {
 		module  string
 		want    string
 	}{
-		"JSON でない":             {"x", "plan_output", referencePlan + " を JSON の object として読めない"},
-		"null":                 {"null", "plan_output", referencePlan + " を JSON の object として読めない"},
-		"resource_changes が無い": {`{}`, "plan_output", referencePlan + " に resource_changes の配列が無い"},
+		"JSON でない":             {"x", "plan_output", testReferencePlan + " を JSON の object として読めない"},
+		"null":                 {"null", "plan_output", testReferencePlan + " を JSON の object として読めない"},
+		"空":                    {"", "plan_output", testReferencePlan + " を JSON の object として読めない"},
+		"resource_changes が無い": {`{}`, "plan_output", testReferencePlan + " に resource_changes の配列が無い"},
 		"address が無い": {referencePlanJSON(t), "none",
-			referencePlan + " に module.state_backend.module.none.aws_s3_bucket_policy.this の policy が1つではない（0 個）"},
+			testReferencePlan + " に module.state_backend.module.none.aws_s3_bucket_policy.this の policy が1つではない（0 個）"},
 		"address が2つ": {dup, "apply_output",
-			referencePlan + " に module.state_backend.module.apply_output.aws_s3_bucket_policy.this の policy が1つではない（2 個）"},
+			testReferencePlan + " に module.state_backend.module.apply_output.aws_s3_bucket_policy.this の policy が1つではない（2 個）"},
 		"policy が null": {`{"resource_changes":[{"address":"module.state_backend.module.plan_output.aws_s3_bucket_policy.this","change":{"after":{"policy":null}}}]}`, "plan_output",
-			referencePlan + " に module.state_backend.module.plan_output.aws_s3_bucket_policy.this の policy が1つではない（1 個）"},
+			testReferencePlan + " に module.state_backend.module.plan_output.aws_s3_bucket_policy.this の policy が1つではない（1 個）"},
 	} {
 		t.Run(name+"なら理由を返す", func(t *testing.T) {
 			t.Parallel()
 
-			doc, reason := referencePolicy(read(tc.content), tc.module, testAccount)
+			doc, reason := referencePolicy(referenceFiles(tc.content), testReferenceDir, tc.module, testAccount)
 
 			assert.Empty(t, doc)
 			assert.Equal(t, tc.want, reason)
 		})
 	}
 
-	t.Run("読めなければ理由を返す", func(t *testing.T) {
+	t.Run("plans.txt を読めなければ、inputs を読まずに理由を返す", func(t *testing.T) {
 		t.Parallel()
 
-		_, reason := referencePolicy(read(""), "plan_output", testAccount)
-		assert.Equal(t, referencePlan+" を JSON の object として読めない", reason)
+		var read []string
 
-		_, reason = referencePolicy(func(string) ([]byte, error) { return nil, os.ErrNotExist }, "plan_output", testAccount)
-		assert.Equal(t, referencePlan+" を読めない: "+os.ErrNotExist.Error(), reason)
+		doc, reason := referencePolicy(func(p string) ([]byte, error) {
+			read = append(read, p)
+
+			return nil, os.ErrNotExist
+		}, testReferenceDir, "plan_output", testAccount)
+
+		assert.Empty(t, doc)
+		assert.Equal(t, testReferenceList+" を読めない（make tf-policy を走らせてください）: "+os.ErrNotExist.Error(), reason)
+		assert.Equal(t, []string{testReferenceList}, read)
+	})
+
+	for name, list := range map[string]string{
+		"空":           "",
+		"ほかの root だけ": testReferenceDir + "/runs/finops.jsonl\n",
+		"名前が state-backend を含むだけ": testReferenceDir + "/runs/state-backend-x.jsonl\n" + testReferenceDir + "/runs/x-state-backend.jsonl\n",
+	} {
+		t.Run("plans.txt が"+name+"なら、今回の出力ではないので inputs を読まない", func(t *testing.T) {
+			t.Parallel()
+
+			doc, reason := referencePolicy(func(p string) ([]byte, error) {
+				if p == testReferenceList {
+					return []byte(list), nil
+				}
+
+				require.Fail(t, "plans.txt のほかを読んだ", p)
+
+				return nil, os.ErrNotExist
+			}, testReferenceDir, "plan_output", testAccount)
+
+			assert.Empty(t, doc)
+			assert.Equal(t, testReferenceList+" に state-backend の plan が無い（make tf-policy で state-backend の plan が落ちた）", reason)
+		})
+	}
+
+	t.Run("plans.txt にあっても inputs の plan を読めなければ理由を返す", func(t *testing.T) {
+		t.Parallel()
+
+		files := referenceFiles("")
+
+		_, reason := referencePolicy(func(p string) ([]byte, error) {
+			if p == testReferencePlan {
+				return nil, os.ErrNotExist
+			}
+
+			return files(p)
+		}, testReferenceDir, "plan_output", testAccount)
+
+		assert.Equal(t, testReferencePlan+" を読めない: "+os.ErrNotExist.Error(), reason)
+	})
+
+	t.Run("置き場は渡された dir から組む", func(t *testing.T) {
+		t.Parallel()
+
+		var read []string
+
+		_, _ = referencePolicy(func(p string) ([]byte, error) {
+			read = append(read, p)
+
+			if p == "x/y/plans.txt" {
+				return []byte("x/y/runs/state-backend.jsonl\n"), nil
+			}
+
+			return nil, os.ErrNotExist
+		}, "x/y", "plan_output", testAccount)
+
+		assert.Equal(t, []string{"x/y/plans.txt", "x/y/inputs/state-backend.json"}, read)
 	})
 }
 
@@ -1439,8 +1515,8 @@ func Test_outputDocument(t *testing.T) {
 
 		f := verifyFake(t, map[string]awsResult{s3Key("get-bucket-policy", testPlanBucket): r}, nil)
 
-		return verifyEnv{q: newQuery(f.fn, testRegion), n: testNames(""), source: source,
-			readFile: func(string) ([]byte, error) { return []byte(referencePlanJSON(t)), nil }}
+		return verifyEnv{q: newQuery(f.fn, testRegion), n: testNames(""), source: source, referenceDir: testReferenceDir,
+			readFile: referenceFiles(referencePlanJSON(t))}
 	}
 
 	for name, tc := range map[string]struct {
@@ -1488,7 +1564,7 @@ func Test_outputDocument(t *testing.T) {
 			require.NoError(t, err)
 
 			e := env(t, sourceReference, okResult(""))
-			e.readFile = func(string) ([]byte, error) { return b, nil }
+			e.readFile = referenceFiles(string(b))
 
 			doc, reason, err := outputDocument(e, testPlanBucket, "plan_output")
 
@@ -1566,8 +1642,8 @@ func Test_outputPolicySteps(t *testing.T) {
 			"plan":  `{"Statement":[{"Effect":"Deny","Principal":"arn:aws:iam::123456789012:root"}]}`,
 			"apply": `{"Statement":[{"Sid":"apply"}]}`,
 		})}
-		e := verifyEnv{q: newQuery(f.fn, testRegion), n: n, source: sourceReference,
-			readFile: func(string) ([]byte, error) { return []byte(referencePlanJSON(t)), nil }}
+		e := verifyEnv{q: newQuery(f.fn, testRegion), n: n, source: sourceReference, referenceDir: testReferenceDir,
+			readFile: referenceFiles(referencePlanJSON(t))}
 
 		lines, err := run(t, e, f)
 
@@ -1603,8 +1679,8 @@ func Test_outputPolicySteps(t *testing.T) {
 			"plan":  `{"Statement":[{"Effect":"Deny","Principal":"arn:aws:iam::210987654321:root"}]}`,
 			"apply": `{"Statement":[{"Sid":"apply"}]}`,
 		})}
-		e := verifyEnv{q: newQuery(f.fn, testRegion), n: other, source: sourceReference,
-			readFile: func(string) ([]byte, error) { return []byte(referencePlanJSON(t)), nil }}
+		e := verifyEnv{q: newQuery(f.fn, testRegion), n: other, source: sourceReference, referenceDir: testReferenceDir,
+			readFile: referenceFiles(referencePlanJSON(t))}
 
 		lines, err := run(t, e, f)
 
@@ -1649,12 +1725,14 @@ func Test_outputPolicySteps(t *testing.T) {
 	})
 
 	for name, tc := range map[string]struct {
-		plan   func(t *testing.T) ([]byte, error)
-		result string
+		readFile func(t *testing.T) func(string) ([]byte, error)
+		result   string
 	}{
-		"reference の plan が無い": {func(*testing.T) ([]byte, error) { return nil, os.ErrNotExist }, "# 結果: 13 件のうち NG 13 件"},
-		"reference の plan に apply_output だけ無い": {func(t *testing.T) ([]byte, error) {
-			return []byte(strings.Replace(referencePlanJSON(t), "module.state_backend.module.apply_output", "module.x", 1)), nil
+		"reference の plan が無い": {func(*testing.T) func(string) ([]byte, error) {
+			return func(string) ([]byte, error) { return nil, os.ErrNotExist }
+		}, "# 結果: 13 件のうち NG 13 件"},
+		"reference の plan に apply_output だけ無い": {func(t *testing.T) func(string) ([]byte, error) {
+			return referenceFiles(strings.Replace(referencePlanJSON(t), "module.state_backend.module.apply_output", "module.x", 1))
 		}, "# 結果: 13 件のうち NG 4 件"},
 	} {
 		t.Run(name+"なら、読めない側が NG", func(t *testing.T) {
@@ -1663,7 +1741,7 @@ func Test_outputPolicySteps(t *testing.T) {
 			f := &fakeAWS{t: t, handler: handler(map[string]string{
 				"plan": `{"Statement":[{"Effect":"Deny","Principal":"arn:aws:iam::123456789012:root"}]}`,
 			})}
-			e := verifyEnv{q: newQuery(f.fn, testRegion), n: n, source: sourceReference, readFile: func(string) ([]byte, error) { return tc.plan(t) }}
+			e := verifyEnv{q: newQuery(f.fn, testRegion), n: n, source: sourceReference, referenceDir: testReferenceDir, readFile: tc.readFile(t)}
 
 			lines, err := run(t, e, f)
 
