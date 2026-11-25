@@ -101,7 +101,6 @@ ENV GOCACHE=/tmp/go-build \
 
 # root で動かさない。bind mount した生成物が root 所有になると、道具が直した行を直した本人が
 # 消せない状態がリポジトリに残る。compose も user を渡すが、イメージ単体でも既定を非 root にする。
-# 数値で書くのは、ホスト側が名前を解決できるとは限らないため（hadolint DL3066）。
 # 65534 は nobody:nogroup。この段に mise も home も残していないため、書き込む先を持たない。
 USER 65534:65534
 
@@ -149,7 +148,7 @@ COPY docker/tools/node/package.json docker/tools/node/pnpm-lock.yaml docker/tool
 RUN pnpm install --frozen-lockfile --prod --store-dir /tmp/pnpm-store
 
 # ==============================================================================
-# node_tools: npm エコシステムの道具。markdownlint-cli2 / commitlint
+# node_tools: npm エコシステムの道具
 # ==============================================================================
 # pnpm と curl はこの段へ持ち込まない（ADR-0503 決定11）。
 FROM node:26.13.1-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS node_tools
