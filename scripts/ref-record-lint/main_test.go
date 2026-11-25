@@ -584,6 +584,25 @@ func Test_isHeading(t *testing.T) {
 	}
 }
 
+func Test_hasTail(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		rest string
+		want bool
+	}{
+		"空":         {"", true},
+		"どれかで始まる":   {"（x）", true},
+		"2つ目で始まる":   {" x", true},
+		"どれでも始まらない": {"x", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, hasTail(c.rest, []string{"（", " "}))
+		})
+	}
+}
+
 func Test_visibleLines(t *testing.T) {
 	t.Parallel()
 
@@ -616,6 +635,15 @@ func Test_visibleLines(t *testing.T) {
 			assert.Equal(t, c.openedAt, openedAt)
 		})
 	}
+}
+
+func Test_backtickRun(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, 0, backtickRun("a`"))
+	assert.Equal(t, 1, backtickRun("`a`"))
+	assert.Equal(t, 3, backtickRun("```"))
+	assert.Equal(t, 0, backtickRun(""))
 }
 
 func Test_checkSection(t *testing.T) {
@@ -805,4 +833,13 @@ func Test_checkList(t *testing.T) {
 			assert.Equal(t, c.want, checkList(lines(c.body), c.label, c.needReason))
 		})
 	}
+}
+
+func Test_isLabel(t *testing.T) {
+	t.Parallel()
+
+	assert.True(t, isLabel(adoptedLabel, adoptedLabel))
+	assert.True(t, isLabel(adoptedLabel+" \t", adoptedLabel), "後ろの空白を許す")
+	assert.False(t, isLabel(" "+adoptedLabel, adoptedLabel), "前の空白は許さない")
+	assert.False(t, isLabel(adoptedLabel+"x", adoptedLabel))
 }
