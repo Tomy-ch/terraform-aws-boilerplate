@@ -66,8 +66,9 @@
 //	    裏で走る plan の全文に、lock を取った後の行が現れたら held を出す。現れる前に plan が終われば空行を出す。
 //	    どちらも起きずに limit を過ぎたら失敗する
 //
-// aws も terraform も起動しない。起動は make が行い、ここは値だけを返す（ADR-0702 決定3）。
-// plan-header だけは git を起動して作業ツリーを読む。assume-denied・oidc-token・oidc-sub・plan-summary・failure-kind・
+// 人の手元の入口の段（local-prepare・local-init・local-plan。local.go）は、1回の起動で1つの目的の道具（aws か
+// terraform）だけを、固定の引数で起動する（ADR-0702 決定3・24）。そのほかのサブコマンドは aws も terraform も
+// 起動せず、値だけを返す。plan-header だけは git を起動して作業ツリーを読む。assume-denied・oidc-token・oidc-sub・plan-summary・failure-kind・
 // policy-result・sha256・lock-key・lock-etag・lock-stale・lock-held・lock-wait はファイルを読み、oidc-url は環境変数を読み、
 // lock-stale と lock-held は時刻を読み、lock-wait は pid のプロセスが生きているかを見る。
 // 値を決められない入力はすべて非ゼロで終わり、make はその時点で terraform を呼ばない。
@@ -122,7 +123,7 @@ var (
 	unsetNames    = []string{"TF_WORKSPACE", "TF_DATA_DIR", "TF_CLI_CONFIG_FILE", "TF_REATTACH_PROVIDERS",
 		"ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"}
 
-	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> [-kind tfstate|tfplan|tfapply] -region <r> -identity <out> | state-key ... | env-unset | plan-header | role-arn ... | assume-denied -role <r> -exitcode <n> <file> | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ... | apply-key ... | apply-result -exitcode <n> | failure-kind -step <s> -exitcode <n> <file> | policy-result -namespace <ns> -rego <file> <file> | policy-result -policy <dir> <file> | account -identity <out> | sha256 <file> | oidc-url | oidc-token <file> | lock-key <root> | lock-etag -key <k> [-want absent|present] <file> | lock-stale -etag <e> -meta <file> <file> | lock-held -etag <e> -meta <file> <file> | lock-wait -pid <pid> [-interval <d>] [-limit <d>] <file>")
+	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> [-kind tfstate|tfplan|tfapply] -region <r> -identity <out> | state-key ... | env-unset | plan-header | role-arn ... | assume-denied -role <r> -exitcode <n> <file> | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ... | apply-key ... | apply-result -exitcode <n> | failure-kind -step <s> -exitcode <n> <file> | policy-result -namespace <ns> -rego <file> <file> | policy-result -policy <dir> <file> | account -identity <out> | sha256 <file> | oidc-url | oidc-token <file> | lock-key <root> | lock-etag -key <k> [-want absent|present] <file> | lock-stale -etag <e> -meta <file> <file> | lock-held -etag <e> -meta <file> <file> | lock-wait -pid <pid> [-interval <d>] [-limit <d>] <file> | local-prepare -project <p> -profile <p> -env <e> -root identity|workload -base <dir> [-missing fail|sse-s3] -out <file> | local-init -profile <p> -state <file> | local-plan -profile <p> -env <e> -root <r> -base <dir> -header <file> -log <file>")
 	errBackendMissing   = xerrors.New("❌ backend.tf がありません")
 	errProvidersMissing = xerrors.New("❌ providers.tf がありません")
 	errRegionMismatch   = xerrors.New("❌ provider と backend の region が違います")
@@ -143,12 +144,14 @@ type deps struct {
 	now      func() time.Time
 	alive    func(pid int) bool
 	sleep    func(time.Duration)
+	tool     toolFunc
+	stderr   io.Writer
 }
 
 func main() {
 	log.SetFlags(0)
 
-	if err := run(os.Args[1:], os.Stdout, deps{readFile: os.ReadFile, environ: os.Environ(), git: gitOutput, now: time.Now, alive: processAlive, sleep: time.Sleep}); err != nil {
+	if err := run(os.Args[1:], os.Stdout, deps{readFile: os.ReadFile, environ: os.Environ(), git: gitOutput, now: time.Now, alive: processAlive, sleep: time.Sleep, tool: command, stderr: os.Stderr}); err != nil {
 		log.Fatalf("%v", err)
 	}
 }
@@ -231,6 +234,12 @@ func run(args []string, out io.Writer, d deps) error {
 		value, err = runLockHeld(args[1:], d)
 	case "lock-wait":
 		value, err = runLockWait(args[1:], d)
+	case "local-prepare":
+		value, err = localPrepare(args[1:], d, d.stderr)
+	case "local-init":
+		value, err = localInit(args[1:], d, out, d.stderr)
+	case "local-plan":
+		value, err = localPlan(args[1:], d, out, d.stderr)
 	default:
 		return xerrors.Wrap(errUsage, args[0])
 	}

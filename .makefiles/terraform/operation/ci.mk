@@ -2,7 +2,7 @@
 ## state に残った lock を外す入口（terraform-unlock.yaml）と、lock を外さずに残す入口（terraform-lock-hold.yaml）
 ##
 ## 資格情報は OIDC の token で role を1回だけ assume し、使い捨てのランナーの ~/.aws の profile に置く。
-## profile を置いた後の terraform と aws は local.mk と同じ TF_LOCAL_ENV で起動し、AWS_* を外した環境で profile だけを使う。
+## profile を置いた後の terraform と aws は TF_LOCAL_ENV で起動し、AWS_* を外した環境で profile だけを使う。
 ## ここは道具を起動する順序と、その間で値を運ぶことだけを持ち、値の算出と判定は tf-local が持つ
 ## （ADR-0702 決定3・24）。plan と apply には、CI_POLICY_NAMESPACES の Policy を掛ける。
 ## 公開されるログに terraform の出力を出さない。plan と apply の全文は plan の出力の Bucket か apply の出力の Bucket に置き、ログには終了コード・
@@ -10,7 +10,22 @@
 ##
 ## 入力は環境変数で受ける。CI_ACCOUNT_ID（environment の secret）と CI_PR（Pull Request の番号）は
 ## workflow が渡し、GITHUB_RUN_ID・GITHUB_RUN_ATTEMPT・RUNNER_TEMP・GITHUB_STEP_SUMMARY・GITHUB_OUTPUT と OIDC の
-## 要求先は GitHub Actions が渡す。tf-local に渡す値の export は local.mk 冒頭の注記に従う。
+## 要求先は GitHub Actions が渡す。tf-local は sh -c の中で動くので、値は export した変数で渡す。export は代入と
+## 分けて書く —— `export x=$(...)` は代入の失敗を export の成功で隠す。
+
+# $(1)=env $(2)=identity|workload（ADR-0604 決定5）
+TF_LOCAL_DIR = $(TF_BASE)/env/$(1)$(if $(filter identity,$(2)),/identity)
+# 直前に unset_env=$(tf-local env-unset) を代入してから使う。
+# TF_CLI_CONFIG_FILE=/dev/null は dev_overrides による provider の差し替えを封じる（docs/setup/bootstrap.md 2-0b）。
+TF_LOCAL_ENV = env $$unset_env AWS_PROFILE=$(TF_LOCAL_PROFILE) TF_CLI_CONFIG_FILE=/dev/null AWS_EC2_METADATA_DISABLED=true CHECKPOINT_DISABLE=1
+
+# init に渡す state の鍵の引数を kms に置く。鍵が無ければ空になり、$$kms は引用せずに展開して消える。
+# 直前に unset_env・region・identity・account・bucket を代入してから使う。$(1)=env $(2)=fail|sse-s3
+define TF_STATE_KEY
+aliases=$$($(TF_LOCAL_ENV) $(AWS_BIN) kms list-aliases --region "$$region" --output json); export aliases; \
+encryption=$$($(TF_LOCAL_ENV) $(AWS_BIN) s3api get-bucket-encryption --region "$$region" --bucket "$$bucket" --expected-bucket-owner "$$account" --output json); export encryption; \
+kms=$$($(call TF_LOCAL,state-key -project $(TF_LOCAL_PROJECT) -env $(1) -region "$$region" -identity "$$identity" -aliases "$$aliases" -encryption "$$encryption" -missing $(2)))
+endef
 
 CI_PLAN_DIR ?= $(if $(RUNNER_TEMP),$(RUNNER_TEMP),tmp)/ci-plan
 # apply を SIGINT で打ち切るまでの時間。apply の job の timeout-minutes より、init・plan と、打ち切りの後に terraform が
