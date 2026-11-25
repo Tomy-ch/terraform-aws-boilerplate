@@ -1,0 +1,8 @@
+-- modules/m/main.tf --
+resource "aws_iam_role" "r" {
+  name = "r"
+}
+resource "aws_iam_role_policy_attachment" "a" {
+  role       = aws_iam_role.r.name
+  policy_arn = "arn:${local.missing}:iam::aws:policy/ReadOnlyAccess"
+}

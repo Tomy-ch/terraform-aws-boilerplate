@@ -4,6 +4,7 @@
       "action.aws_lambda_invoke": {"executes_code": true},
       "data.aws_availability_zones": {"executes_code": false},
       "data.aws_caller_identity": {"executes_code": false},
+      "data.aws_iam_role": {"executes_code": false},
       "data.aws_lambda_invocation": {"executes_code": true},
       "data.aws_partition": {"executes_code": false},
       "data.aws_region": {"executes_code": false},
@@ -103,7 +104,8 @@
         "owner": "repository",
         "source": "usecases/organization-baseline/internal/break-glass/templates/member-break-glass-role.json.tftpl",
         "language": "hcl",
-        "adr": "organization-baseline/member-break-glass-via-stacksets"
+        "adr": "organization-baseline/member-break-glass-via-stacksets",
+        "reasons": ["type"]
       }
     ]
   }

@@ -1,0 +1,12 @@
+-- modules/m/main.tf --
+resource "aws_iam_role" "r" {
+  name = "r"
+}
+resource "aws_iam_policy" "p" {
+  policy = "{}"
+}
+resource "aws_iam_role_policy_attachment" "a" {
+  for_each   = { "arn:aws:iam::123456789012:policy/x" = aws_iam_policy.p.arn }
+  role       = aws_iam_role.r.name
+  policy_arn = each.value
+}

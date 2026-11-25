@@ -1,0 +1,16 @@
+-- m/providers.tf --
+provider "runner" {
+  settings = local.k
+}
+
+locals {
+  k = { runner = { command = "sh" } }
+}
+-- m/versions.tf --
+terraform {
+  required_providers {
+    runner = {
+      source = "example/runner"
+    }
+  }
+}
