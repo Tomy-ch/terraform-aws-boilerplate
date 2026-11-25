@@ -553,40 +553,39 @@ func stackInstanceRows(n names, other string) []simRow {
 	yss, yst, _ := stackSetARNs(n, n.project+"-break-glass-x")
 	ai := n.applyIdentity
 	inst := []string{"cloudformation:CreateStackInstances", "cloudformation:UpdateStackInstances"}
-	// TargetRegion は一覧を受けるキー（Service Authorization Reference の ArrayOfString）で、provider の region に限る
-	// （deployment-identity/ADR-0201 決定4）。
+	// TargetRegion は type の評価にだけ付き、stackset と stackset-target の評価には付かない（#553 で実際の要求で観測した。
+	// Service Authorization Reference は3つとも受けると書く）。付かないキーを context に与える行は、IAM が見ないものを確かめる。
+	// type の条件は一覧を受けるキー（ArrayOfString）を provider の region に限る（deployment-identity/ADR-0201 決定4）。
 	// provider の region だけの一覧は、条件が StringEquals なら implicitDeny になるので、StringEquals で書いた条件を見つける。
 	// 同じ region を2つ並べた一覧は、`,` を含む1つの値として渡ったときに allowed にならない。
 	tr := func(first string, rest ...string) []string {
 		return []string{ctxList("cloudformation:TargetRegion", first, rest...)}
 	}
 
-	var rows []simRow
+	upd := "cloudformation:UpdateStackSet"
 
-	each := func(want string, context []string, actions ...string) {
-		for _, r := range []string{ss, st, ty} {
-			rows = append(rows, simCtx(want, ai, r, context, actions...))
-		}
+	return []simRow{
+		// キーの無い stackset と stackset-target の行は、条件がこの2つへ戻ったときに implicitDeny になる。
+		sim(allowed, ai, ss, inst...),
+		sim(allowed, ai, st, inst...),
+		simCtx(allowed, ai, ty, tr(n.region), inst...),
+		simCtx(allowed, ai, ty, tr(n.region, n.region), inst...),
+		simCtx(implicitDeny, ai, ty, tr(n.region, other), inst...),
+		simCtx(implicitDeny, ai, ty, tr(other), inst...),
+		sim(implicitDeny, ai, ty, inst...),
+		sim(allowed, ai, ss, upd),
+		sim(allowed, ai, st, upd),
+		sim(allowed, ai, ty, upd),
+		sim(implicitDeny, ai, ss, "cloudformation:DeleteStackInstances"),
+		sim(implicitDeny, ai, xss, inst...),
+		sim(implicitDeny, ai, xst, inst...),
+		sim(implicitDeny, ai, yss, inst...),
+		sim(implicitDeny, ai, yst, inst...),
+		sim(implicitDeny, ai, xss, upd),
+		sim(implicitDeny, ai, xst, upd),
+		sim(implicitDeny, ai, yss, upd),
+		sim(implicitDeny, ai, yst, upd),
 	}
-
-	each(allowed, tr(n.region), inst...)
-	each(allowed, tr(n.region, n.region), inst...)
-	each(implicitDeny, tr(n.region, other), inst...)
-	each(implicitDeny, tr(other), inst...)
-	each(implicitDeny, nil, inst...)
-	each(allowed, nil, "cloudformation:UpdateStackSet")
-
-	rows = append(rows, sim(implicitDeny, ai, ss, "cloudformation:DeleteStackInstances"))
-
-	for _, r := range []string{xss, xst, yss, yst} {
-		rows = append(rows, simCtx(implicitDeny, ai, r, tr(n.region), inst...))
-	}
-
-	for _, r := range []string{xss, xst, yss, yst} {
-		rows = append(rows, sim(implicitDeny, ai, r, "cloudformation:UpdateStackSet"))
-	}
-
-	return rows
 }
 
 // permissionsSteps は、CI の role の権限を simulate-principal-policy で評価する確認の表。state の鍵の ARN を読めなければ、

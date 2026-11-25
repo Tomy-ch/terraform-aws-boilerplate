@@ -83,29 +83,21 @@ var (
 		"apply-identity $bg [iam:PolicyARN=arn:aws:iam::aws:policy/AdministratorAccess]: 1 件が allowed",
 		"apply-identity *: 1 件が implicitDeny",
 		"apply-identity $bg: 1 件が implicitDeny",
-		"apply-identity $ss [cloudformation:TargetRegion=ap-northeast-1]: 2 件が allowed",
-		"apply-identity $st [cloudformation:TargetRegion=ap-northeast-1]: 2 件が allowed",
+		"apply-identity $ss: 2 件が allowed",
+		"apply-identity $st: 2 件が allowed",
 		"apply-identity $ty [cloudformation:TargetRegion=ap-northeast-1]: 2 件が allowed",
-		"apply-identity $ss [cloudformation:TargetRegion=ap-northeast-1,ap-northeast-1]: 2 件が allowed",
-		"apply-identity $st [cloudformation:TargetRegion=ap-northeast-1,ap-northeast-1]: 2 件が allowed",
 		"apply-identity $ty [cloudformation:TargetRegion=ap-northeast-1,ap-northeast-1]: 2 件が allowed",
-		"apply-identity $ss [cloudformation:TargetRegion=ap-northeast-1,us-west-2]: 2 件が implicitDeny",
-		"apply-identity $st [cloudformation:TargetRegion=ap-northeast-1,us-west-2]: 2 件が implicitDeny",
 		"apply-identity $ty [cloudformation:TargetRegion=ap-northeast-1,us-west-2]: 2 件が implicitDeny",
-		"apply-identity $ss [cloudformation:TargetRegion=us-west-2]: 2 件が implicitDeny",
-		"apply-identity $st [cloudformation:TargetRegion=us-west-2]: 2 件が implicitDeny",
 		"apply-identity $ty [cloudformation:TargetRegion=us-west-2]: 2 件が implicitDeny",
-		"apply-identity $ss: 2 件が implicitDeny",
-		"apply-identity $st: 2 件が implicitDeny",
 		"apply-identity $ty: 2 件が implicitDeny",
 		"apply-identity $ss: 1 件が allowed",
 		"apply-identity $st: 1 件が allowed",
 		"apply-identity $ty: 1 件が allowed",
 		"apply-identity $ss: 1 件が implicitDeny",
-		"apply-identity $xss [cloudformation:TargetRegion=ap-northeast-1]: 2 件が implicitDeny",
-		"apply-identity $xst [cloudformation:TargetRegion=ap-northeast-1]: 2 件が implicitDeny",
-		"apply-identity $yss [cloudformation:TargetRegion=ap-northeast-1]: 2 件が implicitDeny",
-		"apply-identity $yst [cloudformation:TargetRegion=ap-northeast-1]: 2 件が implicitDeny",
+		"apply-identity $xss: 2 件が implicitDeny",
+		"apply-identity $xst: 2 件が implicitDeny",
+		"apply-identity $yss: 2 件が implicitDeny",
+		"apply-identity $yst: 2 件が implicitDeny",
 		"apply-identity $xss: 1 件が implicitDeny",
 		"apply-identity $xst: 1 件が implicitDeny",
 		"apply-identity $yss: 1 件が implicitDeny",
@@ -226,7 +218,7 @@ var (
 const (
 	// permissions の件数。条件つきの確認の有無で変わる。
 	permissionsBase     = 110
-	governanceGated     = 31
+	governanceGated     = 23
 	workloadGatedCount  = 24
 	budgetsGatedCount   = 4
 	outputPolicyCount   = 13
@@ -344,29 +336,21 @@ var permRowActions = []string{
 	"iam:AttachRolePolicy ; iam:PolicyARN = arn:aws:iam::aws:policy/AdministratorAccess (arn)",
 	"organizations:DeleteOrganization",
 	"iam:DeleteRole",
-	"$inst ; cloudformation:TargetRegion = ap-northeast-1 (stringList)",
-	"$inst ; cloudformation:TargetRegion = ap-northeast-1 (stringList)",
-	"$inst ; cloudformation:TargetRegion = ap-northeast-1 (stringList)",
-	"$inst ; cloudformation:TargetRegion = ap-northeast-1,ap-northeast-1 (stringList)",
-	"$inst ; cloudformation:TargetRegion = ap-northeast-1,ap-northeast-1 (stringList)",
-	"$inst ; cloudformation:TargetRegion = ap-northeast-1,ap-northeast-1 (stringList)",
-	"$inst ; cloudformation:TargetRegion = ap-northeast-1,us-west-2 (stringList)",
-	"$inst ; cloudformation:TargetRegion = ap-northeast-1,us-west-2 (stringList)",
-	"$inst ; cloudformation:TargetRegion = ap-northeast-1,us-west-2 (stringList)",
-	"$inst ; cloudformation:TargetRegion = us-west-2 (stringList)",
-	"$inst ; cloudformation:TargetRegion = us-west-2 (stringList)",
-	"$inst ; cloudformation:TargetRegion = us-west-2 (stringList)",
 	"$inst",
 	"$inst",
+	"$inst ; cloudformation:TargetRegion = ap-northeast-1 (stringList)",
+	"$inst ; cloudformation:TargetRegion = ap-northeast-1,ap-northeast-1 (stringList)",
+	"$inst ; cloudformation:TargetRegion = ap-northeast-1,us-west-2 (stringList)",
+	"$inst ; cloudformation:TargetRegion = us-west-2 (stringList)",
 	"$inst",
 	"cloudformation:UpdateStackSet",
 	"cloudformation:UpdateStackSet",
 	"cloudformation:UpdateStackSet",
 	"cloudformation:DeleteStackInstances",
-	"$inst ; cloudformation:TargetRegion = ap-northeast-1 (stringList)",
-	"$inst ; cloudformation:TargetRegion = ap-northeast-1 (stringList)",
-	"$inst ; cloudformation:TargetRegion = ap-northeast-1 (stringList)",
-	"$inst ; cloudformation:TargetRegion = ap-northeast-1 (stringList)",
+	"$inst",
+	"$inst",
+	"$inst",
+	"$inst",
 	"cloudformation:UpdateStackSet",
 	"cloudformation:UpdateStackSet",
 	"cloudformation:UpdateStackSet",
@@ -1090,20 +1074,26 @@ func Test_permissionSections(t *testing.T) {
 			var rows []row
 
 			for _, r := range byHeading(t, "# 統制の構成物と ").gated {
+				if !slices.Contains(r.actions, "cloudformation:CreateStackInstances") {
+					continue
+				}
+
+				regions := ""
+
 				for _, c := range r.context {
 					if v, ok := strings.CutPrefix(c, "ContextKeyName=cloudformation:TargetRegion,ContextKeyValues="); ok {
-						rows = append(rows, row{r.want, r.resource, strings.TrimSuffix(v, ",ContextKeyType=stringList")})
+						regions = strings.TrimSuffix(v, ",ContextKeyType=stringList")
 					}
 				}
+
+				rows = append(rows, row{r.want, r.resource, regions})
 			}
 
 			assert.Equal(t, []row{
-				{allowed, ss, "us-west-2"}, {allowed, st, "us-west-2"}, {allowed, ty, "us-west-2"},
-				{allowed, ss, "us-west-2,us-west-2"}, {allowed, st, "us-west-2,us-west-2"}, {allowed, ty, "us-west-2,us-west-2"},
-				{implicitDeny, ss, "us-west-2,eu-west-1"}, {implicitDeny, st, "us-west-2,eu-west-1"}, {implicitDeny, ty, "us-west-2,eu-west-1"},
-				{implicitDeny, ss, "eu-west-1"}, {implicitDeny, st, "eu-west-1"}, {implicitDeny, ty, "eu-west-1"},
-				{implicitDeny, xss, "us-west-2"}, {implicitDeny, xst, "us-west-2"},
-				{implicitDeny, yss, "us-west-2"}, {implicitDeny, yst, "us-west-2"},
+				{allowed, ss, ""}, {allowed, st, ""},
+				{allowed, ty, "us-west-2"}, {allowed, ty, "us-west-2,us-west-2"},
+				{implicitDeny, ty, "us-west-2,eu-west-1"}, {implicitDeny, ty, "eu-west-1"}, {implicitDeny, ty, ""},
+				{implicitDeny, xss, ""}, {implicitDeny, xst, ""}, {implicitDeny, yss, ""}, {implicitDeny, yst, ""},
 			}, rows)
 		})
 	})
@@ -1185,39 +1175,42 @@ func Test_stackInstanceRows(t *testing.T) {
 		return simRow{want: want, role: "apply-identity", resource: resource, context: context, actions: actions}
 	}
 
-	t.Run("作成と更新は provider の region だけの一覧で allowed、別の region を含む一覧・別の region だけの一覧・context なしで implicitDeny、"+
-		"UpdateStackSet は allowed、DeleteStackInstances と別の名前・名前の prefix を共有する名前の StackSet は implicitDeny", func(t *testing.T) {
+	t.Run("作成と更新は stackset と stackset-target でキー無しで allowed、type で provider の region だけの一覧で allowed・"+
+		"別の region を含む一覧・別の region だけの一覧・キー無しで implicitDeny、UpdateStackSet は allowed、"+
+		"DeleteStackInstances と別の名前・名前の prefix を共有する名前の StackSet は implicitDeny", func(t *testing.T) {
 		t.Parallel()
 
 		assert.Equal(t, []simRow{
-			row(allowed, ss, tr("ap-northeast-1"), inst...),
-			row(allowed, st, tr("ap-northeast-1"), inst...),
+			row(allowed, ss, nil, inst...),
+			row(allowed, st, nil, inst...),
 			row(allowed, ty, tr("ap-northeast-1"), inst...),
-			row(allowed, ss, tr("ap-northeast-1,ap-northeast-1"), inst...),
-			row(allowed, st, tr("ap-northeast-1,ap-northeast-1"), inst...),
 			row(allowed, ty, tr("ap-northeast-1,ap-northeast-1"), inst...),
-			row(implicitDeny, ss, tr("ap-northeast-1,us-west-2"), inst...),
-			row(implicitDeny, st, tr("ap-northeast-1,us-west-2"), inst...),
 			row(implicitDeny, ty, tr("ap-northeast-1,us-west-2"), inst...),
-			row(implicitDeny, ss, tr("us-west-2"), inst...),
-			row(implicitDeny, st, tr("us-west-2"), inst...),
 			row(implicitDeny, ty, tr("us-west-2"), inst...),
-			row(implicitDeny, ss, nil, inst...),
-			row(implicitDeny, st, nil, inst...),
 			row(implicitDeny, ty, nil, inst...),
 			row(allowed, ss, nil, "cloudformation:UpdateStackSet"),
 			row(allowed, st, nil, "cloudformation:UpdateStackSet"),
 			row(allowed, ty, nil, "cloudformation:UpdateStackSet"),
 			row(implicitDeny, ss, nil, "cloudformation:DeleteStackInstances"),
-			row(implicitDeny, xss, tr("ap-northeast-1"), inst...),
-			row(implicitDeny, xst, tr("ap-northeast-1"), inst...),
-			row(implicitDeny, yss, tr("ap-northeast-1"), inst...),
-			row(implicitDeny, yst, tr("ap-northeast-1"), inst...),
+			row(implicitDeny, xss, nil, inst...),
+			row(implicitDeny, xst, nil, inst...),
+			row(implicitDeny, yss, nil, inst...),
+			row(implicitDeny, yst, nil, inst...),
 			row(implicitDeny, xss, nil, "cloudformation:UpdateStackSet"),
 			row(implicitDeny, xst, nil, "cloudformation:UpdateStackSet"),
 			row(implicitDeny, yss, nil, "cloudformation:UpdateStackSet"),
 			row(implicitDeny, yst, nil, "cloudformation:UpdateStackSet"),
 		}, rows)
+	})
+
+	t.Run("TargetRegion の context は type の行にだけ与え、stackset と stackset-target の行には与えない", func(t *testing.T) {
+		t.Parallel()
+
+		for _, r := range rows {
+			if r.resource != ty {
+				assert.Empty(t, r.context, r.resource)
+			}
+		}
 	})
 }
 
@@ -1242,11 +1235,11 @@ func Test_permissionsSteps(t *testing.T) {
 		result                      string
 	}{
 		"条件つきの確認がすべて走る": {governanceAttached, workloadAttached, nil, nil, nil, permissionsBase + governanceGated + workloadGatedCount + budgetsGatedCount,
-			"# 結果: 169 件のうち NG 0 件"},
+			"# 結果: 161 件のうち NG 0 件"},
 		"統制の policy が付いていない": {noneAttached, workloadAttached, []string{governanceAbsent}, nil, nil, permissionsBase + workloadGatedCount + budgetsGatedCount,
 			"# 結果: 138 件のうち NG 0 件（確かめていない区分 1）"},
 		"workload の policy が付いていない": {governanceAttached, noneAttached, nil, []string{workloadAbsent}, []string{budgetsAbsent},
-			permissionsBase + governanceGated, "# 結果: 141 件のうち NG 0 件（確かめていない区分 2）"},
+			permissionsBase + governanceGated, "# 結果: 133 件のうち NG 0 件（確かめていない区分 2）"},
 		"どちらも付いていない": {noneAttached, noneAttached, []string{governanceAbsent}, []string{workloadAbsent}, []string{budgetsAbsent}, permissionsBase,
 			"# 結果: 110 件のうち NG 0 件（確かめていない区分 3）"},
 	} {
