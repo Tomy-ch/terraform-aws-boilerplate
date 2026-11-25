@@ -57,16 +57,16 @@ var (
 		"plan $other: 1 件が implicitDeny",
 		"apply $sk: 2 件が implicitDeny",
 		"apply $sk: 21 件が explicitDeny",
-		"apply-identity *: 1 件が explicitDeny",
+		"apply-identity * [kms:BypassPolicyLockoutSafetyCheck=true]: 1 件が explicitDeny",
 	}
 	permGovernanceDescs = []string{
 		"apply-identity $policy/apply-identity-governance: 7 件が allowed",
 		"apply-identity $iam:policy/other: 3 件が implicitDeny",
-		"apply-identity $role/apply-identity: 1 件が allowed",
-		"apply-identity $role/apply-identity: 1 件が implicitDeny",
+		"apply-identity $role/apply-identity [iam:PolicyARN=$policy/apply-identity-governance]: 1 件が allowed",
+		"apply-identity $role/apply-identity [iam:PolicyARN=arn:aws:iam::aws:policy/AdministratorAccess]: 1 件が implicitDeny",
 		"apply-identity $policy/apply-identity-manage: 7 件が allowed",
-		"apply-identity $role/apply-identity: 1 件が allowed",
-		"apply-identity $role/apply: 1 件が implicitDeny",
+		"apply-identity $role/apply-identity [iam:PolicyARN=$policy/apply-identity-manage]: 1 件が allowed",
+		"apply-identity $role/apply [iam:PolicyARN=$policy/apply-identity-manage]: 1 件が implicitDeny",
 		"plan $policy/apply-identity-manage: 2 件が allowed",
 		"apply $policy/apply-identity-manage: 1 件が explicitDeny",
 		"plan *: 5 件が allowed",
@@ -80,21 +80,21 @@ var (
 	}
 	permGovernanceGatedDescs = []string{
 		"apply-identity *: 3 件が allowed",
-		"apply-identity $bg: 1 件が allowed",
+		"apply-identity $bg [iam:PolicyARN=arn:aws:iam::aws:policy/AdministratorAccess]: 1 件が allowed",
 		"apply-identity *: 1 件が implicitDeny",
 		"apply-identity $bg: 1 件が implicitDeny",
-		"apply-identity $ss: 2 件が allowed",
-		"apply-identity $st: 2 件が allowed",
-		"apply-identity $ty: 2 件が allowed",
-		"apply-identity $ss: 2 件が allowed",
-		"apply-identity $st: 2 件が allowed",
-		"apply-identity $ty: 2 件が allowed",
-		"apply-identity $ss: 2 件が implicitDeny",
-		"apply-identity $st: 2 件が implicitDeny",
-		"apply-identity $ty: 2 件が implicitDeny",
-		"apply-identity $ss: 2 件が implicitDeny",
-		"apply-identity $st: 2 件が implicitDeny",
-		"apply-identity $ty: 2 件が implicitDeny",
+		"apply-identity $ss [cloudformation:TargetRegion=ap-northeast-1]: 2 件が allowed",
+		"apply-identity $st [cloudformation:TargetRegion=ap-northeast-1]: 2 件が allowed",
+		"apply-identity $ty [cloudformation:TargetRegion=ap-northeast-1]: 2 件が allowed",
+		"apply-identity $ss [cloudformation:TargetRegion=ap-northeast-1,ap-northeast-1]: 2 件が allowed",
+		"apply-identity $st [cloudformation:TargetRegion=ap-northeast-1,ap-northeast-1]: 2 件が allowed",
+		"apply-identity $ty [cloudformation:TargetRegion=ap-northeast-1,ap-northeast-1]: 2 件が allowed",
+		"apply-identity $ss [cloudformation:TargetRegion=ap-northeast-1,us-west-2]: 2 件が implicitDeny",
+		"apply-identity $st [cloudformation:TargetRegion=ap-northeast-1,us-west-2]: 2 件が implicitDeny",
+		"apply-identity $ty [cloudformation:TargetRegion=ap-northeast-1,us-west-2]: 2 件が implicitDeny",
+		"apply-identity $ss [cloudformation:TargetRegion=us-west-2]: 2 件が implicitDeny",
+		"apply-identity $st [cloudformation:TargetRegion=us-west-2]: 2 件が implicitDeny",
+		"apply-identity $ty [cloudformation:TargetRegion=us-west-2]: 2 件が implicitDeny",
 		"apply-identity $ss: 2 件が implicitDeny",
 		"apply-identity $st: 2 件が implicitDeny",
 		"apply-identity $ty: 2 件が implicitDeny",
@@ -102,10 +102,14 @@ var (
 		"apply-identity $st: 1 件が allowed",
 		"apply-identity $ty: 1 件が allowed",
 		"apply-identity $ss: 1 件が implicitDeny",
+		"apply-identity $xss [cloudformation:TargetRegion=ap-northeast-1]: 2 件が implicitDeny",
+		"apply-identity $xst [cloudformation:TargetRegion=ap-northeast-1]: 2 件が implicitDeny",
+		"apply-identity $xss: 1 件が implicitDeny",
+		"apply-identity $xst: 1 件が implicitDeny",
 	}
 	permSLRDescs = []string{
-		"apply-identity $slr: 1 件が allowed",
-		"apply-identity $slr: 1 件が implicitDeny",
+		"apply-identity $slr [iam:AWSServiceName=management.chatbot.amazonaws.com]: 1 件が allowed",
+		"apply-identity $slr [iam:AWSServiceName=config.amazonaws.com]: 1 件が implicitDeny",
 		"apply-identity $slr: 2 件が allowed",
 		"apply-identity $slr: 5 件が implicitDeny",
 		"plan $slr: 1 件が allowed",
@@ -116,34 +120,34 @@ var (
 		"apply-identity $policy/apply-workload-read: 7 件が allowed",
 		"apply-identity $policy/apply-workload-2: 7 件が allowed",
 		"apply-identity $policy/boundary-ops-notification: 7 件が allowed",
-		"apply-identity $role/apply: 1 件が allowed",
-		"apply-identity $role/apply: 1 件が allowed",
-		"apply-identity $role/apply: 1 件が allowed",
-		"apply-identity $role/apply: 1 件が implicitDeny",
-		"apply-identity $role/plan: 1 件が allowed",
-		"apply-identity $role/plan: 1 件が implicitDeny",
-		"apply-identity $role/plan: 1 件が implicitDeny",
+		"apply-identity $role/apply [iam:PolicyARN=$policy/apply-workload]: 1 件が allowed",
+		"apply-identity $role/apply [iam:PolicyARN=$policy/apply-workload-read]: 1 件が allowed",
+		"apply-identity $role/apply [iam:PolicyARN=$policy/apply-workload-2]: 1 件が allowed",
+		"apply-identity $role/apply [iam:PolicyARN=$policy/boundary-ops-notification]: 1 件が implicitDeny",
+		"apply-identity $role/plan [iam:PolicyARN=$policy/apply-workload-read]: 1 件が allowed",
+		"apply-identity $role/plan [iam:PolicyARN=$policy/apply-workload]: 1 件が implicitDeny",
+		"apply-identity $role/plan [iam:PolicyARN=$policy/apply-workload-2]: 1 件が implicitDeny",
 		"plan $policy/apply-workload: 2 件が allowed",
 		"plan $policy/apply-workload-read: 2 件が allowed",
 		"plan arn:aws:sns:us-east-1:123456789012:tabp-admin-ops-notification-us-east-1: 2 件が allowed",
 		"plan arn:aws:sns:us-west-2:123456789012:tabp-admin-ops-notification: 1 件が implicitDeny",
 		"plan $topic: 2 件が allowed",
 		"plan $topic: 1 件が implicitDeny",
-		"plan $wk: 1 件が allowed",
-		"plan $wk: 1 件が implicitDeny",
+		"plan $wk [kms:KeySpec=SYMMETRIC_DEFAULT; kms:KeyUsage=ENCRYPT_DECRYPT; kms:KeyOrigin=AWS_KMS; kms:MultiRegion=false]: 1 件が allowed",
+		"plan $wk [kms:KeySpec=RSA_2048; kms:KeyUsage=SIGN_VERIFY; kms:KeyOrigin=AWS_KMS; kms:MultiRegion=false]: 1 件が implicitDeny",
 		"apply $policy/apply-workload: 2 件が explicitDeny",
 		"apply $policy/apply-workload-read: 2 件が explicitDeny",
 		"apply $policy/boundary-ops-notification: 2 件が explicitDeny",
 		"apply $role/other: 2 件が explicitDeny",
 		"apply *: 1 件が explicitDeny",
-		"apply *: 2 件が explicitDeny",
+		"apply * [kms:BypassPolicyLockoutSafetyCheck=true]: 2 件が explicitDeny",
 	}
 	permWorkloadGatedDescs = []string{
-		"apply $iam:role/tabp-admin-ops-heartbeat: 3 件が allowed",
+		"apply $iam:role/tabp-admin-ops-heartbeat [iam:PermissionsBoundary=$policy/boundary-ops-notification]: 3 件が allowed",
 		"apply $iam:role/tabp-admin-ops-heartbeat: 2 件が implicitDeny",
-		"apply $iam:role/tabp-admin-OPS-heartbeat: 1 件が implicitDeny",
-		"apply $iam:role/tabp-admin-ops-heartbeat: 1 件が allowed",
-		"apply $iam:role/tabp-admin-ops-heartbeat: 1 件が implicitDeny",
+		"apply $iam:role/tabp-admin-OPS-heartbeat [iam:PermissionsBoundary=$policy/boundary-ops-notification]: 1 件が implicitDeny",
+		"apply $iam:role/tabp-admin-ops-heartbeat [iam:PassedToService=scheduler.amazonaws.com]: 1 件が allowed",
+		"apply $iam:role/tabp-admin-ops-heartbeat [iam:PassedToService=lambda.amazonaws.com]: 1 件が implicitDeny",
 		"apply $topic: 2 件が allowed",
 		"apply $topic: 2 件が implicitDeny",
 		"apply $wk: 1 件が implicitDeny",
@@ -152,12 +156,12 @@ var (
 		"apply arn:aws:config:ap-northeast-1:123456789012:configuration-recorder/tabp-admin/abc: 2 件が implicitDeny",
 		"apply arn:aws:access-analyzer:ap-northeast-1:123456789012:analyzer/tabp-admin-external: 2 件が allowed",
 		"apply arn:aws:access-analyzer:ap-northeast-1:123456789012:analyzer/tabp-admin-external: 1 件が implicitDeny",
-		"apply $iam:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig: 1 件が allowed",
-		"apply $iam:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig: 1 件が allowed",
+		"apply $iam:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig [iam:PassedToService=config.amazonaws.com]: 1 件が allowed",
+		"apply $iam:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig [iam:AWSServiceName=config.amazonaws.com]: 1 件が allowed",
 		"apply $iam:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig: 1 件が implicitDeny",
-		"apply *: 2 件が allowed",
-		"apply *: 1 件が implicitDeny",
-		"apply *: 1 件が implicitDeny",
+		"apply * [ec2:Region=ap-northeast-1]: 2 件が allowed",
+		"apply * [ec2:Region=ap-northeast-1]: 1 件が implicitDeny",
+		"apply * [ec2:Region=us-west-2]: 1 件が implicitDeny",
 		"apply *: 4 件が allowed",
 		"apply *: 2 件が implicitDeny",
 		"plan arn:aws:config:ap-northeast-1:123456789012:configuration-recorder/tabp-admin/abc: 2 件が allowed",
@@ -172,8 +176,8 @@ var (
 		"plan *: 2 件が implicitDeny",
 		"plan $monitor: 2 件が implicitDeny",
 		"plan $subscription: 2 件が implicitDeny",
-		"apply $monitor: 3 件が explicitDeny",
-		"apply $subscription: 3 件が explicitDeny",
+		"apply $monitor [aws:ResourceTag/tabp:bootstrap=true]: 3 件が explicitDeny",
+		"apply $subscription [aws:ResourceTag/tabp:bootstrap=true]: 3 件が explicitDeny",
 	}
 	permBudgetsGatedDescs = []string{
 		"apply $budget: 1 件が allowed",
@@ -182,17 +186,17 @@ var (
 		"apply $subscription: 2 件が allowed",
 	}
 	permUnlockIdentityDescs = []string{
-		"unlock-identity $b: 1 件が allowed",
+		"unlock-identity $b [s3:prefix=identity/terraform.tfstate.tflock]: 1 件が allowed",
 		"unlock-identity $key.tflock: 2 件が allowed",
-		"unlock-identity $b: 1 件が implicitDeny",
+		"unlock-identity $b [s3:prefix=identity/terraform.tfstate]: 1 件が implicitDeny",
 		"unlock-identity $key.tflock: 2 件が implicitDeny",
 		"unlock-identity $key: 3 件が implicitDeny",
 		"unlock-identity $sk: 1 件が implicitDeny",
 	}
 	permUnlockDescs = []string{
-		"unlock $b: 1 件が allowed",
+		"unlock $b [s3:prefix=workload/terraform.tfstate.tflock]: 1 件が allowed",
 		"unlock $wkey.tflock: 2 件が allowed",
-		"unlock $b: 1 件が implicitDeny",
+		"unlock $b [s3:prefix=identity/terraform.tfstate.tflock]: 1 件が implicitDeny",
 		"unlock $wkey.tflock: 2 件が implicitDeny",
 		"unlock $key.tflock: 2 件が implicitDeny",
 		"unlock $wkey: 3 件が implicitDeny",
@@ -218,7 +222,7 @@ var (
 const (
 	// permissions の件数。条件つきの確認の有無で変わる。
 	permissionsBase     = 110
-	governanceGated     = 23
+	governanceGated     = 27
 	workloadGatedCount  = 24
 	budgetsGatedCount   = 4
 	outputPolicyCount   = 13
@@ -259,6 +263,8 @@ var permExpand = strings.NewReplacer(
 	"$ss", "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-break-glass:00000000-0000-0000-0000-0000000000b0",
 	"$st", "arn:aws:cloudformation::123456789012:stackset-target/tabp-break-glass:00000000-0000-0000-0000-0000000000b0/r-abcd",
 	"$ty", "arn:aws:cloudformation:*::type/resource/AWS-IAM-Role",
+	"$xss", "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-other:00000000-0000-0000-0000-0000000000b0",
+	"$xst", "arn:aws:cloudformation::123456789012:stackset-target/tabp-other:00000000-0000-0000-0000-0000000000b0/r-abcd",
 	"$inst", "cloudformation:CreateStackInstances cloudformation:UpdateStackInstances",
 )
 
@@ -351,6 +357,10 @@ var permRowActions = []string{
 	"cloudformation:UpdateStackSet",
 	"cloudformation:UpdateStackSet",
 	"cloudformation:DeleteStackInstances",
+	"$inst ; cloudformation:TargetRegion = ap-northeast-1 (stringList)",
+	"$inst ; cloudformation:TargetRegion = ap-northeast-1 (stringList)",
+	"cloudformation:UpdateStackSet",
+	"cloudformation:UpdateStackSet",
 	// Chatbot の service-linked role
 	"iam:CreateServiceLinkedRole ; iam:AWSServiceName = management.chatbot.amazonaws.com (string)",
 	"iam:CreateServiceLinkedRole ; iam:AWSServiceName = config.amazonaws.com (string)",
@@ -583,12 +593,25 @@ func Test_ctxList(t *testing.T) {
 		assert.Equal(t, "ContextKeyName=cloudformation:TargetRegion,ContextKeyValues=ap-northeast-1,us-west-2,ContextKeyType=stringList",
 			ctxList("cloudformation:TargetRegion", "ap-northeast-1", "us-west-2"))
 	})
+}
 
-	t.Run("ctxEntry に stringList と連結した値を渡したものと同じ", func(t *testing.T) {
-		t.Parallel()
+func Test_ctxSummary(t *testing.T) {
+	t.Parallel()
 
-		assert.Equal(t, ctxEntry("k", "a,b,c", "stringList"), ctxList("k", "a", "b", "c"))
-	})
+	for name, tc := range map[string]struct{ in, want string }{
+		"string の entry はキーと値": {"ContextKeyName=ec2:Region,ContextKeyValues=us-west-2,ContextKeyType=string", "ec2:Region=us-west-2"},
+		"stringList の entry は値の `,` を残す": {"ContextKeyName=cloudformation:TargetRegion,ContextKeyValues=ap-northeast-1,us-west-2,ContextKeyType=stringList",
+			"cloudformation:TargetRegion=ap-northeast-1,us-west-2"},
+		"ContextKeyName で始まらなければそのまま": {"c1", "c1"},
+		"ContextKeyValues が無ければそのまま":  {"ContextKeyName=k,ContextKeyType=string", "ContextKeyName=k,ContextKeyType=string"},
+		"ContextKeyType が無ければそのまま":    {"ContextKeyName=k,ContextKeyValues=v", "ContextKeyName=k,ContextKeyValues=v"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tc.want, ctxSummary(tc.in))
+		})
+	}
 }
 
 func Test_sim(t *testing.T) {
@@ -612,6 +635,12 @@ func Test_simRow_desc(t *testing.T) {
 	r := sim(explicitDeny, "apply", "arn:x", "a")
 	r.bucketPolicy = true
 	assert.Equal(t, "apply arn:x（Bucket Policy を含む）: 1 件が explicitDeny", r.desc())
+
+	assert.Equal(t, "plan arn:x [ec2:Region=us-west-2]: 1 件が implicitDeny",
+		simCtx(implicitDeny, "plan", "arn:x", []string{ctxEntry("ec2:Region", "us-west-2", "string")}, "a").desc(), "context を `[...]` で添える")
+	assert.Equal(t, "plan arn:x [k1=a,b; k2=true; c3]: 1 件が allowed",
+		simCtx(allowed, "plan", "arn:x", []string{ctxList("k1", "a", "b"), ctxEntry("k2", "true", "boolean"), "c3"}, "a").desc(),
+		"複数の context は `; ` で区切り、読めない entry はそのまま並べる")
 }
 
 func Test_simRow_args(t *testing.T) {
@@ -918,7 +947,7 @@ func Test_permissionSections(t *testing.T) {
 		assert.Equal(t, []string{a0, a0, a1, a1, a1}, masked)
 	})
 
-	t.Run("各行の role・resource・判定・action の数が、表と独立に書いた desc の一覧と一致する", func(t *testing.T) {
+	t.Run("各行の role・resource・context・判定・action の数が、表と独立に書いた desc の一覧と一致する", func(t *testing.T) {
 		t.Parallel()
 
 		var descs []string
@@ -934,19 +963,21 @@ func Test_permissionSections(t *testing.T) {
 		require.Len(t, descs, len(rows))
 
 		for i, r := range rows {
-			head, tail, ok := strings.Cut(descs[i], ": ")
-			require.True(t, ok, descs[i])
+			assert.Equal(t, descs[i], r.desc(), "%d 行目", i)
+		}
+	})
 
-			role, resource, ok := strings.Cut(head, " ")
-			require.True(t, ok, descs[i])
+	t.Run("区分の中で desc が重ならず、NG の行がどの行かを区別できる", func(t *testing.T) {
+		t.Parallel()
 
-			count, want, ok := strings.Cut(tail, " 件が ")
-			require.True(t, ok, descs[i])
+		for _, s := range sections {
+			var descs []string
+			for _, r := range append(slices.Clone(s.rows), s.gated...) {
+				descs = append(descs, r.desc())
+			}
 
-			assert.Equal(t, role, r.role, "%d 行目", i)
-			assert.Equal(t, resource, r.resource, "%d 行目", i)
-			assert.Equal(t, want, r.want, "%d 行目", i)
-			assert.Equal(t, count, strconv.Itoa(len(r.actions)), "%d 行目", i)
+			sorted := slices.Sorted(slices.Values(descs))
+			assert.Len(t, slices.Compact(sorted), len(descs), s.heading)
 		}
 	})
 
@@ -991,60 +1022,117 @@ func Test_permissionSections(t *testing.T) {
 		assert.Empty(t, sections[1].lead)
 	})
 
-	t.Run("region が us-west-2 なら、及ばない region に eu-west-1 を使う", func(t *testing.T) {
+	t.Run("region が us-west-2 なら", func(t *testing.T) {
 		t.Parallel()
 
 		w := newNames(verifyOptions{project: testProject, region: "us-west-2"}, testAccount)
-
 		got := permissionSections(w, testKeyARN, "")
+		byHeading := func(t *testing.T, prefix string) section {
+			t.Helper()
 
-		assert.True(t, slices.ContainsFunc(got[4].rows, func(r simRow) bool {
-			return r.want == implicitDeny && r.resource == "arn:aws:sns:eu-west-1:123456789012:tabp-admin-ops-notification"
-		}))
+			i := slices.IndexFunc(got, func(s section) bool { return strings.HasPrefix(s.heading, prefix) })
+			require.GreaterOrEqual(t, i, 0, prefix)
 
-		var regions []string
-
-		for _, r := range got[2].gated {
-			for _, c := range r.context {
-				if v, ok := strings.CutPrefix(c, "ContextKeyName=cloudformation:TargetRegion,ContextKeyValues="); ok {
-					regions = append(regions, strings.TrimSuffix(v, ",ContextKeyType=stringList"))
-				}
-			}
+			return got[i]
 		}
 
-		assert.Equal(t, []string{
-			"us-west-2", "us-west-2", "us-west-2", "us-west-2,us-west-2", "us-west-2,us-west-2", "us-west-2,us-west-2",
-			"us-west-2,eu-west-1", "us-west-2,eu-west-1", "us-west-2,eu-west-1", "eu-west-1", "eu-west-1", "eu-west-1",
-		}, regions)
+		t.Run("及ばない region の SNS と ec2 の行に eu-west-1 を使う", func(t *testing.T) {
+			t.Parallel()
+
+			workload := byHeading(t, "# workload の権限の policy と permissions boundary")
+
+			assert.True(t, slices.ContainsFunc(workload.rows, func(r simRow) bool {
+				return r.want == implicitDeny && r.resource == "arn:aws:sns:eu-west-1:123456789012:tabp-admin-ops-notification"
+			}))
+			assert.Contains(t, workload.gated, simRow{want: implicitDeny, role: "apply", resource: "*",
+				context: []string{"ContextKeyName=ec2:Region,ContextKeyValues=eu-west-1,ContextKeyType=string"}, actions: []string{"ec2:EnableEbsEncryptionByDefault"}})
+		})
+
+		t.Run("stack instance の行は、TargetRegion の一覧を us-west-2 と eu-west-1 で組み、stackset の ARN に us-west-2 を持つ", func(t *testing.T) {
+			t.Parallel()
+
+			type row struct{ want, resource, regions string }
+
+			ss := "arn:aws:cloudformation:us-west-2:123456789012:stackset/tabp-break-glass:00000000-0000-0000-0000-0000000000b0"
+			st := "arn:aws:cloudformation::123456789012:stackset-target/tabp-break-glass:00000000-0000-0000-0000-0000000000b0/r-abcd"
+			ty := "arn:aws:cloudformation:*::type/resource/AWS-IAM-Role"
+			xss := "arn:aws:cloudformation:us-west-2:123456789012:stackset/tabp-other:00000000-0000-0000-0000-0000000000b0"
+			xst := "arn:aws:cloudformation::123456789012:stackset-target/tabp-other:00000000-0000-0000-0000-0000000000b0/r-abcd"
+
+			var rows []row
+
+			for _, r := range byHeading(t, "# 統制の構成物と ").gated {
+				for _, c := range r.context {
+					if v, ok := strings.CutPrefix(c, "ContextKeyName=cloudformation:TargetRegion,ContextKeyValues="); ok {
+						rows = append(rows, row{r.want, r.resource, strings.TrimSuffix(v, ",ContextKeyType=stringList")})
+					}
+				}
+			}
+
+			assert.Equal(t, []row{
+				{allowed, ss, "us-west-2"}, {allowed, st, "us-west-2"}, {allowed, ty, "us-west-2"},
+				{allowed, ss, "us-west-2,us-west-2"}, {allowed, st, "us-west-2,us-west-2"}, {allowed, ty, "us-west-2,us-west-2"},
+				{implicitDeny, ss, "us-west-2,eu-west-1"}, {implicitDeny, st, "us-west-2,eu-west-1"}, {implicitDeny, ty, "us-west-2,eu-west-1"},
+				{implicitDeny, ss, "eu-west-1"}, {implicitDeny, st, "eu-west-1"}, {implicitDeny, ty, "eu-west-1"},
+				{implicitDeny, xss, "us-west-2"}, {implicitDeny, xst, "us-west-2"},
+			}, rows)
+		})
 	})
 }
 
 func Test_otherRegion(t *testing.T) {
 	t.Parallel()
 
-	t.Run("provider の region が us-west-2 でなければ us-west-2", func(t *testing.T) {
-		t.Parallel()
+	for region, want := range map[string]string{
+		"ap-northeast-1": "us-west-2",
+		"us-east-1":      "us-west-2",
+		"eu-west-1":      "us-west-2",
+		"us-west-2":      "eu-west-1",
+	} {
+		t.Run("provider の region が "+region+" なら、それとも us-east-1 とも違う "+want, func(t *testing.T) {
+			t.Parallel()
 
-		assert.Equal(t, "us-west-2", otherRegion(testNames("")))
-	})
+			got := otherRegion(newNames(verifyOptions{project: testProject, region: region}, testAccount))
 
-	t.Run("us-west-2 なら eu-west-1", func(t *testing.T) {
-		t.Parallel()
-
-		assert.Equal(t, "eu-west-1", otherRegion(newNames(verifyOptions{project: testProject, region: "us-west-2"}, testAccount)))
-	})
+			assert.Equal(t, want, got)
+			assert.NotEqual(t, region, got)
+			assert.NotEqual(t, "us-east-1", got)
+		})
+	}
 }
 
 func Test_stackSetARNs(t *testing.T) {
 	t.Parallel()
 
-	ss, st, ty := stackSetARNs(testNames(""))
+	t.Run("stackset は provider の region を持ち、stackset-target は region を持たず、type は region が * でアカウントを持たない", func(t *testing.T) {
+		t.Parallel()
 
-	assert.Equal(t, "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-break-glass:00000000-0000-0000-0000-0000000000b0", ss)
-	assert.Equal(t, "arn:aws:cloudformation::123456789012:stackset-target/tabp-break-glass:00000000-0000-0000-0000-0000000000b0/r-abcd", st)
-	assert.Equal(t, "arn:aws:cloudformation:*::type/resource/AWS-IAM-Role", ty)
-	assert.Contains(t, st, "cloudformation::", "stackset-target は region を持たない")
-	assert.Contains(t, ty, ":*::type/", "type は region が * でアカウントを持たない")
+		ss, st, ty := stackSetARNs(testNames(""), "tabp-break-glass")
+
+		assert.Equal(t, "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-break-glass:00000000-0000-0000-0000-0000000000b0", ss)
+		assert.Equal(t, "arn:aws:cloudformation::123456789012:stackset-target/tabp-break-glass:00000000-0000-0000-0000-0000000000b0/r-abcd", st)
+		assert.Equal(t, "arn:aws:cloudformation:*::type/resource/AWS-IAM-Role", ty)
+	})
+
+	t.Run("region が us-west-2 なら、stackset だけが us-west-2 を持つ", func(t *testing.T) {
+		t.Parallel()
+
+		ss, st, ty := stackSetARNs(newNames(verifyOptions{project: testProject, region: "us-west-2"}, testAccount), "tabp-break-glass")
+
+		assert.Equal(t, "arn:aws:cloudformation:us-west-2:123456789012:stackset/tabp-break-glass:00000000-0000-0000-0000-0000000000b0", ss)
+		assert.Equal(t, "arn:aws:cloudformation::123456789012:stackset-target/tabp-break-glass:00000000-0000-0000-0000-0000000000b0/r-abcd", st)
+		assert.Equal(t, "arn:aws:cloudformation:*::type/resource/AWS-IAM-Role", ty)
+	})
+
+	t.Run("名前は stackset と stackset-target にだけ入り、type には入らない", func(t *testing.T) {
+		t.Parallel()
+
+		ss, st, ty := stackSetARNs(testNames(""), "tabp-other")
+
+		assert.Equal(t, "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-other:00000000-0000-0000-0000-0000000000b0", ss)
+		assert.Equal(t, "arn:aws:cloudformation::123456789012:stackset-target/tabp-other:00000000-0000-0000-0000-0000000000b0/r-abcd", st)
+		assert.Equal(t, "arn:aws:cloudformation:*::type/resource/AWS-IAM-Role", ty)
+	})
 }
 
 func Test_stackInstanceRows(t *testing.T) {
@@ -1056,6 +1144,8 @@ func Test_stackInstanceRows(t *testing.T) {
 	ss := "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-break-glass:00000000-0000-0000-0000-0000000000b0"
 	st := "arn:aws:cloudformation::123456789012:stackset-target/tabp-break-glass:00000000-0000-0000-0000-0000000000b0/r-abcd"
 	ty := "arn:aws:cloudformation:*::type/resource/AWS-IAM-Role"
+	xss := "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-other:00000000-0000-0000-0000-0000000000b0"
+	xst := "arn:aws:cloudformation::123456789012:stackset-target/tabp-other:00000000-0000-0000-0000-0000000000b0/r-abcd"
 	inst := []string{"cloudformation:CreateStackInstances", "cloudformation:UpdateStackInstances"}
 	tr := func(v string) []string {
 		return []string{"ContextKeyName=cloudformation:TargetRegion,ContextKeyValues=" + v + ",ContextKeyType=stringList"}
@@ -1064,7 +1154,8 @@ func Test_stackInstanceRows(t *testing.T) {
 		return simRow{want: want, role: "apply-identity", resource: resource, context: context, actions: actions}
 	}
 
-	t.Run("provider の region だけの一覧は allowed、別の region を含む一覧・別の region の単値の一覧・context なしは implicitDeny", func(t *testing.T) {
+	t.Run("作成と更新は provider の region だけの一覧で allowed、別の region を含む一覧・別の region だけの一覧・context なしで implicitDeny、"+
+		"UpdateStackSet は allowed、DeleteStackInstances と別の名前の StackSet は implicitDeny", func(t *testing.T) {
 		t.Parallel()
 
 		assert.Equal(t, []simRow{
@@ -1087,23 +1178,11 @@ func Test_stackInstanceRows(t *testing.T) {
 			row(allowed, st, nil, "cloudformation:UpdateStackSet"),
 			row(allowed, ty, nil, "cloudformation:UpdateStackSet"),
 			row(implicitDeny, ss, nil, "cloudformation:DeleteStackInstances"),
+			row(implicitDeny, xss, tr("ap-northeast-1"), inst...),
+			row(implicitDeny, xst, tr("ap-northeast-1"), inst...),
+			row(implicitDeny, xss, nil, "cloudformation:UpdateStackSet"),
+			row(implicitDeny, xst, nil, "cloudformation:UpdateStackSet"),
 		}, rows)
-	})
-
-	t.Run("削除は apply-identity に許さない", func(t *testing.T) {
-		t.Parallel()
-
-		var deletes []simRow
-
-		for _, r := range rows {
-			if slices.Contains(r.actions, "cloudformation:DeleteStackInstances") {
-				deletes = append(deletes, r)
-			}
-		}
-
-		require.Len(t, deletes, 1)
-		assert.Equal(t, implicitDeny, deletes[0].want)
-		assert.Equal(t, n.applyIdentity, deletes[0].role)
 	})
 }
 
@@ -1128,11 +1207,11 @@ func Test_permissionsSteps(t *testing.T) {
 		result                      string
 	}{
 		"条件つきの確認がすべて走る": {governanceAttached, workloadAttached, nil, nil, nil, permissionsBase + governanceGated + workloadGatedCount + budgetsGatedCount,
-			"# 結果: 161 件のうち NG 0 件"},
+			"# 結果: 165 件のうち NG 0 件"},
 		"統制の policy が付いていない": {noneAttached, workloadAttached, []string{governanceAbsent}, nil, nil, permissionsBase + workloadGatedCount + budgetsGatedCount,
 			"# 結果: 138 件のうち NG 0 件（確かめていない区分 1）"},
 		"workload の policy が付いていない": {governanceAttached, noneAttached, nil, []string{workloadAbsent}, []string{budgetsAbsent},
-			permissionsBase + governanceGated, "# 結果: 133 件のうち NG 0 件（確かめていない区分 2）"},
+			permissionsBase + governanceGated, "# 結果: 137 件のうち NG 0 件（確かめていない区分 2）"},
 		"どちらも付いていない": {noneAttached, noneAttached, []string{governanceAbsent}, []string{workloadAbsent}, []string{budgetsAbsent}, permissionsBase,
 			"# 結果: 110 件のうち NG 0 件（確かめていない区分 3）"},
 	} {

@@ -37,8 +37,28 @@ func ctxEntry(name, value, typ string) string {
 }
 
 // ctxList は、値の一覧を受ける条件キーの --context-entries の1つ。値は AWS CLI の shorthand の一覧として `,` で区切る。
-func ctxList(name string, values ...string) string {
-	return ctxEntry(name, strings.Join(values, ","), "stringList")
+func ctxList(name, first string, rest ...string) string {
+	return ctxEntry(name, strings.Join(append([]string{first}, rest...), ","), "stringList")
+}
+
+// ctxSummary は、ctxEntry の形の entry を `<key>=<values>` に縮めたもの。その形でなければ entry をそのまま返す。
+func ctxSummary(entry string) string {
+	rest, ok := strings.CutPrefix(entry, "ContextKeyName=")
+	if !ok {
+		return entry
+	}
+
+	name, rest, ok := strings.Cut(rest, ",ContextKeyValues=")
+	if !ok {
+		return entry
+	}
+
+	i := strings.LastIndex(rest, ",ContextKeyType=")
+	if i < 0 {
+		return entry
+	}
+
+	return name + "=" + rest[:i]
 }
 
 func sim(want, role, resource string, actions ...string) simRow {
@@ -49,12 +69,23 @@ func simCtx(want, role, resource string, context []string, actions ...string) si
 	return simRow{want: want, role: role, resource: resource, context: context, actions: actions}
 }
 
+// desc は、行の説明。context を与える行は、同じ role と resource の行と区別できるように context を `[...]` で添える。
 func (r simRow) desc() string {
+	subject := r.role + " " + r.resource
 	if r.bucketPolicy {
-		return fmt.Sprintf("%s %s（Bucket Policy を含む）: %d 件が %s", r.role, r.resource, len(r.actions), r.want)
+		subject += "（Bucket Policy を含む）"
 	}
 
-	return fmt.Sprintf("%s %s: %d 件が %s", r.role, r.resource, len(r.actions), r.want)
+	if len(r.context) > 0 {
+		parts := make([]string, 0, len(r.context))
+		for _, c := range r.context {
+			parts = append(parts, ctxSummary(c))
+		}
+
+		subject += " [" + strings.Join(parts, "; ") + "]"
+	}
+
+	return fmt.Sprintf("%s: %d 件が %s", subject, len(r.actions), r.want)
 }
 
 func (r simRow) args(n names) []string {
@@ -265,7 +296,7 @@ func permissionSections(n names, sk, skReason string) []section {
 	admin := "arn:aws:iam::aws:policy/AdministratorAccess"
 	slr := iam + ":role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot"
 	serviceName := func(svc string) []string { return []string{ctxEntry("iam:AWSServiceName", svc, "string")} }
-	ss, _, _ := stackSetARNs(n)
+	ss, _, _ := stackSetARNs(n, n.project+"-break-glass")
 
 	wp := n.policyARN(apply + "-workload")
 	wrp := n.policyARN(apply + "-workload-read")
@@ -501,11 +532,11 @@ func otherRegion(n names) string {
 	return "us-west-2"
 }
 
-// stackSetARNs は、break-glass の StackSet の stack instance の操作が当たる3つの resource（stackset・stackset-target・type）の
+// stackSetARNs は、name の StackSet の stack instance の操作が当たる3つの resource（stackset・stackset-target・type）の
 // ARN。stackset-target は region を持たず、type は region が `*` でアカウントを持たない（deployment-identity/ADR-0201 決定4）。
 // 末尾の ID は作るまで決まらないので、ダミーにする。
-func stackSetARNs(n names) (string, string, string) {
-	id := n.project + "-break-glass:00000000-0000-0000-0000-0000000000b0"
+func stackSetARNs(n names, name string) (string, string, string) {
+	id := name + ":00000000-0000-0000-0000-0000000000b0"
 
 	return "arn:aws:cloudformation:" + n.region + ":" + n.account + ":stackset/" + id,
 		"arn:aws:cloudformation::" + n.account + ":stackset-target/" + id + "/r-abcd",
@@ -513,15 +544,21 @@ func stackSetARNs(n names) (string, string, string) {
 }
 
 // stackInstanceRows は、apply-identity が break-glass の stack instance を provider の region にだけ作り・更新でき、削除
-// できないことの行。1つの要求が3つの resource に当たり、simCheck は返った action を数えるので、resource ごとに行を分ける。
+// できず、別の名前の StackSet には及ばないことの行。1つの要求が3つの resource に当たり、simCheck は返った action を数えるので、
+// resource ごとに行を分ける。
 func stackInstanceRows(n names, other string) []simRow {
-	ss, st, ty := stackSetARNs(n)
+	ss, st, ty := stackSetARNs(n, n.project+"-break-glass")
+	// policy の type の Resource はアカウントが `*` で StackSet の名前を含まないので、type には別の名前の行を持たない。
+	xss, xst, _ := stackSetARNs(n, n.project+"-other")
 	ai := n.applyIdentity
 	inst := []string{"cloudformation:CreateStackInstances", "cloudformation:UpdateStackInstances"}
 	// TargetRegion は一覧を受けるキー（Service Authorization Reference の ArrayOfString）で、provider の region に限る
 	// （deployment-identity/ADR-0201 決定4）。
+	// provider の region だけの一覧は、条件が StringEquals なら implicitDeny になるので、StringEquals で書いた条件を見つける。
 	// 同じ region を2つ並べた一覧は、`,` を含む1つの値として渡ったときに allowed にならない。
-	tr := func(regions ...string) []string { return []string{ctxList("cloudformation:TargetRegion", regions...)} }
+	tr := func(first string, rest ...string) []string {
+		return []string{ctxList("cloudformation:TargetRegion", first, rest...)}
+	}
 
 	var rows []simRow
 
@@ -538,7 +575,17 @@ func stackInstanceRows(n names, other string) []simRow {
 	each(implicitDeny, nil, inst...)
 	each(allowed, nil, "cloudformation:UpdateStackSet")
 
-	return append(rows, sim(implicitDeny, ai, ss, "cloudformation:DeleteStackInstances"))
+	rows = append(rows, sim(implicitDeny, ai, ss, "cloudformation:DeleteStackInstances"))
+
+	for _, r := range []string{xss, xst} {
+		rows = append(rows, simCtx(implicitDeny, ai, r, tr(n.region), inst...))
+	}
+
+	for _, r := range []string{xss, xst} {
+		rows = append(rows, sim(implicitDeny, ai, r, "cloudformation:UpdateStackSet"))
+	}
+
+	return rows
 }
 
 // permissionsSteps は、CI の role の権限を simulate-principal-policy で評価する確認の表。state の鍵の ARN を読めなければ、
