@@ -71,6 +71,36 @@ func TestLines(t *testing.T) {
 	})
 }
 
+func TestFence_Next(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		fence    Fence
+		text     string
+		wantNext Fence
+		wantIn   bool
+	}{
+		"外の本文は外のまま":                {"", "本文", "", false},
+		"外の区切りで開く":                 {"", "```go", "```", true},
+		"字下げした区切りでも開く":             {"", "  ~~~", "~~~", true},
+		"中の本文は中のまま":                {"```", "<!-- 本文", "```", true},
+		"同じ文字種で同じ長さなら閉じる":          {"```", "```", "", true},
+		"開きより長い閉じでも閉じる":            {"```", "`````", "", true},
+		"開きより短い区切りでは閉じない":          {"````", "```", "````", true},
+		"文字種が違えば閉じない":              {"```", "~~~", "```", true},
+		"info string を持つ区切りでは閉じない": {"```", "```go", "```", true},
+		"後ろの空白は閉じを妨げない":            {"```", "```   ", "", true},
+		"後ろの CR は閉じを妨げない":          {"```", "```\r", "", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			next, in := c.fence.Next(c.text)
+			assert.Equal(t, c.wantNext, next)
+			assert.Equal(t, c.wantIn, in)
+		})
+	}
+}
+
 func Test_fenceMarker(t *testing.T) {
 	t.Parallel()
 
@@ -132,6 +162,30 @@ func TestInlineCodes(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestCodeSpan(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		s      string
+		n      int
+		closed bool
+	}{
+		"同じ長さの閉じまでを返す":      {"`a` b", 3, true},
+		"長さの違う並びを読み飛ばして閉じる": {"`a``b` c", 6, true},
+		"2つの並びは2つの並びで閉じる":   {"``a`b`` c", 7, true},
+		"閉じが無ければ開きの並びだけを返す": {"`a``b", 1, false},
+		"バッククォートで始まらなければ0":  {"a`b`", 0, false},
+		"空": {"", 0, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			n, closed := CodeSpan(c.s)
+			assert.Equal(t, c.n, n)
+			assert.Equal(t, c.closed, closed)
+		})
+	}
 }
 
 func Test_findClose(t *testing.T) {
