@@ -10,6 +10,12 @@ mock_provider "aws" {
   mock_data "aws_partition" {
     defaults = { partition = "aws" }
   }
+  mock_data "aws_iam_role" {
+    defaults = {
+      path = "/aws-service-role/management.chatbot.amazonaws.com/"
+      arn  = "arn:aws:iam::123456789012:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot"
+    }
+  }
 }
 
 override_resource {

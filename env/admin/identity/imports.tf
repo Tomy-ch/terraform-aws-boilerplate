@@ -22,3 +22,12 @@ import {
   to = module.state_backend.module.s3.aws_s3_bucket_versioning.this
   id = local.state_bucket_name
 }
+
+data "aws_caller_identity" "current" {}
+data "aws_partition" "current" {}
+
+# 管理アカウントには、Chatbot が作った service-linked role が identity root より前に在る（deployment-identity/ADR-0002 決定4）。
+import {
+  to = module.deployment_identity.module.service_linked_roles.aws_iam_service_linked_role.chatbot[0]
+  id = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot"
+}
