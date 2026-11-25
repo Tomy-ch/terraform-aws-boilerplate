@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -295,7 +296,7 @@ func ciHoldPlan(d deps, s ciState, hold string, interval, limit time.Duration) e
 		return xerrors.Wrap(err, "plan の全文")
 	}
 	defer func() { _ = f.Close() }()
-	cmd := d.tool(s.Dir, localEnv(d.environ, s.Profile), stepCIPlanHold)
+	cmd := d.tool(context.Background(), s.Dir, localEnv(d.environ, s.Profile), stepCIPlanHold)
 	cmd.Stdout, cmd.Stderr = f, f
 	if err := cmd.Start(); err != nil {
 		return xerrors.Wrapf(errLocalTF, "plan: %v", err)

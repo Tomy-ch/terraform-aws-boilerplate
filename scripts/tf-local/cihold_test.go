@@ -337,7 +337,7 @@ func Test_ciHoldPlan(t *testing.T) {
 
 	t.Run("起動できなければ失敗する", func(t *testing.T) {
 		t.Parallel()
-		tool := func(string, []string, string) *exec.Cmd {
+		tool := func(context.Context, string, []string, string, ...string) *exec.Cmd {
 			return exec.CommandContext(context.Background(), filepath.Join(t.TempDir(), "none"))
 		}
 		err := ciHoldPlan(deps{tool: tool}, ciState{Dir: t.TempDir()}, filepath.Join(t.TempDir(), "h"), time.Millisecond, time.Second)

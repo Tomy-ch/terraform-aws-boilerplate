@@ -50,7 +50,7 @@ rc=$(pick rc)
 exit "${rc:-0}"
 `
 	require.NoError(t, os.WriteFile(script, []byte(body), 0o600))
-	tool := func(d string, env []string, step string) *exec.Cmd {
+	tool := func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
 		c := exec.CommandContext(context.Background(), "/bin/sh", script, step)
 		c.Dir, c.Env = d, env
 		return c
@@ -622,7 +622,7 @@ func Test_runExitCode(t *testing.T) {
 
 	t.Run("起動できなければ errLocalAWS", func(t *testing.T) {
 		t.Parallel()
-		tool := func(string, []string, string) *exec.Cmd {
+		tool := func(context.Context, string, []string, string, ...string) *exec.Cmd {
 			return exec.CommandContext(context.Background(), filepath.Join(t.TempDir(), "none"))
 		}
 		_, _, err := runExitCode(tool, t.TempDir(), nil, stepAssumeRole)

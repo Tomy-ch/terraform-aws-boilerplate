@@ -74,7 +74,7 @@ rc=0; if [ -e "$k/$step.rc" ]; then rc=$(cat "$k/$step.rc"); fi
 exit "$rc"
 `
 	require.NoError(t, os.WriteFile(script, []byte(body), 0o600))
-	tool := func(d string, env []string, step string) *exec.Cmd {
+	tool := func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
 		c := exec.CommandContext(context.Background(), "/bin/sh", script, step)
 		c.Dir, c.Env = d, env
 		return c
@@ -569,7 +569,7 @@ func Test_ciRunApply(t *testing.T) {
 
 	t.Run("起動できなければ失敗する", func(t *testing.T) {
 		t.Parallel()
-		tool := func(string, []string, string) *exec.Cmd {
+		tool := func(context.Context, string, []string, string, ...string) *exec.Cmd {
 			return exec.CommandContext(context.Background(), filepath.Join(t.TempDir(), "none"))
 		}
 		_, err := ciRunApply(ciState{Dir: t.TempDir(), Out: fileWith(t, "")}, deps{tool: tool}, time.Second)

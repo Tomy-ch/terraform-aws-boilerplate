@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cientry"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -40,13 +41,11 @@ var (
 	errLocalLog   = xerrors.New("❌ plan の log を書けません")
 )
 
-// toolFunc は、作業ディレクトリ dir で段 step の道具を起動するコマンドを作ります。テストは差し替えます。
-type toolFunc func(dir string, env []string, step string) *exec.Cmd
+type toolFunc = toolrun.Func
 
 // command は toolFunc の実物です。aws の可変の値は、作業ディレクトリに置いた input.json（--cli-input-json）と
 // AWS_REGION で、terraform の可変の値は TF_CLI_ARGS_<サブコマンド> で渡します。
-func command(dir string, env []string, step string) *exec.Cmd {
-	ctx := context.Background()
+func command(ctx context.Context, dir string, env []string, step string, _ ...string) *exec.Cmd {
 	var cmd *exec.Cmd
 	switch step {
 	case stepCallerIdentity:
@@ -131,7 +130,7 @@ func localRoot(base, env, root string) (string, error) {
 // runTool は、道具を起動して stdout を返します。stderr は人の端末へ出します。
 func runTool(tool toolFunc, dir string, env []string, step string, stderr io.Writer) ([]byte, error) {
 	var out bytes.Buffer
-	cmd := tool(dir, env, step)
+	cmd := tool(context.Background(), dir, env, step)
 	cmd.Stdout, cmd.Stderr = &out, stderr
 	if err := cmd.Run(); err != nil {
 		return nil, xerrors.Wrapf(errLocalAWS, "%s: %v", step, err)
@@ -245,7 +244,7 @@ func localInit(args []string, d deps, stdout, stderr io.Writer) (string, error) 
 	if err := json.Unmarshal(raw, &s); err != nil || s.Dir == "" || len(s.InitArgs) == 0 {
 		return "", xerrors.Wrap(errLocalState, *statePath)
 	}
-	cmd := d.tool(s.Dir, localEnv(d.environ, *profile, "TF_CLI_ARGS_init="+strings.Join(s.InitArgs, " ")), stepLocalInit)
+	cmd := d.tool(context.Background(), s.Dir, localEnv(d.environ, *profile, "TF_CLI_ARGS_init="+strings.Join(s.InitArgs, " ")), stepLocalInit)
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	if err := cmd.Run(); err != nil {
 		return "", xerrors.Wrapf(errLocalTF, "init: %v", err)
@@ -294,7 +293,7 @@ func localPlan(args []string, d deps, stdout, stderr io.Writer) (string, error) 
 	if _, err := fmt.Fprintf(w, "%s\n", strings.TrimSpace(string(header))); err != nil {
 		return "", xerrors.Wrap(errLocalLog, err.Error())
 	}
-	cmd := d.tool(dir, localEnv(d.environ, *profile), stepLocalPlan)
+	cmd := d.tool(context.Background(), dir, localEnv(d.environ, *profile), stepLocalPlan)
 	cmd.Stdout, cmd.Stderr = w, w
 	if err := cmd.Run(); err != nil {
 		return "", xerrors.Wrapf(errLocalTF, "plan: %v", err)

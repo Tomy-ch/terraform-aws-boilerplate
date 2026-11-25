@@ -406,7 +406,7 @@ func ciAssumeDenied(args []string, d deps, stdout io.Writer) (string, error) {
 // runExitCode は、道具を起動して終了コードと stderr を返します。stdout は捨てます。起動できなければ失敗します。
 func runExitCode(tool toolFunc, dir string, env []string, step string) (int, []byte, error) {
 	var stderr bytes.Buffer
-	cmd := tool(dir, env, step)
+	cmd := tool(context.Background(), dir, env, step)
 	cmd.Stdout, cmd.Stderr = io.Discard, &stderr
 	err := cmd.Run()
 	var exit *exec.ExitError

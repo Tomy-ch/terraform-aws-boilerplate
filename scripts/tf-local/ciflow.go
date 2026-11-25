@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -386,7 +387,7 @@ func ciRunInit(s ciState, d deps) error {
 		return err
 	}
 	defer func() { _ = f.Close() }()
-	cmd := d.tool(s.Dir, localEnv(d.environ, s.Profile, "TF_CLI_ARGS_init="+strings.Join(s.InitArgs, " ")), stepCIInit)
+	cmd := d.tool(context.Background(), s.Dir, localEnv(d.environ, s.Profile, "TF_CLI_ARGS_init="+strings.Join(s.InitArgs, " ")), stepCIInit)
 	cmd.Stdout, cmd.Stderr = f, f
 	if err := cmd.Run(); err != nil {
 		return errCIInit
@@ -464,7 +465,7 @@ func ciRunPlan(s *ciState, d deps, stdout io.Writer) (string, error) {
 	if k, ok := cientry.Lookup(s.Mode); ok && k.Lock == cientry.LockSkip {
 		step = stepCIPlanNoLock
 	}
-	cmd := d.tool(s.Dir, localEnv(d.environ, s.Profile, "TF_CLI_ARGS_plan=-out="+s.TFPlan), step)
+	cmd := d.tool(context.Background(), s.Dir, localEnv(d.environ, s.Profile, "TF_CLI_ARGS_plan=-out="+s.TFPlan), step)
 	cmd.Stdout, cmd.Stderr = f, f
 	code, err := exitCode(cmd.Run())
 	if err != nil {
@@ -477,7 +478,7 @@ func ciRunPlan(s *ciState, d deps, stdout io.Writer) (string, error) {
 	if err != nil {
 		return "", xerrors.Wrap(err, "plan の JSON")
 	}
-	cmd = d.tool(s.Dir, localEnv(d.environ, s.Profile, "TF_CLI_ARGS_show=-json "+s.TFPlan), stepCIShow)
+	cmd = d.tool(context.Background(), s.Dir, localEnv(d.environ, s.Profile, "TF_CLI_ARGS_show=-json "+s.TFPlan), stepCIShow)
 	cmd.Stdout, cmd.Stderr = show, f
 	_ = cmd.Run()
 	if err := show.Close(); err != nil {
@@ -574,7 +575,7 @@ func ciRunPolicy(s ciState, d deps, stdout io.Writer, parent, policy, decl, laye
 		}
 	}
 	var result bytes.Buffer
-	cmd := d.tool(work, localEnv(d.environ, s.Profile), stepCIConftest)
+	cmd := d.tool(context.Background(), work, localEnv(d.environ, s.Profile), stepCIConftest)
 	cmd.Stdout, cmd.Stderr = &result, d.stderr
 	// 違反があれば conftest は非ゼロで終わる。判定は結果の JSON で行う。
 	if _, err := exitCode(cmd.Run()); err != nil {
@@ -719,7 +720,7 @@ func ciRunApply(s ciState, d deps, limit time.Duration) (int, error) {
 		return 0, err
 	}
 	defer func() { _ = f.Close() }()
-	cmd := d.tool(s.Dir, localEnv(d.environ, s.Profile, "TF_CLI_ARGS_apply=-input=false -no-color "+s.TFPlan), stepCIApply)
+	cmd := d.tool(context.Background(), s.Dir, localEnv(d.environ, s.Profile, "TF_CLI_ARGS_apply=-input=false -no-color "+s.TFPlan), stepCIApply)
 	cmd.Stdout, cmd.Stderr = f, f
 	if err := cmd.Start(); err != nil {
 		return 0, xerrors.Wrapf(errLocalTF, "apply: %v", err)
