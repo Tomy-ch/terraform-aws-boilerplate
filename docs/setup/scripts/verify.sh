@@ -209,6 +209,7 @@ before_apply() {
   done
   # 在ると、段4 の apply は import せずに上書きする。
   expect_error "account password policy がまだ無い" NoSuchEntity aws iam get-account-password-policy
+  expect_error "Chatbot の service-linked role がまだ無い" NoSuchEntity aws iam get-role --role-name AWSServiceRoleForAWSChatbot
 }
 
 stage4() {
@@ -269,6 +270,8 @@ stage4() {
     --arg apply "$(role_arn apply)" --arg unlock "$(role_arn unlock-identity)" --arg wunlock "$(role_arn unlock)" --arg via "s3.${REGION}.amazonaws.com" \
     --arg sb "arn:aws:s3:::${BUCKET}" --arg pb "arn:aws:s3:::${PLAN_BUCKET}" --arg ab "arn:aws:s3:::${APPLY_BUCKET}" \
     "$JQ_KEY_POLICY"
+  expect_json "Chatbot の service-linked role の path が /aws-service-role/management.chatbot.amazonaws.com/" "$(aws iam get-role --role-name AWSServiceRoleForAWSChatbot)" \
+    '.Role.Path == "/aws-service-role/management.chatbot.amazonaws.com/"'
 }
 
 permissions() {

@@ -2,7 +2,7 @@
 
 ## 1. 設定の概要
 
-管理アカウントに、Terraform の state の置き場（`state-backend`）と、CI が AWS に入るための role（`deployment-identity`）を作る。これらは CI 自身では作れないので、最初の一度だけ人が作る。同じ apply で、管理アカウントの identity root が持つ統制の構成物（`organization-baseline` の組織・OU・SCP などと break-glass）も作る（[ADR-0602](../adr/0602-bootstrap-and-ci-authentication.md) 決定1）。その後の設定は [organization-baseline 手順書](organization-baseline.md) が持つ。
+管理アカウントに、Terraform の state の置き場（`state-backend`）と、CI が AWS に入るための role（`deployment-identity`）を作る。これらは CI 自身では作れないので、最初の一度だけ人が作る。同じ apply で、管理アカウントの identity root が持つ統制の構成物（`organization-baseline` の組織・OU・SCP などと break-glass）も作る（[ADR-0602](../adr/0602-bootstrap-and-ci-authentication.md) 決定1）。Chatbot の service-linked role（`AWSServiceRoleForAWSChatbot`）も、同じ apply（段4）で identity root が作る（[deployment-identity/ADR-0002](../../usecases/deployment-identity/docs/adr/0002-account-prerequisite-service-linked-roles.md) 決定1）。その後の設定は [organization-baseline 手順書](organization-baseline.md) が持つ。
 
 | 実施者 | 担当 |
 | --- | --- |
@@ -562,6 +562,7 @@ Credential report の IAM user が break-glass の2つ（`break-glass-1`・`brea
 | Terraform が `aws login` の認証情報を読めない | [aws login の認証情報を読めない](#aws-login-の認証情報を読めない) |
 | `make bootstrap-check-plan` に NG がある | [段2 の plan が一致しない](#段2-の-plan-が一致しない) |
 | `make bootstrap-check-plan` が `検証できません` で終わる | 示された理由を見る。init が済んでいなければ段2 の手順1 から、plan が失敗していれば原因を直して段2 の手順2 をやり直す |
+| `verify.sh before-apply` の `Chatbot の service-linked role がまだ無い` が NG | 段4 より前に Chatbot を使い、AWS が role を作っている。そのままでは段4 の apply が名前の重複で落ちる。role を消さず、`env/admin/identity/imports.tf` に `import` block（`to` は `module.deployment_identity.module.service_linked_roles.aws_iam_service_linked_role.chatbot[0]`、`id` は `arn:aws:iam::<アカウントID>:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot`）を足し、[`scripts/check-plan.expected`](scripts/check-plan.expected) の同じ address の行を `add` から `import` に替える commit を Pull Request に積んで、段2 からやり直す。この行の NG だけは残ってよい。段4 の apply の後、`import` block と期待値の行を戻す変更を別の Pull Request で merge する（[deployment-identity/ADR-0002](../../usecases/deployment-identity/docs/adr/0002-account-prerequisite-service-linked-roles.md) 決定4） |
 | 段2・段4 で `unset_env` について「段1 の手順1 のブロックを先に実行する」と出る | 段1 の手順1 のブロックを実行し、同じシェルでやり直す |
 | 段4 の apply が失敗した、lock が残った | [段4 の apply が失敗した](#段4-の-apply-が失敗した) |
 | 段5 の CI の apply が失敗した | [段5 の CI の apply が失敗した](#段5-の-ci-の-apply-が失敗した) |

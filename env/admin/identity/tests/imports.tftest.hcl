@@ -65,10 +65,6 @@ override_resource {
   target = module.state_backend.module.s3.aws_s3_bucket_versioning.this
 }
 
-override_resource {
-  target = module.deployment_identity.module.service_linked_roles.aws_iam_service_linked_role.chatbot[0]
-}
-
 run "admin_state_bucket_name" {
   command = plan
 
