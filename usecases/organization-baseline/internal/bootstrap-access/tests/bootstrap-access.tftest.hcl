@@ -26,7 +26,7 @@ run "stack_set" {
       aws_cloudformation_stack_set.this.name == "tabp-bootstrap-read"
       && aws_cloudformation_stack_set.this.permission_model == "SERVICE_MANAGED"
       && aws_cloudformation_stack_set.this.auto_deployment[0].enabled
-      && !aws_cloudformation_stack_set.this.auto_deployment[0].retain_stacks_on_account_removal
+      && aws_cloudformation_stack_set.this.auto_deployment[0].retain_stacks_on_account_removal == false
       && aws_cloudformation_stack_set.this.managed_execution[0].active
       && aws_cloudformation_stack_set.this.capabilities == toset(["CAPABILITY_NAMED_IAM"])
     )
