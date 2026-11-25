@@ -1413,8 +1413,13 @@ run "policies" {
         Resource = [
           "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-break-glass:*",
           "arn:aws:cloudformation::123456789012:stackset-target/tabp-break-glass:*",
-          "arn:aws:cloudformation:*:*:type/resource/AWS-IAM-Role",
         ]
+      },
+      {
+        Sid      = "LimitBreakGlassStackInstanceRegions"
+        Effect   = "Allow"
+        Action   = ["cloudformation:CreateStackInstances", "cloudformation:UpdateStackInstances"]
+        Resource = ["arn:aws:cloudformation:*:*:type/resource/AWS-IAM-Role"]
         Condition = {
           "ForAllValues:StringEquals" = { "cloudformation:TargetRegion" = "ap-northeast-1" }
           Null                        = { "cloudformation:TargetRegion" = "false" }
@@ -3039,12 +3044,17 @@ run "governance_follows_data_sources" {
   }
 
   assert {
-    condition = [for s in jsondecode(aws_iam_policy.governance[0].policy).Statement : [s.Resource, try(s.Condition, null)] if contains(["UpdateBreakGlassStackSet", "ManageBreakGlassStackInstances"], s.Sid)] == [
-      for c in [null, { "ForAllValues:StringEquals" = { "cloudformation:TargetRegion" = "us-gov-west-1" }, Null = { "cloudformation:TargetRegion" = "false" } }] : [[
+    condition = [for s in jsondecode(aws_iam_policy.governance[0].policy).Statement : [s.Resource, try(s.Condition, null)] if contains(["UpdateBreakGlassStackSet", "ManageBreakGlassStackInstances", "LimitBreakGlassStackInstanceRegions"], s.Sid)] == [
+      [[
         "arn:aws-us-gov:cloudformation:us-gov-west-1:210987654321:stackset/t4bp-break-glass:*",
         "arn:aws-us-gov:cloudformation::210987654321:stackset-target/t4bp-break-glass:*",
         "arn:aws-us-gov:cloudformation:*:*:type/resource/AWS-IAM-Role",
-      ], c]
+      ], null],
+      [[
+        "arn:aws-us-gov:cloudformation:us-gov-west-1:210987654321:stackset/t4bp-break-glass:*",
+        "arn:aws-us-gov:cloudformation::210987654321:stackset-target/t4bp-break-glass:*",
+      ], null],
+      [["arn:aws-us-gov:cloudformation:*:*:type/resource/AWS-IAM-Role"], { "ForAllValues:StringEquals" = { "cloudformation:TargetRegion" = "us-gov-west-1" }, Null = { "cloudformation:TargetRegion" = "false" } }],
     ]
     error_message = "break-glass の StackSet の書き込みの Resource と条件が、partition・region・アカウントと role の名前から組まれていません（stackset-target は region を空、type は region を `*` にする）。"
   }
