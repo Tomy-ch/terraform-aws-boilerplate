@@ -389,8 +389,11 @@ func stage4Steps(n names, readFile func(string) ([]byte, error)) []step {
 			desc = "role " + n.roleName(r) + " に付く managed policy が、統制の policy と manage の policy だけ"
 			want = []string{n.roleName(n.applyIdentity + "-governance"), n.roleName(n.applyIdentity + "-manage")}
 		case n.apply:
-			desc = "role " + n.roleName(r) + " に付く managed policy が、workload の2つの policy だけ"
-			want = []string{n.roleName(n.apply + "-workload"), n.roleName(n.apply + "-workload-read")}
+			desc = "role " + n.roleName(r) + " に付く managed policy が、workload の3つの policy だけ"
+			want = []string{n.roleName(n.apply + "-workload"), n.roleName(n.apply + "-workload-2"), n.roleName(n.apply + "-workload-read")}
+		case n.plan:
+			desc = "role " + n.roleName(r) + " に付く managed policy が、workload の読み取りの policy だけ"
+			want = []string{n.roleName(n.apply + "-workload-read")}
 		}
 
 		steps = append(steps, checkStep(expectJSON(desc, func(v map[string]any) bool {

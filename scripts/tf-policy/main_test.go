@@ -89,6 +89,7 @@ func Test_exitCode(t *testing.T) {
 		"0件は 2":           {xerrors.Wrap(errNoInput, "x"), 2},
 		"読めない入力は 2":       {xerrors.Wrap(errRead, "x"), 2},
 		"使い方の誤りは 2":       {xerrors.Wrap(errUsage, "x"), 2},
+		"道具を起動できない・シグナルで終わったは 2": {xerrors.Wrap(errTool, "x"), 2},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

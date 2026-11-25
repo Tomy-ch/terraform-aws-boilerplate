@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/fakeexec"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/misetoml"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
@@ -1042,7 +1043,7 @@ func stubMise(t *testing.T, script string) {
 
 	dir := t.TempDir()
 	body := "#!/bin/sh\n" + script + "\n"
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "mise"), []byte(body), 0o700)) //nolint:gosec // テスト専用の実行可能スタブ
+	fakeexec.Write(t, filepath.Join(dir, "mise"), body, 0o700)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 

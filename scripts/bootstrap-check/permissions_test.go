@@ -128,6 +128,21 @@ var (
 		"apply $topic: 2 件が implicitDeny",
 		"apply $wk: 1 件が implicitDeny",
 		"apply $slr: 1 件が allowed",
+		"apply arn:aws:config:ap-northeast-1:123456789012:configuration-recorder/tabp-admin/abc: 3 件が allowed",
+		"apply arn:aws:config:ap-northeast-1:123456789012:configuration-recorder/tabp-admin/abc: 2 件が implicitDeny",
+		"apply arn:aws:access-analyzer:ap-northeast-1:123456789012:analyzer/tabp-admin-external: 2 件が allowed",
+		"apply arn:aws:access-analyzer:ap-northeast-1:123456789012:analyzer/tabp-admin-external: 1 件が implicitDeny",
+		"apply $iam:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig: 1 件が allowed",
+		"apply $iam:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig: 1 件が allowed",
+		"apply $iam:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig: 1 件が implicitDeny",
+		"apply *: 2 件が allowed",
+		"apply *: 1 件が implicitDeny",
+		"apply *: 1 件が implicitDeny",
+		"apply *: 4 件が allowed",
+		"apply *: 2 件が implicitDeny",
+		"plan arn:aws:config:ap-northeast-1:123456789012:configuration-recorder/tabp-admin/abc: 2 件が allowed",
+		"plan arn:aws:access-analyzer:ap-northeast-1:123456789012:analyzer/tabp-admin-external: 1 件が allowed",
+		"plan arn:aws:access-analyzer:ap-northeast-1:123456789012:analyzer/tabp-admin-external: 1 件が implicitDeny",
 	}
 	permBudgetsDescs = []string{
 		"plan $budget: 2 件が allowed",
@@ -184,17 +199,17 @@ const (
 	// permissions の件数。条件つきの確認の有無で変わる。
 	permissionsBase     = 109
 	governanceGated     = 4
-	workloadGatedCount  = 9
+	workloadGatedCount  = 24
 	budgetsGatedCount   = 4
 	outputPolicyCount   = 13
 	governanceAbsent    = "  統制の policy がまだ付いていないので、作成と設定の権限は確かめない（統制の policy を作って付ける apply の後にもう一度走らせる）"
-	workloadAbsent      = "  workload の2つの policy がまだ付いていないので、apply の role の workload の権限は確かめない（2つの policy を作って付ける apply の後にもう一度走らせる）"
-	budgetsAbsent       = "  workload の2つの policy がまだ付いていないので、apply の role の budgets と Cost Anomaly Detection の作成と変更の権限は確かめない（2つの policy を作って付ける apply の後にもう一度走らせる）"
+	workloadAbsent      = "  workload の3つの policy がまだ付いていないので、apply の role の workload の権限は確かめない（3つの policy を作って付ける apply の後にもう一度走らせる）"
+	budgetsAbsent       = "  workload の3つの policy がまだ付いていないので、apply の role の budgets と Cost Anomaly Detection の作成と変更の権限は確かめない（3つの policy を作って付ける apply の後にもう一度走らせる）"
 	budgetsUnknown      = "  apply の role の managed policy を確かめられないので（上の NG）、apply の role の budgets と Cost Anomaly Detection の作成と変更の権限は確かめない"
 	attachedIdentityKey = "iam list-attached-role-policies --role-name tabp-admin-ci-apply-identity --output json --region " + testRegion
 	attachedApplyKey    = "iam list-attached-role-policies --role-name tabp-admin-ci-apply --output json --region " + testRegion
 	governanceAttached  = `{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-manage"},{"PolicyName":"tabp-admin-ci-apply-identity-governance"}]}`
-	workloadAttached    = `{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-workload-read"},{"PolicyName":"tabp-admin-ci-apply-workload"}]}`
+	workloadAttached    = `{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-workload-read"},{"PolicyName":"tabp-admin-ci-apply-workload-2"},{"PolicyName":"tabp-admin-ci-apply-workload"}]}`
 	noneAttached        = `{"AttachedPolicies":[]}`
 )
 
@@ -334,6 +349,21 @@ var permRowActions = []string{
 	"sns:DeleteTopic sns:Subscribe",
 	"kms:ScheduleKeyDeletion",
 	"iam:GetRole",
+	"config:PutConfigurationRecorder config:StartConfigurationRecorder config:DescribeConfigurationRecorders",
+	"config:DeleteConfigurationRecorder config:StopConfigurationRecorder",
+	"access-analyzer:CreateAnalyzer access-analyzer:GetAnalyzer",
+	"access-analyzer:DeleteAnalyzer",
+	"iam:PassRole ; iam:PassedToService = config.amazonaws.com (string)",
+	"iam:CreateServiceLinkedRole ; iam:AWSServiceName = config.amazonaws.com (string)",
+	"iam:DeleteServiceLinkedRole",
+	"ec2:EnableEbsEncryptionByDefault ec2:ModifyVpcBlockPublicAccessOptions ; ec2:Region = ap-northeast-1 (string)",
+	"ec2:DisableEbsEncryptionByDefault ; ec2:Region = ap-northeast-1 (string)",
+	"ec2:EnableEbsEncryptionByDefault ; ec2:Region = us-west-2 (string)",
+	"s3:PutAccountPublicAccessBlock config:PutDeliveryChannel config:PutRetentionConfiguration elasticmapreduce:PutBlockPublicAccessConfiguration",
+	"config:DeleteDeliveryChannel config:DeleteRetentionConfiguration",
+	"config:DescribeConfigurationRecorders config:DescribeConfigurationRecorderStatus",
+	"access-analyzer:GetAnalyzer",
+	"access-analyzer:CreateAnalyzer",
 	// budgets と Cost Anomaly Detection
 	"budgets:ViewBudget budgets:ListTagsForResource",
 	"ce:GetAnomalyMonitors ce:ListTagsForResource",
@@ -729,7 +759,7 @@ func Test_workloadGate(t *testing.T) {
 		r     awsResult
 		state gateState
 	}{
-		"2つちょうどなら attached": {okResult(workloadAttached), gateAttached},
+		"3つちょうどなら attached": {okResult(workloadAttached), gateAttached},
 		"付いていなければ absent":   {okResult(noneAttached), gateAbsent},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -747,12 +777,14 @@ func Test_workloadGate(t *testing.T) {
 		wantDesc   string
 		wantReason string
 	}{
-		"読めなければ unknown":    {failed("denied"), "apply: list-attached-role-policies を読めないので、workload の2つの policy が付いているかを決められない", "呼び出しが失敗: denied"},
-		"応答が読めなければ unknown": {okResult(`{"AttachedPolicies":"x"}`), "apply: list-attached-role-policies を読めないので、workload の2つの policy が付いているかを決められない", "応答を読めない"},
+		"読めなければ unknown":    {failed("denied"), "apply: list-attached-role-policies を読めないので、workload の3つの policy が付いているかを決められない", "呼び出しが失敗: denied"},
+		"応答が読めなければ unknown": {okResult(`{"AttachedPolicies":"x"}`), "apply: list-attached-role-policies を読めないので、workload の3つの policy が付いているかを決められない", "応答を読めない"},
 		"1つだけなら unknown": {okResult(`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-workload"}]}`),
-			"apply の role に付く managed policy が workload の2つの policy ではない", "tabp-admin-ci-apply-workload"},
+			"apply の role に付く managed policy が workload の3つの policy ではない", "tabp-admin-ci-apply-workload"},
+		"workload-2 が無ければ unknown": {okResult(`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-workload"},{"PolicyName":"tabp-admin-ci-apply-workload-read"}]}`),
+			"apply の role に付く managed policy が workload の3つの policy ではない", "tabp-admin-ci-apply-workload、tabp-admin-ci-apply-workload-read"},
 		"余分があれば unknown": {okResult(`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-workload"},{"PolicyName":"x"},{"PolicyName":"tabp-admin-ci-apply-workload-read"}]}`),
-			"apply の role に付く managed policy が workload の2つの policy ではない", "tabp-admin-ci-apply-workload、tabp-admin-ci-apply-workload-read、x"},
+			"apply の role に付く managed policy が workload の3つの policy ではない", "tabp-admin-ci-apply-workload、tabp-admin-ci-apply-workload-read、x"},
 	} {
 		t.Run(name+"で、NG の確認を持つ", func(t *testing.T) {
 			t.Parallel()
@@ -921,9 +953,9 @@ func Test_permissionsSteps(t *testing.T) {
 		result                      string
 	}{
 		"条件つきの確認がすべて走る": {governanceAttached, workloadAttached, nil, nil, nil, permissionsBase + governanceGated + workloadGatedCount + budgetsGatedCount,
-			"# 結果: 126 件のうち NG 0 件"},
+			"# 結果: 141 件のうち NG 0 件"},
 		"統制の policy が付いていない": {noneAttached, workloadAttached, []string{governanceAbsent}, nil, nil, permissionsBase + workloadGatedCount + budgetsGatedCount,
-			"# 結果: 122 件のうち NG 0 件（確かめていない区分 1）"},
+			"# 結果: 137 件のうち NG 0 件（確かめていない区分 1）"},
 		"workload の policy が付いていない": {governanceAttached, noneAttached, nil, []string{workloadAbsent}, []string{budgetsAbsent},
 			permissionsBase + governanceGated, "# 結果: 113 件のうち NG 0 件（確かめていない区分 2）"},
 		"どちらも付いていない": {noneAttached, noneAttached, []string{governanceAbsent}, []string{workloadAbsent}, []string{budgetsAbsent}, permissionsBase,
@@ -948,7 +980,7 @@ func Test_permissionsSteps(t *testing.T) {
 		require.ErrorIs(t, err, errMismatch)
 		assert.Equal(t, append(permExpected(
 			[]string{"NG  apply-identity: list-attached-role-policies を読めないので、統制の policy が付いているかを決められない（呼び出しが失敗: denied）"},
-			[]string{"NG  apply: list-attached-role-policies を読めないので、workload の2つの policy が付いているかを決められない（呼び出しが失敗: denied）"},
+			[]string{"NG  apply: list-attached-role-policies を読めないので、workload の3つの policy が付いているかを決められない（呼び出しが失敗: denied）"},
 			[]string{budgetsUnknown},
 		), "# 結果: "+strconv.Itoa(permissionsBase+2)+" 件のうち NG 2 件（確かめていない区分 1）"), lines)
 	})
@@ -978,7 +1010,7 @@ func Test_permissionsSteps(t *testing.T) {
 		lines, err := run(t, permFake(t, okResult(governanceAttached), okResult(`{"AttachedPolicies":[{"PolicyName":"x"}]}`)))
 
 		require.ErrorIs(t, err, errMismatch)
-		assert.Contains(t, lines, "NG  apply の role に付く managed policy が workload の2つの policy ではない（x）")
+		assert.Contains(t, lines, "NG  apply の role に付く managed policy が workload の3つの policy ではない（x）")
 		assert.Contains(t, lines, budgetsUnknown)
 		assert.Equal(t, "# 結果: "+strconv.Itoa(permissionsBase+governanceGated+1)+" 件のうち NG 1 件（確かめていない区分 1）", lines[len(lines)-1])
 	})

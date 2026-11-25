@@ -214,25 +214,25 @@ func governanceGate(q *query, n names) (gateResult, error) {
 	}
 }
 
-// workloadGate は、apply の role に workload の2つの policy が付いているか。どちらも付いていなければ absent、
-// 2つちょうどでなければ unknown。
+// workloadGate は、apply の role に workload の3つの policy が付いているか。どれも付いていなければ absent、
+// 3つちょうどでなければ unknown。
 func workloadGate(q *query, n names) (gateResult, error) {
 	got, reason, err := attachedNames(q, n.roleName(n.apply))
 	if err != nil {
 		return gateResult{}, err
 	}
 
-	want := []string{n.roleName(n.apply + "-workload"), n.roleName(n.apply + "-workload-read")}
+	want := []string{n.roleName(n.apply + "-workload"), n.roleName(n.apply + "-workload-2"), n.roleName(n.apply + "-workload-read")}
 
 	switch {
 	case reason != "":
-		return gateResult{state: gateUnknown, ng: fixedCheck(n.apply+": list-attached-role-policies を読めないので、workload の2つの policy が付いているかを決められない", verdict{reason: reason})}, nil
+		return gateResult{state: gateUnknown, ng: fixedCheck(n.apply+": list-attached-role-policies を読めないので、workload の3つの policy が付いているかを決められない", verdict{reason: reason})}, nil
 	case slices.Equal(got, want):
 		return gateResult{state: gateAttached}, nil
 	case len(got) == 0:
 		return gateResult{state: gateAbsent}, nil
 	default:
-		return gateResult{state: gateUnknown, ng: fixedCheck("apply の role に付く managed policy が workload の2つの policy ではない", verdict{reason: strings.Join(got, "、")})}, nil
+		return gateResult{state: gateUnknown, ng: fixedCheck("apply の role に付く managed policy が workload の3つの policy ではない", verdict{reason: strings.Join(got, "、")})}, nil
 	}
 }
 
@@ -278,6 +278,11 @@ func permissionSections(n names, sk, skReason string) []section {
 	if n.region == otherRegion {
 		otherRegion = "eu-west-1"
 	}
+
+	rec := "arn:aws:config:" + n.region + ":" + n.account + ":configuration-recorder/" + n.prefix + "/abc"
+	an := "arn:aws:access-analyzer:" + n.region + ":" + n.account + ":analyzer/" + n.prefix + "-external"
+	cslr := iam + ":role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig"
+	regionCtx := func(r string) []string { return []string{ctxEntry("ec2:Region", r, "string")} }
 
 	wk := "arn:aws:kms:" + n.region + ":" + n.account + ":key/00000000-0000-0000-0000-0000000000a1"
 	keyCtx := func(spec, usage string) []string {
@@ -428,8 +433,24 @@ func permissionSections(n names, sk, skReason string) []section {
 				sim(implicitDeny, apply, topic, "sns:DeleteTopic", "sns:Subscribe"),
 				sim(implicitDeny, apply, wk, "kms:ScheduleKeyDeletion"),
 				sim(allowed, apply, slr, "iam:GetRole"),
+				// account-baseline の構成物（決定13・17）。削除と停止は与えず、password policy の更新は admin で拒む（決定5）。
+				sim(allowed, apply, rec, "config:PutConfigurationRecorder", "config:StartConfigurationRecorder", "config:DescribeConfigurationRecorders"),
+				sim(implicitDeny, apply, rec, "config:DeleteConfigurationRecorder", "config:StopConfigurationRecorder"),
+				sim(allowed, apply, an, "access-analyzer:CreateAnalyzer", "access-analyzer:GetAnalyzer"),
+				sim(implicitDeny, apply, an, "access-analyzer:DeleteAnalyzer"),
+				simCtx(allowed, apply, cslr, passed("config.amazonaws.com"), "iam:PassRole"),
+				simCtx(allowed, apply, cslr, serviceName("config.amazonaws.com"), "iam:CreateServiceLinkedRole"),
+				sim(implicitDeny, apply, cslr, "iam:DeleteServiceLinkedRole"),
+				simCtx(allowed, apply, "*", regionCtx(n.region), "ec2:EnableEbsEncryptionByDefault", "ec2:ModifyVpcBlockPublicAccessOptions"),
+				simCtx(implicitDeny, apply, "*", regionCtx(n.region), "ec2:DisableEbsEncryptionByDefault"),
+				simCtx(implicitDeny, apply, "*", regionCtx(otherRegion), "ec2:EnableEbsEncryptionByDefault"),
+				sim(allowed, apply, "*", "s3:PutAccountPublicAccessBlock", "config:PutDeliveryChannel", "config:PutRetentionConfiguration", "elasticmapreduce:PutBlockPublicAccessConfiguration"),
+				sim(implicitDeny, apply, "*", "config:DeleteDeliveryChannel", "config:DeleteRetentionConfiguration"),
+				sim(allowed, plan, rec, "config:DescribeConfigurationRecorders", "config:DescribeConfigurationRecorderStatus"),
+				sim(allowed, plan, an, "access-analyzer:GetAnalyzer"),
+				sim(implicitDeny, plan, an, "access-analyzer:CreateAnalyzer"),
 			},
-			absentNote: "  workload の2つの policy がまだ付いていないので、apply の role の workload の権限は確かめない（2つの policy を作って付ける apply の後にもう一度走らせる）",
+			absentNote: "  workload の3つの policy がまだ付いていないので、apply の role の workload の権限は確かめない（3つの policy を作って付ける apply の後にもう一度走らせる）",
 			reportGate: true,
 		},
 		{
@@ -453,7 +474,7 @@ func permissionSections(n names, sk, skReason string) []section {
 				sim(allowed, apply, monitor, "ce:UpdateAnomalyMonitor", "ce:DeleteAnomalyMonitor"),
 				sim(allowed, apply, subscription, "ce:UpdateAnomalySubscription", "ce:DeleteAnomalySubscription"),
 			},
-			absentNote:  "  workload の2つの policy がまだ付いていないので、apply の role の budgets と Cost Anomaly Detection の作成と変更の権限は確かめない（2つの policy を作って付ける apply の後にもう一度走らせる）",
+			absentNote:  "  workload の3つの policy がまだ付いていないので、apply の role の budgets と Cost Anomaly Detection の作成と変更の権限は確かめない（3つの policy を作って付ける apply の後にもう一度走らせる）",
 			unknownNote: "  apply の role の managed policy を確かめられないので（上の NG）、apply の role の budgets と Cost Anomaly Detection の作成と変更の権限は確かめない",
 		},
 		{heading: "# " + ui + " の role", rows: []simRow{

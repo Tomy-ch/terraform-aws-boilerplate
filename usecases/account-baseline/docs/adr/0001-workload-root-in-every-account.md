@@ -61,20 +61,21 @@ AWS SRA は、Config と Access Analyzer をアカウントの onboarding と ba
 
 ## 保証範囲
 
-- 保証すること: `env` が7つの token の外なら plan で落ちること。`sandbox` で Config を置かず、`admin` で password policy を置かず、ほかの env では両方を置くこと。account-baseline が持つアカウントに1つの型を、ほかのユースケースの reference の plan が持てば Policy Test で落ちること。reference の plan の間で password policy の値が `organization-baseline` の break-glass と食い違えば Policy Test で落ちること
-- 保証しないこと: このユースケースが実際に7つのアカウントの workload root から呼ばれること（呼び出す root の配置が決める）。env の root の直接の宣言が、アカウントに1つの型を持たないこと。メンバーの apply の role が password policy を書けること（「影響」の改訂の前は、メンバーでの apply が落ちる）
+- 保証すること: `env` が7つの token の外なら plan で落ちること。`sandbox` で Config を置かず、`admin` で password policy を置かず、ほかの env では両方を置くこと。account-baseline が持つアカウントかリージョンに1つの型を、ほかのユースケース・env・一般 module が宣言すれば層の検査で落ちること。reference の plan の間で password policy の値が `organization-baseline` の break-glass と食い違えば Policy Test で落ちること
+- 保証しないこと: このユースケースが実際に7つのアカウントの workload root から呼ばれること（呼び出す root の配置が決める）
 
 ## 検証方法
 
 - Contract Test: `tests/validation.tftest.hcl` の `unknown_env` が、ほかの `env` を拒むことを確かめる。`tests/contract.tftest.hcl` の `workload_account`・`sandbox_has_no_config`・`management_account_has_no_password_policy` が、env ごとの合成の件数を確かめる
-- Policy Test（`make tf-policy`）: `PLAN-ACB-05` が、アカウントに1つの型が `account-baseline` の外の reference の plan に現れることを落とす（password policy は `organization-baseline` も認める）。`PLAN-ACB-06` が、reference の plan の間で password policy の値（`conftest/plan/decl.json` の `account_baseline.password_policy_keys`）が食い違うことを落とす。比べる相手（owners に載せた usecase の password policy）が入力に無いときと、宣言の属性で値が1つも読めないときも落とす
+- Static Analysis（`make layer-check`）: `LY401` が、アカウントかリージョンに1つの型が持ち主の外で宣言されることを落とす（password policy は `organization-baseline` も認める）。
+- Policy Test（`make tf-policy`）: `PLAN-ACB-06` が、reference の plan の間で password policy の値（`conftest/plan/decl.json` の `account_baseline.password_policy_keys`）が食い違うことを落とす。比べる相手（層の宣言 `conftest/hcl/layer/decl.json` の `singletons` が password policy の持ち主とする usecase の password policy）が入力に無いときと、宣言の属性で値が1つも読めないときも落とす
 - 昇格の条件（決定7）は実環境の観測で確かめる。どのテストも見ない
 
 ## 影響
 
 各アカウントの workload root と、その apply の role の権限が要る。管理アカウントの password policy の持ち主は `organization-baseline` のままである。
 
-メンバーの apply の role が password policy を書けるのは、deployment-identity/ADR-0201 (enumerated-permissions) 決定5 の `DenyGovernanceChange` の password policy の Action を、管理アカウントに限る改訂の後である（#465 の後の、#22 の PR-3）。それまでは、メンバーでの apply が password policy で落ちる。
+メンバーの apply の role は password policy を書ける。deployment-identity/ADR-0201 (enumerated-permissions) 決定5 の `DenyGovernanceChange` は、password policy の更新を管理アカウントでだけ拒む。
 
 ## 見直し条件
 

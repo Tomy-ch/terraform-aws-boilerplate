@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/fakeexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -152,7 +153,7 @@ func Test_hostAWS(t *testing.T) {
 
 		path := filepath.Join(t.TempDir(), "aws")
 		body := "#!/bin/sh\nfor a in \"$@\"; do echo \"$a\"; done\necho \"home=${HOME:-}\" >&2\nexit " + code + "\n"
-		require.NoError(t, os.WriteFile(path, []byte(body), 0o700))
+		fakeexec.Write(t, path, body, 0o700)
 
 		return path
 	}

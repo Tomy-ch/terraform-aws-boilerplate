@@ -61,9 +61,9 @@ func stage4Descs(executor string) []string {
 	return append(append([]string{}, encryptionDescs...),
 		"OIDC provider の ClientIDList が sts.amazonaws.com だけ",
 		"role tabp-admin-ci-plan の inline policy が plan だけ",
-		"role tabp-admin-ci-plan に managed policy が付いていない",
+		"role tabp-admin-ci-plan に付く managed policy が、workload の読み取りの policy だけ",
 		"role tabp-admin-ci-apply の inline policy が apply だけ",
-		"role tabp-admin-ci-apply に付く managed policy が、workload の2つの policy だけ",
+		"role tabp-admin-ci-apply に付く managed policy が、workload の3つの policy だけ",
 		"role tabp-admin-ci-apply-identity の inline policy が apply_identity だけ",
 		"role tabp-admin-ci-apply-identity に付く managed policy が、統制の policy と manage の policy だけ",
 		"role tabp-admin-ci-unlock-identity の inline policy が unlock_identity だけ",
@@ -186,7 +186,8 @@ func stage4Responses(t *testing.T, bucketPolicy string) map[string]awsResult {
 
 	attached := map[string]string{
 		"apply-identity": `{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-manage"},{"PolicyName":"tabp-admin-ci-apply-identity-governance"}]}`,
-		"apply":          `{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-workload-read"},{"PolicyName":"tabp-admin-ci-apply-workload"}]}`,
+		"apply":          `{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-workload-read"},{"PolicyName":"tabp-admin-ci-apply-workload-2"},{"PolicyName":"tabp-admin-ci-apply-workload"}]}`,
+		"plan":           `{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-workload-read"}]}`,
 	}
 
 	for _, role := range []string{"plan", "apply", "apply-identity", "unlock-identity", "unlock"} {
@@ -897,7 +898,7 @@ func Test_stage4Steps(t *testing.T) {
 			"role tabp-admin-ci-apply-identity に付く managed policy が、統制の policy と manage の policy だけ"},
 		"apply に余分な policy": {jsonKey("iam", "list-attached-role-policies", "--role-name", "tabp-admin-ci-apply"),
 			`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-workload"},{"PolicyName":"tabp-admin-ci-apply-workload-read"},{"PolicyName":"x"}]}`,
-			"role tabp-admin-ci-apply に付く managed policy が、workload の2つの policy だけ"},
+			"role tabp-admin-ci-apply に付く managed policy が、workload の3つの policy だけ"},
 		"unlock に policy が付く": {jsonKey("iam", "list-attached-role-policies", "--role-name", "tabp-admin-ci-unlock"),
 			`{"AttachedPolicies":[{"PolicyName":"x"}]}`, "role tabp-admin-ci-unlock に managed policy が付いていない"},
 		"鍵が無効": {jsonKey("kms", "describe-key", "--key-id", testAlias), strings.Replace(describeKeyBody, `"Enabled"`, `"Disabled"`, 1),

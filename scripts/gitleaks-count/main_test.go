@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/fakeexec"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/misetoml"
 )
 
@@ -384,7 +385,7 @@ func recipe(t *testing.T, f *fixture, target string, vars []string, env ...strin
 	t.Helper()
 
 	bin := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(bin, "gitleaks"), []byte(fakeGitleaks), 0o700)) //nolint:gosec // 偽物の道具は実行できなければならない
+	fakeexec.Write(t, filepath.Join(bin, "gitleaks"), fakeGitleaks, 0o700)
 
 	root := filepath.Join("..", "..")
 	scriptBin, err := os.MkdirTemp(filepath.Join(root, "tmp"), "gitleaks-count-test.")

@@ -10,10 +10,11 @@ func Test_command(t *testing.T) {
 	t.Parallel()
 
 	for step, want := range map[string][]string{
-		stepMain:    {"typos", "--format", "brief"},
-		stepScan:    {"typos", "--config", ".typos.toml", "--format", "brief"},
-		stepFiles:   {"typos", "--files"},
-		stepLsFiles: {"git", "-c", "core.quotepath=false", "ls-files", "-z"},
+		stepMain:      {"typos", "--format", "brief"},
+		stepScan:      {"typos", "--config", ".typos.toml", "--format", "brief"},
+		stepFiles:     {"typos", "--files"},
+		stepLsFiles:   {"git", "-c", "core.quotepath=false", "ls-files", "-z"},
+		stepLsDeleted: {"git", "-c", "core.quotepath=false", "ls-files", "-z", "--deleted"},
 	} {
 		t.Run(step, func(t *testing.T) {
 			t.Parallel()

@@ -590,7 +590,7 @@ func permissiveHandler(args []string) (awsResult, bool) {
 	case strings.Contains(joined, "list-attached-role-policies --role-name tabp-admin-ci-apply-identity "):
 		return okResult(`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-governance"}]}`), true
 	case strings.Contains(joined, "list-attached-role-policies --role-name tabp-admin-ci-apply "):
-		return okResult(`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-workload"},{"PolicyName":"tabp-admin-ci-apply-workload-read"}]}`), true
+		return okResult(`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-workload"},{"PolicyName":"tabp-admin-ci-apply-workload-2"},{"PolicyName":"tabp-admin-ci-apply-workload-read"}]}`), true
 	case strings.Contains(joined, "describe-key"):
 		return okResult(`{"KeyMetadata":{"Arn":"` + testKeyARN + `"}}`), true
 	case strings.Contains(joined, "get-bucket-policy"):
@@ -732,7 +732,7 @@ func Test_checkVerify(t *testing.T) {
 		{verifyOptions{stage: "before-apply"}, "# 結果: 21 件のうち NG 21 件"},
 		{verifyOptions{stage: "stage4"}, "# 結果: 24 件のうち NG 22 件"},
 		{verifyOptions{stage: "stage4", executor: "bob"}, "# 結果: 24 件のうち NG 23 件"},
-		{verifyOptions{stage: "permissions"}, "# 結果: 126 件のうち NG 69 件"},
+		{verifyOptions{stage: "permissions"}, "# 結果: 141 件のうち NG 76 件"},
 		{verifyOptions{stage: "stage5"}, "# 結果: 5 件のうち NG 4 件"},
 		{verifyOptions{stage: "output-policy", policySource: "live"}, "# 結果: 13 件のうち NG 7 件"},
 		{verifyOptions{stage: "output-policy", policySource: "reference"}, "# 結果: 13 件のうち NG 7 件"},

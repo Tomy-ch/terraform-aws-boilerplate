@@ -297,6 +297,7 @@ func Test_exitCode(t *testing.T) {
 		{"canary の食い違いは 1", xerrors.Wrap(errCanary, "x"), 1},
 		{"root が無いのは 2", xerrors.Wrap(errMissingRoot, "x"), 2},
 		{"使い方の誤りは 2", xerrors.Wrap(errUsage, "x"), 2},
+		{"道具を起動できない・シグナルで終わったは 2", xerrors.Wrap(errTool, "x"), 2},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
