@@ -1,10 +1,7 @@
 name: Markdown Lint
 
-# `make md-lint` / `make adr-lint` / `make skill-lint` / `make ref-record-lint` が配線されて
-# いるのは lefthook の pre-commit だけなので、`--no-verify` と GitHub の Web UI 経由の編集は検査を通らずに
-# merge へ届く。**すべての段をここで走らせる。**
-#
-# 4つを1つの workflow に置くのは、どれも主題が Markdown だからである。
+# lefthook は `--no-verify` と GitHub の Web UI 経由の編集を通すので、Markdown を主題とする
+# md-lint / adr-lint / skill-lint / ref-record-lint のすべての段をここで走らせる（ADR-0501 決定26）。
 #
 # CI ではコンテナを起こさず、`RUNNER_MODE=host` の前置きで直接呼ぶ（ADR-0503 決定7・17）。
 #

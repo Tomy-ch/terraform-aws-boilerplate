@@ -17,7 +17,6 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-// validSection は、検査を通る参照記録の節。
 const validSection = `## 公式実装の参照（ADR-0206 決定7・8）
 
 参照日: 2026-11-19（一部は 2026-11-20）、AWS Provider v6.70.0 の文書

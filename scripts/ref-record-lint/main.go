@@ -234,7 +234,6 @@ func difference(a, b []string) []string {
 	return out
 }
 
-// checkTarget は、root からの相対パス path の README を読み、checkReadme にかけます。
 func checkTarget(root, path string) ([]lintreport.Finding, error) {
 	full := filepath.Join(root, filepath.FromSlash(path))
 	info, err := os.Lstat(full)
@@ -295,7 +294,6 @@ func section(lines []mdscan.Line, start int) []mdscan.Line {
 	return lines[start+1 : end]
 }
 
-// checkSection は、見出しが headingLine に在る節の本文 body が、記録の項目を持つことを検査します。
 func checkSection(path string, headingLine int, body []mdscan.Line) []lintreport.Finding {
 	var findings []lintreport.Finding
 	add := func(line int, msg string) {
@@ -347,7 +345,6 @@ func checkDate(body []mdscan.Line) (line int, msg string, ok bool) {
 	return found[0].Number, "", true
 }
 
-// hasProviderVersion は、節のどこかに AWS Provider の version が書かれているかを返します。
 func hasProviderVersion(body []mdscan.Line) bool {
 	for _, l := range body {
 		if providerVersion.MatchString(l.Text) {

@@ -121,7 +121,6 @@ pre-commit:
         - "docker/images-pin.toml"
       run: make pin-images-check
 
-    # テストを hook から外さない（ADR-0702 決定16）。
     go-fmt-check:
       glob: "scripts/**/*.go"
       run: make go-fmt-check
