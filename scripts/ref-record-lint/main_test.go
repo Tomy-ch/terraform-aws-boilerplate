@@ -734,6 +734,26 @@ func Test_headingLevel(t *testing.T) {
 	}
 }
 
+func Test_frontMatterEnd(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		texts []string
+		want  int
+	}{
+		"閉じの行の添字を返す":        {[]string{"---", "a: b", "---", "---"}, 2},
+		"閉じが無ければ 0":         {[]string{"---", "a: b"}, 0},
+		"1行目が --- でなければ 0":  {[]string{"a", "---", "---"}, 0},
+		"字下げした --- は区切りでない": {[]string{"---", " ---"}, 0},
+		"空": {nil, 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, frontMatterEnd(c.texts))
+		})
+	}
+}
+
 func Test_isHTMLBlockStart(t *testing.T) {
 	t.Parallel()
 
@@ -751,10 +771,14 @@ func Test_isHTMLBlockStart(t *testing.T) {
 		"3つまでの字下げ":        {"   <pre>", true},
 		"4つの字下げ":          {"    <pre>", false},
 		"行頭でない":           {"a <b>x</b>", false},
-		"< の後が英字でない":      {"< a", false},
-		"< の後が数字":         {"<1>", false},
-		"コメントはタグではない":     {"<!-- x -->", false},
-		"</ の後が英字でない":     {"</ a>", false},
+		"< の後が英字でない":      {"< a", true},
+		"< の後が数字":         {"<1>", true},
+		"コメントは HTML ブロックとして扱わない": {"<!-- x -->", false},
+		"</ の後が英字でない":            {"</ a>", true},
+		"処理命令":                   {"<?php", true},
+		"宣言":                     {"<!X", true},
+		"CDATA":                  {"<![CDATA[", true},
+		"autolink":               {"<https://x>", true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -794,17 +818,22 @@ func Test_isParagraphLine(t *testing.T) {
 		text string
 		want bool
 	}{
-		"本文":        {"本文", true},
-		"label":     {adoptedLabel, true},
-		"= の並び":     {"===", true},
-		"空白だけ":      {"  ", false},
-		"見出し":       {"## a", false},
-		"- の項目":     {"- A", false},
-		"- だけの項目":   {"-", false},
-		"番号の項目":     {"1. A", false},
-		"区切り線":      {"* * *", false},
-		"HTML ブロック": {"<pre>", false},
-		"行頭がコメント":   {"<!-- x -->", false},
+		"本文":          {"本文", true},
+		"label":       {adoptedLabel, true},
+		"= の並び":       {"===", true},
+		"空白だけ":        {"  ", false},
+		"見出し":         {"## a", false},
+		"- の項目":       {"- A", false},
+		"- だけの項目":     {"-", false},
+		"番号の項目":       {"1. A", false},
+		"区切り線":        {"* * *", false},
+		"HTML ブロック":   {"<pre>", false},
+		"行頭がコメント":     {"<!-- x -->", false},
+		"引用":          {"> quote", false},
+		"字下げした引用":     {"   > quote", false},
+		"4つの字下げ":      {"    code", false},
+		"タブの字下げ":      {"\tcode", false},
+		"3つまでの字下げの本文": {"   本文", true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -937,6 +966,34 @@ func Test_scanReadme(t *testing.T) {
 			"a\n```\n```\n---\n<!--\n-->\n---",
 			scanned{lines: []line{{Number: 1, Text: "a"}, {Number: 4, Text: "---"}, {Number: 5}, {Number: 6}, {Number: 7, Text: "---"}}},
 		},
+		"引用と字下げしたコードの直後の --- は setext ではない": {
+			"> quote\n---\n\n    code\n---",
+			scanned{lines: []line{{Number: 1, Text: "> quote"}, {Number: 2, Text: "---"}, {Number: 3}, {Number: 4, Text: "    code"}, {Number: 5, Text: "---"}}},
+		},
+		"1行目からの front matter の閉じの --- は setext ではない": {
+			"---\ntitle: x\n---\n本文",
+			scanned{lines: []line{{Number: 1, Text: "---"}, {Number: 2, Text: "title: x"}, {Number: 3, Text: "---"}, {Number: 4, Text: "本文"}}},
+		},
+		"front matter の中の < は HTML ブロックではなく、閉じた後は読む": {
+			"---\nx: <y>\n<z>\n---\n<div>",
+			scanned{lines: []line{{Number: 1, Text: "---"}, {Number: 2, Text: "x: <y>"}, {Number: 3, Text: "<z>"}, {Number: 4, Text: "---"}, {Number: 5, Text: "<div>"}},
+				unsupported: []lintreport.Finding{{Line: 5, Message: msgHTMLBlock}}},
+		},
+		"front matter の中の見出しを front matter の理由で報告する": {
+			"---\n" + heading + "\n---",
+			scanned{lines: []line{{Number: 1, Text: "---"}, {Number: 2, Text: heading}, {Number: 3, Text: "---"}},
+				hidden: []hiddenLine{{Line: 2, Reason: reasonFrontMatter}}},
+		},
+		"閉じない 1行目の --- は front matter ではない": {
+			"---\n<x>",
+			scanned{lines: []line{{Number: 1, Text: "---"}, {Number: 2, Text: "<x>"}},
+				unsupported: []lintreport.Finding{{Line: 2, Message: msgHTMLBlock}}},
+		},
+		"2行目からの --- の組は front matter ではない": {
+			"a\n---\nb\n---",
+			scanned{lines: []line{{Number: 1, Text: "a"}, {Number: 2, Text: "---"}, {Number: 3, Text: "b"}, {Number: 4, Text: "---"}},
+				unsupported: []lintreport.Finding{{Line: 2, Message: msgSetext}, {Line: 4, Message: msgSetext}}},
+		},
 		"段落の中で開いたコメントの後ろは段落が続き、--- は setext": {
 			"b <!--\n-->\n---",
 			scanned{lines: []line{{Number: 1, Text: "b "}, {Number: 2}, {Number: 3, Text: "---"}},
@@ -987,6 +1044,9 @@ func Test_stripComments(t *testing.T) {
 		"閉じた同じ行で開き直す":                          {"<!-- a --> b <!-- c", false, " b ", true},
 		"コメントでない < の後ろの開きは開く":                  {"a <div> <!-- x", false, "a <div> ", true},
 		"<! で始まるがコメントでないものは文字":                 {"a <div> <!x> b", false, "a <div> <!x> b", false},
+		"バックスラッシュで逃がした < は開かない":                {"\\<!-- x", false, "\\<!-- x", false},
+		"逃がしたバックスラッシュの後ろの < は開く":               {"\\\\<!-- x", false, "\\\\", true},
+		"逃がしたバッククォートは inline code を開かない":       {"\\`<!-- x`", false, "\\`", true},
 		"<!--> は空のコメント":                        {"a<!-->b", false, "ab", false},
 		"<!---> は空のコメント":                       {"a<!--->b", false, "ab", false},
 		"<!----> は閉じたコメント":                     {"a<!---->b", false, "ab", false},

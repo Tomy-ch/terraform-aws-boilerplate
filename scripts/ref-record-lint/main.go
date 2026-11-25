@@ -12,6 +12,9 @@
 //  4. 節が `採用した知見:` の行をちょうど1つ持ち、本文が空でない項目が1件以上続く
 //  5. 節が `採用しなかった知見と理由:` の行をちょうど1つ持ち、`<知見>: <理由>` の両側が空でない項目が1件以上続く
 //
+// `参照日:` の行と2つのラベルの行は、字下げせず行頭から書き、一覧の項目にしません。`- 参照日:` や字下げした行は、
+// その行として数えません。
+//
 // 記録の中身が正しいこと、公式実装と一致することは見ません（ADR-0206 の検証方法のレビュー）。
 //
 // 対象の集合は、ディレクトリの列挙と git の追跡ファイルの2つの経路で得て突き合わせます。見出しの数も、
@@ -42,25 +45,26 @@ import (
 )
 
 const (
-	toolName       = "ref-record-lint"
-	readme         = "README.md"
-	headingText    = "公式実装の参照"
-	heading        = "## " + headingText
-	datePrefix     = "参照日: "
-	adoptedLabel   = "採用した知見:"
-	rejectedLabel  = "採用しなかった知見と理由:"
-	itemPrefix     = "- "
-	reasonSep      = ": "
-	dateLayout     = "2006-01-02"
-	dateLayoutSize = len(dateLayout)
-	dateShape      = "YYYY-MM-DD"
-	commentOpen    = "<!--"
-	commentClose   = "-->"
+	toolName         = "ref-record-lint"
+	readme           = "README.md"
+	headingText      = "公式実装の参照"
+	heading          = "## " + headingText
+	datePrefix       = "参照日: "
+	adoptedLabel     = "採用した知見:"
+	rejectedLabel    = "採用しなかった知見と理由:"
+	itemPrefix       = "- "
+	reasonSep        = ": "
+	dateLayout       = "2006-01-02"
+	dateLayoutSize   = len(dateLayout)
+	dateShape        = "YYYY-MM-DD"
+	commentOpen      = "<!--"
+	commentClose     = "-->"
+	frontMatterFence = "---"
 )
 
 // 読まない形の違反。走査がこれらを読めば、後ろの行の意味が変わる。
 const (
-	msgHTMLBlock = "ref-record-lint は HTML ブロック（`<` か `</` に英字が続くタグで始まる行）を読みません。別の書き方にします"
+	msgHTMLBlock = "ref-record-lint は HTML ブロック（`<!--` のコメント以外で `<` から始まる行）を読みません。別の書き方にします"
 	msgSetext    = "ref-record-lint は setext 見出し（段落の直後の `=` か `-` だけの行）を読みません。`#` の見出しにするか、前に空行を置きます"
 )
 
@@ -70,11 +74,13 @@ var scanRoots = []string{"usecases", "modules"}
 var (
 	providerVersion = regexp.MustCompile(`AWS Provider v?[0-9]+\.[0-9]+\.[0-9]+`)
 	anyHeading      = regexp.MustCompile(`^ {0,3}(#{1,6})([ \t]|$)`)
-	htmlBlockStart  = regexp.MustCompile(`^ {0,3}</?[A-Za-z]`)
+	htmlBlockStart  = regexp.MustCompile(`^ {0,3}<`)
 	setextUnderline = regexp.MustCompile(`^ {0,3}(=+|-+)[ \t]*$`)
 	listItem        = regexp.MustCompile(`^ {0,3}([-+*]|[0-9]{1,9}[.)])([ \t]|$)`)
 	thematicBreak   = regexp.MustCompile(`^ {0,3}((\*[ \t]*){3,}|(-[ \t]*){3,}|(_[ \t]*){3,})$`)
 	commentStart    = regexp.MustCompile(`^ {0,3}<!--`)
+	blockQuote      = regexp.MustCompile(`^ {0,3}>`)
+	indentedCode    = regexp.MustCompile(`^( {4}| {0,3}\t)`)
 )
 
 // headingTails と dateTails は、見出しと日付の直後に続いてよいもの。行末も許します。
@@ -324,8 +330,9 @@ func checkReadme(path string, content []byte) ([]lintreport.Finding, error) {
 
 // 見出しの形をした行を、見出しとして読まなかった理由。
 const (
-	reasonFence   = "フェンス"
-	reasonComment = "HTML コメント"
+	reasonFence       = "フェンス"
+	reasonComment     = "HTML コメント"
+	reasonFrontMatter = "front matter"
 )
 
 // hiddenLine は、見出しの形をしているが、フェンスか HTML コメントの中に在るので見出しとして読まなかった行です。
@@ -364,8 +371,17 @@ func scanReadme(content []byte) scanned {
 	// paragraph は直前の行が段落の行か、inlineComment は開いているコメントが段落の中で開いたか（行頭で開いた
 	// コメントは HTML ブロックで、閉じた後ろに段落は続かない）。
 	paragraph, inlineComment := false, false
-	for i, text := range strings.Split(string(content), "\n") {
+	texts := strings.Split(string(content), "\n")
+	frontEnd := frontMatterEnd(texts)
+	for i, text := range texts {
 		number := i + 1
+		if i <= frontEnd && frontEnd > 0 {
+			if isHeading(text) {
+				sc.hidden = append(sc.hidden, hiddenLine{Line: number, Reason: reasonFrontMatter})
+			}
+			sc.lines = append(sc.lines, scanLine{Number: number, Text: text})
+			continue
+		}
 		if sc.openedAt == 0 {
 			var in bool
 			if fence, in = fence.Next(text); in {
@@ -422,10 +438,23 @@ func headingLevel(text string) int {
 	return len(m[1])
 }
 
-// isHTMLBlockStart は、text がタグで始まり、HTML ブロック（CommonMark の種類1・6・7）を開きうるかを返します。
-// コメント（`<!--`）は含みません。
+// frontMatterEnd は、texts の1行目が `---` で、後ろに閉じの `---` の行が在れば、その添字を返します。無ければ 0 です。
+func frontMatterEnd(texts []string) int {
+	if len(texts) == 0 || texts[0] != frontMatterFence {
+		return 0
+	}
+	for i := 1; i < len(texts); i++ {
+		if texts[i] == frontMatterFence {
+			return i
+		}
+	}
+	return 0
+}
+
+// isHTMLBlockStart は、text が `<!--` のコメント以外の `<` で始まり、HTML ブロック（CommonMark の種類1・3-7）か
+// autolink を開きうるかを返します。
 func isHTMLBlockStart(text string) bool {
-	return htmlBlockStart.MatchString(text)
+	return htmlBlockStart.MatchString(text) && !commentStart.MatchString(text)
 }
 
 // isSetextUnderline は、text が、直前の段落の行を setext 見出しにする下線の形かを返します。
@@ -434,10 +463,11 @@ func isSetextUnderline(text string) bool {
 }
 
 // isParagraphLine は、text が段落の行として読まれ、次の行が下線なら setext 見出しになるかを返します。空行・見出し・
-// 一覧の項目・区切り線・HTML ブロックとコメントで始まる行は段落の行ではありません。
+// 一覧の項目・区切り線・引用・4つ以上の字下げ・HTML ブロックとコメントで始まる行は段落の行ではありません。
 func isParagraphLine(text string) bool {
 	return strings.TrimSpace(text) != "" && headingLevel(text) == 0 && !listItem.MatchString(text) &&
-		!thematicBreak.MatchString(text) && !isHTMLBlockStart(text) && !commentStart.MatchString(text)
+		!thematicBreak.MatchString(text) && !blockQuote.MatchString(text) && !indentedCode.MatchString(text) &&
+		!isHTMLBlockStart(text) && !commentStart.MatchString(text)
 }
 
 // rawLines は、content の全行を、フェンスを区別せずに1始まりの番号で返します。
@@ -475,7 +505,8 @@ func hasTail(rest string, tails []string) bool {
 }
 
 // stripComments は、1行から HTML コメントの部分を除いた文字と、行末でコメントが開いたままかを返します。open は、
-// 行の頭でコメントが開いているかです。inline code の中の `<!--` はコメントを開きません。`<!-->` と `<!--->` は
+// 行の頭でコメントが開いているかです。inline code の中の `<!--` と、バックスラッシュで逃がした `<` はコメントを
+// 開きません。`<!-->` と `<!--->` は
 // 空のコメントです。
 func stripComments(text string, open bool) (visible string, stillOpen bool) {
 	var b strings.Builder
@@ -494,6 +525,11 @@ func stripComments(text string, open bool) (visible string, stillOpen bool) {
 			text = text[n:]
 			continue
 		}
+		if text[0] == '\\' && len(text) > 1 {
+			b.WriteString(text[:2])
+			text = text[2:]
+			continue
+		}
 		if rest, ok := strings.CutPrefix(text, commentOpen); ok {
 			if empty, ok := cutEmptyComment(rest); ok {
 				text = empty
@@ -502,7 +538,7 @@ func stripComments(text string, open bool) (visible string, stillOpen bool) {
 			open, text = true, rest
 			continue
 		}
-		next := strings.IndexAny(text[1:], "`<")
+		next := strings.IndexAny(text[1:], "`<\\")
 		if next < 0 {
 			b.WriteString(text)
 			break
