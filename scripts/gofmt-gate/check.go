@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -30,16 +31,24 @@ func runCheck(args []string, w io.Writer, tool toolFunc, root string) error {
 	if !filepath.IsLocal(*dir) {
 		return xerrors.Wrapf(errUsage, "-dir %q はリポジトリ直下からの相対パスで、外へ出ないものに限ります", *dir)
 	}
-	fixture, err := workdir.Resolve(root, *work)
-	if err != nil {
+	if _, err := workdir.Resolve(root, *work); err != nil {
 		return xerrors.Wrapf(errUsage, "-work %v", err)
 	}
 	n, err := countGoFiles(filepath.Join(root, *dir))
 	if err != nil {
 		return err
 	}
+	fixture, err := workdir.Recreate(root, *work)
+	if err != nil {
+		return xerrors.Wrapf(errRead, "-work %v", err)
+	}
+	defer workdir.Cleanup(root, *work, w)
 	if err := runCanary(fixture, w, tool); err != nil {
 		return err
+	}
+	// 本走査の前に fixture を消す。-dir が tmp/ を含んでも、意図した未整形のファイルを拾わない。
+	if err := workdir.Remove(root, *work); err != nil {
+		return xerrors.Wrapf(errRead, "-work の後片付け: %v", err)
 	}
 
 	return runScan(filepath.Join(root, *dir), *dir, n, w, tool)
@@ -79,7 +88,7 @@ func countGoFiles(dir string) (int, error) {
 // runScan は、dir で本走査（gofmt -l .）を走らせます。0 でない終了コードは errExit、挙がったファイルは label からの
 // パスで w へ書いて errFailed です。
 func runScan(dir, label string, n int, w io.Writer, tool toolFunc) error {
-	r, err := toolrun.Run(tool(dir, os.Environ(), stepMain))
+	r, err := toolrun.Run(tool(context.Background(), dir, os.Environ(), stepMain))
 	if err != nil {
 		return err
 	}

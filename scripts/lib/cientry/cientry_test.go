@@ -3,7 +3,6 @@ package cientry
 import (
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -18,14 +17,11 @@ var repoRoot = filepath.Join("..", "..", "..")
 const nonEntryBlock = ".PHONY: ci-aws-credentials ## x\n" +
 	"ci-aws-credentials: SHELL := /bin/bash\n" +
 	"ci-aws-credentials:\n" +
-	"\t@$(if $(CI_ENV),,$(error x))$(call CI_AWS_CREDENTIALS,$(CI_ENV),$(CI_ROLE))\n"
-
-const deniedLine = "CI_DENIED_ROLES ?= apply apply-identity unlock-identity unlock\n"
+	"\t@$(if $(CI_ENV),,$(error x))$(call TF_LOCAL,ci-credentials -env $(CI_ENV) -role $(CI_ROLE))\n"
 
 // fixture は登録簿どおりの ci.mk の本文を組む。entries は {種別, env, root}。登録簿に無い種別の role は plan にする。
 func fixture(entries ...[3]string) string {
 	var b strings.Builder
-	b.WriteString(deniedLine)
 	var defined []string
 	for _, e := range entries {
 		if !slices.Contains(defined, e[0]) {
@@ -63,17 +59,6 @@ func replaced(t *testing.T, s, old, repl string) string {
 	return strings.Replace(s, old, repl, 1)
 }
 
-func makeDryRun(t *testing.T, args ...string) string {
-	t.Helper()
-	cmd := exec.CommandContext(t.Context(), "make", append([]string{"-C", repoRoot, "-n", "--no-print-directory"}, args...)...)
-	cmd.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool {
-		return strings.HasPrefix(kv, "MAKEFLAGS=") || strings.HasPrefix(kv, "MFLAGS=") || strings.HasPrefix(kv, "MAKELEVEL=")
-	})
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, string(out))
-	return string(out)
-}
-
 func TestKinds(t *testing.T) {
 	t.Parallel()
 
@@ -99,43 +84,19 @@ func TestKinds(t *testing.T) {
 			assert.Equal(t, Plan, again[0].Name)
 			assert.Equal(t, EventPush, again[1].Events[0])
 		})
+	})
+}
 
-		// 属性の宣言は ci.mk の define の本体の写しである。このケースはレシピを対象とするテストで、ADR-0702 決定25 に反する。
-		// ci.mk の判定を tf-local へ移す変更（#439）で、置き換えと同時に消す。
-		t.Run("実物の ci.mk の入口のレシピが、種別の Terraform と Lock の属性と一致する", func(t *testing.T) {
+func TestRoot_Dir(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("identity は env の下の identity、workload は env の直下", func(t *testing.T) {
 			t.Parallel()
-			const sentinel = "tf-bin-sentinel"
-			entries, err := ParseRepo(repoRoot)
-			require.NoError(t, err)
-			seen := map[string]int{}
-			for _, e := range entries {
-				out := makeDryRun(t, e.Target, "TF_BIN="+sentinel)
-				k := e.Kind
-				assert.Equal(t, k.Terraform, strings.Contains(out, sentinel), e.Target)
-				assert.Equal(t, k.Lock == LockSkip, strings.Contains(out, " plan -lock=false"), e.Target)
-				switch k.Lock {
-				case LockSkip:
-					assert.Contains(t, out, " plan -lock=false -input=false", e.Target)
-					assert.NotContains(t, out, " apply ", e.Target)
-				case LockRelease:
-					assert.NotContains(t, out, "-lock=false", e.Target)
-					assert.Contains(t, out, " plan -input=false", e.Target)
-					assert.Contains(t, out, " apply -input=false", e.Target)
-				case LockKeep:
-					assert.NotContains(t, out, "-lock=false", e.Target)
-					assert.Contains(t, out, " plan -input=false", e.Target)
-					assert.Contains(t, out, "lock-wait", e.Target)
-					assert.NotContains(t, out, " apply ", e.Target)
-				case LockRemove:
-					assert.Contains(t, out, "delete-object", e.Target)
-				default:
-					t.Fatalf("%s: lock の扱い %d を知りません", e.Target, k.Lock)
-				}
-				seen[k.Name]++
-			}
-			for _, k := range Kinds() {
-				require.Positive(t, seen[k.Name], k.Name)
-			}
+			assert.Equal(t, "env/admin/identity", RootIdentity.Dir("admin"))
+			assert.Equal(t, "env/admin", RootWorkload.Dir("admin"))
 		})
 	})
 }
@@ -188,6 +149,53 @@ func TestRoles(t *testing.T) {
 		t.Run("種別の順に identity、workload の role を重複なく返す", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, []string{"plan", "apply-identity", "apply", "unlock-identity", "unlock"}, Roles())
+		})
+	})
+}
+
+func TestDeniedRoles(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("pull_request で起動する plan の role を除き、ほかの role を登録簿の順で返す", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, []string{"apply-identity", "apply", "unlock-identity", "unlock"}, DeniedRoles())
+		})
+	})
+}
+
+func Test_registry_deniedRoles(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("lock の扱いではなく起動のイベントで分け、pull_request の種別と共有する role も除く", func(t *testing.T) {
+			t.Parallel()
+			r := registry{
+				{Name: "a", Lock: LockRelease, Events: []string{EventPullRequest}, IdentityRole: "a-identity", WorkloadRole: "s"},
+				{Name: "b", Lock: LockSkip, Events: []string{EventPush}, IdentityRole: "b-identity", WorkloadRole: "s"},
+				{Name: "c", Lock: LockKeep, Events: []string{EventWorkflowDispatch, EventPullRequest}, IdentityRole: "c-identity", WorkloadRole: "c"},
+			}
+			assert.Equal(t, []string{"b-identity"}, r.deniedRoles())
+		})
+
+		t.Run("pull_request の種別が無ければすべての role を返す", func(t *testing.T) {
+			t.Parallel()
+			r := registry{{Name: "b", Lock: LockRelease, Events: []string{EventPush}, IdentityRole: "b-identity", WorkloadRole: "b"}}
+			assert.Equal(t, []string{"b-identity", "b"}, r.deniedRoles())
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("すべての種別が pull_request で起動すれば空を返す", func(t *testing.T) {
+			t.Parallel()
+			r := registry{{Name: "a", Lock: LockSkip, Events: []string{EventPullRequest}, IdentityRole: "a", WorkloadRole: "a"}}
+			assert.Empty(t, r.deniedRoles())
 		})
 	})
 }
@@ -337,13 +345,6 @@ func TestParse(t *testing.T) {
 			}
 		})
 
-		t.Run("名前の続く CI_DENIED_ROLES_X の行は CI_DENIED_ROLES と読まない", func(t *testing.T) {
-			t.Parallel()
-			got, err := Parse(fixture([3]string{Plan, "t", "identity"}) + "CI_DENIED_ROLES_X ?= x\n")
-			require.NoError(t, err)
-			assert.Len(t, got, 1)
-		})
-
 		t.Run("ハイフンを含む env を読む", func(t *testing.T) {
 			t.Parallel()
 			got, err := Parse(fixture([3]string{Plan, "log-archive", "workload"}))
@@ -366,18 +367,18 @@ func TestParse(t *testing.T) {
 			err    error
 			reason string
 		}{
-			"入口が1件も無い":             {func(*testing.T) string { return deniedLine + nonEntryBlock }, ErrParse, "入口が 1 件もありません"},
+			"入口が1件も無い":             {func(*testing.T) string { return nonEntryBlock }, ErrParse, "入口が 1 件もありません"},
 			"ルール行の次の行が呼び出しでない":     {func(t *testing.T) string { return replaced(t, base, call, "\t@echo x\n") }, ErrParse, "の次の行が"},
 			"ルール行がファイルの最終行":        {func(*testing.T) string { return "ci-plan-t-identity:" }, ErrParse, "の次の行が"},
 			"呼び出しの種別がターゲットと違う":     {func(t *testing.T) string { return replaced(t, base, call, "\t@$(call CI_APPLY,t,identity)\n") }, ErrParse, "ci-apply-t-identity の入口です"},
 			"呼び出しの env がターゲットと違う":  {func(t *testing.T) string { return replaced(t, base, call, "\t@$(call CI_PLAN,u,identity)\n") }, ErrParse, "ci-plan-u-identity の入口です"},
 			"呼び出しの root がターゲットと違う": {func(t *testing.T) string { return replaced(t, base, call, "\t@$(call CI_PLAN,t,workload)\n") }, ErrParse, "ci-plan-t-workload の入口です"},
 			"root が identity / workload でない": {func(*testing.T) string {
-				return deniedLine + "ci-plan-t-other:\n\t@$(call CI_PLAN,t,other)\n"
+				return "ci-plan-t-other:\n\t@$(call CI_PLAN,t,other)\n"
 			}, ErrParse, "の次の行が"},
 			"種別が登録簿に無い": {func(*testing.T) string { return fixture([3]string{"import", "t", "identity"}) }, ErrKindUnknown, "ci-import-t-identity（種別 import）"},
 			"種別の名前が1語でない": {func(*testing.T) string {
-				return deniedLine + "ci-force-unlock-t-identity:\n\t@$(call CI_FORCE_UNLOCK,t,identity)\n"
+				return "ci-force-unlock-t-identity:\n\t@$(call CI_FORCE_UNLOCK,t,identity)\n"
 			}, ErrParse, "種別は1語（[a-z]+）に限ります"},
 			"入口が重複している":            {func(*testing.T) string { return base + "ci-plan-t-identity:\n" + call }, ErrParse, "ci-plan-t-identity が重複しています"},
 			"未分類の ci- のルールがある":     {func(*testing.T) string { return base + "ci-other: x\n" }, ErrParse, "ci-other は入口でも"},
@@ -402,15 +403,6 @@ func TestParse(t *testing.T) {
 			"種別の define が無い": {func(t *testing.T) string {
 				return replaced(t, base, "define CI_PLAN\n", "define CI_OTHER\n")
 			}, ErrParse, "define CI_PLAN が 0 個です"},
-			"CI_DENIED_ROLES が無い":   {func(t *testing.T) string { return replaced(t, base, deniedLine, "") }, ErrParse, "CI_DENIED_ROLES の行がありません"},
-			"CI_DENIED_ROLES が2行":   {func(*testing.T) string { return base + deniedLine }, ErrParse, "2行以上"},
-			"CI_DENIED_ROLES の形が違う": {func(t *testing.T) string { return replaced(t, base, deniedLine, "CI_DENIED_ROLES := apply\n") }, ErrParse, "CI_DENIED_ROLES ?="},
-			"CI_DENIED_ROLES が登録簿の role を欠く": {func(t *testing.T) string {
-				return replaced(t, base, deniedLine, "CI_DENIED_ROLES ?= apply apply-identity unlock-identity\n")
-			}, ErrRole, "CI_DENIED_ROLES は"},
-			"CI_DENIED_ROLES が plan の role を含む": {func(t *testing.T) string {
-				return replaced(t, base, deniedLine, "CI_DENIED_ROLES ?= plan apply apply-identity unlock-identity unlock\n")
-			}, ErrRole, "CI_DENIED_ROLES は"},
 			"ルール行を経ない呼び出しの行がある": {func(*testing.T) string { return base + "x:\n" + call }, ErrParse, "呼び出しの行 2 件 / 読めた入口 1 件"},
 			"本文が空": {func(*testing.T) string { return "" }, ErrParse, "入口が 1 件もありません"},
 			"ルール行のコロンの後に空白がある": {func(t *testing.T) string {
@@ -776,51 +768,6 @@ func Test_checkDefines(t *testing.T) {
 			t.Run(name+"なら弾く", func(t *testing.T) {
 				t.Parallel()
 				require.ErrorIs(t, checkDefines(lines, entries), ErrParse)
-			})
-		}
-	})
-}
-
-func Test_checkDenied(t *testing.T) {
-	t.Parallel()
-
-	const good = "CI_DENIED_ROLES ?= apply apply-identity unlock-identity unlock"
-
-	t.Run("正常系", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("順序と重複を問わず、集合で一致すれば成功する", func(t *testing.T) {
-			t.Parallel()
-			assert.NoError(t, checkDenied([]string{"CI_DENIED_ROLES ?= unlock unlock-identity apply-identity apply apply"}))
-		})
-
-		t.Run("値を読むだけの行と、名前の続く別の変数は代入と数えない", func(t *testing.T) {
-			t.Parallel()
-			assert.NoError(t, checkDenied([]string{good, "\t@$(call CI_ASSUME_DENIED,$(CI_ENV),$(CI_DENIED_ROLES))", ".PHONY: ci-assume-denied ## CI_DENIED_ROLES の role", "CI_DENIED_ROLES_X := x"}))
-		})
-	})
-
-	t.Run("異常系", func(t *testing.T) {
-		t.Parallel()
-
-		for name, c := range map[string]struct {
-			lines []string
-			err   error
-		}{
-			"行が無い":         {[]string{"CI_ROLE ?= plan"}, ErrParse},
-			"行頭に空白のある代入":   {[]string{good, " CI_DENIED_ROLES := plan"}, ErrParse},
-			"override の代入": {[]string{good, "override CI_DENIED_ROLES := plan"}, ErrParse},
-			"export の代入":   {[]string{good, "export CI_DENIED_ROLES := plan"}, ErrParse},
-			"target ごとの代入": {[]string{good, "ci-x: CI_DENIED_ROLES := plan"}, ErrParse},
-			"記号の前に空白の無い代入": {[]string{good, "CI_DENIED_ROLES?= plan"}, ErrParse},
-			"+= の代入":       {[]string{good, "CI_DENIED_ROLES += plan"}, ErrParse},
-			"define":       {[]string{good, "define CI_DENIED_ROLES"}, ErrParse},
-			"空の一覧":         {[]string{"CI_DENIED_ROLES ?="}, ErrRole},
-			"登録簿に無い role":  {[]string{"CI_DENIED_ROLES ?= apply apply-identity unlock-identity unlock revert"}, ErrRole},
-		} {
-			t.Run(name+"なら弾く", func(t *testing.T) {
-				t.Parallel()
-				require.ErrorIs(t, checkDenied(c.lines), c.err)
 			})
 		}
 	})

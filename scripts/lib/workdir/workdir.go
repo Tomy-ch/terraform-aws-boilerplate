@@ -1,9 +1,11 @@
-// Package workdir は、検査の道具が毎回 RemoveAll で作り直す作業ディレクトリ（-work）の検証を持ちます。検証が
-// 道具ごとに分かれて片方だけ緩むと、リポジトリ直下の tmp/ の外を消します。
+// Package workdir は、検査の道具が毎回作り直す作業ディレクトリ（-work）の検証と作り直し、一時ディレクトリの
+// 後片付けを持ちます。検証や削除が道具ごとに分かれて片方だけ緩むと、リポジトリ直下の tmp/ の外を消します。
 package workdir
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -34,6 +36,137 @@ type lsFilesFunc func(root string) ([]byte, error)
 // 落とします。
 func Resolve(root, work string) (string, error) {
 	return resolve(root, work, lsFilesTmp)
+}
+
+// Recreate は、work を [Resolve] で検証し、空のディレクトリとして作り直して root からのパスを返します。消すのと作るのは
+// root の tmp を開いた [os.Root] の中で行うので、検証の後に途中を外への symlink へ差し替えられても tmp の外は消えません。
+// その差し替えによる失敗は [ErrInvalid] ではなく、消せない・作れないエラーで返ります。work 自身が tmp/ の下を指す
+// symlink なら、指す先を作り直します。
+func Recreate(root, work string) (string, error) {
+	return recreate(root, work, lsFilesTmp)
+}
+
+func recreate(root, work string, lsFiles lsFilesFunc) (string, error) {
+	target, err := resolve(root, work, lsFiles)
+	if err != nil {
+		return "", err
+	}
+	tmp := filepath.Join(root, "tmp")
+	if err := os.MkdirAll(tmp, 0o750); err != nil {
+		return "", xerrors.Wrap(err, "tmp")
+	}
+	tmpReal, rel, err := realRel(tmp, target)
+	if err != nil {
+		return "", xerrors.Wrapf(ErrInvalid, "%q: %v", work, err)
+	}
+	if err := rebuild(tmpReal, rel); err != nil {
+		return "", xerrors.Wrapf(err, "%q", work)
+	}
+
+	return target, nil
+}
+
+// realRel は、tmp の symlink を解いた先と、target の在る祖先の symlink を解いた先からの target の相対パスを返します。
+// [os.Root] は root の外を指さない symlink でも絶対パスのものを辿らないので、検証済みの値を実パスへ直してから渡します。
+func realRel(tmp, target string) (string, string, error) {
+	tmpReal, err := filepath.EvalSymlinks(tmp)
+	if err != nil {
+		return "", "", err
+	}
+	existing, rest := target, ""
+	for {
+		if _, err := os.Lstat(existing); err == nil {
+			break
+		}
+		rest = filepath.Join(filepath.Base(existing), rest)
+		existing = filepath.Dir(existing)
+	}
+	resolved, err := filepath.EvalSymlinks(existing)
+	if err != nil {
+		return "", "", err
+	}
+	rel, err := filepath.Rel(tmpReal, filepath.Join(resolved, rest))
+	if err != nil {
+		return "", "", err
+	}
+	if rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", "", xerrors.Newf("%s は %s の下にありません", resolved, tmpReal)
+	}
+
+	return tmpReal, rel, nil
+}
+
+// Remove は、work を [Resolve] で検証し、tmp を開いた [os.Root] の中で消します。在らなければ何もしません。
+func Remove(root, work string) error {
+	return remove(root, work, lsFilesTmp)
+}
+
+func remove(root, work string, lsFiles lsFilesFunc) error {
+	target, err := resolve(root, work, lsFiles)
+	if err != nil {
+		return err
+	}
+	tmp := filepath.Join(root, "tmp")
+	if _, err := os.Lstat(tmp); xerrors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	tmpReal, rel, err := realRel(tmp, target)
+	if err != nil {
+		return xerrors.Wrapf(ErrInvalid, "%q: %v", work, err)
+	}
+	r, err := os.OpenRoot(tmpReal)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = r.Close() }()
+
+	return xerrors.Wrapf(r.RemoveAll(rel), "%q を消せません", work)
+}
+
+// Cleanup は、後片付けとして [Remove] を呼び、消せなければ w へ1行の警告を書きます。判定は変えず、消し残しを
+// 見えるようにするだけです。失敗の経路の defer に置きます。
+func Cleanup(root, work string, w io.Writer) {
+	if err := Remove(root, work); err != nil {
+		fmt.Fprintf(w, "⚠️ 作業ディレクトリ %q を消せませんでした: %v\n", work, err)
+	}
+}
+
+// rebuild は、tmp を開いた [os.Root] の中で rel を消して作り直します。rel の途中の symlink が tmp の外を指せば、
+// 外へは辿らずに失敗します。
+func rebuild(tmp, rel string) error {
+	r, err := os.OpenRoot(tmp)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = r.Close() }()
+	if err := r.RemoveAll(rel); err != nil {
+		return xerrors.Wrap(err, "消せません")
+	}
+	if err := r.MkdirAll(rel, 0o750); err != nil {
+		return xerrors.Wrap(err, "作れません")
+	}
+
+	return nil
+}
+
+// Temp は、parent の下に pattern の一時ディレクトリを作り、その子だけを消す後片付けとともに返します。parent が空なら
+// [os.TempDir] の下です。後片付けは parent を開いた [os.Root] の中で消すので、parent の外へは出ません。
+func Temp(parent, pattern string) (dir string, cleanup func(), err error) {
+	dir, err = os.MkdirTemp(parent, pattern)
+	if err != nil {
+		return "", nil, err
+	}
+	base := filepath.Dir(dir)
+	name := filepath.Base(dir)
+
+	return dir, func() {
+		r, err := os.OpenRoot(base)
+		if err != nil {
+			return
+		}
+		_ = r.RemoveAll(name)
+		_ = r.Close()
+	}, nil
 }
 
 func resolve(root, work string, lsFiles lsFilesFunc) (string, error) {

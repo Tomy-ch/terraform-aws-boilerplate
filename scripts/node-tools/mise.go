@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -16,6 +17,7 @@ var (
 	errMiseNoTools = xerrors.New("mise ls が道具を1つも返しません")
 	errMiseJSON    = xerrors.New("mise ls の出力を解釈できません")
 	errMiseNPM     = xerrors.New("mise が npm: の道具を入れる対象にしています")
+	errMiseLs      = xerrors.New("mise ls が落ちました")
 )
 
 // runMiseNPMDisabled は、mise ls が返す、いまの作業ディレクトリで有効な道具に npm: のものが無いことを検証します。
@@ -25,15 +27,18 @@ func runMiseNPMDisabled(ctx context.Context, args []string, d deps) error {
 	if len(args) > 0 {
 		return errMiseUsage
 	}
-	cmd := d.tool(ctx, "", stepMiseLs)
+	cmd := d.tool(ctx, "", nil, stepMiseLs)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, d.stderr
-	if err := cmd.Run(); err != nil {
-		if ctx.Err() != nil {
-			return errInterrupted
-		}
-
+	code, err := toolrun.Exec(cmd)
+	if ctx.Err() != nil {
+		return errInterrupted
+	}
+	if err != nil {
 		return xerrors.Wrap(err, "mise ls")
+	}
+	if code != 0 {
+		return xerrors.Wrapf(errMiseLs, "exit status %d", code)
 	}
 	active, err := npmTools(out.Bytes())
 	if err != nil {

@@ -30,11 +30,9 @@ import (
 )
 
 const (
-	// namespace は、サンプルの印の名前空間。
 	namespace = "sample"
 	// pinFile は、GitHub Actions の pin の SSOT。
-	pinFile = ".github/actions-pin.toml"
-	// gitTimeout は、git ls-files の上限。
+	pinFile    = ".github/actions-pin.toml"
 	gitTimeout = 60 * time.Second
 	// protectionFile は、必須検査の宣言。JSON なので印を置けない。
 	protectionFile = ".github/settings/branch-protection.json"
@@ -52,7 +50,7 @@ type domain struct {
 	contexts []string
 }
 
-// manifest は、取り除くサンプルの一覧。最後の domain はこのツール自身を消す。
+// manifest の最後の domain は、このツール自身を消す。
 var manifest = []domain{
 	{
 		name:    "sonarcloud",
@@ -77,24 +75,17 @@ var manifest = []domain{
 }
 
 var (
-	errUsage = xerrors.New("❌ usage: sample-remove <check|apply [--dry-run]>")
-	// errNoFiles は、走査対象のファイルが1件も無いことを表す。
+	errUsage   = xerrors.New("❌ usage: sample-remove <check|apply [--dry-run]>")
 	errNoFiles = xerrors.New("❌ git ls-files が1件も返しませんでした")
 	// errNoTargets は、印が1つも無いことを表す。manifest のパスだけでは、印の解釈が壊れて何も拾わなく
 	// なった状態と区別できない。
-	errNoTargets = xerrors.New("❌ sample: の印が1つも見つかりません")
-	// errMissingPath は、manifest のパスが実在しないことを表す。
-	errMissingPath = xerrors.New("❌ manifest のパスがありません")
-	// errMissingPin は、manifest の action の pin が lockfile に1つも無いことを表す。
-	errMissingPin = xerrors.New("❌ manifest の action の pin が " + pinFile + " にありません")
-	// errVersionedAction は、manifest の action の名前に版が付いていることを表す。
+	errNoTargets       = xerrors.New("❌ sample: の印が1つも見つかりません")
+	errMissingPath     = xerrors.New("❌ manifest のパスがありません")
+	errMissingPin      = xerrors.New("❌ manifest の action の pin が " + pinFile + " にありません")
 	errVersionedAction = xerrors.New("❌ manifest の action に版を書いています（版は " + pinFile + " が持ちます）")
-	// errBadMarker は、印を解釈できないファイルがあることを表す。
-	errBadMarker = xerrors.New("❌ sample: の印を解釈できません")
-	// errMissingContext は、manifest の context が必須検査の宣言に無いことを表す。
-	errMissingContext = xerrors.New("❌ manifest の context が " + protectionFile + " にありません")
-	// errRead は、走査対象のファイルを読めないことを表す。
-	errRead = xerrors.New("❌ ファイルを読めません")
+	errBadMarker       = xerrors.New("❌ sample: の印を解釈できません")
+	errMissingContext  = xerrors.New("❌ manifest の context が " + protectionFile + " にありません")
+	errRead            = xerrors.New("❌ ファイルを読めません")
 )
 
 // integrationID は、必須検査の宣言で context の次に置く integration_id の行。
@@ -103,16 +94,11 @@ var integrationID = regexp.MustCompile(`^"integration_id": [0-9]+$`)
 // plan は、apply が書き換えるものを書く前にすべて決めたもの。
 type plan struct {
 	// writes は、パス→新しい内容。
-	writes map[string]string
-	// deletes は、消すパス。
-	deletes []string
-	// markerCount は、取り除く印の数。
-	markerCount int
-	// markedFiles は、印を持つファイル。
-	markedFiles []string
-	// droppedPins は、外す pin のキー。
-	droppedPins []string
-	// droppedContexts は、必須検査の宣言から外す context。
+	writes          map[string]string
+	deletes         []string
+	markerCount     int
+	markedFiles     []string
+	droppedPins     []string
 	droppedContexts []string
 }
 
@@ -402,11 +388,17 @@ func apply(root string, p plan) error {
 	for f, c := range p.writes {
 		changes[filepath.Join(root, f)] = c
 	}
+	// 消す側の root は書き換えの前に開く。開けないまま書き換えだけが済む部分適用にしない。
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		return xerrors.Wrapf(err, "❌ %s を開けません", root)
+	}
+	defer func() { _ = r.Close() }()
 	if err := atomicwrite.Apply(changes, 0o644); err != nil {
 		return xerrors.Wrap(err, "❌ 書き換えに失敗しました")
 	}
 	for _, d := range p.deletes {
-		if err := os.RemoveAll(filepath.Join(root, d)); err != nil {
+		if err := r.RemoveAll(d); err != nil {
 			return xerrors.Wrapf(err, "❌ %s を消せません", d)
 		}
 	}

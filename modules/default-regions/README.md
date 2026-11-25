@@ -38,3 +38,14 @@ Terraform を読まない道具のための写しは次の2つに限る（ADR-02
 
 - 参照した一次資料: AWS Account Management Reference Guide「Enable or disable AWS Regions in your account」（既定で有効な17のリージョンの表と、opt-in のリージョンの表）
 - AWS / HashiCorp が publisher の、リージョンの集合を持つ Registry module は探していない。集合は AWS の定義の写しで、機構を持たないためである
+- AWS Provider v6.70.0: この module は provider を持たず、Provider の文書から取った知見は無い。集合を使う usecase（`account-baseline`・`deployment-identity`）が `for_each` と `region` の引数で使う版である
+
+採用した知見:
+
+- 集合は、2019年3月20日より前に提供された、既定で有効なリージョンとする。無効にできないので、どのアカウントでも有効である（同ガイド）
+- 集合は増えも減りもしないので、literal で持つ
+
+採用しなかった知見と理由:
+
+- `data.aws_regions` で有効なリージョンを読むこと: 結果がアカウントの状態で変わり、plan の時点で API を呼ぶ。CI の role の権限と egress の宛先を、固定の集合で列挙できない（[ADR-0209](../../docs/adr/0209-default-regions-for-regional-controls.md) 決定3）
+- SSM の公開 parameter（`/aws/service/global-infrastructure/regions`）から集合を組むこと: opt-in のリージョンも含み、plan の時点で API を呼ぶ。同じ理由で採らない

@@ -110,7 +110,6 @@ var (
 	errGitUnset   = errors.New("git の環境変数を外せません")
 )
 
-// runner は *testing.M の部分です。
 type runner interface {
 	Run() int
 }
@@ -131,7 +130,6 @@ func RunGitIsolated(m runner) int {
 	return m.Run()
 }
 
-// isolateGitEnv は、gitEnvVars の変数をすべてプロセスから外します。1つでも外せなければ、そこで止めます。
 func isolateGitEnv() error {
 	names, err := gitEnvVars()
 	if err != nil {
@@ -159,4 +157,18 @@ func gitEnvVars() ([]string, error) {
 	}
 
 	return names, nil
+}
+
+// RemoveUnder は、base を開いた [os.Root] の中で rel（スラッシュ区切り）を中身ごと消します。消せなければテストを
+// 落とします。テストの fixture から一部を外すときに使い、base の外へは辿りません。
+func RemoveUnder(t testing.TB, base, rel string) {
+	t.Helper()
+	r, err := os.OpenRoot(base)
+	if err != nil {
+		t.Fatalf("%s を開けません: %v", base, err)
+	}
+	defer func() { _ = r.Close() }()
+	if err := r.RemoveAll(rel); err != nil {
+		t.Fatalf("%s の %s を消せません: %v", base, rel, err)
+	}
 }
