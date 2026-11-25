@@ -22,6 +22,8 @@ var (
 	errShortPage          = xerrors.New("総数に届く前にページが尽きました")
 	errUnexpectedResponse = xerrors.New("GitHub API の応答が想定した形ではありません")
 	errRequest            = xerrors.New("GitHub API へ要求できませんでした")
+	// errNotFound は 404 の応答。errHTTP の一種なので、errHTTP で判定する呼び出し側はそのまま落ちる。
+	errNotFound = xerrors.Wrap(errHTTP, "404")
 )
 
 // githubClient は GitHub REST API の呼び出し。base はテストで差し替える。
@@ -68,7 +70,11 @@ func (c githubClient) do(ctx context.Context, method, path string, body, out any
 		if len(excerpt) > limit {
 			excerpt = excerpt[:limit] + "..."
 		}
-		return xerrors.Wrapf(errHTTP, "%s %s: %d %s", method, path, resp.StatusCode, excerpt)
+		cause := errHTTP
+		if resp.StatusCode == http.StatusNotFound {
+			cause = errNotFound
+		}
+		return xerrors.Wrapf(cause, "%s %s: %d %s", method, path, resp.StatusCode, excerpt)
 	}
 	if out == nil {
 		return nil
