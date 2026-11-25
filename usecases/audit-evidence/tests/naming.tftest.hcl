@@ -50,7 +50,7 @@ variables {
       organization_id  = "o-abcdefghij"
       region           = "ap-northeast-1"
     }
-    config_source_accounts = ["222222222222"]
+    config_source_accounts = ["111111111111"]
   }
   access_log_retention_days = 365
   notify_topic_arn          = "arn:aws:sns:ap-northeast-1:123456789012:tabp-log-archive-ops-notification"

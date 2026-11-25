@@ -50,7 +50,7 @@ variables {
       organization_id  = "o-abcdefghij"
       region           = "ap-northeast-1"
     }
-    config_source_accounts = ["222222222222"]
+    config_source_accounts = ["111111111111"]
   }
   access_log_retention_days = 365
   notify_topic_arn          = "arn:aws:sns:ap-northeast-1:123456789012:tabp-log-archive-ops-notification"
@@ -101,7 +101,7 @@ run "key_policy_wiring" {
         organization_id  = "o-abcdefghij"
         region           = "us-west-2"
       }
-      config_source_accounts = ["333333333333", "222222222222"]
+      config_source_accounts = ["333333333333", "111111111111"]
     }
   }
 
@@ -111,7 +111,7 @@ run "key_policy_wiring" {
   }
 
   assert {
-    condition     = [for s in jsondecode(module.archive_key.key_policy).Statement : s.Condition.StringEquals["aws:SourceAccount"] if s.Sid == "ConfigService"] == [["222222222222", "333333333333"]]
+    condition     = [for s in jsondecode(module.archive_key.key_policy).Statement : s.Condition.StringEquals["aws:SourceAccount"] if s.Sid == "ConfigService"] == [["111111111111", "333333333333"]]
     error_message = "証跡の鍵の Config の文が、Config のアカウントを昇順で要求元にしていません。"
   }
 
