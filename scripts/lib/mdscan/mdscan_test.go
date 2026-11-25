@@ -49,6 +49,22 @@ func TestLines(t *testing.T) {
 				content: "外\n   ```\n   中\n   ```\n外2",
 				want:    []Line{{Number: 1, Text: "外"}, {Number: 5, Text: "外2"}},
 			},
+			"info string にバッククォートを含む行はフェンスを開かず、後ろの行も返す": {
+				content: "```x``` 本文\n後ろ\n## 見出し",
+				want:    []Line{{Number: 1, Text: "```x``` 本文"}, {Number: 2, Text: "後ろ"}, {Number: 3, Text: "## 見出し"}},
+			},
+			"空白4つで字下げした区切りはフェンスを開かず、後ろの行も返す": {
+				content: "    ```\n後ろ\n## 見出し",
+				want:    []Line{{Number: 1, Text: "    ```"}, {Number: 2, Text: "後ろ"}, {Number: 3, Text: "## 見出し"}},
+			},
+			"タブで字下げした区切りはフェンスを開かない": {
+				content: "\t```\n後ろ",
+				want:    []Line{{Number: 1, Text: "\t```"}, {Number: 2, Text: "後ろ"}},
+			},
+			"空白4つで字下げした区切りはフェンスを閉じない": {
+				content: "```\n    ```\n中\n```\n外",
+				want:    []Line{{Number: 5, Text: "外"}},
+			},
 			"閉じられないフェンスは以降をすべて飲み込む": {
 				content: "外\n```\n中\n中2",
 				want:    []Line{{Number: 1, Text: "外"}},
@@ -92,6 +108,9 @@ func TestFence_Next(t *testing.T) {
 		"info string を持つ区切りでは閉じない": {"```", "```go", "```", true},
 		"後ろの空白は閉じを妨げない":            {"```", "```   ", "", true},
 		"後ろの CR は閉じを妨げない":          {"```", "```\r", "", true},
+		"空白4つで字下げした区切りでは開かない":      {"", "    ```", "", false},
+		"空白4つで字下げした区切りでは閉じない":      {"```", "    ```", "```", true},
+		"空白3つで字下げした区切りでは閉じる":       {"```", "   ```", "", true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -114,14 +133,20 @@ func Test_fenceMarker(t *testing.T) {
 			wantInfo   string
 			wantOK     bool
 		}{
-			"3つのバッククォートは区切り":      {line: "```", wantMarker: "```", wantInfo: "", wantOK: true},
-			"info string を分けて返す":  {line: "```go", wantMarker: "```", wantInfo: "go", wantOK: true},
-			"4つ以上も区切り":            {line: "````", wantMarker: "````", wantInfo: "", wantOK: true},
-			"チルダも区切り":             {line: "~~~", wantMarker: "~~~", wantInfo: "", wantOK: true},
-			"先頭の空白は無視する":          {line: "  ```", wantMarker: "```", wantInfo: "", wantOK: true},
-			"2つでは区切りにならない":        {line: "``x``", wantMarker: "", wantInfo: "", wantOK: false},
-			"行の途中のバッククォートは区切りでない": {line: "text ```", wantMarker: "", wantInfo: "", wantOK: false},
-			"空行は区切りでない":           {line: "", wantMarker: "", wantInfo: "", wantOK: false},
+			"3つのバッククォートは区切り":     {line: "```", wantMarker: "```", wantInfo: "", wantOK: true},
+			"info string を分けて返す": {line: "```go", wantMarker: "```", wantInfo: "go", wantOK: true},
+			"4つ以上も区切り":           {line: "````", wantMarker: "````", wantInfo: "", wantOK: true},
+			"チルダも区切り":            {line: "~~~", wantMarker: "~~~", wantInfo: "", wantOK: true},
+			"先頭の空白は無視する":         {line: "  ```", wantMarker: "```", wantInfo: "", wantOK: true},
+			"空白3つの字下げまでは区切り":     {line: "   ```", wantMarker: "```", wantInfo: "", wantOK: true},
+			"空白4つの字下げは区切りでない":    {line: "    ```", wantMarker: "", wantInfo: "", wantOK: false},
+			"タブの字下げは区切りでない":      {line: "\t```", wantMarker: "", wantInfo: "", wantOK: false},
+			"空白の後のタブの字下げは区切りでない": {line: "   \t~~~", wantMarker: "", wantInfo: "", wantOK: false},
+			"info string にバッククォートを含むバッククォートの行は区切りでない": {line: "```x``` 本文", wantMarker: "", wantInfo: "", wantOK: false},
+			"チルダの区切りの info string はバッククォートを含んでよい":     {line: "~~~ `x`", wantMarker: "~~~", wantInfo: " `x`", wantOK: true},
+			"2つでは区切りにならない":                            {line: "``x``", wantMarker: "", wantInfo: "", wantOK: false},
+			"行の途中のバッククォートは区切りでない":                     {line: "text ```", wantMarker: "", wantInfo: "", wantOK: false},
+			"空行は区切りでない":                               {line: "", wantMarker: "", wantInfo: "", wantOK: false},
 		}
 
 		for name, tt := range tests {

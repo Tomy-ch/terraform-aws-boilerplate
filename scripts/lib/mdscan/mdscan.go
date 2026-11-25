@@ -19,6 +19,8 @@ import (
 const (
 	commentOpen  = "<!--"
 	commentClose = "-->"
+	// maxIndent は、フェンスの区切りが持てる字下げの空白の数です。4つ目からは字下げしたコードブロックです。
+	maxIndent = 3
 )
 
 // ErrUnclosedComment は、HTML コメントが末尾まで閉じないことを表します。
@@ -69,17 +71,30 @@ func (f Fence) Next(text string) (next Fence, in bool) {
 	}
 }
 
-// fenceMarker は、行がフェンスの区切りなら、そのマーカと後続の info string を返します。
+// fenceMarker は、行がフェンスの区切りなら、そのマーカと後続の info string を返します。字下げが空白4つ以上
+// （タブはタブ位置まで進めて数えるので、行頭の空白にタブを含めば4つ以上）の行と、info string にバッククォートを
+// 含むバッククォートの行は区切りではありません（CommonMark）。
 func fenceMarker(line string) (marker, info string, ok bool) {
-	trimmed := strings.TrimLeft(line, " \t")
+	indent := 0
+	for indent < len(line) && line[indent] == ' ' {
+		indent++
+	}
+	if indent > maxIndent || strings.HasPrefix(line[indent:], "\t") {
+		return "", "", false
+	}
+	trimmed := line[indent:]
 	for _, c := range []byte{'`', '~'} {
 		n := 0
 		for n < len(trimmed) && trimmed[n] == c {
 			n++
 		}
-		if n >= 3 {
-			return trimmed[:n], trimmed[n:], true
+		if n < 3 {
+			continue
 		}
+		if c == '`' && strings.ContainsRune(trimmed[n:], '`') {
+			return "", "", false
+		}
+		return trimmed[:n], trimmed[n:], true
 	}
 	return "", "", false
 }
