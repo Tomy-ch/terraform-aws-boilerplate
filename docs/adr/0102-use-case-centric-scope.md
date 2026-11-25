@@ -172,6 +172,7 @@
   - attachment 型の resource の親を指す引数が、同じ module の、親の型の resource だけを参照すること（決定18）。どの参照を辿り、何を違反とするかは `conftest/hcl/layer/` が持つ
   - 親の resource が、attachment 型と同じ設定を書くと宣言した引数を書かないこと。文書全体を置き換えると宣言した attachment 型の resource とその `count`・`for_each` の instance が、同じ親を2つ以上から参照しないこと（決定18）。同じ親かどうかは、前項により親を同じ module の参照で指すので、plan の値ではなく、参照と、親を選ぶ添字の形で突き合わせる。別々の resource の間で突き合わせられない組は違反として扱い、1つの resource の instance どうしは、親を直接選ぶ形だけを判定する
   - 排他に持つと宣言した親の引数について、同じ設定を書く attachment 型の resource が、その親を参照しないこと（決定18）
+  - アカウントかリージョンに1つしか置けないと宣言した型の resource が、宣言した持ち主のユースケースの下（`usecases/<持ち主>/`）にだけ在ること。env と一般 module とほかのユースケースが、その型を直接宣言しないこと（決定16）。型と持ち主の宣言は `conftest/hcl/layer/` が持ち、Policy Test はそこから導く
   - attachment 型の親として宣言した型の、Provider の schema が非推奨とする書ける引数が、すべて宣言で分類されていること（決定18）
 - 決定18 の宣言は `conftest/hcl/layer/` が持つ。同じ引数を ADR-0402 決定17 の宣言にも載せる場合は、片方を正とし、他方をそこから導く
 - レビュー: 決定18 の、resource の NOTE に依る引数の選定と、attachment 型が文書全体を置き換えるかの判定。いずれも機械判定できないため、宣言を変える Pull Request のレビュー観点とする。判定の根拠は Provider の docs と AWS の API の docs に置く（ADR-0206 決定3、ADR-0501 決定21）

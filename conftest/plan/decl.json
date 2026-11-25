@@ -690,20 +690,7 @@
         "retention": "aws_config_retention_configuration"
       },
       "public_access_block": "aws_s3_account_public_access_block",
-      "password_policy_keys": ["minimum_password_length", "password_reuse_prevention", "require_lowercase_characters", "require_uppercase_characters", "require_numbers", "require_symbols", "allow_users_to_change_password", "max_password_age", "hard_expiry"],
-      "owners": {
-        "aws_account_alternate_contact": ["account-baseline"],
-        "aws_config_configuration_recorder": ["account-baseline"],
-        "aws_config_configuration_recorder_status": ["account-baseline"],
-        "aws_config_delivery_channel": ["account-baseline"],
-        "aws_config_retention_configuration": ["account-baseline"],
-        "aws_ebs_encryption_by_default": ["account-baseline"],
-        "aws_emr_block_public_access_configuration": ["account-baseline"],
-        "aws_iam_account_password_policy": ["account-baseline", "organization-baseline"],
-        "aws_s3_account_public_access_block": ["account-baseline"],
-        "aws_ssm_service_setting": ["account-baseline"],
-        "aws_vpc_block_public_access_options": ["account-baseline"]
-      }
+      "password_policy_keys": ["minimum_password_length", "password_reuse_prevention", "require_lowercase_characters", "require_uppercase_characters", "require_numbers", "require_symbols", "allow_users_to_change_password", "max_password_age", "hard_expiry"]
     },
     "audit_evidence": {
       "bucket": "module.audit_evidence.module.archive.aws_s3_bucket.this",

@@ -12,7 +12,6 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun/tooltest"
 )
 
-// passingFake は、canary と範囲の突き合わせが成り立つ偽の道具です。
 func passingFake(t *testing.T) *tooltest.Fake {
 	t.Helper()
 	f := tooltest.New(t)
@@ -54,7 +53,7 @@ func Test_runCheck(t *testing.T) {
 		f := passingFake(t)
 		var out bytes.Buffer
 		require.NoError(t, checkWith(t, &out, f.Tool(), isolated))
-		assert.Equal(t, []string{stepScan, stepFiles, stepFiles, stepLsFiles, stepMain}, steps(f.Calls()))
+		assert.Equal(t, []string{stepScan, stepFiles, stepFiles, stepLsFiles, stepLsDeleted, stepMain}, steps(f.Calls()))
 		assert.Contains(t, out.String(), "✅ typos canary")
 		assert.Contains(t, out.String(), "✅ typos coverage")
 		assert.Contains(t, out.String(), "✅ typos: 綴りの誤りはありません")

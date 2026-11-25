@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/fakeexec"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lockfile"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
@@ -1735,7 +1736,7 @@ func useGitStub(t *testing.T) {
 		shaCodeQL + "\trefs/tags/v4\n"
 	dir := t.TempDir()
 	script := "#!/bin/sh\ncat <<'GITSTUB'\n" + out + "GITSTUB\n"
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o755)) //nolint:gosec // 実行可能スタブ
+	fakeexec.Write(t, filepath.Join(dir, "git"), script, 0o755)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 

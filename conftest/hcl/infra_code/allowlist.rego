@@ -14,6 +14,18 @@ deny contains msg if {
 	msg := sprintf("IC020 [当たらない項目] 許可リストの項目 %s は、どのインフラ内コードにも当たりません → 項目を消す", [item.id])
 }
 
+detected_pairs := {[d.id, d.code] | some d in detected}
+
+deny contains msg if {
+	hcl.input_ok
+	some item in decl.allowlist
+	item.id in detected_ids
+	is_array(item.reasons)
+	some code in item.reasons
+	not [item.id, code] in detected_pairs
+	msg := sprintf("IC020 [当たらない理由] 許可リストの項目 %s の理由 %s は、その構成要素のどの検出にも当たりません → reasons から外す", [item.id, code])
+}
+
 # refs は、許可リストに載ったコンポーネントが引数に書いた値（属性か入れ子の block）と、その値の種類。
 refs contains {"item": item, "component": c, "arg": arg, "value": v} if {
 	some c in components
