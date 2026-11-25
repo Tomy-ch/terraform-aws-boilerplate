@@ -250,6 +250,7 @@ an architecture violation and as a type-design suggestion, and shipping both dou
 | `.github/settings/**` | `make required-check-lint` |
 | `docker/**` | `make docker-lint` / `make trivy-config` |
 | `*.md` | `make md-lint`。`.claude/skills/**` なら `make skill-lint` も |
+| `usecases/*/README.md` / `modules/*/README.md` | `make ref-record-lint` |
 | `usecases/**` / `modules/**` / `env/**` / `*.tf` | `make tf-fmt-check` / `make tf-validate` / `make tf-test` / `make tf-lint` / `make trivy-config` |
 | `.makefiles/terraform/**` / `scripts/tf-gates/**` / `scripts/tf-policy/**` | `make tf-validate`（本走査の前に canary を走らせる）/ `make tf-policy` |
 
