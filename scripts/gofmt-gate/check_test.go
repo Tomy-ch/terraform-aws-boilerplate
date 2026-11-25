@@ -73,11 +73,11 @@ func Test_runCheck(t *testing.T) {
 		t.Parallel()
 		root := repoRoot(t)
 		writeFile(t, filepath.Join(root, "tmp", "gofmt-gate", "stale.go"), "package stale\n")
-		f := tooltest.New(t, tooltest.WithPrelude(`case "$step" in canary) find . -name stale.go > "$ctl/stale.seen" ;; main) ls -A ../tmp/gofmt-gate > "$ctl/fixture.seen" 2>/dev/null || : ;; esac`))
+		f := tooltest.New(t, tooltest.WithPrelude(`case "$step" in canary) find . -name stale.go > "$ctl/stale.seen" ;; main) if [ -e ../tmp/gofmt-gate ]; then ls -A ../tmp/gofmt-gate; else echo gone; fi > "$ctl/fixture.seen" ;; esac`))
 		f.Set(stepCanary, "out", canaryOut)
 		require.NoError(t, runCheck(checkArgs, new(bytes.Buffer), f.Tool(), root))
 		assert.Empty(t, f.Read("stale.seen"), "canary の起動時に前の中身が残っていない")
-		assert.Empty(t, f.Read("fixture.seen"), "本走査の起動時に fixture が残っていない")
+		assert.Equal(t, "gone\n", f.Read("fixture.seen"), "本走査の起動時に fixture が残っていない")
 	})
 
 	t.Run("-work の前の中身を消して canary を建て、通っても落ちても終わりに消す", func(t *testing.T) {

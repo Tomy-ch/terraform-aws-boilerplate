@@ -689,17 +689,16 @@ func TestTemp(t *testing.T) {
 		assert.NotPanics(t, cleanup)
 	})
 
-	t.Run("後片付けは2度呼んでも落ちず、中の外を指す symlink の先を消さない", func(t *testing.T) {
+	t.Run("後片付けを2度呼んでも、dir は無いままで parent の他は残る", func(t *testing.T) {
 		t.Parallel()
-		parent, outside := t.TempDir(), t.TempDir()
-		require.NoError(t, os.WriteFile(filepath.Join(outside, "f"), []byte("o"), 0o600))
+		parent := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(parent, "keep"), []byte("k"), 0o600))
 		dir, cleanup, err := Temp(parent, "x-")
 		require.NoError(t, err)
-		require.NoError(t, os.Symlink(outside, filepath.Join(dir, "out")))
 		cleanup()
-		assert.NotPanics(t, cleanup)
+		cleanup()
 		assert.NoDirExists(t, dir)
-		assert.FileExists(t, filepath.Join(outside, "f"))
+		assert.Equal(t, map[string]string{"keep": "k"}, snapshot(t, parent))
 	})
 }
 

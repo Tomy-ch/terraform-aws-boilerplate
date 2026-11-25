@@ -1058,6 +1058,21 @@ func Test_baseDeclarations(t *testing.T) {
 			require.ErrorIs(t, err, errBaseUnresolved)
 		})
 
+		t.Run("mise.toml 以外の git show が 0 以外で rev-parse を起動できなければ ErrTool で終了コード 2（宣言なしとして飛ばさない）", func(t *testing.T) {
+			t.Parallel()
+			f := tooltest.New(t)
+			f.Set(stepGitShow, "rc", "128")
+			launch := func(ctx context.Context, dir string, env []string, step string, ops ...string) *exec.Cmd {
+				if step == stepGitRevParse {
+					return tooltest.Missing(ctx, dir, env, step, ops...)
+				}
+				return f.Tool()(ctx, dir, env, step, ops...)
+			}
+			_, err := baseDeclarations("b", []string{"python/x.in"}, launch)
+			require.ErrorIs(t, err, toolrun.ErrTool)
+			assert.Equal(t, 2, exitCode(err))
+		})
+
 		t.Run("git show が 0 で何も出さなければ、空の宣言として返す（0件の判定は呼び出し側）", func(t *testing.T) {
 			t.Parallel()
 			f := tooltest.New(t)

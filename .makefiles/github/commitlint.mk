@@ -21,12 +21,8 @@ commitlint-msg:
 ## 起点は CI が渡す。渡されない手元では origin/HEAD を引き、それも無ければ空にする。
 ## **既定値を固定のブランチ名にしない** —— 存在しない ref を既定にすると、範囲が 0 件になった
 ## 理由が「積んだ commit が無い」なのか「ref が解決できない」なのか区別できなくなる。
-COMMITLINT_FROM ?= $(if $(GITHUB_BASE_REF),origin/$(GITHUB_BASE_REF),$(shell git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null))
+COMMITLINT_FROM ?= $(if $(GITHUB_BASE_REF),origin/$(call literal_value,GITHUB_BASE_REF),$(shell git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null))
 COMMITLINT_TO ?= HEAD
-
-## literal_value は、変数 $(1) の値を返す。コマンドラインと環境から来た値は make に展開させず字面のまま返す
-## （ref の名前は $ を含みうる）。Makefile の中の既定は展開する。
-literal_value = $(if $(filter command environment,$(firstword $(origin $(1)))),$(value $(1)),$($(1)))
 
 ## 範囲の件数の判定は scripts/commit-range が持つ。
 ## 引数は sh -c の位置引数で渡す（RUN_SCRIPT の $(2) は単一引用符の内側に入る）。範囲の両端は make の展開で
