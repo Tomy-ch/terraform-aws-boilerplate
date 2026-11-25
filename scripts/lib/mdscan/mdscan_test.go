@@ -326,6 +326,9 @@ func Test_lineView_thematicBreakAt(t *testing.T) {
 	}{
 		"3つの - は区切り線":          {"---", 0, true},
 		"空白を挟んでもよい":            {"* * *", 0, true},
+		"2つの * は区切り線でない":       {"* *", 0, false},
+		"2つの _ は区切り線でない":       {"_ _", 0, false},
+		"3つの _ は区切り線":          {"___", 0, true},
 		"位置より後ろだけを見る":          {"x ___", 2, true},
 		"2つでは区切り線でない":          {"- -", 0, false},
 		"後ろに別の文字があれば区切り線でない":   {"- - - x", 0, false},
@@ -365,6 +368,11 @@ func Test_interrupts(t *testing.T) {
 		"ロング s は ASCII の s と同一視しない": {"<ſcript>", false},
 		"ケルビン記号は ASCII の英字と同一視しない":  {"<!\u212Ax", false},
 		"遮らない行":                     {"本文", false},
+		"いちばん長い自己終了の形":              {"</figcaption/>", true},
+		"blockquote の自己終了":          {"</blockquote/>", true},
+		"いちばん長い閉じタグ":                {"</figcaption>", true},
+		"名前の後ろに文字が続く閉じタグは遮らない":      {"</figcaptionx", false},
+		"見る長さより長い行":                 {"<div class=\"" + strings.Repeat("x", 100) + "\">", true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -414,6 +422,8 @@ func Test_listMarker(t *testing.T) {
 		"3桁の番号":              {"123. a", 0, 5, false, true},
 		"9桁の番号":              {"123456789. a", 0, 11, false, true},
 		"印で始まらない":            {"a", 0, 0, false, false},
+		"印の後ろの NBSP は空白ではない": {"-\u00a0", 0, 0, false, false},
+		"印の後ろの NEL は空白ではない":  {"-\u0085", 0, 0, false, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -679,6 +689,8 @@ func Test_stripComments(t *testing.T) {
 		"<!----> は閉じたコメント":                     {"a<!---->b", false, "ab", false},
 		"行末のバックスラッシュは文字":                       {"a\\", false, "a\\", false},
 		"バックスラッシュだけの行":                         {"\\", false, "\\", false},
+		"行の途中の inline code の中の開きは開かない":         {"x `<!--` y", false, "x `<!--` y", false},
+		"コメントの後ろの inline code の中の開きは開かない":      {"<!-- a --> `<!--` b", false, " `<!--` b", false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -757,6 +769,15 @@ func TestInlineCodes(t *testing.T) {
 		got := InlineCodes(line)
 		assert.Less(t, time.Since(start), time.Second)
 		assert.Empty(t, got)
+	})
+
+	t.Run("閉じた span が多い行も、行の長さに比例する手間で読む", func(t *testing.T) {
+		t.Parallel()
+		const n = 120000
+		start := time.Now()
+		got := InlineCodes(strings.Repeat("`a` ", n))
+		assert.Less(t, time.Since(start), time.Second)
+		assert.Len(t, got, n)
 	})
 }
 

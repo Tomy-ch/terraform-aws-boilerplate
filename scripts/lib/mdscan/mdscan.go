@@ -186,7 +186,7 @@ var (
 		`track|ul)([ \t>]|/>|$))`)
 )
 
-// interruptHead は、interrupts が見る行頭の長さです。いちばん長い開始の形（`</figcaption` と区切りの1文字）より長くします。
+// interruptHead は、interrupts が見る行頭の長さです。いちばん長い開始の形 `</figcaption/>` の14バイト以上にします。
 const interruptHead = 16
 
 // interrupts は、body（字下げを除いた行）が段落を遮り、遅延した続きの行にならない行頭（ATX 見出し・引用と、
