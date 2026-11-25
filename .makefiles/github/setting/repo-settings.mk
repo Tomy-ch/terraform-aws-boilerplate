@@ -36,7 +36,7 @@ apply-environments:
 apply-vulnerability-reporting:
 	@$(call REPO_SETTINGS_REMOTE,sync -only vulnerability-reporting)
 
-# 引数は RUN_SCRIPT_HOST の sh が環境変数から展開する。宣言とツールは base の commit を取り出した木のものを使う。
+# 引数は RUN_SCRIPT_HOST の sh が環境変数から展開する。
 deploy-source-check:
 	@$(call RUN_SCRIPT_HOST,repo-settings,source -base "$${BASE_REF:-}" -base-sha "$${BASE_SHA:-}" -head-sha "$${HEAD_SHA:-}" -default "$${DEFAULT_BRANCH:-}")
 
