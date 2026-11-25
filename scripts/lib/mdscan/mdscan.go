@@ -11,6 +11,7 @@
 package mdscan
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
@@ -38,36 +39,161 @@ type Line struct {
 // （```go の go）が参照の形をしていても、それが言語名であって参照ではないためです。
 func Lines(content []byte) []Line {
 	var out []Line
-	var fence Fence
+	var b Blocks
 	for i, text := range strings.Split(string(content), "\n") {
-		var in bool
-		if fence, in = fence.Next(text); !in {
+		if !b.Next(text) {
 			out = append(out, Line{Number: i + 1, Text: text})
 		}
 	}
 	return out
 }
 
-// Fence は、そこまでの行を読んだ時点で開いているフェンスのマーカそのもの（``` や ~~~~）です。空ならフェンスの
-// 外です。フェンスの外かどうかを別の状態（HTML コメントなど）と合わせて1行ずつ決める走査は、Lines ではなくこれを
-// 使います。
-type Fence string
+// Blocks は、そこまでの行を読んだ時点のフェンスと、それを囲みうる一覧の項目の状態です。ゼロ値は文書の頭です。
+// フェンスの区切りの字下げは、いちばん内側の項目の中身の桁から数えます（CommonMark）。引用（`>`）は容器として
+// 読まず、`>` で始まる行はフェンスの区切りになりません。
+type Blocks struct {
+	items     []listItem
+	fence     string
+	fenceBase int
+	paragraph bool
+}
 
-// Next は、text の1行を読んだ後の状態と、text がフェンスの開始行・内部・終了行のどれかかを返します。
-func (f Fence) Next(text string) (next Fence, in bool) {
-	marker, info, ok := fenceMarker(text)
-	switch {
-	case f != "":
-		// 長さを「以上」で見るのは、``` の例を ```` で囲む入れ子が成立するためです。
-		if ok && marker[0] == f[0] && len(marker) >= len(f) && strings.TrimSpace(info) == "" {
-			return "", true
+// listItem は開いている一覧の項目です。col は中身の桁、empty は項目が印だけの行で開き、まだ中身の行が無いかです。
+type listItem struct {
+	col   int
+	empty bool
+}
+
+// Next は、text の1行を読み、text がフェンスの開始行・内部・終了行のどれかかを返します。
+func (b *Blocks) Next(text string) bool {
+	line := expandTabs(text)
+	blank := strings.TrimSpace(line) == ""
+	ind := indentOf(line)
+	if b.fence != "" {
+		if blank || ind >= b.fenceBase {
+			// 長さを「以上」で見るのは、``` の例を ```` で囲む入れ子が成立するためです。
+			if marker, info, ok := fenceMarker(line[min(b.fenceBase, ind):]); ok && marker[0] == b.fence[0] &&
+				len(marker) >= len(b.fence) && strings.TrimSpace(info) == "" {
+				b.fence = ""
+			}
+			return true
 		}
-		return f, true
-	case ok:
-		return Fence(marker), true
-	default:
-		return "", false
+		// 囲む項目が続かない行は、項目とともにフェンスを閉じる。
+		b.fence = ""
 	}
+	if blank {
+		if n := len(b.items); n > 0 && b.items[n-1].empty {
+			b.items = b.items[:n-1]
+		}
+		b.paragraph = false
+		return false
+	}
+
+	matched := 0
+	for matched < len(b.items) && ind >= b.items[matched].col {
+		b.items[matched].empty = false
+		matched++
+	}
+	lazy := b.paragraph && matched < len(b.items)
+	base := 0
+	if matched > 0 {
+		base = b.items[matched-1].col
+	}
+	for {
+		rest := line[base:]
+		rel := indentOf(rest)
+		body := rest[rel:]
+		allMatched := matched == len(b.items)
+		switch {
+		case rel > maxIndent:
+			if !b.paragraph || (!allMatched && !lazy) {
+				b.items, b.paragraph = b.items[:matched], false
+			}
+			return false
+		case b.paragraph && allMatched && setextUnderline.MatchString(body):
+			b.paragraph = false
+			return false
+		}
+		if marker, _, ok := fenceMarker(rest); ok {
+			b.items, b.paragraph = b.items[:matched], false
+			b.fence, b.fenceBase = marker, base
+			return true
+		}
+		if thematicBreak.MatchString(body) || interrupter.MatchString(body) {
+			b.items, b.paragraph = b.items[:matched], false
+			return false
+		}
+		if col, empty, ok := listMarker(body, base+rel); ok && (!b.paragraph || !allMatched || canInterrupt(body, empty)) {
+			b.items = append(b.items[:matched], listItem{col: col, empty: empty})
+			matched, base, lazy, b.paragraph = matched+1, col, false, false
+			if empty {
+				return false
+			}
+			continue
+		}
+		if !lazy {
+			b.items = b.items[:matched]
+		}
+		b.paragraph = true
+		return false
+	}
+}
+
+var (
+	listStart       = regexp.MustCompile(`^([-+*]|([0-9]{1,9})[.)])( *)(.*)$`)
+	thematicBreak   = regexp.MustCompile(`^((\*[ \t]*){3,}|(-[ \t]*){3,}|(_[ \t]*){3,})$`)
+	setextUnderline = regexp.MustCompile(`^(=+|-+)[ \t]*$`)
+	// interrupter は、段落を遮り、遅延した続きの行にならない行の頭（ATX 見出し・引用・HTML ブロック）です。
+	interrupter = regexp.MustCompile(`^(#{1,6}([ \t]|$)|>|<)`)
+)
+
+// listMarker は、body（字下げを除いた行）が一覧の項目を開くなら、中身の桁と、印の後ろが空かを返します。at は印の桁
+// です。印の後ろの空白が5つ以上なら、中身は印の1つ後ろの桁からの字下げしたコードブロックです（CommonMark）。
+func listMarker(body string, at int) (col int, empty, ok bool) {
+	m := listStart.FindStringSubmatch(body)
+	if m == nil {
+		return 0, false, false
+	}
+	width, spaces, content := len(m[1]), len(m[3]), m[4]
+	switch {
+	case strings.TrimSpace(content) == "":
+		return at + width + 1, true, true
+	case spaces == 0:
+		return 0, false, false
+	case spaces > maxIndent+1:
+		return at + width + 1, false, true
+	}
+	return at + width + spaces, false, true
+}
+
+// canInterrupt は、項目が段落を遮れるかを返します。空の項目と、1 以外で始まる番号付きの項目は遮りません。
+func canInterrupt(body string, empty bool) bool {
+	if empty {
+		return false
+	}
+	m := listStart.FindStringSubmatch(body)
+	return m[2] == "" || strings.TrimLeft(m[2], "0") == "1"
+}
+
+// expandTabs は、タブを4の倍数の桁まで空白で埋めます。
+func expandTabs(text string) string {
+	if !strings.Contains(text, "\t") {
+		return text
+	}
+	var sb strings.Builder
+	for i := 0; i < len(text); i++ {
+		if text[i] != '\t' {
+			sb.WriteByte(text[i])
+			continue
+		}
+		sb.WriteString(strings.Repeat(" ", 4-sb.Len()%4))
+	}
+	return sb.String()
+}
+
+// indentOf は、行頭の空白の数を返します。
+func indentOf(s string) int {
+	return len(s) - len(strings.TrimLeft(s, " "))
 }
 
 // fenceMarker は、行がフェンスの区切りなら、そのマーカと後続の info string を返します。字下げが空白4つ以上
@@ -121,7 +247,7 @@ func VisibleLines(content []byte) ([]Line, error) {
 // `<!--` はコメントを開かず、コメントの中のフェンスの区切りはフェンスを開きません。front matter のように
 // 走査しない行は、Next に渡さずに飛ばします。
 type Scanner struct {
-	fence    Fence
+	blocks   Blocks
 	openedAt int
 }
 
@@ -138,8 +264,7 @@ type Scanned struct {
 // Next は、l の1行を読み、状態を進めます。
 func (s *Scanner) Next(l Line) Scanned {
 	if s.openedAt == 0 {
-		var in bool
-		if s.fence, in = s.fence.Next(l.Text); in {
+		if s.blocks.Next(l.Text) {
 			return Scanned{Fence: true}
 		}
 	}

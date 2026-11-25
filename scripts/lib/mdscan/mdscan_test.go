@@ -65,6 +65,62 @@ func TestLines(t *testing.T) {
 				content: "```\n    ```\n中\n```\n外",
 				want:    []Line{{Number: 5, Text: "外"}},
 			},
+			"番号付きの項目の中で、中身の桁から字下げしたフェンスを読む": {
+				content: "11. 本文\n\n    ```text\n    中\n    ```\n\n12. 次",
+				want:    []Line{{Number: 1, Text: "11. 本文"}, {Number: 2}, {Number: 6}, {Number: 7, Text: "12. 次"}},
+			},
+			"入れ子の項目の中のフェンスを読み、閉じた後の項目も返す": {
+				content: "1. 外\n   1. 中\n\n      ```bash\n      make x\n      ```\n\n   2. 次\n\n      ```bash\n      make y\n      ```\n後ろ",
+				want: []Line{{Number: 1, Text: "1. 外"}, {Number: 2, Text: "   1. 中"}, {Number: 3}, {Number: 7},
+					{Number: 8, Text: "   2. 次"}, {Number: 9}, {Number: 13, Text: "後ろ"}},
+			},
+			"箇条書きの項目の中のフェンスを読む": {
+				content: "- a\n  - b\n\n    ```\n    中\n    ```\n外",
+				want:    []Line{{Number: 1, Text: "- a"}, {Number: 2, Text: "  - b"}, {Number: 3}, {Number: 7, Text: "外"}},
+			},
+			"一覧の外の字下げしたコードブロックの ``` はフェンスではない": {
+				content: "本文\n\n    ```\n    中\n    ```\n後ろ",
+				want: []Line{{Number: 1, Text: "本文"}, {Number: 2}, {Number: 3, Text: "    ```"}, {Number: 4, Text: "    中"},
+					{Number: 5, Text: "    ```"}, {Number: 6, Text: "後ろ"}},
+			},
+			"項目が終わった後の空白4つの ``` はフェンスではない": {
+				content: "- a\n\nb\n\n    ```\n中",
+				want: []Line{{Number: 1, Text: "- a"}, {Number: 2}, {Number: 3, Text: "b"}, {Number: 4},
+					{Number: 5, Text: "    ```"}, {Number: 6, Text: "中"}},
+			},
+			"10. の印は中身の桁を4にし、7つの字下げはフェンス": {
+				content: "10. a\n\n       ```\n       中\n       ```\n外",
+				want:    []Line{{Number: 1, Text: "10. a"}, {Number: 2}, {Number: 6, Text: "外"}},
+			},
+			"1. の印は中身の桁を3にし、7つの字下げはフェンスではない": {
+				content: "1. a\n\n       ```\n中",
+				want:    []Line{{Number: 1, Text: "1. a"}, {Number: 2}, {Number: 3, Text: "       ```"}, {Number: 4, Text: "中"}},
+			},
+			"項目の中身の桁より浅い行はフェンスを閉じ、後ろを返す": {
+				content: "- a\n  ```\n  中\nb\n後ろ",
+				want:    []Line{{Number: 1, Text: "- a"}, {Number: 4, Text: "b"}, {Number: 5, Text: "後ろ"}},
+			},
+			"遅延した続きの行は項目を閉じず、後ろの字下げしたフェンスを項目の中で読む": {
+				content: "- a\n続き\n    ```\n    中\n    ```\n外",
+				want:    []Line{{Number: 1, Text: "- a"}, {Number: 2, Text: "続き"}, {Number: 6, Text: "外"}},
+			},
+			"引用の中の ``` はフェンスではなく、後ろの行も返す": {
+				content: "> ```\n> 中\n後ろ",
+				want:    []Line{{Number: 1, Text: "> ```"}, {Number: 2, Text: "> 中"}, {Number: 3, Text: "後ろ"}},
+			},
+			"印だけの項目は直後の空行で終わる": {
+				content: "-\n\n     ```\n中",
+				want:    []Line{{Number: 1, Text: "-"}, {Number: 2}, {Number: 3, Text: "     ```"}, {Number: 4, Text: "中"}},
+			},
+			"段落の後の 1 以外で始まる番号は項目を開かない": {
+				content: "本文\n2. b\n\n     ```\n中",
+				want: []Line{{Number: 1, Text: "本文"}, {Number: 2, Text: "2. b"}, {Number: 3},
+					{Number: 4, Text: "     ```"}, {Number: 5, Text: "中"}},
+			},
+			"段落の後の 1. は項目を開く": {
+				content: "本文\n1. b\n\n     ```\n     中\n     ```\n外",
+				want:    []Line{{Number: 1, Text: "本文"}, {Number: 2, Text: "1. b"}, {Number: 3}, {Number: 7, Text: "外"}},
+			},
 			"閉じられないフェンスは以降をすべて飲み込む": {
 				content: "外\n```\n中\n中2",
 				want:    []Line{{Number: 1, Text: "外"}},
@@ -88,14 +144,14 @@ func TestLines(t *testing.T) {
 	})
 }
 
-func TestFence_Next(t *testing.T) {
+func TestBlocks_Next(t *testing.T) {
 	t.Parallel()
 
 	for name, c := range map[string]struct {
-		fence    Fence
-		text     string
-		wantNext Fence
-		wantIn   bool
+		fence     string
+		text      string
+		wantFence string
+		wantIn    bool
 	}{
 		"外の本文は外のまま":                {"", "本文", "", false},
 		"外の区切りで開く":                 {"", "```go", "```", true},
@@ -111,11 +167,13 @@ func TestFence_Next(t *testing.T) {
 		"空白4つで字下げした区切りでは開かない":      {"", "    ```", "", false},
 		"空白4つで字下げした区切りでは閉じない":      {"```", "    ```", "```", true},
 		"空白3つで字下げした区切りでは閉じる":       {"```", "   ```", "", true},
+		"タブで字下げした区切りでは開かない":        {"", "\t```", "", false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			next, in := c.fence.Next(c.text)
-			assert.Equal(t, c.wantNext, next)
+			b := Blocks{fence: c.fence}
+			in := b.Next(c.text)
+			assert.Equal(t, c.wantFence, b.fence)
 			assert.Equal(t, c.wantIn, in)
 		})
 	}
@@ -159,6 +217,97 @@ func Test_fenceMarker(t *testing.T) {
 			})
 		}
 	})
+}
+
+func Test_listMarker(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		body      string
+		at        int
+		wantCol   int
+		wantEmpty bool
+		wantOK    bool
+	}{
+		"箇条書きは印と空白1つの後ろ":     {"- a", 0, 2, false, true},
+		"印の桁を足す":             {"- a", 3, 5, false, true},
+		"空白4つまでは中身の桁に含める":    {"-    a", 0, 5, false, true},
+		"空白5つ以上は印の1つ後ろの桁":    {"-     a", 0, 2, false, true},
+		"番号の桁数を印の幅に含める":      {"10. a", 0, 4, false, true},
+		"閉じ括弧の番号":            {"1) a", 0, 3, false, true},
+		"印だけの行は空の項目":         {"*", 0, 2, true, true},
+		"印の後ろが空白だけでも空の項目":    {"+   ", 0, 2, true, true},
+		"印の直後に空白が無ければ項目ではない": {"-a", 0, 0, false, false},
+		"10桁の番号は項目ではない":      {"1234567890. a", 0, 0, false, false},
+		"印で始まらない":            {"a", 0, 0, false, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			col, empty, ok := listMarker(c.body, c.at)
+			assert.Equal(t, c.wantOK, ok)
+			assert.Equal(t, c.wantCol, col)
+			assert.Equal(t, c.wantEmpty, empty)
+		})
+	}
+}
+
+func Test_canInterrupt(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		body  string
+		empty bool
+		want  bool
+	}{
+		"箇条書きは遮る":         {"- a", false, true},
+		"1 で始まる番号は遮る":     {"1. a", false, true},
+		"0 を前に置いた 1 も遮る":  {"01. a", false, true},
+		"1 以外で始まる番号は遮らない": {"2. a", false, false},
+		"空の項目は遮らない":       {"-", true, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, canInterrupt(c.body, c.empty))
+		})
+	}
+}
+
+func Test_expandTabs(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		text string
+		want string
+	}{
+		"タブが無ければそのまま":      {"a b", "a b"},
+		"行頭のタブは4桁":         {"\tx", "    x"},
+		"空白の後のタブは次の4の倍数まで": {"  \tx", "    x"},
+		"桁4のタブは桁8まで":       {"-   \tx", "-       x"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, expandTabs(c.text))
+		})
+	}
+}
+
+func Test_indentOf(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		s    string
+		want int
+	}{
+		"字下げ無し":   {"a", 0},
+		"空白を数える":  {"   a", 3},
+		"空白だけの行":  {"  ", 2},
+		"タブは数えない": {"\ta", 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, indentOf(c.s))
+		})
+	}
 }
 
 func TestVisibleLines(t *testing.T) {
