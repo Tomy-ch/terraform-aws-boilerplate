@@ -1018,6 +1018,55 @@ func Test_baseDeclarations(t *testing.T) {
 			assert.Contains(t, err.Error(), "base を取得できていない可能性があります")
 		})
 	})
+
+	t.Run("偽の git で: 終了コードと sentinel", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("mise.toml の git show が 0 以外なら errBaseUnresolved で終了コード 2", func(t *testing.T) {
+			t.Parallel()
+			f := tooltest.New(t)
+			f.Set(stepGitShow, "rc", "128")
+			_, err := baseDeclarations("b", []string{miseFile}, f.Tool())
+			require.ErrorIs(t, err, errBaseUnresolved)
+			assert.Equal(t, 2, exitCode(err))
+			assert.Equal(t, []string{stepGitShow + " b:" + miseFile}, f.Args())
+		})
+
+		t.Run("git を起動できなければ ErrTool で終了コード 2（宣言なしとして飛ばさない）", func(t *testing.T) {
+			t.Parallel()
+			_, err := baseDeclarations("b", []string{"python/x.in"}, noTool)
+			require.ErrorIs(t, err, toolrun.ErrTool)
+			assert.Equal(t, 2, exitCode(err))
+		})
+
+		t.Run("mise.toml 以外の git show が 0 以外で rev-parse が通れば、その宣言を飛ばす", func(t *testing.T) {
+			t.Parallel()
+			f := tooltest.New(t)
+			f.Set(stepGitShow, "rc", "128")
+			got, err := baseDeclarations("b", []string{"python/x.in"}, f.Tool())
+			require.NoError(t, err)
+			assert.Empty(t, got)
+			assert.Equal(t, []string{stepGitShow + " b:python/x.in", stepGitRevParse + " b^{commit}"}, f.Args())
+		})
+
+		t.Run("mise.toml 以外の git show が 0 以外で rev-parse も 0 以外なら errBaseUnresolved", func(t *testing.T) {
+			t.Parallel()
+			f := tooltest.New(t)
+			f.Set(stepGitShow, "rc", "128")
+			f.Set(stepGitRevParse, "rc", "1")
+			_, err := baseDeclarations("b", []string{"python/x.in"}, f.Tool())
+			require.ErrorIs(t, err, errBaseUnresolved)
+		})
+
+		t.Run("git show が 0 で何も出さなければ、空の宣言として返す（0件の判定は呼び出し側）", func(t *testing.T) {
+			t.Parallel()
+			f := tooltest.New(t)
+			got, err := baseDeclarations("b", []string{miseFile}, f.Tool())
+			require.NoError(t, err)
+			require.Len(t, got, 1)
+			assert.Empty(t, got[0].content)
+		})
+	})
 }
 
 //nolint:paralleltest // t.Chdir がプロセス共有の状態を差し替えるため並列化不可
@@ -2896,6 +2945,7 @@ func Test_exitCode(t *testing.T) {
 		want int
 	}{
 		"成功は 0":                {nil, 0},
+		"backend を決められないのは 2":  {errUnsupportedBackend, 2},
 		"違反が残ったのは 1":           {errBlocking, 1},
 		"base を解決できないのは 2":     {errBaseUnresolved, 2},
 		"mise registry の失敗は 2": {errMiseRegistry, 2},

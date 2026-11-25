@@ -150,6 +150,14 @@ func Test_runCheck(t *testing.T) {
 		require.NoError(t, runCheck([]string{"-work", "tmp/w", "-config", cfg}, new(bytes.Buffer), passingFake(t).Tool(), isolated, root), "対照: 欠けも余りも無ければ通る")
 	})
 
+	t.Run("canary が落ちても -work を終わりに消す", func(t *testing.T) {
+		t.Parallel()
+		args, root := checkArgs(t)
+		err := runCheck(args, new(bytes.Buffer), tooltest.New(t).Tool(), isolated, root)
+		require.ErrorIs(t, err, errCanary)
+		assert.NoDirExists(t, filepath.Join(root, "tmp", "typos-gate"))
+	})
+
 	t.Run("fixture を root の tmp の下に、前の中身を消して建て、終わりに消す", func(t *testing.T) {
 		t.Parallel()
 		args, root := checkArgs(t)

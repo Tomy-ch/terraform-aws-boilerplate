@@ -4,6 +4,8 @@ package workdir
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -38,6 +40,8 @@ func Resolve(root, work string) (string, error) {
 
 // Recreate は、work を [Resolve] で検証し、空のディレクトリとして作り直して root からのパスを返します。消すのと作るのは
 // root の tmp を開いた [os.Root] の中で行うので、検証の後に途中を外への symlink へ差し替えられても tmp の外は消えません。
+// その差し替えによる失敗は [ErrInvalid] ではなく、消せない・作れないエラーで返ります。work 自身が tmp/ の下を指す
+// symlink なら、指す先を作り直します。
 func Recreate(root, work string) (string, error) {
 	return recreate(root, work, lsFilesTmp)
 }
@@ -117,6 +121,14 @@ func remove(root, work string, lsFiles lsFilesFunc) error {
 	defer func() { _ = r.Close() }()
 
 	return xerrors.Wrapf(r.RemoveAll(rel), "%q を消せません", work)
+}
+
+// Cleanup は、後片付けとして [Remove] を呼び、消せなければ w へ1行の警告を書きます。判定は変えず、消し残しを
+// 見えるようにするだけです。失敗の経路の defer に置きます。
+func Cleanup(root, work string, w io.Writer) {
+	if err := Remove(root, work); err != nil {
+		fmt.Fprintf(w, "⚠️ 作業ディレクトリ %q を消せませんでした: %v\n", work, err)
+	}
 }
 
 // rebuild は、tmp を開いた [os.Root] の中で rel を消して作り直します。rel の途中の symlink が tmp の外を指せば、

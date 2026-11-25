@@ -168,7 +168,7 @@ func Test_runCheck(t *testing.T) {
 		f := tooltest.New(t, tooltest.WithPrelude(`if [ -e ../stale ]; then echo yes; else echo no; fi > "$ctl/stale.seen"`))
 		c := checkArgs(t)
 		writeFile(t, filepath.Join(c.work, "stale"), "")
-		require.Error(t, c.run(new(bytes.Buffer), f.Tool(), isolated))
+		require.ErrorIs(t, c.run(new(bytes.Buffer), f.Tool(), isolated), errCanary)
 		assert.Equal(t, "no\n", f.Read("stale.seen"), "canary の起動時に前の中身が残っていない")
 		assert.NoDirExists(t, c.work)
 	})

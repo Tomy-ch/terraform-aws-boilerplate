@@ -59,10 +59,11 @@ func command(ctx context.Context, dir string, env []string, step string, _ ...st
 	return cmd
 }
 
-// 検出を表す終了コードです。terraform fmt -check は差分があれば 3、TFLint は指摘があれば 2 で終わり、ほかの 0 以外は
-// 道具が検査を成り立たせられなかったことです。どちらも公式の文書は値を持ちません。値がずれても 0 以外は通しません。
+// 検出を表す終了コードです。terraform fmt -check は差分があれば 3、構文の誤りなどの診断があれば 2、TFLint は指摘が
+// あれば 2 で終わり、ほかの 0 以外（flag の誤りなど）は道具が検査を成り立たせられなかったことです。どちらも公式の文書は
+// 値を持ちません。値がずれても 0 以外は通しません。
 var (
-	detectFmtCheck = []int{3}
+	detectFmtCheck = []int{2, 3}
 	detectLint     = []int{2}
 )
 

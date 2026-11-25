@@ -111,11 +111,11 @@ func runTrufflehogGit(args []string, ranged bool, stdout, log io.Writer, r runne
 	if err != nil {
 		return err
 	}
-	dir, err := prepareWork(r.root, work)
+	dir, cleanup, err := prepareWork(r.root, work, log)
 	if err != nil {
 		return err
 	}
-	defer removeWork(r.root, work)
+	defer cleanup()
 
 	if err := trufflehogCanary(r, env, dir, trufflehogSteps["json"][idx], union, log); err != nil {
 		return err

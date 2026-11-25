@@ -132,7 +132,7 @@ func command(ctx context.Context, dir string, env []string, step string, operand
 	switch {
 	case step == stepLsRemote && len(operands) > 1:
 		args := append([]string{"ls-remote", operands[0], "--end-of-options"}, operands[1:]...)
-		cmd = exec.CommandContext(ctx, "git", args...) //nolint:gosec // G204: URL は https://github.com/ に owner/repo を足したもので、ref 名は --end-of-options の後ろだけに置く。道具と option はリテラル
+		cmd = exec.CommandContext(ctx, "git", args...) //nolint:gosec // G204: URL は https://github.com/ に owner/repo を足したもので、ref 名は --end-of-options の後ろだけに置く。道具と option はリテラル。gosec が境の後ろの operand を区別できるようになれば外す
 	default:
 		cmd = exec.CommandContext(ctx, "false")
 	}

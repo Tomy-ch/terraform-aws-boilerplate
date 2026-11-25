@@ -19,7 +19,7 @@ import (
 // 間に fork した子がその書き込みの fd を持ち越すと、書いたばかりのファイルの exec が ETXTBSY で落ちるため。
 // fakeTool は、起動ごとに「作業ディレクトリ 段 TF_DATA_DIR」を calls.log へ書く偽の道具を作る。作業ディレクトリに
 // `fail-<段>` があればその段は検出の終了コード（fmt-check は 3、lint は 2、ほかは 1）で、`validate.out` があれば
-// validate はその中身を出す。環境に AWS_ で始まる変数（宣言で塞ぐ3つを除く）が残っていれば 97 で落ちる。
+// validate はその中身を出す。`rc-<段>` があればその中身の終了コードで終わる。環境に AWS_ で始まる変数（宣言で塞ぐ3つを除く）が残っていれば 97 で落ちる。
 func fakeTool(t *testing.T) (toolFunc, func() []string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -33,6 +33,7 @@ if [ -n "$left" ]; then echo "AWS の環境変数が残っています: $left"; 
 rc=1
 case "$step" in fmt-check) rc=3 ;; lint) rc=2 ;; esac
 if [ -e "fail-$step" ]; then echo "$step が落ちた"; exit "$rc"; fi
+if [ -e "rc-$step" ]; then exit "$(cat "rc-$step")"; fi
 if [ "$step" = validate ] && [ -e validate.out ]; then cat validate.out; fi
 exit 0
 `

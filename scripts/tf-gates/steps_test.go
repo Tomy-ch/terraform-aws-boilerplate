@@ -167,7 +167,7 @@ func Test_runEach(t *testing.T) {
 	}{
 		"fmt-check の 3 は落ちた対象で、全部走って終了コードは 1":       {detectFmtCheck, "3", errDirsFailed, 1, 3},
 		"fmt-check の 1 は不成立で、打ち切って終了コードは 2":         {detectFmtCheck, "1", errToolFailed, 2, 1},
-		"fmt-check の 2 は不成立で、打ち切って終了コードは 2":         {detectFmtCheck, "2", errToolFailed, 2, 1},
+		"fmt-check の 2（構文の誤り）は落ちた対象で、全部走って終了コードは 1": {detectFmtCheck, "2", errDirsFailed, 1, 3},
 		"lint の 2 は落ちた対象で、全部走って終了コードは 1":            {detectLint, "2", errDirsFailed, 1, 3},
 		"lint の 1 は不成立で、打ち切って終了コードは 2":              {detectLint, "1", errToolFailed, 2, 1},
 		"lint の 3 は不成立で、打ち切って終了コードは 2":              {detectLint, "3", errToolFailed, 2, 1},
@@ -229,6 +229,36 @@ func Test_runFmt(t *testing.T) {
 		assert.Contains(t, out.String(), "❌ tf-fmt-check が落ちたディレクトリ: "+filepath.Join(base, "usecases"))
 		assert.Len(t, calls(), 2)
 	})
+
+	for name, c := range map[string]struct {
+		check    bool
+		rc       string
+		want     error
+		wantCode int
+		calls    int
+	}{
+		"-check の 2（構文の誤り）は落ちた root で、全部走って終了コード 1":           {true, "2", errDirsFailed, 1, 2},
+		"-check の 1（flag の誤りなど）は errToolFailed で打ち切り、終了コード 2": {true, "1", errToolFailed, 2, 1},
+		"-check なしの fmt は 0 以外をすべて落ちた root にし、終了コード 1":        {false, "1", errDirsFailed, 1, 2},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			step := stepFmt
+			if c.check {
+				step = stepFmtCheck
+			}
+			base := okTree(t, map[string]string{"modules/rc-" + step: c.rc})
+			args := []string{"-base", base, "modules", "usecases"}
+			if c.check {
+				args = append([]string{"-check"}, args...)
+			}
+			tool, calls := fakeTool(t)
+			err := runFmt(args, &bytes.Buffer{}, tool)
+			require.ErrorIs(t, err, c.want)
+			assert.Equal(t, c.wantCode, exitCode(err))
+			assert.Len(t, calls(), c.calls)
+		})
+	}
 
 	t.Run("対象が0件なら起動せずに errNoTargets", func(t *testing.T) {
 		t.Parallel()
@@ -673,7 +703,18 @@ func Test_runLint(t *testing.T) {
 		assert.Len(t, calls(), 1, "ruleset の取得だけが走った")
 	})
 
-	t.Run("ruleset の取得が落ちれば、ディレクトリを走らせずに落ちる", func(t *testing.T) {
+	t.Run("tflint の 1（設定や plugin の誤り）は指摘ではなく errToolFailed で、終了コード 2", func(t *testing.T) {
+		t.Parallel()
+		base := okTree(t, map[string]string{"usecases/b/rc-lint": "1"})
+		tool, _ := fakeTool(t)
+		var out bytes.Buffer
+		err := runLint([]string{"-base", base, "-config", "c", "-plugin-dir", t.TempDir(), "modules", "usecases"}, &out, tool)
+		require.ErrorIs(t, err, errToolFailed)
+		assert.Equal(t, 2, exitCode(err))
+		assert.NotContains(t, out.String(), "❌ tf-lint が落ちたディレクトリ")
+	})
+
+	t.Run("ruleset の取得（tflint --init）の 0 以外は落ちたディレクトリとして扱い、ディレクトリを走らせない", func(t *testing.T) {
 		t.Parallel()
 		base := okTree(t, map[string]string{"fail-lint-init": ""})
 		tool, calls := fakeTool(t)

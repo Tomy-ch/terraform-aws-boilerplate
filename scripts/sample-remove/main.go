@@ -388,17 +388,15 @@ func apply(root string, p plan) error {
 	for f, c := range p.writes {
 		changes[filepath.Join(root, f)] = c
 	}
-	if err := atomicwrite.Apply(changes, 0o644); err != nil {
-		return xerrors.Wrap(err, "❌ 書き換えに失敗しました")
-	}
-	if len(p.deletes) == 0 {
-		return nil
-	}
+	// 消す側の root は書き換えの前に開く。開けないまま書き換えだけが済む部分適用にしない。
 	r, err := os.OpenRoot(root)
 	if err != nil {
 		return xerrors.Wrapf(err, "❌ %s を開けません", root)
 	}
 	defer func() { _ = r.Close() }()
+	if err := atomicwrite.Apply(changes, 0o644); err != nil {
+		return xerrors.Wrap(err, "❌ 書き換えに失敗しました")
+	}
 	for _, d := range p.deletes {
 		if err := r.RemoveAll(d); err != nil {
 			return xerrors.Wrapf(err, "❌ %s を消せません", d)

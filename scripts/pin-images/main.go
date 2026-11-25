@@ -195,7 +195,7 @@ func command(ctx context.Context, dir string, env []string, step string, operand
 	if args == nil || len(operands) != 1 {
 		cmd = exec.CommandContext(ctx, "false")
 	} else {
-		cmd = exec.CommandContext(ctx, "docker", append(append(args, "--"), operands...)...) //nolint:gosec // G204: 参照は Dockerfile と compose の宣言から読んだ image:tag で、-- の後ろだけに置く。道具と option はリテラル
+		cmd = exec.CommandContext(ctx, "docker", append(append(args, "--"), operands...)...) //nolint:gosec // G204: 参照は Dockerfile と compose の宣言から読んだ image:tag で、-- の後ろだけに置く。道具と option はリテラル。gosec が境の後ろの operand を区別できるようになれば外す
 	}
 	cmd.Dir, cmd.Env = dir, env
 

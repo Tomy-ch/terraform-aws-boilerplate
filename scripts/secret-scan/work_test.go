@@ -1,8 +1,10 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -20,11 +22,32 @@ func Test_prepareWork(t *testing.T) {
 		stale := filepath.Join(root, "tmp", "secret-scan", "x", "stale")
 		require.NoError(t, os.MkdirAll(filepath.Dir(stale), 0o750))
 		require.NoError(t, os.WriteFile(stale, nil, 0o600))
-		dir, err := prepareWork(root, "x")
+		dir, _, err := prepareWork(root, "x", io.Discard)
 		require.NoError(t, err)
 		assert.Equal(t, filepath.Join(root, "tmp", "secret-scan", "x"), dir)
 		assert.DirExists(t, dir)
 		assert.NoFileExists(t, stale)
+	})
+
+	t.Run("後片付けは tmp/secret-scan/<name> だけを消し、消せなければ log へ警告する", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		var log strings.Builder
+		dir, cleanup, err := prepareWork(root, "x", &log)
+		require.NoError(t, err)
+		keep := filepath.Join(root, "tmp", "secret-scan", "y")
+		require.NoError(t, os.MkdirAll(keep, 0o750))
+		cleanup()
+		assert.NoDirExists(t, dir)
+		assert.DirExists(t, keep)
+		assert.Empty(t, log.String())
+
+		outside := t.TempDir()
+		require.NoError(t, os.Remove(filepath.Join(root, "tmp", "secret-scan", "y")))
+		require.NoError(t, os.Symlink(outside, filepath.Join(root, "tmp", "secret-scan", "x")))
+		cleanup()
+		assert.Contains(t, log.String(), "⚠️ 作業ディレクトリ")
+		assert.DirExists(t, outside)
 	})
 
 	t.Run("tmp/ の外を指せば errUsage で、外を消さない", func(t *testing.T) {
@@ -35,10 +58,10 @@ func Test_prepareWork(t *testing.T) {
 		require.NoError(t, os.WriteFile(keep, nil, 0o600))
 		require.NoError(t, os.Mkdir(filepath.Join(root, "tmp"), 0o750))
 		require.NoError(t, os.Symlink(outside, filepath.Join(root, "tmp", "secret-scan")))
-		_, err := prepareWork(root, "x")
+		_, _, err := prepareWork(root, "x", io.Discard)
 		require.ErrorIs(t, err, errUsage)
 		assert.FileExists(t, keep)
-		_, err = prepareWork(root, "../../x")
+		_, _, err = prepareWork(root, "../../x", io.Discard)
 		require.ErrorIs(t, err, errUsage)
 	})
 
@@ -49,7 +72,7 @@ func Test_prepareWork(t *testing.T) {
 		require.NoError(t, os.MkdirAll(filepath.Join(root, "tmp"), 0o750))
 		require.NoError(t, os.Chmod(filepath.Join(root, "tmp"), 0o500))
 		t.Cleanup(func() { _ = os.Chmod(filepath.Join(root, "tmp"), 0o700) })
-		_, err := prepareWork(root, "x")
+		_, _, err := prepareWork(root, "x", io.Discard)
 		require.ErrorIs(t, err, errInput)
 	})
 }
@@ -92,20 +115,4 @@ func Test_copyInto(t *testing.T) {
 	assert.Equal(t, "cfg", string(got))
 
 	require.ErrorIs(t, copyInto(root, dir, ".gitleaksignore"), errInput, "複写元が無い")
-}
-
-func Test_removeWork(t *testing.T) {
-	t.Parallel()
-
-	t.Run("tmp/secret-scan/<name> だけを消す", func(t *testing.T) {
-		t.Parallel()
-		root := t.TempDir()
-		dir, err := prepareWork(root, "x")
-		require.NoError(t, err)
-		keep := filepath.Join(root, "tmp", "secret-scan", "y")
-		require.NoError(t, os.MkdirAll(keep, 0o750))
-		removeWork(root, "x")
-		assert.NoDirExists(t, dir)
-		assert.DirExists(t, keep)
-	})
 }

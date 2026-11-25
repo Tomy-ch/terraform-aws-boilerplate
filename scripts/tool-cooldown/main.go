@@ -194,7 +194,7 @@ func command(ctx context.Context, dir string, env []string, step string, operand
 	if name == "" || len(operands) != 1 {
 		cmd = exec.CommandContext(ctx, "false")
 	} else {
-		cmd = exec.CommandContext(ctx, name, append(args, operands...)...) //nolint:gosec // G204: operand は呼び出し側が与える base の rev か mise.toml のキーで、境の後ろだけに置く。道具と option はリテラル
+		cmd = exec.CommandContext(ctx, name, append(args, operands...)...) //nolint:gosec // G204: operand は呼び出し側が与える base の rev か mise.toml のキーで、境の後ろだけに置く。道具と option はリテラル。gosec が境の後ろの operand を区別できるようになれば外す
 	}
 	cmd.Dir, cmd.Env = dir, env
 

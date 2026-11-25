@@ -37,7 +37,7 @@ func runCheck(args []string, w io.Writer, tool toolFunc, env envFunc, root strin
 	if err != nil {
 		return xerrors.Wrapf(errRead, "-work %v", err)
 	}
-	defer func() { _ = workdir.Remove(root, *work) }()
+	defer workdir.Cleanup(root, *work, w)
 	fixture := func(sub string) fixturePaths {
 		return fixturePaths{work: filepath.Join(base, sub), editorconfig: *editorconfig, checkerConfig: *checkerConfig}
 	}
@@ -49,6 +49,10 @@ func runCheck(args []string, w io.Writer, tool toolFunc, env envFunc, root strin
 	}
 	if err := runExcludeCanary(fixture("exclude"), w, tool, gitEnv); err != nil {
 		return err
+	}
+	// 本走査の前に fixture を消す。走査の範囲を .gitignore の扱いに預けない。
+	if err := workdir.Remove(root, *work); err != nil {
+		return xerrors.Wrapf(errRead, "-work の後片付け: %v", err)
 	}
 	if err := runConfig(*checkerConfig, w, tool, gitEnv); err != nil {
 		return err

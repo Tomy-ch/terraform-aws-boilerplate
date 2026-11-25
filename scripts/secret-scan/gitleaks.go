@@ -47,11 +47,11 @@ func runGitleaks(args []string, ranged bool, log io.Writer, r runner) error {
 			return err
 		}
 	}
-	dir, err := prepareWork(r.root, work)
+	dir, cleanup, err := prepareWork(r.root, work, log)
 	if err != nil {
 		return err
 	}
-	defer removeWork(r.root, work)
+	defer cleanup()
 
 	if err := gitleaksCanary(r, env, dir, log); err != nil {
 		return err

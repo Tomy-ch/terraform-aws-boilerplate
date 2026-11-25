@@ -67,11 +67,11 @@ func runTrivy(args []string, stdout, log io.Writer, r runner) error {
 // trivyCanary は、tmp/secret-scan/trivy/canary に偽の token と、root に在る trivyConfigs の写しを置いて canary の段を
 // 走らせ、終わりに作業ディレクトリを消します。落ちたときだけ、Trivy の stderr を log へ出します。
 func trivyCanary(r runner, env []string, log io.Writer) error {
-	dir, err := prepareWork(r.root, "trivy")
+	dir, cleanup, err := prepareWork(r.root, "trivy", log)
 	if err != nil {
 		return err
 	}
-	defer removeWork(r.root, "trivy")
+	defer cleanup()
 	canary := filepath.Join(dir, "canary")
 	if err := writeFile(filepath.Join(canary, "canary.txt"), fakeGitHubToken()); err != nil {
 		return err

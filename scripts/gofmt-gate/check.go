@@ -42,9 +42,13 @@ func runCheck(args []string, w io.Writer, tool toolFunc, root string) error {
 	if err != nil {
 		return xerrors.Wrapf(errRead, "-work %v", err)
 	}
-	defer func() { _ = workdir.Remove(root, *work) }()
+	defer workdir.Cleanup(root, *work, w)
 	if err := runCanary(fixture, w, tool); err != nil {
 		return err
+	}
+	// 本走査の前に fixture を消す。-dir が tmp/ を含んでも、意図した未整形のファイルを拾わない。
+	if err := workdir.Remove(root, *work); err != nil {
+		return xerrors.Wrapf(errRead, "-work の後片付け: %v", err)
 	}
 
 	return runScan(filepath.Join(root, *dir), *dir, n, w, tool)

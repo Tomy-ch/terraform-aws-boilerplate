@@ -24,11 +24,15 @@ commitlint-msg:
 COMMITLINT_FROM ?= $(if $(GITHUB_BASE_REF),origin/$(GITHUB_BASE_REF),$(shell git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null))
 COMMITLINT_TO ?= HEAD
 
+## literal_value は、変数 $(1) の値を返す。コマンドラインと環境から来た値は make に展開させず字面のまま返す
+## （ref の名前は $ を含みうる）。Makefile の中の既定は展開する。
+literal_value = $(if $(filter command environment,$(firstword $(origin $(1)))),$(value $(1)),$($(1)))
+
 ## 範囲の件数の判定は scripts/commit-range が持つ。
 ## 引数は sh -c の位置引数で渡す（RUN_SCRIPT の $(2) は単一引用符の内側に入る）。範囲の両端は make の展開で
 ## レシピのシェルの文字列へ埋めず、env（RANGE_FROM・RANGE_TO）から読む。ref の名前は $ や " を含みうる。
-commitlint-range: export RANGE_FROM = $(COMMITLINT_FROM)
-commitlint-range: export RANGE_TO = $(COMMITLINT_TO)
+commitlint-range: export RANGE_FROM = $(call literal_value,COMMITLINT_FROM)
+commitlint-range: export RANGE_TO = $(call literal_value,COMMITLINT_TO)
 commitlint-range:
 	@$(call RUN_SCRIPT,commit-range,"$$@") commit-range check -from "$$RANGE_FROM" -to "$$RANGE_TO"
 	@$(NODE_TOOL) commitlint --from "$$RANGE_FROM" --to "$$RANGE_TO"

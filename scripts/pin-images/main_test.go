@@ -2134,6 +2134,17 @@ func Test_command(t *testing.T) {
 		})
 	}
 
+	for step, want := range map[string][]string{
+		stepCreatedIndex:  {"docker", "buildx", "imagetools", "inspect", "--format", `{{ range .Image }}{{ println .Created }}{{ end }}`, "--", "-x"},
+		stepCreatedSingle: {"docker", "buildx", "imagetools", "inspect", "--format", `{{ println .Image.Created }}`, "--", "-x"},
+	} {
+		t.Run(step+" は --format の雛形の後ろ、-- の後ろに ref を置く", func(t *testing.T) {
+			t.Parallel()
+			cmd := command(t.Context(), "", nil, step, "-x")
+			assert.Equal(t, want, append([]string{filepath.Base(cmd.Args[0])}, cmd.Args[1:]...))
+		})
+	}
+
 	t.Run("作業ディレクトリと env を渡す", func(t *testing.T) {
 		t.Parallel()
 		cmd := command(t.Context(), "/d", []string{"A=1"}, stepInspect, "a:1")

@@ -574,6 +574,26 @@ func TestRecreate(t *testing.T) {
 		require.ErrorIs(t, err, ErrInvalid)
 		assert.Equal(t, map[string]string{"f": "o"}, snapshot(t, outside))
 	})
+
+	t.Run("-work が既存のファイルなら、ディレクトリとして作り直す", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "tmp"), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(root, "tmp", "w"), []byte("x"), 0o600))
+		got, err := Recreate(root, "tmp/w")
+		require.NoError(t, err)
+		assert.DirExists(t, got)
+	})
+
+	t.Run("-work の途中の祖先がファイルなら、検証で ErrInvalid になり、そのファイルを消さない", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "tmp"), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(root, "tmp", "f"), []byte("x"), 0o600))
+		_, err := Recreate(root, "tmp/f/w")
+		require.ErrorIs(t, err, ErrInvalid)
+		assert.FileExists(t, filepath.Join(root, "tmp", "f"))
+	})
 }
 
 func Test_realRel(t *testing.T) {
@@ -668,6 +688,19 @@ func TestTemp(t *testing.T) {
 		require.NoError(t, os.Remove(parent))
 		assert.NotPanics(t, cleanup)
 	})
+
+	t.Run("後片付けは2度呼んでも落ちず、中の外を指す symlink の先を消さない", func(t *testing.T) {
+		t.Parallel()
+		parent, outside := t.TempDir(), t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(outside, "f"), []byte("o"), 0o600))
+		dir, cleanup, err := Temp(parent, "x-")
+		require.NoError(t, err)
+		require.NoError(t, os.Symlink(outside, filepath.Join(dir, "out")))
+		cleanup()
+		assert.NotPanics(t, cleanup)
+		assert.NoDirExists(t, dir)
+		assert.FileExists(t, filepath.Join(outside, "f"))
+	})
 }
 
 func TestRemove(t *testing.T) {
@@ -710,6 +743,18 @@ func TestRemove(t *testing.T) {
 		require.ErrorIs(t, Remove(root, "tmp/out"), ErrInvalid)
 		require.ErrorIs(t, Remove(root, "tmp/out/f"), ErrInvalid)
 		assert.Equal(t, map[string]string{"f": "o"}, snapshot(t, outside))
+	})
+
+	t.Run("tmp/ の下を指す絶対パスの symlink を経た -work も、実パスの側で消す", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		tmp := filepath.Join(root, "tmp")
+		require.NoError(t, os.MkdirAll(filepath.Join(tmp, "real", "w"), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(tmp, "real", "w", "f"), []byte("x"), 0o600))
+		require.NoError(t, os.Symlink(filepath.Join(tmp, "real"), filepath.Join(tmp, "link")))
+		require.NoError(t, Remove(root, "tmp/link/w"))
+		assert.NoDirExists(t, filepath.Join(tmp, "real", "w"))
+		assert.DirExists(t, filepath.Join(tmp, "real"))
 	})
 }
 
@@ -762,5 +807,32 @@ func Test_remove(t *testing.T) {
 		require.NoError(t, os.Symlink(target, filepath.Join(root, "tmp")))
 		require.NoError(t, remove(root, "tmp/w", func(string) ([]byte, error) { return nil, nil }))
 		assert.NoDirExists(t, filepath.Join(target, "w"))
+	})
+}
+
+func TestCleanup(t *testing.T) {
+	t.Parallel()
+
+	t.Run("消せれば何も書かない", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "tmp", "w"), 0o750))
+		var out strings.Builder
+		Cleanup(root, "tmp/w", &out)
+		assert.Empty(t, out.String())
+		assert.NoDirExists(t, filepath.Join(root, "tmp", "w"))
+	})
+
+	t.Run("消せなければ1行の警告を書き、外は消さない", func(t *testing.T) {
+		t.Parallel()
+		root, outside := t.TempDir(), t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(outside, "f"), []byte("o"), 0o600))
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "tmp"), 0o750))
+		require.NoError(t, os.Symlink(outside, filepath.Join(root, "tmp", "out")))
+		var out strings.Builder
+		Cleanup(root, "tmp/out", &out)
+		assert.Contains(t, out.String(), "⚠️ 作業ディレクトリ \"tmp/out\" を消せませんでした")
+		assert.Equal(t, 1, strings.Count(out.String(), "\n"))
+		assert.FileExists(t, filepath.Join(outside, "f"))
 	})
 }
