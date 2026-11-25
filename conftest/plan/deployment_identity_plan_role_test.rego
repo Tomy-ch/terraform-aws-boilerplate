@@ -360,3 +360,22 @@ test_violation_attachment_without_policy_arn_while_managed_arn_unknown if {
 	plan := fixture.plan([role, policies_exclusive, attached_exclusive, plan_policy([write_output]), unknown, bare])
 	fixture.has(sprintf("[PLAN-ROLE-04] p.json: %s が plan の role に付ける policy が", [read_attachment.address]), p.deny) with input as plan with data.policy_plan.deployment_identity as managed_decl
 }
+
+# 変更系の名前の Action のうち、メンバーの立ち上げの読み取りの role の引き受けだけを通す。
+test_pass_bootstrap_read_assume if {
+	s := {"Effect": "Allow", "Action": "sts:AssumeRole", "Resource": ["arn:aws:iam::111111111111:role/bootstrap/tabp-bootstrap-read"]}
+	not fixture.has("[PLAN-ROLE-02]", p.deny) with input as with_role([s], []) with data.policy_plan.deployment_identity as decl
+}
+
+test_violation_assume_other_than_bootstrap_read if {
+	every resources in [
+		["arn:aws:iam::111111111111:role/OrganizationAccountAccessRole"],
+		["arn:aws:iam::111111111111:role/bootstrap/tabp-bootstrap-read", "arn:aws:iam::111111111111:role/OrganizationAccountAccessRole"],
+		["arn:aws:iam::*:role/bootstrap/tabp-bootstrap-read"],
+		"*",
+		[],
+	] {
+		s := {"Effect": "Allow", "Action": "sts:AssumeRole", "Resource": resources}
+		fixture.has("[PLAN-ROLE-02] p.json: plan の role の Allow に変更系の Action sts:assumerole があります", p.deny) with input as with_role([s], []) with data.policy_plan.deployment_identity as decl
+	}
+}

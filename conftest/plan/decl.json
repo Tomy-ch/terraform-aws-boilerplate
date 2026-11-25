@@ -301,13 +301,18 @@
         "output_bucket_policy_statements": 5,
         "managed_policies": [
           "module.deployment_identity.module.github_oidc.aws_iam_policy.manage",
-          "module.deployment_identity.module.github_oidc.aws_iam_policy.governance[0]"
+          "module.deployment_identity.module.github_oidc.aws_iam_policy.governance[0]",
+          "module.deployment_identity.module.github_oidc.aws_iam_policy.members[0]"
         ]
+      },
+      "bootstrap_assume": {
+        "apply_identity_policy": "module.deployment_identity.module.github_oidc.aws_iam_policy.members[0]"
       },
       "customer_managed_policies": [
         "module.deployment_identity.module.github_oidc.aws_iam_policy.boundary",
         "module.deployment_identity.module.github_oidc.aws_iam_policy.governance",
         "module.deployment_identity.module.github_oidc.aws_iam_policy.manage",
+        "module.deployment_identity.module.github_oidc.aws_iam_policy.members",
         "module.deployment_identity.module.github_oidc.aws_iam_policy.workload",
         "module.deployment_identity.module.github_oidc.aws_iam_policy.workload_2",
         "module.deployment_identity.module.github_oidc.aws_iam_policy.workload_read"
@@ -668,7 +673,8 @@
           {"action": "organizations:ListTargetsForPolicy", "reason": "組織・OU・policy・メンバーアカウント（管理アカウントの API）"},
           {"action": "s3:GetObject", "reason": "state の object。立ち上げの plan は管理アカウントの state Bucket から読む（organization-baseline/ADR-0203 決定4）"},
           {"action": "s3:PutObject", "reason": "plan の出力。管理アカウントの plan の出力の Bucket に書く"},
-          {"action": "ssm:GetParameter", "reason": "メンバーアカウントのメールの parameter（管理アカウント）"}
+          {"action": "ssm:GetParameter", "reason": "メンバーアカウントのメールの parameter（管理アカウント）"},
+          {"action": "sts:AssumeRole", "reason": "管理アカウントの plan の role が、メンバーのこの role を引き受ける（deployment-identity/ADR-0201 決定22）"}
         ]
       }
     },
