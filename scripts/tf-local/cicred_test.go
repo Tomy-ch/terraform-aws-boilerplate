@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -51,7 +52,7 @@ exit "${rc:-0}"
 `
 	require.NoError(t, os.WriteFile(script, []byte(body), 0o600))
 	tool := func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
-		c := exec.CommandContext(context.Background(), "/bin/sh", script, step)
+		c := exec.CommandContext(ctx, "/bin/sh", script, step)
 		c.Dir, c.Env = d, env
 		return c
 	}
@@ -620,12 +621,13 @@ func Test_runExitCode(t *testing.T) {
 		assert.Equal(t, "e", string(stderr))
 	})
 
-	t.Run("起動できなければ errLocalAWS", func(t *testing.T) {
+	t.Run("起動できなければ ErrTool で、終了コード 2", func(t *testing.T) {
 		t.Parallel()
-		tool := func(context.Context, string, []string, string, ...string) *exec.Cmd {
-			return exec.CommandContext(context.Background(), filepath.Join(t.TempDir(), "none"))
+		tool := func(ctx context.Context, _ string, _ []string, _ string, _ ...string) *exec.Cmd {
+			return exec.CommandContext(ctx, filepath.Join(t.TempDir(), "none"))
 		}
 		_, _, err := runExitCode(tool, t.TempDir(), nil, stepAssumeRole)
-		require.ErrorIs(t, err, errLocalAWS)
+		require.ErrorIs(t, err, toolrun.ErrTool)
+		assert.Equal(t, 2, exitCode(err))
 	})
 }

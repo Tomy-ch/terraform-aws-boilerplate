@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -335,13 +336,14 @@ func Test_ciHoldPlanStep(t *testing.T) {
 func Test_ciHoldPlan(t *testing.T) {
 	t.Parallel()
 
-	t.Run("起動できなければ失敗する", func(t *testing.T) {
+	t.Run("起動できなければ ErrTool で、終了コード 2", func(t *testing.T) {
 		t.Parallel()
-		tool := func(context.Context, string, []string, string, ...string) *exec.Cmd {
-			return exec.CommandContext(context.Background(), filepath.Join(t.TempDir(), "none"))
+		tool := func(ctx context.Context, _ string, _ []string, _ string, _ ...string) *exec.Cmd {
+			return exec.CommandContext(ctx, filepath.Join(t.TempDir(), "none"))
 		}
 		err := ciHoldPlan(deps{tool: tool}, ciState{Dir: t.TempDir()}, filepath.Join(t.TempDir(), "h"), time.Millisecond, time.Second)
-		require.ErrorIs(t, err, errLocalTF)
+		require.ErrorIs(t, err, toolrun.ErrTool)
+		assert.Equal(t, 2, exitCode(err))
 	})
 }
 

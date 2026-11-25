@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -299,7 +300,7 @@ func ciHoldPlan(d deps, s ciState, hold string, interval, limit time.Duration) e
 	cmd := d.tool(context.Background(), s.Dir, localEnv(d.environ, s.Profile), stepCIPlanHold)
 	cmd.Stdout, cmd.Stderr = f, f
 	if err := cmd.Start(); err != nil {
-		return xerrors.Wrapf(errLocalTF, "plan: %v", err)
+		return xerrors.Wrapf(toolrun.ErrTool, "plan: %v", err)
 	}
 	var exited atomic.Bool
 	waited := make(chan struct{})

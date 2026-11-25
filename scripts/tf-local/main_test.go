@@ -13,6 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workdir"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -739,5 +742,37 @@ func Test_processAlive(t *testing.T) {
 		cmd := exec.CommandContext(t.Context(), "true")
 		require.NoError(t, cmd.Run())
 		assert.False(t, processAlive(cmd.Process.Pid))
+	})
+}
+
+func Test_exitCode(t *testing.T) {
+	t.Parallel()
+
+	for _, err := range verdicts {
+		t.Run("判定の失敗 "+err.Error()+" は 1", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, 1, exitCode(xerrors.Wrap(err, "x")))
+		})
+	}
+	for name, err := range map[string]error{
+		"道具を起動できないのは 2":      toolrun.ErrTool,
+		"init の失敗は 2":        errLocalInit,
+		"aws の失敗は 2":         errLocalAWS,
+		"state を読めないのは 2":    errLocalState,
+		"使い方の誤りは 2":          errUsage,
+		"作業ディレクトリの誤りは 2":     workdir.ErrInvalid,
+		"plan の JSON の誤りは 2": errPlanJSON,
+		"plan が0件なのは 2":      errPlanEmpty,
+		"CI の init の失敗は 2":   errCIInit,
+		"region の不一致は 2":     errRegionMismatch,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, 2, exitCode(err))
+		})
+	}
+	t.Run("成功は 0", func(t *testing.T) {
+		t.Parallel()
+		assert.Zero(t, exitCode(nil))
 	})
 }

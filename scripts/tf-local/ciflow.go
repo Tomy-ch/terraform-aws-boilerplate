@@ -1,8 +1,8 @@
 package main
 
 import (
-	"context"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -20,6 +20,7 @@ import (
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cientry"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/policyresult"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -389,24 +390,15 @@ func ciRunInit(s ciState, d deps) error {
 	defer func() { _ = f.Close() }()
 	cmd := d.tool(context.Background(), s.Dir, localEnv(d.environ, s.Profile, "TF_CLI_ARGS_init="+strings.Join(s.InitArgs, " ")), stepCIInit)
 	cmd.Stdout, cmd.Stderr = f, f
-	if err := cmd.Run(); err != nil {
-		return errCIInit
+	code, err := toolrun.Exec(cmd)
+	if err != nil {
+		return xerrors.Wrap(err, "init")
+	}
+	if code != 0 {
+		return xerrors.Wrapf(errCIInit, "exit status %d", code)
 	}
 
 	return nil
-}
-
-// exitCode は、道具の終了コードを返します。起動できなければ失敗します。
-func exitCode(err error) (int, error) {
-	var exit *exec.ExitError
-	switch {
-	case err == nil:
-		return 0, nil
-	case errors.As(err, &exit):
-		return exit.ExitCode(), nil
-	default:
-		return 0, err
-	}
 }
 
 // failureKind は、plan か apply の段の失敗の種類を返します。種類は revert の対象かの判定（scripts/apply-revert）が
@@ -467,9 +459,9 @@ func ciRunPlan(s *ciState, d deps, stdout io.Writer) (string, error) {
 	}
 	cmd := d.tool(context.Background(), s.Dir, localEnv(d.environ, s.Profile, "TF_CLI_ARGS_plan=-out="+s.TFPlan), step)
 	cmd.Stdout, cmd.Stderr = f, f
-	code, err := exitCode(cmd.Run())
+	code, err := toolrun.Exec(cmd)
 	if err != nil {
-		return "", xerrors.Wrapf(errLocalTF, "plan: %v", err)
+		return "", xerrors.Wrap(err, "plan")
 	}
 	if _, err := fmt.Fprintf(stdout, "plan の終了コード: %d\n", code); err != nil {
 		return "", err
@@ -578,8 +570,8 @@ func ciRunPolicy(s ciState, d deps, stdout io.Writer, parent, policy, decl, laye
 	cmd := d.tool(context.Background(), work, localEnv(d.environ, s.Profile), stepCIConftest)
 	cmd.Stdout, cmd.Stderr = &result, d.stderr
 	// 違反があれば conftest は非ゼロで終わる。判定は結果の JSON で行う。
-	if _, err := exitCode(cmd.Run()); err != nil {
-		return xerrors.Wrapf(errLocalTF, "conftest: %v", err)
+	if _, err := toolrun.Exec(cmd); err != nil {
+		return xerrors.Wrap(err, "conftest")
 	}
 	entries, err := policyresult.Parse(result.Bytes())
 	if err != nil {
@@ -714,6 +706,20 @@ func ciApplyStep(args []string, d deps, stdout io.Writer) (string, error) {
 	return "✅ apply が終わりました", s.save(statePath)
 }
 
+// waitCode は、Start した道具の Wait の結果を終了コードに分けます。シグナルで終わった・待てなかったときは
+// toolrun.ErrTool です（toolrun.Exec と同じ分類）。
+func waitCode(err error) (int, error) {
+	var exit *exec.ExitError
+	switch {
+	case err == nil:
+		return 0, nil
+	case errors.As(err, &exit) && exit.ExitCode() >= 0:
+		return exit.ExitCode(), nil
+	default:
+		return 0, xerrors.Wrapf(toolrun.ErrTool, "%v", err)
+	}
+}
+
 func ciRunApply(s ciState, d deps, limit time.Duration) (int, error) {
 	f, err := appendOut(s)
 	if err != nil {
@@ -723,20 +729,21 @@ func ciRunApply(s ciState, d deps, limit time.Duration) (int, error) {
 	cmd := d.tool(context.Background(), s.Dir, localEnv(d.environ, s.Profile, "TF_CLI_ARGS_apply=-input=false -no-color "+s.TFPlan), stepCIApply)
 	cmd.Stdout, cmd.Stderr = f, f
 	if err := cmd.Start(); err != nil {
-		return 0, xerrors.Wrapf(errLocalTF, "apply: %v", err)
+		return 0, xerrors.Wrapf(toolrun.ErrTool, "apply: %v", err)
 	}
 	var timedOut atomic.Bool
 	timer := time.AfterFunc(limit, func() {
 		timedOut.Store(true)
 		_ = cmd.Process.Signal(os.Interrupt)
 	})
-	code, err := exitCode(cmd.Wait())
+	waitErr := cmd.Wait()
 	timer.Stop()
-	if err != nil {
-		return 0, xerrors.Wrapf(errLocalTF, "apply: %v", err)
-	}
 	if timedOut.Load() {
 		return applyTimedOut, nil
+	}
+	code, err := waitCode(waitErr)
+	if err != nil {
+		return 0, xerrors.Wrapf(err, "apply")
 	}
 
 	return code, nil

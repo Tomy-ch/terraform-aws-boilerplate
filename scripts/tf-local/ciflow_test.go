@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -75,7 +76,7 @@ exit "$rc"
 `
 	require.NoError(t, os.WriteFile(script, []byte(body), 0o600))
 	tool := func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
-		c := exec.CommandContext(context.Background(), "/bin/sh", script, step)
+		c := exec.CommandContext(ctx, "/bin/sh", script, step)
 		c.Dir, c.Env = d, env
 		return c
 	}
@@ -569,11 +570,12 @@ func Test_ciRunApply(t *testing.T) {
 
 	t.Run("起動できなければ失敗する", func(t *testing.T) {
 		t.Parallel()
-		tool := func(context.Context, string, []string, string, ...string) *exec.Cmd {
-			return exec.CommandContext(context.Background(), filepath.Join(t.TempDir(), "none"))
+		tool := func(ctx context.Context, _ string, _ []string, _ string, _ ...string) *exec.Cmd {
+			return exec.CommandContext(ctx, filepath.Join(t.TempDir(), "none"))
 		}
 		_, err := ciRunApply(ciState{Dir: t.TempDir(), Out: fileWith(t, "")}, deps{tool: tool}, time.Second)
-		require.ErrorIs(t, err, errLocalTF)
+		require.ErrorIs(t, err, toolrun.ErrTool)
+		assert.Equal(t, 2, exitCode(err))
 	})
 }
 
@@ -626,19 +628,21 @@ func Test_failureKind(t *testing.T) {
 	}
 }
 
-func Test_exitCode(t *testing.T) {
+func Test_waitCode(t *testing.T) {
 	t.Parallel()
 
-	t.Run("終了コードを返し、起動できなければ失敗する", func(t *testing.T) {
+	t.Run("終了コードを返し、シグナルや待てない失敗は ErrTool", func(t *testing.T) {
 		t.Parallel()
-		code, err := exitCode(nil)
+		code, err := waitCode(nil)
 		require.NoError(t, err)
 		assert.Zero(t, code)
-		code, err = exitCode(exec.CommandContext(context.Background(), "/bin/sh", "-c", "exit 3").Run())
+		code, err = waitCode(exec.CommandContext(context.Background(), "/bin/sh", "-c", "exit 3").Run())
 		require.NoError(t, err)
 		assert.Equal(t, 3, code)
-		_, err = exitCode(errBoom)
-		require.ErrorIs(t, err, errBoom)
+		_, err = waitCode(exec.CommandContext(context.Background(), "/bin/sh", "-c", "kill -9 $$").Run())
+		require.ErrorIs(t, err, toolrun.ErrTool)
+		_, err = waitCode(errBoom)
+		require.ErrorIs(t, err, toolrun.ErrTool)
 	})
 }
 

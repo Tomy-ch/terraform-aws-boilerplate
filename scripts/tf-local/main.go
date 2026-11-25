@@ -38,6 +38,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/policyresult"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -95,8 +97,25 @@ func main() {
 	log.SetFlags(0)
 
 	if err := run(os.Args[1:], os.Stdout, deps{readFile: os.ReadFile, environ: os.Environ(), git: gitOutput, now: time.Now, alive: processAlive, sleep: time.Sleep, tool: command, fetch: fetchOIDC, stderr: os.Stderr}); err != nil {
-		log.Fatalf("%v", err)
+		log.Printf("%v", err)
+		os.Exit(exitCode(err))
 	}
+}
+
+// verdicts は、対象について否と言えた失敗です。終了コード 1 にし、ほかの失敗（道具を起動できない、値を決められない、
+// 入力を読めない、使い方の誤りなど）は 2 にします（lib/toolrun の取り決め）。
+var verdicts = []error{
+	errRootCredentials, errStateKeyMissing, errStateKeyMismatch,
+	errPlanFailed, errPlanErrored, errLocalPlan,
+	errCIPolicy, policyresult.ErrViolation, policyresult.ErrCount, policyresult.ErrEmpty,
+	errApplyFailed, errApplyTimeout, errAssumeSucceeded,
+	errLockFresh, errLockForeign, errLockExists,
+	errCIFailed, errCIUnfinish,
+}
+
+// exitCode は err の終了コードです。
+func exitCode(err error) int {
+	return toolrun.ExitCode(err, verdicts...)
 }
 
 // argCounts は、位置引数だけを取るサブコマンドの、サブコマンド名を含む引数の数。

@@ -10,12 +10,12 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cientry"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -403,19 +403,16 @@ func ciAssumeDenied(args []string, d deps, stdout io.Writer) (string, error) {
 	return fmt.Sprintf("✅ %d 個の role の assume がすべて拒否されました", len(roles)), nil
 }
 
-// runExitCode は、道具を起動して終了コードと stderr を返します。stdout は捨てます。起動できなければ失敗します。
+// runExitCode は、道具を起動して終了コードと stderr を返します。stdout は捨てます。起動できない・シグナルで
+// 終わったときは toolrun.ErrTool です。
 func runExitCode(tool toolFunc, dir string, env []string, step string) (int, []byte, error) {
 	var stderr bytes.Buffer
 	cmd := tool(context.Background(), dir, env, step)
 	cmd.Stdout, cmd.Stderr = io.Discard, &stderr
-	err := cmd.Run()
-	var exit *exec.ExitError
-	switch {
-	case err == nil:
-		return 0, stderr.Bytes(), nil
-	case errors.As(err, &exit):
-		return exit.ExitCode(), stderr.Bytes(), nil
-	default:
-		return 0, nil, xerrors.Wrapf(errLocalAWS, "%s: %v", step, err)
+	code, err := toolrun.Exec(cmd)
+	if err != nil {
+		return 0, nil, xerrors.Wrap(err, step)
 	}
+
+	return code, stderr.Bytes(), nil
 }
