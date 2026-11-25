@@ -42,10 +42,11 @@ type verifyOptions struct {
 	region       string
 	executor     string
 	policySource string
+	referenceDir string
 }
 
 // parseVerifyArgs は verify の引数を読む。-executor は stage4、-policy-source は output-policy にだけ渡せる。
-// -policy-source の既定は live。
+// -policy-source の既定は live。-reference-dir は reference のときに要り、ほかでは渡せない。
 func parseVerifyArgs(args []string) (verifyOptions, error) {
 	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -57,6 +58,7 @@ func parseVerifyArgs(args []string) (verifyOptions, error) {
 	fs.StringVar(&o.region, "region", "", "")
 	fs.StringVar(&o.executor, "executor", "", "")
 	fs.StringVar(&o.policySource, "policy-source", "", "")
+	fs.StringVar(&o.referenceDir, "reference-dir", "", "")
 
 	if err := fs.Parse(args); err != nil {
 		return verifyOptions{}, xerrors.Wrap(errUsage, err.Error())
@@ -81,6 +83,10 @@ func parseVerifyArgs(args []string) (verifyOptions, error) {
 		if o.policySource != sourceLive && o.policySource != sourceReference {
 			return verifyOptions{}, errUsage
 		}
+	}
+
+	if (o.policySource == sourceReference) != (o.referenceDir != "") {
+		return verifyOptions{}, errUsage
 	}
 
 	return o, nil
@@ -292,10 +298,11 @@ func expectDocument(desc string, pred func(map[string]any) bool, args ...string)
 
 // verifyEnv は、段の確認の表を組むときに使うもの。
 type verifyEnv struct {
-	q        *query
-	n        names
-	readFile func(string) ([]byte, error)
-	source   string
+	q            *query
+	n            names
+	readFile     func(string) ([]byte, error)
+	source       string
+	referenceDir string
 }
 
 // verifySteps は、段の確認の表。表を組むために読む応答（条件つきの確認の有無、文書）はここで読む。
@@ -341,7 +348,7 @@ func checkVerify(o verifyOptions, out io.Writer, d deps) error {
 		return xerrors.Wrapf(errNoAccount, "sts get-caller-identity の Account: %q", account)
 	}
 
-	steps, err := verifySteps(o.stage, verifyEnv{q: q, n: newNames(o, account), readFile: d.readFile, source: o.policySource})
+	steps, err := verifySteps(o.stage, verifyEnv{q: q, n: newNames(o, account), readFile: d.readFile, source: o.policySource, referenceDir: o.referenceDir})
 	if err != nil {
 		return err
 	}

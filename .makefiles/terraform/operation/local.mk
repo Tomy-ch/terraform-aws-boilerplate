@@ -54,7 +54,7 @@ POLICY_SOURCE :=
 
 .PHONY: bootstrap-verify ## bootstrap の段の確認を実環境を読んで行う（STAGE=<stage1|before-apply|stage4|permissions|stage5|output-policy>、段4 は BOOTSTRAP_EXECUTOR=、output-policy は POLICY_SOURCE=）
 bootstrap-verify:
-	@set -eu; unset_env=$$($(call TF_LOCAL,env-unset)); region=$$($(call TF_LOCAL,region "$(TF_BASE)/env/admin/identity")); env $$unset_env AWS_PROFILE=$(TF_LOCAL_PROFILE) AWS_EC2_METADATA_DISABLED=true $(call RUN_SCRIPT_HOST_ARGS,bootstrap-check) verify -stage "$(STAGE)" -project $(TF_LOCAL_PROJECT) -region "$$region"$(if $(BOOTSTRAP_EXECUTOR), -executor "$(BOOTSTRAP_EXECUTOR)")$(if $(POLICY_SOURCE), -policy-source "$(POLICY_SOURCE)")
+	@set -eu; unset_env=$$($(call TF_LOCAL,env-unset)); region=$$($(call TF_LOCAL,region "$(TF_BASE)/env/admin/identity")); env $$unset_env AWS_PROFILE=$(TF_LOCAL_PROFILE) AWS_EC2_METADATA_DISABLED=true $(call RUN_SCRIPT_HOST_ARGS,bootstrap-check) verify -stage "$(STAGE)" -project $(TF_LOCAL_PROJECT) -region "$$region"$(if $(BOOTSTRAP_EXECUTOR), -executor "$(BOOTSTRAP_EXECUTOR)")$(if $(POLICY_SOURCE), -policy-source "$(POLICY_SOURCE)")$(if $(filter reference,$(POLICY_SOURCE)), -reference-dir "$(TF_POLICY_INPUT)/run")
 
 # terraform show は AWS を呼ばないので、環境変数は引き継がず、
 # terraform が動くのに要る PATH と HOME だけを渡す。
