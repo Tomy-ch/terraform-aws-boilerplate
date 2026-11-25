@@ -180,8 +180,9 @@ func (c ciTarget) assumeInput(work, role, session string) error {
 }
 
 // ciWorkUnder は、-work の値 parent を root の tmp/ の下に限って検証し、その下に pattern の一時ディレクトリを
-// 作ります。返す関数がその子だけを消します。tmp/ の外の値は errUsage です。
-func ciWorkUnder(root, parent, pattern string) (string, func(), error) {
+// 作ります。返す関数がその子だけを消し、消し残せば w へ警告します（子は OIDC の token を置く）。tmp/ の外の値は
+// errUsage です。
+func ciWorkUnder(root, parent, pattern string, w io.Writer) (string, func(), error) {
 	dir, err := workdir.Resolve(root, parent)
 	if err != nil {
 		return "", nil, xerrors.Wrapf(errUsage, "-work %v", err)
@@ -194,7 +195,12 @@ func ciWorkUnder(root, parent, pattern string) (string, func(), error) {
 		return "", nil, xerrors.Wrap(err, "作業ディレクトリ")
 	}
 
-	return work, cleanup, nil
+	return work, func() {
+		cleanup()
+		if _, err := os.Lstat(work); !os.IsNotExist(err) {
+			fmt.Fprintf(w, "⚠️ 作業ディレクトリ %s を消せませんでした\n", work)
+		}
+	}, nil
 }
 
 // ciCredentials は、OIDC の token で role を1回だけ assume し、資格情報を GitHub Actions のログで伏せる指示を
@@ -217,7 +223,7 @@ func ciCredentials(args []string, d deps, stdout io.Writer) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	work, cleanup, err := ciWorkUnder(d.root, *workParent, "assume-")
+	work, cleanup, err := ciWorkUnder(d.root, *workParent, "assume-", d.stderr)
 	if err != nil {
 		return "", err
 	}
@@ -377,7 +383,7 @@ func ciAssumeDenied(args []string, d deps, stdout io.Writer) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	work, cleanup, err := ciWorkUnder(d.root, *workParent, "assume-")
+	work, cleanup, err := ciWorkUnder(d.root, *workParent, "assume-", d.stderr)
 	if err != nil {
 		return "", err
 	}

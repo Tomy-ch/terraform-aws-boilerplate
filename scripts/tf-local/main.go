@@ -114,7 +114,7 @@ func main() {
 var verdicts = []error{
 	errRootCredentials, errStateKeyMissing, errStateKeyMismatch,
 	errPlanFailed, errPlanErrored, errLocalPlan,
-	errCIPolicy, policyresult.ErrViolation, policyresult.ErrCount, policyresult.ErrEmpty,
+	errCIPolicy, policyresult.ErrViolation,
 	errApplyFailed, errApplyTimeout, errAssumeSucceeded,
 	errLockFresh, errLockForeign, errLockExists,
 	errCIFailed, errCIUnfinish,

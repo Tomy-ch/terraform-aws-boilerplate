@@ -143,6 +143,15 @@ func Test_runTool(t *testing.T) {
 		assert.Equal(t, "out", string(got))
 		_, err = runTool(tool, t.TempDir(), nil, "b", &bytes.Buffer{})
 		require.ErrorIs(t, err, errLocalAWS)
+		assert.Equal(t, 2, exitCode(err))
+	})
+
+	t.Run("起動できなければ errLocalAWS ではなく ErrTool で、終了コード 2", func(t *testing.T) {
+		t.Parallel()
+		_, err := runTool(tooltest.Missing, t.TempDir(), nil, "a", &bytes.Buffer{})
+		require.ErrorIs(t, err, toolrun.ErrTool)
+		assert.NotErrorIs(t, err, errLocalAWS)
+		assert.Equal(t, 2, exitCode(err))
 	})
 }
 
@@ -326,6 +335,19 @@ func Test_localPlan(t *testing.T) {
 	planArgs := func(base, header, log string) []string {
 		return []string{"-profile", "tabp-bootstrap", "-env", "admin", "-root", "identity", "-base", base, "-header", header, "-log", log}
 	}
+
+	t.Run("plan を起動できなければ ErrTool で、終了コード 2", func(t *testing.T) {
+		t.Parallel()
+		base := localBase(t)
+		work := t.TempDir()
+		header := filepath.Join(work, "h")
+		require.NoError(t, os.WriteFile(header, []byte("commit: "+commitSHA+"\n"), 0o600))
+		d, _ := localDeps(tooltest.Missing)
+		_, err := localPlan(planArgs(base, header, filepath.Join(work, "p.log")), d, &bytes.Buffer{}, d.stderr)
+		require.ErrorIs(t, err, toolrun.ErrTool)
+		assert.NotErrorIs(t, err, errLocalPlan)
+		assert.Equal(t, 2, exitCode(err))
+	})
 
 	t.Run("lock を取らない plan を起動し、header と出力を log と端末へ書き、log を所有者だけの権限で作り直す", func(t *testing.T) {
 		t.Parallel()

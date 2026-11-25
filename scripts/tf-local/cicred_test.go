@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -315,7 +316,7 @@ func Test_ciWorkUnder(t *testing.T) {
 	t.Run("root の tmp/ の下の -work の下に作業ディレクトリを作り、返す関数がその子だけを消す", func(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
-		work, cleanup, err := ciWorkUnder(root, "tmp/ci-plan", "assume-")
+		work, cleanup, err := ciWorkUnder(root, "tmp/ci-plan", "assume-", io.Discard)
 		require.NoError(t, err)
 		assert.Equal(t, filepath.Join(root, "tmp", "ci-plan"), filepath.Dir(work))
 		assert.DirExists(t, work)
@@ -324,11 +325,11 @@ func Test_ciWorkUnder(t *testing.T) {
 		assert.DirExists(t, filepath.Join(root, "tmp", "ci-plan"))
 	})
 
-	for _, parent := range []string{"/abs/ci-plan", "ci-plan", "tmp", "../x"} {
+	for _, parent := range []string{"", "/abs/ci-plan", "ci-plan", "tmp", "tmp/", "tmp/.", "../x", "tmp/../tmp/x"} {
 		t.Run(parent+" は errUsage で、何も作らない", func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			_, _, err := ciWorkUnder(root, parent, "assume-")
+			_, _, err := ciWorkUnder(root, parent, "assume-", io.Discard)
 			require.ErrorIs(t, err, errUsage)
 			assert.Equal(t, 2, exitCode(err))
 			entries, err := os.ReadDir(root)
@@ -342,7 +343,7 @@ func Test_ciWorkUnder(t *testing.T) {
 		root := t.TempDir()
 		require.NoError(t, os.MkdirAll(filepath.Join(root, "tmp"), 0o750))
 		require.NoError(t, os.WriteFile(filepath.Join(root, "tmp", "f"), nil, 0o600))
-		_, _, err := ciWorkUnder(root, "tmp/f/x", "assume-")
+		_, _, err := ciWorkUnder(root, "tmp/f/x", "assume-", io.Discard)
 		require.Error(t, err)
 	})
 }

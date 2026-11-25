@@ -560,7 +560,7 @@ func (l *stringList) Set(v string) error {
 }
 
 func ciRunPolicy(s ciState, d deps, stdout io.Writer, parent, policy, decl, layer string, namespaces []string) error {
-	work, cleanup, err := ciWorkUnder(d.root, parent, "policy-")
+	work, cleanup, err := ciWorkUnder(d.root, parent, "policy-", d.stderr)
 	if err != nil {
 		return err
 	}
@@ -585,6 +585,7 @@ func ciRunPolicy(s ciState, d deps, stdout io.Writer, parent, policy, decl, laye
 		return err
 	}
 	var failed []string
+	var unestablished []error
 	for _, ns := range namespaces {
 		rego, err := readInRoot(filepath.Join(policy, strings.TrimPrefix(ns, "plan.")+".rego"))
 		if err != nil {
@@ -601,12 +602,20 @@ func ciRunPolicy(s ciState, d deps, stdout io.Writer, parent, policy, decl, laye
 				return werr
 			}
 			failed = append(failed, ns)
+			if !xerrors.Is(err, policyresult.ErrViolation) {
+				unestablished = append(unestablished, xerrors.Wrap(err, ns))
+			}
 
 			continue
 		}
 		if _, err := fmt.Fprintln(stdout, line); err != nil {
 			return err
 		}
+	}
+	// 評価が0件・件数の食い違いなど、違反のほかの理由で落ちた名前空間が1つでもあれば、Policy を評価できなかった
+	// ことになる（ADR-0702 決定13）。違反だけのときに限って判定（errCIPolicy）にする。
+	if len(unestablished) > 0 {
+		return xerrors.Wrapf(errors.Join(unestablished...), "Policy を評価できません（%s）", strings.Join(failed, " "))
 	}
 	if len(failed) > 0 {
 		return xerrors.Wrap(errCIPolicy, strings.Join(failed, " "))
@@ -746,7 +755,9 @@ func ciRunApply(s ciState, d deps, limit time.Duration) (int, error) {
 	})
 	waitErr := cmd.Wait()
 	timer.Stop()
-	if timedOut.Load() {
+	// 打ち切りの割り込みで終わったときだけ timeout とする。Wait が戻ってから timer を止めるまでに発火しても、0 で
+	// 終わった apply を timeout（revert の対象）に読み替えない。
+	if timedOut.Load() && waitErr != nil {
 		return applyTimedOut, nil
 	}
 	code, err := waitCode(waitErr)
@@ -770,7 +781,10 @@ func ciUploadStep(args []string, d deps, stdout io.Writer) (string, error) {
 	}
 	if err := ciRunUpload(&s, d, stdout); err != nil {
 		s.fail(stageUpload)
-		s.Established = isVerdict(err)
+		// 先の段の失敗が残っていれば、その判定を上書きしない。
+		if s.Stage == stageUpload {
+			s.Established = isVerdict(err)
+		}
 		if serr := s.save(statePath); serr != nil {
 			return "", errors.Join(err, serr)
 		}
@@ -854,14 +868,14 @@ func ciFinishStep(args []string, d deps) (string, error) {
 		if slices.Contains(s.Done, stageUpload) {
 			err = errCIFailed
 		}
+		// 判定に届いていなければ、判定の sentinel を連鎖に残さない（残すと終了コードが 1 になる）。
+		if !s.Established {
+			err = xerrors.Wrapf(errCINotEstablished, "%v", err)
+		}
 		if s.Mode == ciModeApply {
 			if werr := writeFailure(d.environ, s.Stage); werr != nil {
 				return "", errors.Join(err, werr)
 			}
-		}
-
-		if !s.Established {
-			return "", xerrors.Wrapf(errCINotEstablished, "失敗の段: %s（%v）", s.Stage, err)
 		}
 
 		return "", xerrors.Wrapf(err, "失敗の段: %s", s.Stage)
