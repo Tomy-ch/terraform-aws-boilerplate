@@ -7,9 +7,9 @@
 
 ## Context
 
-メンバーアカウントの `state-backend` と `deployment-identity` は、そのアカウントの CI の role が在るまで、管理アカウントの identity root が作る（repository-wide/ADR-0604 決定6）。apply は、管理アカウントの apply-identity の role がメンバーの `OrganizationAccountAccessRole` を引き受けて行う。
+repository-wide/ADR-0604 決定6 は、メンバーアカウントの立ち上げの間、管理アカウントの identity root の apply を apply-identity の role がそのアカウントの `OrganizationAccountAccessRole` を引き受けて行い、plan を plan の role がそのアカウントにだけ置く立ち上げ用の読み取りの role を引き受けて行うと決める。読み取りの role は、統制の構成物として管理アカウントから配る（repository-wide/ADR-0602 決定1）。plan の role に `OrganizationAccountAccessRole` を引き受けさせないのは、Pull Request のコードを走らせる job が、立ち上げの間メンバーの管理者になるからである（repository-wide/ADR-0602 決定13）。
 
-Pull Request の plan は、管理アカウントの plan の role で走る。plan の role に `OrganizationAccountAccessRole` を引き受けさせると、Pull Request のコードを走らせる job が、立ち上げの間メンバーの管理者になる。repository-wide/ADR-0602 決定13 は、plan の role に書き込みの権限を与えない。
+この ADR は、その読み取りの role を、この usecase がどう配り、何を許し、立ち上げの外でどう閉じるかを決める。
 
 メンバーの側に読み取りの role を Terraform で先に作る形は成り立たない。その role を作る Pull Request の plan 自身が、メンバーへ届く provider を要するからである。管理アカウントの identity root は、メンバーへ届く provider を持たない（organization-baseline/ADR-0001）。メンバーへ resource を置く経路は、管理アカウントの StackSet である（organization-baseline/ADR-0202）。
 
@@ -25,7 +25,7 @@ Pull Request の plan は、管理アカウントの plan の role で走る。p
    - IAM の CI の role と policy は `<project>-*-ci-*` の prefix pattern にする。S3 と同じく env を名指せないためである。OIDC provider は固定の ARN にする
 
    管理アカウントの plan の role の inline policy の読みのうち、管理アカウントの構成物（組織、break-glass の user と group、StackSet、メールの parameter、password policy）と state の object・plan の出力にだけ掛かるもののほかを、すべて持つ。除いた Action は、理由と組にして `conftest/plan/decl.json` の `organization_baseline.bootstrap_read.management_only_actions` に宣言する。
-5. 立ち上げの外では閉じる。`deny-bootstrap-role` は、`OrganizationAccountAccessRole` とこの role の両方の使用を拒む。`protect-governance-roles` は、StackSets の実行の role（`stacksets-exec-*`）のほかに、この role の変更を拒む（organization-baseline/ADR-0202 決定5 と同じ例外）。この usecase が持つのはメンバーの側の拒否だけである。管理アカウントの側で、この role の引き受けをどのアカウントに許すかは `deployment-identity` が決める。
+5. 立ち上げの外では閉じる。`deny-bootstrap-role` は、`OrganizationAccountAccessRole` とこの role の両方の使用を拒む。`protect-governance-roles` は、StackSets の実行の role（`stacksets-exec-*`）のほかに、この role の変更を拒む（organization-baseline/ADR-0202 決定5 と同じ例外）。この usecase が持つのはメンバーの側の拒否だけである。管理アカウントの側で、この role の引き受けをどのアカウントに許すかは `deployment-identity` が決める（deployment-identity/ADR-0201 決定22）。
 6. StackSet と stack instance に `prevent_destroy` を付け、`stateful_protection.protected_types` に載せる。
 7. FSBP の CloudFormation.4 から外れる（repository-wide/ADR-0207 決定11 の記録）。
    - 外れる推奨: FSBP の CloudFormation.4（stack に service role が付いていること）
@@ -96,7 +96,7 @@ Pull Request のコードを走らせる job が、立ち上げの間メンバ�
 
 ## 影響
 
-管理アカウントに StackSet が1つ増え、メンバーアカウントごとに stack が1つ置かれる。管理アカウントの CI の apply-identity の role は、この StackSet の作成と更新の権限を、plan の role はその読み取りとこの role の引き受けの権限を要する。それらは `deployment-identity` の権限であり、この ADR は決めない。
+管理アカウントに StackSet が1つ増え、メンバーアカウントごとに stack が1つ置かれる。管理アカウントの CI の apply-identity の role は、この StackSet の作成と更新の権限を、plan の role はその読み取りとこの role の引き受けの権限を要する。それらは `deployment-identity` の権限であり、deployment-identity/ADR-0201 決定7・22 が決める。
 
 ## 見直し条件
 
