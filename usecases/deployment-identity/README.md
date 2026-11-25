@@ -108,7 +108,7 @@ unsupported:
 - 判断 Issue: #130、#98、#142、#96、#83。いずれも閉じている
 - GitHub 側の environment は [`.github/settings/environments.json`](../../.github/settings/environments.json) が宣言する。名前はこのユースケースの role の表の `<env>-<role>` の写しで、`env/` の root が渡す `env` ごとにすべての role の名前が宣言に揃っていることを `make repo-settings-check` が見る。plan の role は `terraform-gates.yaml` の `plan-admin-identity` が、apply-identity の role は `terraform-apply.yaml` の `apply-admin-identity` が、unlock-identity の role は `terraform-unlock.yaml` の `unlock-admin-identity` が assume する。apply の role は `terraform-apply.yaml` の `apply-admin-workload` と `terraform-lock-hold.yaml` の `hold-admin-workload` が、unlock の role は `terraform-unlock.yaml` の `unlock-admin-workload` が assume する
 
-identity root に構成物を足すときは、権限の変更を先に merge してから、その権限で作る resource を apply する（[deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) の影響）。
+identity root に構成物を足すときは、権限の変更と、その権限で作る resource を、同じ Pull Request・同じ昇格に入れてよい。反映の遅れで初回の apply が落ちたら走らせ直す（[deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) の影響）。
 
 ## 検証方法
 

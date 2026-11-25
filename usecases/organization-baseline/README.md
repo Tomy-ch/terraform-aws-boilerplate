@@ -62,7 +62,7 @@ unsupported:
 
 ## 依存するユースケースと判断 Issue
 
-- `deployment-identity`: 管理アカウントの apply-identity の role に、この usecase の resource を変える権限と、apply の role にそれを拒ませる Deny が要る。初回は bootstrap の段4 が、権限とこの usecase の resource を同じ apply で作る（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定1）。以後、この usecase の resource を足す変更は、その権限の変更を先に昇格してから昇格する
+- `deployment-identity`: 管理アカウントの apply-identity の role に、この usecase の resource を変える権限と、apply の role にそれを拒ませる Deny が要る。初回は bootstrap の段4 が、権限とこの usecase の resource を同じ apply で作る（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定1）。以後、この usecase の resource を足す変更は、その権限の変更と同じ昇格でよい（deployment-identity/ADR-0201 の影響）
 - 判断 Issue: #21（7つのアカウント、OU、break-glass、Identity Center、データ境界の決定）、#99、#142、#156、#128
 
 ## 検証方法
