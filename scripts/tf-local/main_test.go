@@ -67,7 +67,7 @@ func stubGitWith(revParse, status, failOn string) func(args ...string) (string, 
 			return status, nil
 		}
 
-		return "", fmt.Errorf("unexpected git %v", args)
+		return "", xerrors.Newf("unexpected git %v", args)
 	}
 }
 

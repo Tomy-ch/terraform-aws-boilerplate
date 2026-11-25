@@ -22,7 +22,7 @@ linters:
     - contextcheck # context の伝播が途切れていないか
     - copyloopvar
     - errorlint # エラーの比較が errors.Is / As を通っているか
-    - forbidigo # 作業ディレクトリを消す経路を lib/workdir と os.Root に限る
+    - forbidigo # 作業ディレクトリを消す経路と、エラーを作る経路を限る
     - gocritic
     - gosec # 外部コマンドの起動とファイル操作を多く含むため
     - misspell
@@ -43,6 +43,8 @@ linters:
       forbid:
         - pattern: ^os\.RemoveAll$
           msg: 消すのは lib/workdir の Recreate・Remove・Temp か、os.Root の RemoveAll に限る（検証と削除の間に symlink へ差し替えられても外を消さない）
+        - pattern: ^fmt\.Errorf$
+          msg: エラーは lib/xerrors の New・Wrap・Join で作る（スタックを付け、センチネルを Is で辿れるようにする。lib/xerrors/README.md）
     staticcheck:
       checks:
         - all

@@ -78,7 +78,7 @@ func fetchOnce(client *http.Client, url, bearer string) ([]byte, bool, error) {
 		return nil, true, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, resp.StatusCode >= http.StatusInternalServerError, fmt.Errorf("HTTP %d", resp.StatusCode)
+		return nil, resp.StatusCode >= http.StatusInternalServerError, xerrors.Newf("HTTP %d", resp.StatusCode)
 	}
 
 	return body, false, nil
