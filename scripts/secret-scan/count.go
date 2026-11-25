@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/gitrev"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -106,7 +107,7 @@ func expected(raw []byte) (must, maybe int, err error) {
 			break
 		}
 		if hash, ok := strings.CutPrefix(tok, commitHeader); ok {
-			if !isHash(hash) {
+			if !gitrev.IsHash(hash) {
 				return 0, 0, xerrors.Wrapf(errNumstat, "commit の行 %q", tok)
 			}
 			if seen {
@@ -163,17 +164,4 @@ func lineCounts(added, deleted string) (changed, binary bool, err error) {
 		return false, false, xerrors.Wrap(errNumstat, fmt.Sprintf("行数の列 %q %q", added, deleted))
 	}
 	return a+d > 0, false, nil
-}
-
-// isHash は s が SHA-1 か SHA-256 の object 名であるかを返します。
-func isHash(s string) bool {
-	if len(s) != 40 && len(s) != 64 {
-		return false
-	}
-	for _, c := range s {
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return false
-		}
-	}
-	return true
 }

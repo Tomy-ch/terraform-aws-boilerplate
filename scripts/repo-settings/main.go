@@ -21,6 +21,10 @@
 //	sync   drift と同じ差分を、GitHub への書き込みで解消する（管理者の資格情報を要する）
 //	source デプロイブランチへ入る Pull Request の head を検査する（ADR-0603 決定31。ネットワークを使わない）
 //	deploy-branch  env のデプロイブランチの名前を出す
+//	delete-labels  リポジトリのラベルをすべて消す（make setup-repo の連鎖。管理者の資格情報を要する。以下同じ）
+//	create-labels  labels.json のラベルを作るか、同じ名前のものを宣言へ書き換える
+//	enable-workflows  disabled_fork の workflow を有効にする
+//	create-deploy-branch  env のデプロイブランチを、デフォルトブランチの先頭から作る（在れば失敗する）
 package main
 
 import (
@@ -53,10 +57,10 @@ const (
 )
 
 var (
-	errUsage                             = xerrors.New("usage: repo-settings <apply|check|drift|sync|source|deploy-branch> [-repo owner/name] [-only ruleset|environments|vulnerability-reporting] [-base <ref> -base-sha <sha> -head-sha <sha> -default <branch>] [-env <env>]")
+	errUsage                             = xerrors.New("usage: repo-settings <apply|check|drift|sync|source|deploy-branch|delete-labels|create-labels|enable-workflows|create-deploy-branch> [-repo owner/name] [-only ruleset|environments|vulnerability-reporting] [-base <ref> -base-sha <sha> -head-sha <sha> -default <branch>] [-env <env>]")
 	errIncludeDrift                      = xerrors.New("branch-protection.json の include が branches.json からずれています（make repo-settings-apply）")
 	errDrift                             = xerrors.New("宣言と実態がずれています")
-	errNoToken                           = xerrors.New("GITHUB_TOKEN がありません")
+	errNoToken                           = xerrors.New("GITHUB_TOKEN がありません（gh auth login でログインするか、GITHUB_TOKEN を渡してください）")
 	errNoRepo                            = xerrors.New("対象のリポジトリを解決できません（-repo、GITHUB_REPOSITORY、gh repo view のいずれも空です）")
 	errVulnerabilityReportingUnavailable = xerrors.New("公開でないリポジトリでは Private Vulnerability Reporting を使えません。" +
 		vulnerabilityReportingFile + " の enabled を false にして commit し、SECURITY.md の報告先を差し替えてください")
@@ -91,6 +95,8 @@ func run(args []string, wd func() (string, error), c githubClient, out io.Writer
 		"apply": {}, "check": {}, "drift": {"repo": true}, "sync": {"repo": true, "only": true},
 		"source":        {"base": true, "base-sha": true, "head-sha": true, "default": true},
 		"deploy-branch": {"env": true},
+		"delete-labels": {"repo": true}, "create-labels": {"repo": true}, "enable-workflows": {"repo": true},
+		"create-deploy-branch": {"repo": true, "env": true},
 	}
 	unused := false
 	fs.Visit(func(f *flag.Flag) {
@@ -139,8 +145,33 @@ func run(args []string, wd func() (string, error), c githubClient, out io.Writer
 			return errUsage
 		}
 		return deployBranch(root, *env, out)
+	case "delete-labels", "create-labels", "enable-workflows", "create-deploy-branch":
+		return runSetup(ctx, args[0], root, c, *repo, *env, out)
 	default:
 		return errUsage
+	}
+}
+
+// runSetup は、GitHub へ書き込む初期化のサブコマンドを、対象と資格情報を確かめてから呼びます。
+func runSetup(ctx context.Context, sub, root string, c githubClient, repo, env string, out io.Writer) error {
+	if sub == "create-deploy-branch" && env == "" {
+		return errDeployEnvArg
+	}
+	if repo == "" {
+		return errNoRepo
+	}
+	if c.token == "" {
+		return errNoToken
+	}
+	switch sub {
+	case "delete-labels":
+		return deleteLabels(ctx, root, c, repo, out)
+	case "create-labels":
+		return createLabels(ctx, root, c, repo, out)
+	case "enable-workflows":
+		return enableWorkflows(ctx, c, repo, out)
+	default:
+		return createDeployBranch(ctx, root, c, repo, env, out)
 	}
 }
 
@@ -159,6 +190,8 @@ type declarations struct {
 	exprs int
 	// dependabotLabels は、labels.json にあることを確かめた Dependabot のラベルの数。
 	dependabotLabels int
+	// dependabotCooldowns は、cooldown が取り込みの窓を下回らないことを確かめた Dependabot の updates の項の数。
+	dependabotCooldowns int
 }
 
 // readDeclarations は宣言を読み、検証し、include の区間を生成し直します。書き込みはしません。
@@ -216,6 +249,10 @@ func readDeclarations(root string) (declarations, error) {
 	if err != nil {
 		return declarations{}, err
 	}
+	dependabotCooldowns, err := checkDependabotCooldown(dependabot)
+	if err != nil {
+		return declarations{}, err
+	}
 	src, err := os.ReadFile(filepath.Clean(filepath.Join(root, rulesetFile)))
 	if err != nil {
 		return declarations{}, xerrors.Wrapf(err, "%s の読み取り", rulesetFile)
@@ -231,7 +268,7 @@ func readDeclarations(root string) (declarations, error) {
 	if err := verifyInclude(rendered, includes); err != nil {
 		return declarations{}, xerrors.Wrapf(err, "%s", rulesetFile)
 	}
-	return declarations{branches: b, environments: envs, vulnerabilityReporting: pvr, ruleset: src, rendered: rendered, workflows: workflows, sets: sets, marks: marks, exprs: exprs, dependabotLabels: dependabotLabels}, nil
+	return declarations{branches: b, environments: envs, vulnerabilityReporting: pvr, ruleset: src, rendered: rendered, workflows: workflows, sets: sets, marks: marks, exprs: exprs, dependabotLabels: dependabotLabels, dependabotCooldowns: dependabotCooldowns}, nil
 }
 
 // loadDesired は宣言からあるべき実態を組みます。include の区間がずれていればエラーにします
@@ -262,9 +299,9 @@ func applyOrCheck(root string, dryRun bool, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	summary := fmt.Sprintf("保護対象 %d 件、environment %d 件、%s の宣言（enabled=%t）、apply の workflow %d 件、分岐の集合の印 %d 件（workflow %d 件）、ref を比べる式の検査 %d 件、labels.json にある Dependabot のラベル %d 件",
+	summary := fmt.Sprintf("保護対象 %d 件、environment %d 件、%s の宣言（enabled=%t）、apply の workflow %d 件、分岐の集合の印 %d 件（workflow %d 件）、ref を比べる式の検査 %d 件、labels.json にある Dependabot のラベル %d 件、窓を下回らない Dependabot の cooldown %d 件",
 		len(rulesetIncludes(decl.branches)), len(decl.environments), vulnerabilityReportingName, decl.vulnerabilityReporting,
-		len(decl.workflows), decl.marks, len(decl.sets), decl.exprs, decl.dependabotLabels)
+		len(decl.workflows), decl.marks, len(decl.sets), decl.exprs, decl.dependabotLabels, decl.dependabotCooldowns)
 	changed := map[string]string{}
 	var names []string
 	if string(decl.rendered) != string(decl.ruleset) {

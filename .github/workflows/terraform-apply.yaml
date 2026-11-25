@@ -495,6 +495,7 @@ jobs:
             kms.ap-northeast-1.amazonaws.com
             organizations.us-east-1.amazonaws.com
             *.s3-control.ap-northeast-1.amazonaws.com
+            ssm.ap-northeast-1.amazonaws.com
             guardduty.ap-northeast-1.amazonaws.com
             guardduty.ap-northeast-2.amazonaws.com
             guardduty.ap-northeast-3.amazonaws.com
@@ -547,7 +548,6 @@ jobs:
             securityhub.us-west-1.amazonaws.com
             securityhub.us-west-2.amazonaws.com
             cloudtrail.ap-northeast-1.amazonaws.com
-            ssm.ap-northeast-1.amazonaws.com
       - name: Harden the runner (retry)
         if: steps.harden-runner.outcome != 'success'
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
@@ -597,6 +597,7 @@ jobs:
             kms.ap-northeast-1.amazonaws.com
             organizations.us-east-1.amazonaws.com
             *.s3-control.ap-northeast-1.amazonaws.com
+            ssm.ap-northeast-1.amazonaws.com
             guardduty.ap-northeast-1.amazonaws.com
             guardduty.ap-northeast-2.amazonaws.com
             guardduty.ap-northeast-3.amazonaws.com
@@ -649,7 +650,6 @@ jobs:
             securityhub.us-west-1.amazonaws.com
             securityhub.us-west-2.amazonaws.com
             cloudtrail.ap-northeast-1.amazonaws.com
-            ssm.ap-northeast-1.amazonaws.com
 
       # 再実行は元の run の commit と payload を使うので、古い run を止める。skip は成功として数えられる
       # ので失敗にする（ADR-0603 決定17）。どのブランチから起動できるかは environment が限る。
@@ -753,6 +753,7 @@ jobs:
             kms.ap-northeast-1.amazonaws.com
             organizations.us-east-1.amazonaws.com
             *.s3-control.ap-northeast-1.amazonaws.com
+            ssm.ap-northeast-1.amazonaws.com
             sns.ap-northeast-1.amazonaws.com
             sns.us-east-1.amazonaws.com
             kms.us-east-1.amazonaws.com
@@ -808,6 +809,7 @@ jobs:
             kms.ap-northeast-1.amazonaws.com
             organizations.us-east-1.amazonaws.com
             *.s3-control.ap-northeast-1.amazonaws.com
+            ssm.ap-northeast-1.amazonaws.com
             sns.ap-northeast-1.amazonaws.com
             sns.us-east-1.amazonaws.com
             kms.us-east-1.amazonaws.com

@@ -179,7 +179,6 @@ IAM Identity Center の文書の手順である。外部 IdP を前提とし、I
   - policy document の Allow の statement に Action wildcard が存在しないこと
   - Resource wildcard が、許可リストに登録されたaction以外で使用されていないこと。同じ範囲を与える `NotResource` の Allow が無いこと。許可リストに、使われていない action が残っていないこと
   - `0.0.0.0/0` と `::/0` からのingressが、インターネット公開点として宣言されたresource以外に存在しないこと
-  - 暗号化・public access block・secure transport等のSecure by Default設定が有効であること
   - 意味論的権限指定から生成されたActionの集合が、期待集合と完全一致すること
   - KMS Key Policy のアカウントへの委任に暗号操作と `kms:CreateGrant` が無いこと。identity-based policy（role・user・group の inline policy と customer managed policy）の Allow に KMS の暗号操作と `kms:CreateGrant` が無いこと
   - break-glass の IAM user がちょうど2つで、Terraform がアクセスキーと login profile を持たないこと。IAM user の Allow が break-glass の role の `sts:AssumeRole` と自身の MFA・パスワードの管理に限られ、長期の資格情報の作成（`iam:CreateAccessKey`・`iam:CreateServiceSpecificCredential`・`iam:UploadSSHPublicKey`・`iam:UploadSigningCertificate`）を、条件なしで全 Resource について Deny していること
@@ -190,6 +189,7 @@ IAM Identity Center の文書の手順である。外部 IdP を前提とし、I
   - permission set に付く AWS managed policy が、設計記録の一覧（permission set ごとの許可リスト）に一致すること。一覧に無い policy の attachment が無いこと、一覧に使われていない項目が残っていないこと
   - `AdministratorAccess` を付ける permission set の割当が、管理アカウントだけ、かつ `principal_type = "USER"` だけであること。メンバーアカウントへの割当に、`AdministratorAccess` を付けた permission set が無いこと
   - 排他の resource（`aws_iam_role_policy_attachments_exclusive`）が載せる policy ごとに、同じ role への attachment がちょうど1つ在ること。排他の resource に載らない attachment が無いこと（決定21。`plan.iam_role_attachment_pairing`、`PLAN-ATTACH-*`）
+- Security（ADR-0501 決定6 の道具）: 暗号化・public access block・secure transport 等の Secure by Default の設定が有効であること。道具の既定ルールが本リポジトリの書き方を検出しない設定は、ADR-0402 決定6 の表の下の文により Policy Test が持つ。
 - Unit Test: 権限語彙と入力の組合せに対する導出結果を検証する。
 - 人の手順: break-glass で実際にサインインして role を引き受け、通知が届くことを定期的に試す。手順と頻度は `organization-baseline` の README の検証方法が持つ。
 - Integration / E2E Test: 意図した通信のみが成立し、意図しない通信が拒否されることを実環境で検証する。

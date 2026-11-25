@@ -143,11 +143,13 @@ locals {
   break_glass_stack_set_arns  = [for n in local.break_glass_stack_set_names : "${local.cfn_arn_prefix}:stackset/${n}:*"]
   # UpdateStackSet と stack instance の操作は、stackset-target と type の resource 型も要る（Service Authorization Reference）。type の ARN はアカウントを `*` にする（deployment-identity/ADR-0201 決定4）。
   # stackset-target は region を空、type は region を `*` にする（同 決定4）。
-  break_glass_stack_set_write_arns = concat(
+  break_glass_stack_instance_arns = concat(
     local.break_glass_stack_set_arns,
     [for n in local.break_glass_stack_set_names : "arn:${data.aws_partition.current.partition}:cloudformation::${data.aws_caller_identity.current.account_id}:stackset-target/${n}:*"],
-    ["arn:${data.aws_partition.current.partition}:cloudformation:*:*:type/resource/AWS-IAM-Role"],
   )
+  break_glass_stack_set_type_arn     = "arn:${data.aws_partition.current.partition}:cloudformation:*:*:type/resource/AWS-IAM-Role"
+  break_glass_stack_set_write_arns   = concat(local.break_glass_stack_instance_arns, [local.break_glass_stack_set_type_arn])
+  break_glass_stack_instance_actions = ["cloudformation:CreateStackInstances", "cloudformation:UpdateStackInstances"]
 
   governance_policy_name = "${var.name_prefix}-ci-apply-identity-governance"
   governance_policy_arn  = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/${local.governance_policy_name}"
@@ -432,6 +434,8 @@ locals {
   governance_wildcard_read_actions = [
     "iam:GetAccountPasswordPolicy",
     "iam:ListOrganizationsFeatures",
+    # アカウントの作成の待ち。統制の policy の長さを抑えるため、読みに置く。
+    "organizations:DescribeCreateAccountStatus",
     "organizations:DescribeOrganization",
     "organizations:ListAWSServiceAccessForOrganization",
     "organizations:ListAccounts",
@@ -486,8 +490,6 @@ locals {
     "iam:UpdateAccountPasswordPolicy",
     "organizations:CreateAccount",
     "organizations:CreateOrganization",
-    # アカウントの作成の待ち。CreateAccount と同じく resource-level 権限を持たない。
-    "organizations:DescribeCreateAccountStatus",
   ]
 
   # 組織の削除・メンバーの閉鎖・組織からの除外と、prevent_destroy を持つ構成物の削除は与えない（deployment-identity/ADR-0201 決定3）。
@@ -559,12 +561,13 @@ locals {
       },
       # StackSet と stack instance の削除は与えない。メンバーの break-glass の role が消える（deployment-identity/ADR-0201「与えないもの」）。
       { Sid = "UpdateBreakGlassStackSet", Effect = "Allow", Action = "cloudformation:UpdateStackSet", Resource = local.break_glass_stack_set_write_arns },
+      { Sid = "ManageBreakGlassStackInstances", Effect = "Allow", Action = local.break_glass_stack_instance_actions, Resource = local.break_glass_stack_instance_arns },
+      # TargetRegion は type の評価にだけ付くので、条件はこの文に置く。ForAllValues は空の一覧にも成り立つので、Null を外さない（deployment-identity/ADR-0201 決定4）。
       {
-        Sid      = "ManageBreakGlassStackInstances"
+        Sid      = "LimitBreakGlassStackInstanceRegions"
         Effect   = "Allow"
-        Action   = ["cloudformation:CreateStackInstances", "cloudformation:UpdateStackInstances"]
-        Resource = local.break_glass_stack_set_write_arns
-        # ForAllValues は空の一覧にも成り立つので、Null を外さない（deployment-identity/ADR-0201 決定4）。
+        Action   = local.break_glass_stack_instance_actions
+        Resource = [local.break_glass_stack_set_type_arn]
         Condition = {
           "ForAllValues:StringEquals" = { "cloudformation:TargetRegion" = data.aws_region.current.region }
           Null                        = { "cloudformation:TargetRegion" = "false" }
