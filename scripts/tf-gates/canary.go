@@ -13,6 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/atomicwrite"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workdir"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -27,9 +28,10 @@ const (
 
 // runValidateCanary は、実物の terraform と AWS Provider で validate と判定の全体を走らせ、非推奨の引数で落ち、
 // 宣言に当たる警告と非推奨の無い構成で通ることを確かめます（ADR-0501 決定13）。Provider の版は -reference の
-// lock に揃えます。抑止の宣言の detail は、canary の出力から取ります（版で文言が変わるため）。
-func runValidateCanary(args []string, w io.Writer, tool toolFunc) error {
-	fset := flag.NewFlagSet("tf-gates validate-canary", flag.ContinueOnError)
+// lock に揃えます。抑止の宣言の detail は、canary の出力から取ります（版で文言が変わるため）。[errTool] の
+// ときは、ケースの判定に畳まず [errTool] を返し、それまでに落ちたケースは文面にだけ添えます。root はリポジトリ直下です。
+func runValidateCanary(args []string, w io.Writer, tool toolFunc, root string) error {
+	fset := flag.NewFlagSet("tf-gates validate の canary", flag.ContinueOnError)
 	fset.SetOutput(w)
 	data := fset.String("data", "", "TF_DATA_DIR を置くディレクトリ（絶対パス）")
 	work := fset.String("work", "", "fixture を建てるディレクトリ（中身は毎回作り直す）")
@@ -38,12 +40,16 @@ func runValidateCanary(args []string, w io.Writer, tool toolFunc) error {
 		return xerrors.Wrapf(errUsage, "%v", err)
 	}
 	if *data == "" || *work == "" || *reference == "" || fset.NArg() > 0 || !filepath.IsAbs(*data) {
-		return xerrors.Wrap(errUsage, "tf-gates validate-canary -data <絶対パス> -work <dir> -reference <dir>")
+		return xerrors.Wrap(errUsage, "canary -data <絶対パス> -work <tmp/ の下の相対パス> -reference <dir>")
 	}
-	if err := os.RemoveAll(*work); err != nil {
-		return xerrors.Wrapf(err, "%s の削除", *work)
+	workDir, err := workdir.Resolve(root, *work)
+	if err != nil {
+		return xerrors.Wrapf(errUsage, "-work %v", err)
 	}
-	empty := filepath.Join(*work, "ignore-empty.yaml")
+	if err := os.RemoveAll(workDir); err != nil {
+		return xerrors.Wrapf(err, "%s の削除", workDir)
+	}
+	empty := filepath.Join(workDir, "ignore-empty.yaml")
 	if err := writeText(empty, "warnings: []\n"); err != nil {
 		return err
 	}
@@ -55,30 +61,46 @@ func runValidateCanary(args []string, w io.Writer, tool toolFunc) error {
 			fmt.Fprintf(w, "--- canary %s の出力:\n%s\n", name, out)
 		}
 	}
+	aborted := func(name string, err error) error {
+		if len(failed) == 0 {
+			return err
+		}
 
-	clean, err := canaryCase(*work, "clean", *reference, "")
+		return xerrors.Wrapf(err, "canary %s で打ち切りました（それまでに落ちたケース: %s）", name, strings.Join(failed, " "))
+	}
+
+	clean, err := canaryCase(workDir, "clean", *reference, "")
 	if err != nil {
 		return err
 	}
 	out, err := validateFixture(clean, *data, empty, tool)
+	if xerrors.Is(err, errTool) {
+		return aborted("clean", err)
+	}
 	check("clean", err == nil && strings.Contains(out, "1 ディレクトリを validate し"), out)
 
-	deprecated, err := canaryCase(*work, "deprecated", *reference, canaryDeprecated)
+	deprecated, err := canaryCase(workDir, "deprecated", *reference, canaryDeprecated)
 	if err != nil {
 		return err
 	}
 	out, err = validateFixture(deprecated, *data, empty, tool)
+	if xerrors.Is(err, errTool) {
+		return aborted("deprecated", err)
+	}
 	check("deprecated", xerrors.Is(err, errFailed) && strings.Contains(out, canaryWarning), out)
 
 	detail, err := onlyWarningDetail(filepath.Join(deprecated, "tmp", "tf-validate", "1.json"))
 	if err != nil {
 		check("detail", false, err.Error())
 	} else {
-		ignore := filepath.Join(*work, "ignore-aws.yaml")
+		ignore := filepath.Join(workDir, "ignore-aws.yaml")
 		if err := writeIgnore(ignore, detail); err != nil {
 			return err
 		}
 		out, err = validateFixture(deprecated, *data, ignore, tool)
+		if xerrors.Is(err, errTool) {
+			return aborted("ignored", err)
+		}
 		check("ignored", err == nil && strings.Contains(out, "抑止 1 件"), out)
 	}
 
@@ -88,6 +110,11 @@ func runValidateCanary(args []string, w io.Writer, tool toolFunc) error {
 	fmt.Fprintln(w, "✅ tf-validate は AWS Provider の非推奨の引数で落ち、宣言に当たる警告と非推奨の無い構成で通る")
 
 	return nil
+}
+
+// validateCanary は、root をリポジトリ直下として runValidateCanary を走らせる canary です。
+func validateCanary(root string) canaryFunc {
+	return func(args []string, w io.Writer, tool toolFunc) error { return runValidateCanary(args, w, tool, root) }
 }
 
 // canaryCase は、<work>/<name> に reference の版を写した root を建て、その基点を返します。

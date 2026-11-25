@@ -59,6 +59,8 @@ CI の権限については循環の性質が異なる。backend さえあれば
 
    統制の構成物は bootstrap の構成物ではない。CI が Terraform を実行できるようになるまでに要らないからである。ただし管理アカウントの identity root は、統制の構成物も持つ（ADR-0604 決定3）。そのため、管理アカウントで初めて CI 実行基盤を用意するときの段4 の apply（決定9 の1つ目の契機）に限り、その root が宣言する統制の構成物も作る。回復の契機（決定9 の2つ目）の apply では、統制の構成物を変更しない。それ以外の統制の構成物の変更は、常に ADR-0601 の経路で行う。
 
+   bootstrap と統制のほかに、**アカウントの前提の構成物**を「workload root の use-case が存在を前提にし、その use-case と同じ apply で作ると成り立たない、アカウントに1つの構成物」と定義し、対象を AWS が名前を決める service-linked role に限る。use-case が自分の resource の引数に ARN を渡すために同じ apply で作る service-linked role は、これに当たらない。どの service-linked role がこれに当たるかは、それを持つ use-case の ADR が列挙する。前提の構成物は bootstrap の構成物でも統制の構成物でもない。CI が Terraform を実行できるようになるまでに要らないからである。ただし identity root は前提の構成物も持つ（ADR-0604 決定3）。そのため、当該アカウントで初めて CI 実行基盤を用意するときの段4 の apply（決定9 の1つ目の契機）に限り、その root が宣言する前提の構成物も作る。段4 の対象から外すと、段4 の後の Pull Request の head に対する CI の plan が前提の構成物の追加を示し、決定10 の merge の条件が成り立たないからである。回復の契機（決定9 の2つ目）の apply では、前提の構成物を変更しない。それ以外の前提の構成物の変更は、常に ADR-0601 の経路で行う。
+
 2. bootstrap の構成物も use-case として `usecases/` 配下へ置く（ADR-0102）。bootstrap であることを理由に、型付き契約（ADR-0203）・Generic Escape Hatch の禁止（ADR-0204）・最小権限（ADR-0301）・テスト（ADR-0401）のいずれも免除しない。
 3. bootstrap 層であることは、適用の契機が異なることのみを意味する。公開契約とテストの要件は他のユースケースと同一とする。
 
@@ -84,7 +86,7 @@ CI の権限については循環の性質が異なる。backend さえあれば
    CI/CD が apply すること（決定4）、人がローカル環境から本番環境へ直接 apply しないこと（決定5）、apply
    対象が merge された commit と一致すること（決定6）である。例外の範囲を次に限る。
 
-   - 対象: 本 ADR 決定1 が定める bootstrap の構成物。管理アカウントの1つ目の契機に限り、決定1 の但し書きが定める統制の構成物を含む
+   - 対象: 本 ADR 決定1 が定める bootstrap の構成物。管理アカウントの1つ目の契機に限り、決定1 の但し書きが定める統制の構成物を含む。いずれのアカウントでも1つ目の契機に限り、決定1 が定めるアカウントの前提の構成物を含む
    - 契機: 次のいずれか
      - 当該 AWS アカウントで初めて CI 実行基盤を用意するとき、1回限り。**既に CI 実行基盤を持つ
        別のアカウントの CI から当該アカウントの bootstrap の構成物を作れる場合は、この契機に当たらない。**
@@ -132,11 +134,15 @@ CI の権限については循環の性質が異なる。backend さえあれば
     したがって plan の role を assume できる主体は state を読める。state に置く秘密の扱いは、当該 use-case
     の ADR が決定する。
 
-    apply を行う role を、さらに2つに分ける。bootstrap の構成物と統制の構成物（決定1）を変更する
-    apply-identity の role と、それ以外を変更する apply の role である。apply の role に、bootstrap の構成物と
-    統制の構成物を変更する権限を与えない。統制の構成物を apply-identity の role が持つのは、それが apply の
+    apply を行う role を、さらに2つに分ける。bootstrap の構成物と統制の構成物とアカウントの前提の構成物
+    （決定1）を変更する apply-identity の role と、それ以外を変更する apply の role である。apply の role に、
+    bootstrap の構成物と統制の構成物を変更する権限を与えない。アカウントの前提の構成物については、apply の
+    role に作成のほかの変更の権限を与えない。作成の権限を残すかは、その構成物を持つ use-case の ADR が、
+    理由と撤回の条件とともに決める。統制の構成物を apply-identity の role が持つのは、それが apply の
     role を含む CI と人を縛る仕組みであり、縛られる側が外せないようにするためである。apply-identity の role は
     CI の role をもともと作り変えられるので、統制の構成物の権限を足しても、到達できる範囲は増えない。
+    前提の構成物（service-linked role）の permissions policy は AWS が持ち、利用者は書き換えられないので、
+    apply-identity の role がそれを作っても、到達できる範囲は増えない。
     apply-identity の role は、本 ADR が apply の role に課す条件（決定14-16）にすべて従い、
     apply の role とは別の environment を持つ。
 
@@ -234,6 +240,10 @@ plan の role は変更系の権限を一切持たずに済む。ただし plan 
 
 変更が要らない。ただし member account の state の書き込みの拒否（決定11）が、管理アカウントの workload root のコードと apply の role の判断に左右される。apply の role が、自分を含む CI を縛る仕組みを外せる。
 
+### 案J: アカウントの前提の構成物を段4 の対象から外し、CI の apply-identity だけが作る（決定1・9 に対して）
+
+決定9 の例外の対象が bootstrap と統制の構成物のままで済む。ただし identity root の一部だけを段4 で apply するには、`-target` か、アカウントごとに段4 の後に切り替える入力（判断を保留した暫定の設定口。ADR-0204 決定4）か、3つ目の root（ADR-0604 決定2 が許さない）が要る。どれを採っても、段4 の後の Pull Request の head に対する CI の plan が前提の構成物の追加を示し、決定10 の merge の条件が成り立たない。
+
 ### 評価
 
 | 評価軸 | 案A: 管理外 | 案B: 全て CLI + import | 案C: 長期キー | 案D: ref で限定 | 案E: 回復を例外にしない | 案F: 別の job が書く | 採用案 |
@@ -290,7 +300,7 @@ plan の role は変更系の権限を一切持たずに済む。ただし plan 
 - 運用機構（`make check-plan-expected`）: 段2-4 の期待値（`docs/setup/scripts/check-plan.expected`）が、管理アカウントの identity root の mock の plan と、import と追加の address の集合で一致すること（決定1・8）。実 plan との突合は段2 の手順が持つ
 - 手順: 段2 の完了条件（決定8）は、それ自体が検証である。plan が決定8 の条件を満たさない限り段3 へ進まない
 
-決定9 の契機の判定と、回復の契機の plan が統制の構成物に変更を示さないこと（決定1）と、決定10 の apply 前の条件と記録の存在は、機械判定できない。例外の commit を含む Pull Request のレビューで扱う。決定10 の merge 前の条件は、required check の plan が担う（ADR-0603 決定12）。決定11 のうち member account の SCP と root 資格情報の中央管理の中身は、`organization-baseline` の Policy Test が見る。本 ADR が見るのは、apply の role がそれらを変更できないことである。
+決定9 の契機の判定と、回復の契機の plan が統制の構成物とアカウントの前提の構成物に変更を示さないこと（決定1）と、決定10 の apply 前の条件と記録の存在は、機械判定できない。例外の commit を含む Pull Request のレビューで扱う。決定10 の merge 前の条件は、required check の plan が担う（ADR-0603 決定12）。決定11 のうち member account の SCP と root 資格情報の中央管理の中身は、`organization-baseline` の Policy Test が見る。本 ADR が見るのは、apply の role がそれらを変更できないことである。
 
 ## 影響
 
@@ -311,3 +321,4 @@ plan の role は変更系の権限を一切持たずに済む。ただし plan 
 - GitHub Actions 以外の CI を採用する場合（決定14 の claim の形が変わる）
 - GitHub が environment 形式の `sub` を廃止または変更した場合
 - 回復の契機（決定9）による例外の実行が観測された場合。信頼条件の誤りを merge 前に止める検査の不足を示す
+- アカウントの前提の構成物に、service-linked role でない種類が要るようになった場合（決定1 の対象の限定）

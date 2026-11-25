@@ -67,7 +67,7 @@ Bucket 1つと lifecycle のために、公開契約と bootstrap の段の割�
 ## 保証範囲
 
 - 保証すること: plan の出力の Bucket が、公開されず、ACL を持たず、版を残し、TLS でない要求を拒否し、state の鍵による SSE-KMS で暗号化され、Bucket Key を使わず、SSE-C を拒否し、保持日数を過ぎた版を消す設定を持つこと（いずれも宣言として。実 API での振る舞いは保証しない）。apply の出力の Bucket（決定7）は同じ module で作り、同じ設定を持つこと。2つの出力の Bucket を指す `aws_s3_bucket_policy` が、それぞれ宣言した1つだけであること（Policy Test）。2つの出力の Bucket の Bucket Policy の文書が決定8 のとおりであること（Unit Test の文書の完全一致）と、その文の数が宣言と一致すること（Policy Test の `PLAN-RPE-03`）。state の鍵の Key Policy が決定9 の role に、決定9 の object に限って暗号操作を許し、形が `plan.kms_key_policy` の規則を満たすこと（Contract Test の文書の照合と、Policy Test の `PLAN-SBW-06`・`plan.kms_key_policy`・`PLAN-UNLOCK-04`）。plan・apply-identity・apply の role の復号と鍵の生成の object が、その role の IAM の `s3:GetObject`・`s3:PutObject` の Resource と一致すること（Policy Test の `PLAN-SBW-10`。reference の plan で）
-- 保証しないこと: lifecycle が実際に日数どおりに版を消すこと（S3 は失効を非同期に行う）。切り替えの前に書かれた出力が、保持日数の2倍を過ぎるまで SSE-S3 で残ること。決定8 の Deny が実際の要求で文書どおりに評価されること（人が merge の前に `docs/setup/scripts/verify.sh output-policy` で確かめる）。決定9 の object の限定が、S3 の実際の暗号化コンテキストに文書どおりに当たること
+- 保証しないこと: lifecycle が実際に日数どおりに版を消すこと（S3 は失効を非同期に行う）。切り替えの前に書かれた出力が、保持日数の2倍を過ぎるまで SSE-S3 で残ること。決定8 の Deny が実際の要求で文書どおりに評価されること（人が merge の前に `make bootstrap-verify STAGE=output-policy` で確かめる）。決定9 の object の限定が、S3 の実際の暗号化コンテキストに文書どおりに当たること
 
 ## 検証方法
 
@@ -79,7 +79,7 @@ Bucket 1つと lifecycle のために、公開契約と bootstrap の段の割�
 - Unit Test: `internal/plan-output/tests/policy.tftest.hcl` が、決定8 の Bucket Policy の文書を完全一致で確かめる
 - Contract Test: `tests/contract.tftest.hcl` が、決定9 の Key Policy の文を、出力の Bucket の ARN を override しない mock の plan で照合する
 - Policy Test: `plan.state_backend_write_deny` が、Key Policy の暗号操作を許す role の集合が宣言と一致すること（`PLAN-SBW-06`）と、plan・apply-identity・apply の role の復号と鍵の生成の object が IAM の S3 の object と一致すること（`PLAN-SBW-10`）を、`plan.kms_key_policy` が Key Policy の形と S3 経由の文が object で限られること（`PLAN-KMS-12`）を、`plan.deployment_identity_unlock_role`（`PLAN-UNLOCK-04`）が lock を外す role への復号がそれぞれの root の lock file の object に限られることを確かめる（決定9）
-- 手順: 決定8 の Bucket Policy を変える昇格の merge の前に、人が `docs/setup/scripts/verify.sh output-policy` で、書き手の書き込みが拒まれず、書き手の外と削除が拒まれることを `simulate-principal-policy --resource-policy` で確かめる（`docs/setup/bootstrap.md`）
+- 手順: 決定8 の Bucket Policy を変える昇格の merge の前に、人が `make bootstrap-verify STAGE=output-policy` で、書き手の書き込みが拒まれず、書き手の外と削除が拒まれることを `simulate-principal-policy --resource-policy` で確かめる（`docs/setup/bootstrap.md`）
 - Security: `make trivy-config` が AWS-0132 を、`make checkov` が CKV_AWS_145 を報告しないこと（抑止は持たない）
 
 ## 影響

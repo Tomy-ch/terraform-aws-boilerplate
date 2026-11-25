@@ -1,0 +1,14 @@
+-- m/providers.tf --
+provider "runner" {
+  settings = { outer = { inner = [{ port = 443 }, { host = var.h }] } }
+}
+
+variable "h" {}
+-- m/versions.tf --
+terraform {
+  required_providers {
+    runner = {
+      source = "example/runner"
+    }
+  }
+}

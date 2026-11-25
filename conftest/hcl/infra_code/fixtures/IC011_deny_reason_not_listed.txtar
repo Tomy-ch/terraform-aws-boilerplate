@@ -1,0 +1,6 @@
+-- m/main.tf --
+resource "aws_instance" "i" {
+  provisioner "local-exec" {
+    command = "x"
+  }
+}

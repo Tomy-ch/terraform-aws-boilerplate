@@ -40,6 +40,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/harden"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lintreport"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
@@ -248,13 +249,15 @@ func checkNeeds(job workflow.Job, jobs []workflow.Job, finding func(int, string,
 func checkSteps(job workflow.Job, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
 	var findings []lintreport.Finding
 	runs := 0
+	// egress が生成した bullfrog の対の continue-on-error: と if: は見逃す（harden.GeneratedLines。ADR-0702 決定20）。
+	generated := harden.GeneratedLines(job)
 	for _, step := range workflow.SplitSteps(job) {
 		inEnv, checkout, persistOff := false, false, false
 		for _, l := range step.Lines {
 			if commentLine.MatchString(l.Text) {
 				continue
 			}
-			if m := stepHides.FindStringSubmatch(l.Text); m != nil {
+			if m := stepHides.FindStringSubmatch(l.Text); m != nil && !generated[l.Number] {
 				findings = append(findings, finding(l.Number, "step に %s: を置かないでください", m[1]))
 			}
 			if anyUses.MatchString(l.Text) {

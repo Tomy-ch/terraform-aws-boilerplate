@@ -3,7 +3,7 @@ name: Checkov
 # Checkov over the Terraform tree, one of the Security layer's gates (ADR-0501 decision 6).
 # Checkov returns no severity, so any finding fails; accepted exceptions are inline
 # #checkov:skip comments. The tool runs from its upstream image without a bind mount, which
-# the runner's egress agent refuses (.makefiles/runner.mk IMAGE_RUN).
+# the runner's egress agent refuses (scripts/iac-scan).
 
 on:
   push:
@@ -22,6 +22,12 @@ on:
       - 'Makefile'
       - 'docker-compose.yaml'
       - 'docker/images-pin.toml'
+      - 'scripts/iac-scan/**'
+      - 'scripts/lib/**'
+      - 'scripts/go.mod'
+      - 'scripts/go.sum'
+      - '.github/actions/setup-mise/**'
+      - 'mise.toml'
       - 'usecases/**'
       - 'modules/**'
       - 'env/**'
@@ -47,6 +53,28 @@ jobs:
       relevant: ${{ steps.filter.outputs.relevant }}
     steps:
       - name: Harden the runner
+        id: harden-runner
+        continue-on-error: true
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+      - name: Harden the runner (retry)
+        if: steps.harden-runner.outcome != 'success'
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
         with:
           egress-policy: block
@@ -87,6 +115,12 @@ jobs:
               - 'Makefile'
               - 'docker-compose.yaml'
               - 'docker/images-pin.toml'
+              - 'scripts/iac-scan/**'
+              - 'scripts/lib/**'
+              - 'scripts/go.mod'
+              - 'scripts/go.sum'
+              - '.github/actions/setup-mise/**'
+              - 'mise.toml'
               - 'usecases/**'
               - 'modules/**'
               - 'env/**'
@@ -105,6 +139,8 @@ jobs:
 
     steps:
       - name: Harden the runner
+        id: harden-runner
+        continue-on-error: true
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
         with:
           egress-policy: block
@@ -123,6 +159,37 @@ jobs:
             productionresultssa30.blob.core.windows.net
             productionresultssa31.blob.core.windows.net
             productionresultssa32.blob.core.windows.net
+            mise-versions.jdx.dev
+            dl.google.com
+            proxy.golang.org
+            registry-1.docker.io
+            auth.docker.io
+            production.cloudfront.docker.com
+            docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com
+            docker-images-prod.s3.dualstack.us-east-1.amazonaws.com
+      - name: Harden the runner (retry)
+        if: steps.harden-runner.outcome != 'success'
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise-versions.jdx.dev
+            dl.google.com
+            proxy.golang.org
             registry-1.docker.io
             auth.docker.io
             production.cloudfront.docker.com
@@ -133,6 +200,12 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: go
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # The gate exits non-zero on a finding, which would skip the summary below; the exit
       # code is recorded instead and judged by the last step.
@@ -206,8 +279,7 @@ jobs:
           sarif_file: tmp/checkov/out/results_sarif.sarif
           category: checkov
 
-      # The verdict is make's exit code: the threshold lives in .makefiles/security/checkov.mk
-      # alone. The count only reports.
+      # The verdict is make's exit code, judged by scripts/iac-scan. The count only reports.
       - name: Fail if the gate failed
         if: always()
         shell: bash

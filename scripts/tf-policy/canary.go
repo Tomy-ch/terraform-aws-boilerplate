@@ -18,6 +18,8 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/atomicwrite"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/policyresult"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/tfexec"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workdir"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -27,22 +29,20 @@ var canaryExcluded = []string{
 	"deployment_identity_*.rego", "state_backend_*.rego", "kms_key_policy*.rego", "resource_policy_exclusive*.rego",
 	"audit_evidence*.rego", "finops*.rego", "network_foundation*.rego", "dns_zone*.rego", "ops_notification*.rego",
 	"image_registry*.rego", "publisher_trust*.rego", "iam_role_attachment_pairing*.rego", "organization_baseline_*.rego",
-	"workload_role_boundary*.rego", "account_baseline*.rego",
+	"workload_role_boundary*.rego", "account_baseline*.rego", "security_group_ingress*.rego",
 }
 
 // canaryData は、canary の Policy の宣言です。terraform_data の input を IAM の文書として読ませます。
 const canaryData = `{"policy_plan": {"plan_format_version": "1.2", "provider_format_version": "1.0", "documents": {"terraform_data": ["input"]}, "required_documents": ["terraform_data"], "deployment_identity": {"roles": ["module.x.aws_iam_role.this"], "oidc_provider": "module.x.aws_iam_openid_connect_provider.this"}, "stateful_protection": {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_ecr_lifecycle_policy", "terraform_data"], "allow": {}}, "inline_arguments": {"terraform_data": {"triggers_replace": null}}}}`
 
-// canaryLayer は、canary の層の宣言です。
 const canaryLayer = `{"layer_decl": {"attachments": {"aws_x_policy": {"parents": {"x": ["aws_x"]}, "optional": false, "parent_arguments": {}, "whole_document": false}}, "unrelated_deprecated_arguments": {}, "inline_owned": {}}}`
 
-// canaryPolicyInput は、Policy の入力を出す terraform test です。
 const canaryPolicyInput = "run \"policy_input\" {\n  command = plan\n}\n"
 
 // canaryOK は、違反の無い文書を持つ構成です。
 const canaryOK = `resource "terraform_data" "doc" { input = jsonencode({ Statement = [{ Effect = "Allow", Action = "s3:GetObject", Resource = "*" }] }) }`
 
-// canaryCase は、canary の1ケースです。want は通るか（pass）落ちるか（fail）、pattern は出力に現れるべき文です。
+// canaryCase は、canary の1ケースです。pass は通るか落ちるか、pattern は出力に現れるべき文です。
 type canaryCase struct {
 	name    string
 	pass    bool
@@ -56,9 +56,10 @@ type canaryCase struct {
 // runCanary は、Policy Test の段（Rego の形の検査、Rego のテスト、plan の取得と取り出し、非推奨の引数の取り出し、
 // Conftest の適用、評価の数の突き合わせ）を、実物の terraform・Conftest・mock provider で通しで走らせ、違反の無い
 // 入力で通り、Go の単体テストでは作れない落ち方（実物の Conftest が評価しない規則、mock の override が書いた
-// 値を隠さないこと。ADR-0402 決定18）で落ちることを確かめます。
-func runCanary(args []string, w io.Writer, tool toolFunc) error {
-	fset := flag.NewFlagSet("tf-policy canary", flag.ContinueOnError)
+// 値を隠さないこと。ADR-0402 決定18）で落ちることを確かめます。[errTool] のときは、ケースの判定に
+// 畳まず [errTool] を返し、それまでに落ちたケースは文面にだけ添えます。root はリポジトリ直下です。
+func runCanary(args []string, w io.Writer, tool toolFunc, root string) error {
+	fset := flag.NewFlagSet("tf-policy plan の canary", flag.ContinueOnError)
 	fset.SetOutput(w)
 	data := fset.String("data", "", "TF_DATA_DIR を置くディレクトリ（絶対パス）")
 	work := fset.String("work", "", "fixture を建てるディレクトリ（中身は毎回作り直す）")
@@ -70,15 +71,20 @@ func runCanary(args []string, w io.Writer, tool toolFunc) error {
 		return xerrors.Wrapf(errUsage, "%v", err)
 	}
 	if !filepath.IsAbs(*data) || *work == "" || *policy == "" || *planDecl == "" || *layerDecl == "" || *reference == "" || fset.NArg() > 0 {
-		return xerrors.Wrap(errUsage, "tf-policy canary -data <絶対パス> -work <dir> -policy <dir> -decl <path> -layer <path> -reference <dir>")
+		return xerrors.Wrap(errUsage, "canary -data <絶対パス> -work <tmp/ の下の相対パス> -policy <dir> -decl <path> -layer <path> -reference <dir>")
+	}
+	resolved, err := workdir.Resolve(root, *work)
+	if err != nil {
+		return xerrors.Wrapf(errUsage, "-work %v", err)
+	}
+	// fixture の中で起動する道具の作業ディレクトリと、dir からの相対パスを解くため、絶対パスにする。
+	workAbs, err := filepath.Abs(resolved)
+	if err != nil {
+		return xerrors.Wrapf(err, "%s", resolved)
 	}
 	planDeclRaw, err := os.ReadFile(filepath.Clean(*planDecl))
 	if err != nil {
 		return xerrors.Wrapf(errRead, "%s: %v", *planDecl, err)
-	}
-	workAbs, err := filepath.Abs(*work)
-	if err != nil {
-		return xerrors.Wrapf(err, "%s", *work)
 	}
 	if err := os.RemoveAll(workAbs); err != nil {
 		return xerrors.Wrapf(err, "%s の削除", workAbs)
@@ -100,6 +106,13 @@ func runCanary(args []string, w io.Writer, tool toolFunc) error {
 			return xerrors.Wrapf(err, "%s の fixture", c.name)
 		}
 		out, err := policyChain(dir, *data, tool, verified)
+		if xerrors.Is(err, errTool) {
+			if len(failed) == 0 {
+				return err
+			}
+
+			return xerrors.Wrapf(err, "canary %s で打ち切りました（それまでに落ちたケース: %s）", c.name, strings.Join(failed, " "))
+		}
 		ok := strings.Contains(out, c.pattern)
 		if c.pass {
 			ok = ok && err == nil
@@ -119,7 +132,11 @@ func runCanary(args []string, w io.Writer, tool toolFunc) error {
 	return nil
 }
 
-// canaryCases は、canary のケースの一覧です。
+// planCanary は、root をリポジトリ直下として runCanary を走らせる canary です。
+func planCanary(root string) canaryFunc {
+	return func(args []string, w io.Writer, tool toolFunc) error { return runCanary(args, w, tool, root) }
+}
+
 func canaryCases(reference string, layerRaw []byte, nullValues string) []canaryCase {
 	appendTo := func(rel, text string) func(c string) error {
 		return func(c string) error { return appendText(filepath.Join(c, filepath.FromSlash(rel)), text) }
@@ -332,7 +349,7 @@ func copyPolicy(src, dst string) error {
 
 // policyChain は、ケースの配置 dir で Policy Test の段を順に走らせ、出力と、最初に落ちた段のエラーを返します。
 // Rego のテストの結果は、Rego の木と宣言の中身が同じケースの間で verified に持ち回ります（同じ入力の conftest
-// verify を繰り返さない）。
+// verify を繰り返さない）。[errTool] を返した段は、その結果を持ち回りません。
 func policyChain(dir, data string, tool toolFunc, verified map[string][]byte) (string, error) {
 	var out bytes.Buffer
 	files, err := readPolicy(filepath.Join(dir, "rego"))
@@ -356,7 +373,9 @@ func policyChain(dir, data string, tool toolFunc, verified map[string][]byte) (s
 		var buf bytes.Buffer
 		verify := tool(dir, env, stepVerify)
 		verify.Stdout, verify.Stderr = &buf, &out
-		_ = verify.Run()
+		if _, err := toolrun.Exec(verify); err != nil {
+			return out.String(), xerrors.Wrap(err, "conftest verify")
+		}
 		report = buf.Bytes()
 		verified[key] = report
 	}
@@ -375,8 +394,12 @@ func policyChain(dir, data string, tool toolFunc, verified map[string][]byte) (s
 	for _, r := range roots {
 		cmd := tool(r.path, tfexec.Env(os.Environ(), "TF_DATA_DIR="+tfexec.DataDir(data, r.rel)), stepInit)
 		cmd.Stdout, cmd.Stderr = &out, &out
-		if err := cmd.Run(); err != nil {
-			return out.String(), xerrors.Wrapf(errFailed, "%s の init: %v", r.path, err)
+		code, err := toolrun.Exec(cmd)
+		if err != nil {
+			return out.String(), xerrors.Wrapf(err, "%s の init", r.path)
+		}
+		if code != 0 {
+			return out.String(), xerrors.Wrapf(errFailed, "%s の init: exit status %d", r.path, code)
 		}
 	}
 	outDir := filepath.Join(dir, "out")
@@ -396,13 +419,19 @@ func policyChain(dir, data string, tool toolFunc, verified map[string][]byte) (s
 	}
 	deprecated := tool(dir, env, stepDeprecated)
 	deprecated.Stdout, deprecated.Stderr = &out, &out
-	if err := deprecated.Run(); err != nil {
-		return out.String(), xerrors.Wrapf(errFailed, "非推奨の引数を取り出せません: %v", err)
+	code, err := toolrun.Exec(deprecated)
+	if err != nil {
+		return out.String(), xerrors.Wrap(err, "非推奨の引数の取り出し")
+	}
+	if code != 0 {
+		return out.String(), xerrors.Wrapf(errFailed, "非推奨の引数を取り出せません: exit status %d", code)
 	}
 	var result bytes.Buffer
 	test := tool(dir, env, stepConftest)
 	test.Stdout, test.Stderr = &result, &out
-	_ = test.Run()
+	if _, err := toolrun.Exec(test); err != nil {
+		return out.String(), xerrors.Wrap(err, "conftest test")
+	}
 	rules, err := policyresult.Rules(filepath.Join(dir, "rego"), os.ReadFile)
 	if err != nil {
 		fmt.Fprintf(&out, "%v\n", err)
