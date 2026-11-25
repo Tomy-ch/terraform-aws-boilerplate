@@ -15,6 +15,7 @@ import (
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cientry"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workdir"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -169,11 +170,11 @@ func localPrepare(args []string, d deps, stderr io.Writer) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	work, err := os.MkdirTemp("", "tf-local-prepare-")
+	work, cleanup, err := workdir.Temp("", "tf-local-prepare-")
 	if err != nil {
 		return "", xerrors.Wrap(err, "作業ディレクトリ")
 	}
-	defer func() { _ = os.RemoveAll(work) }()
+	defer cleanup()
 	awsEnv := localEnv(d.environ, *profile, "AWS_REGION="+region)
 
 	identityOut, err := runTool(d.tool, work, awsEnv, stepCallerIdentity, stderr)

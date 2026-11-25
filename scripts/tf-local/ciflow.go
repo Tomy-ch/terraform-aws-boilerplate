@@ -21,6 +21,7 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cientry"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/policyresult"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workdir"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -290,11 +291,11 @@ func ciPrepareState(d deps, stdout io.Writer, mode, project, env, root, profile,
 	if s.Region, err = rootRegion(dir, d.readFile); err != nil {
 		return s, err
 	}
-	work, err := os.MkdirTemp(filepath.Dir(out), "prepare-")
+	work, cleanup, err := workdir.Temp(filepath.Dir(out), "prepare-")
 	if err != nil {
 		return s, xerrors.Wrap(errCIState, err.Error())
 	}
-	defer func() { _ = os.RemoveAll(work) }()
+	defer cleanup()
 	awsEnv := localEnv(d.environ, profile, "AWS_REGION="+s.Region)
 	identity, err := runTool(d.tool, work, awsEnv, stepCallerIdentity, d.stderr)
 	if err != nil {
@@ -561,14 +562,11 @@ func (l *stringList) Set(v string) error {
 }
 
 func ciRunPolicy(s ciState, d deps, stdout io.Writer, parent, policy, decl, layer string, namespaces []string) error {
-	if err := os.MkdirAll(parent, 0o700); err != nil {
-		return xerrors.Wrap(err, "作業ディレクトリ")
-	}
-	work, err := os.MkdirTemp(parent, "policy-")
+	work, cleanup, err := ciWorkUnder(d.root, parent, "policy-")
 	if err != nil {
-		return xerrors.Wrap(err, "作業ディレクトリ")
+		return err
 	}
-	defer func() { _ = os.RemoveAll(work) }()
+	defer cleanup()
 	if err := copyTree(policy, filepath.Join(work, "rego")); err != nil {
 		return xerrors.Wrap(errPolicyRules, err.Error())
 	}
@@ -795,11 +793,11 @@ func ciRunUpload(s *ciState, d deps, stdout io.Writer) error {
 	if _, err := fmt.Fprintf(stdout, "全文: key=%s sha256=%s\n", s.Key, sha); err != nil {
 		return err
 	}
-	work, err := os.MkdirTemp("", "tf-local-upload-")
+	work, cleanup, err := workdir.Temp("", "tf-local-upload-")
 	if err != nil {
 		return xerrors.Wrap(errCIUpload, err.Error())
 	}
-	defer func() { _ = os.RemoveAll(work) }()
+	defer cleanup()
 	if err := copyFile(s.Out, filepath.Join(work, "body.txt")); err != nil {
 		return xerrors.Wrap(errCIUpload, err.Error())
 	}

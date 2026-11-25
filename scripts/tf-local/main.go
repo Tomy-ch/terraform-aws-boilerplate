@@ -91,12 +91,14 @@ type deps struct {
 	tool     toolFunc
 	fetch    fetchFunc
 	stderr   io.Writer
+	// root は、-work を検証するリポジトリ直下です。
+	root string
 }
 
 func main() {
 	log.SetFlags(0)
 
-	if err := run(os.Args[1:], os.Stdout, deps{readFile: os.ReadFile, environ: os.Environ(), git: gitOutput, now: time.Now, alive: processAlive, sleep: time.Sleep, tool: command, fetch: fetchOIDC, stderr: os.Stderr}); err != nil {
+	if err := run(os.Args[1:], os.Stdout, deps{readFile: os.ReadFile, environ: os.Environ(), git: gitOutput, now: time.Now, alive: processAlive, sleep: time.Sleep, tool: command, fetch: fetchOIDC, stderr: os.Stderr, root: "."}); err != nil {
 		log.Printf("%v", err)
 		os.Exit(exitCode(err))
 	}

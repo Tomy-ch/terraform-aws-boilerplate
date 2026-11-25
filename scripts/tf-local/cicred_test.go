@@ -99,7 +99,7 @@ func ciDeps(t *testing.T, tool toolFunc, fetch fetchFunc, extra ...string) (deps
 	home := t.TempDir()
 	var stderr bytes.Buffer
 	return deps{readFile: os.ReadFile, environ: ciEnviron(home, extra...), git: stubGit("", ""), now: time.Now,
-		tool: tool, fetch: fetch, stderr: &stderr}, base, home
+		tool: tool, fetch: fetch, stderr: &stderr, root: t.TempDir()}, base, home
 }
 
 func oidcBody(sub string) string {
@@ -309,25 +309,40 @@ func Test_ciTarget_assumeInput(t *testing.T) {
 	})
 }
 
-func Test_ciWork(t *testing.T) {
+func Test_ciWorkUnder(t *testing.T) {
 	t.Parallel()
 
-	t.Run("親の下に作業ディレクトリを作り、返す関数が消す", func(t *testing.T) {
+	t.Run("root の tmp/ の下の -work の下に作業ディレクトリを作り、返す関数がその子だけを消す", func(t *testing.T) {
 		t.Parallel()
-		parent := filepath.Join(t.TempDir(), "ci-plan")
-		work, cleanup, err := ciWork(parent)
+		root := t.TempDir()
+		work, cleanup, err := ciWorkUnder(root, "tmp/ci-plan", "assume-")
 		require.NoError(t, err)
-		assert.Equal(t, parent, filepath.Dir(work))
+		assert.Equal(t, filepath.Join(root, "tmp", "ci-plan"), filepath.Dir(work))
 		assert.DirExists(t, work)
 		cleanup()
 		assert.NoDirExists(t, work)
+		assert.DirExists(t, filepath.Join(root, "tmp", "ci-plan"))
 	})
 
-	t.Run("親を作れなければ失敗する", func(t *testing.T) {
+	for _, parent := range []string{"/abs/ci-plan", "ci-plan", "tmp", "../x"} {
+		t.Run(parent+" は errUsage で、何も作らない", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			_, _, err := ciWorkUnder(root, parent, "assume-")
+			require.ErrorIs(t, err, errUsage)
+			assert.Equal(t, 2, exitCode(err))
+			entries, err := os.ReadDir(root)
+			require.NoError(t, err)
+			assert.Empty(t, entries)
+		})
+	}
+
+	t.Run("-work の親を作れなければ失敗する", func(t *testing.T) {
 		t.Parallel()
-		file := filepath.Join(t.TempDir(), "f")
-		require.NoError(t, os.WriteFile(file, nil, 0o600))
-		_, _, err := ciWork(filepath.Join(file, "x"))
+		root := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "tmp"), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(root, "tmp", "f"), nil, 0o600))
+		_, _, err := ciWorkUnder(root, "tmp/f/x", "assume-")
 		require.Error(t, err)
 	})
 }
@@ -344,7 +359,7 @@ func Test_ciCredentials(t *testing.T) {
 		tool, calls := fakeAssume(t, map[string]string{"default.out": credsJSON})
 		fetch, _ := fakeFetch(oidcBody(immutable), nil)
 		d, base, home := ciDeps(t, tool, fetch)
-		work := filepath.Join(t.TempDir(), "ci-plan")
+		work := "tmp/ci-plan"
 		var out bytes.Buffer
 		got, err := ciCredentials(credArgs(base, work, "-role", "apply-identity"), d, &out)
 		require.NoError(t, err)
@@ -362,7 +377,7 @@ func Test_ciCredentials(t *testing.T) {
 		config, err := os.ReadFile(filepath.Join(home, ".aws", "config"))
 		require.NoError(t, err)
 		assert.Equal(t, "[profile tabp-admin-ci-apply-identity]\nregion = ap-northeast-1\n", string(config))
-		entries, err := os.ReadDir(work)
+		entries, err := os.ReadDir(filepath.Join(d.root, work))
 		require.NoError(t, err)
 		assert.Empty(t, entries, "token を含む input.json が残っています")
 	})
@@ -384,7 +399,7 @@ func Test_ciCredentials(t *testing.T) {
 			tool, calls := fakeAssume(t, c.knobs)
 			fetch, _ := fakeFetch(oidcBody(immutable), c.fetch)
 			d, base, home := ciDeps(t, tool, fetch, c.extra...)
-			work := filepath.Join(t.TempDir(), "ci-plan")
+			work := "tmp/ci-plan"
 			_, err := ciCredentials(credArgs(base, work, "-role", "plan"), d, &bytes.Buffer{})
 			require.ErrorIs(t, err, c.want)
 			assert.Len(t, calls(), c.tries)
@@ -526,10 +541,10 @@ func Test_ciAssumeDenied(t *testing.T) {
 		tool, calls := fakeAssume(t, knobs)
 		fetch, _ := fakeFetch(oidcBody(immutable), nil)
 		d, base, home := ciDeps(t, tool, fetch, extra...)
-		work := filepath.Join(t.TempDir(), "ci-plan")
+		work := "tmp/ci-plan"
 		var out bytes.Buffer
 		got, err := ciAssumeDenied(credArgs(base, work), d, &out)
-		entries, rerr := os.ReadDir(work)
+		entries, rerr := os.ReadDir(filepath.Join(d.root, work))
 		if !os.IsNotExist(rerr) {
 			require.NoError(t, rerr)
 		}

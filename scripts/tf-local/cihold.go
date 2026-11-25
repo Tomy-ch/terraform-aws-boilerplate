@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workdir"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -133,11 +134,11 @@ func ciUnlockStep(args []string, d deps, stdout io.Writer) (string, error) {
 	if *project == "" || *profile == "" || *base == "" || fs.NArg() > 0 {
 		return "", errUsage
 	}
-	work, err := os.MkdirTemp("", "tf-local-unlock-")
+	work, cleanup, err := workdir.Temp("", "tf-local-unlock-")
 	if err != nil {
 		return "", xerrors.Wrap(err, "作業ディレクトリ")
 	}
-	defer func() { _ = os.RemoveAll(work) }()
+	defer cleanup()
 	l, err := ciLockTarget(d, work, *project, *env, *root, *profile, *base)
 	if err != nil {
 		return "", err
@@ -250,11 +251,11 @@ func ciHoldAbsent(d deps, s ciState) error {
 	if err != nil {
 		return err
 	}
-	work, err := os.MkdirTemp("", "tf-local-hold-")
+	work, cleanup, err := workdir.Temp("", "tf-local-hold-")
 	if err != nil {
 		return xerrors.Wrap(err, "作業ディレクトリ")
 	}
-	defer func() { _ = os.RemoveAll(work) }()
+	defer cleanup()
 	etag, err := l.etag(d, work)
 	if err != nil {
 		return err
@@ -357,11 +358,11 @@ func ciHoldVerify(d deps, s ciState) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	work, err := os.MkdirTemp("", "tf-local-hold-")
+	work, cleanup, err := workdir.Temp("", "tf-local-hold-")
 	if err != nil {
 		return "", xerrors.Wrap(err, "作業ディレクトリ")
 	}
-	defer func() { _ = os.RemoveAll(work) }()
+	defer cleanup()
 	etag, err := l.etag(d, work)
 	if err != nil {
 		return "", err
