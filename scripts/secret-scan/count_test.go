@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -232,26 +231,6 @@ func Test_lineCounts(t *testing.T) {
 
 			_, _, err := lineCounts(c[0], c[1])
 			require.ErrorIs(t, err, errNumstat)
-		})
-	}
-}
-
-func Test_isHash(t *testing.T) {
-	t.Parallel()
-
-	for s, want := range map[string]bool{
-		strings.Repeat("0", 40): true,
-		strings.Repeat("f", 64): true,
-		strings.Repeat("0", 39): false,
-		strings.Repeat("0", 41): false,
-		strings.Repeat("g", 40): false,
-		strings.Repeat("F", 40): false,
-		"":                      false,
-	} {
-		t.Run(fmt.Sprintf("%q", s), func(t *testing.T) {
-			t.Parallel()
-
-			assert.Equal(t, want, isHash(s))
 		})
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/gitrev"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -132,7 +133,7 @@ func Test_runGitleaks(t *testing.T) {
 			"canary は本走査と同じ段（引数）を、作業ディレクトリだけ替えて起動する")
 		calls := s.calls()
 		assert.Equal(t, from, calls[2].rev, "本走査は起点を解決した完全な sha を受ける")
-		assert.True(t, isHash(calls[0].rev))
+		assert.True(t, gitrev.IsHash(calls[0].rev))
 		assert.NotEqual(t, from, calls[0].rev, "canary は canary のリポジトリの起点を受ける")
 		assert.Empty(t, calls[1].rev)
 		assert.Equal(t, "# config\n# ignore\n", s.read("config-"+stepGitleaksRange+"@canary"), "canary は root の設定と抑止の写しを読む")
