@@ -198,12 +198,15 @@ scoped_resources(s) if {
 	s.Resource == "*"
 }
 
+# アカウントの位置に置き先のアカウントを置く。S3 の Bucket の ARN はアカウントを持たないので、名前の中のアカウント ID で限る。
+account_scoped := `^arn:\$\{AWS::Partition\}:(s3:::[^:/]+-\$\{AWS::AccountId\}-|kms:\$\{AWS::Region\}:\$\{AWS::AccountId\}:|iam::\$\{AWS::AccountId\}:)`
+
 scoped_resources(s) if {
 	every r in lib.as_array(s.Resource) {
 		is_object(r)
 		object.keys(r) == {"Fn::Sub"}
 		is_string(r["Fn::Sub"])
-		contains(r["Fn::Sub"], "${AWS::AccountId}")
+		regex.match(account_scoped, r["Fn::Sub"])
 	}
 }
 

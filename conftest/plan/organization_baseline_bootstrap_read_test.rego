@@ -470,3 +470,31 @@ test_violation_bootstrap_scp_extra_condition if {
 	s := scp("deny-bootstrap-role", [{"Sid": "D", "Effect": "Deny", "Action": "*", "Resource": "*", "Condition": {"ArnLike": {"aws:PrincipalArn": [pattern]}, "StringEquals": {"aws:RequestedRegion": "us-east-1"}}}])
 	scp_violation(s, protect(pattern), "[PLAN-BR-06] deny-bootstrap-role")
 }
+
+# アカウント ID を含んでも、アカウントの位置が * なら置き先に限っていない。
+test_violation_resource_account_id_elsewhere if {
+	read_violation({"Sid": "X", "Effect": "Allow", "Action": "iam:GetRole", "Resource": [{"Fn::Sub": "arn:${AWS::Partition}:iam::*:role/x-${AWS::AccountId}"}]}, "[PLAN-BR-03] 立ち上げの読み取りの role の文 X")
+}
+
+test_violation_bucket_without_account_id if {
+	read_violation({"Sid": "X", "Effect": "Allow", "Action": "s3:GetBucketAcl", "Resource": [{"Fn::Sub": "arn:${AWS::Partition}:s3:::tabp-*-tfstate-*"}]}, "[PLAN-BR-03] 立ち上げの読み取りの role の文 X")
+}
+
+plan_role_messages(attrs, t) := msgs if {
+	r := change(plan_role_address, "aws_iam_role", attrs)
+	msgs := p.deny with input as fixture.plan([organization, r, stack_set_with({}, properties(t, [read])), instances_with(root_target), valid_bootstrap_scp, protect(pattern), valid_plan_role]) with data.policy_plan as decl
+}
+
+# path を書かない role は AWS が "/" に置く。plan では null で表れる。
+test_pass_plan_role_path_null if {
+	not fixture.has("[PLAN-BR-02]", plan_role_messages({"name": "tabp-admin-ci-plan", "path": null}, [trust]))
+}
+
+test_violation_plan_role_path_not_in_trust if {
+	fixture.has("[PLAN-BR-02]", plan_role_messages({"name": "tabp-admin-ci-plan", "path": "/ci/"}, [trust]))
+}
+
+test_pass_plan_role_path_in_trust if {
+	t := object.union(trust, {"Condition": {"ArnEquals": {"aws:PrincipalArn": "arn:aws:iam::111111111111:role/ci/tabp-admin-ci-plan"}}})
+	not fixture.has("[PLAN-BR-02]", plan_role_messages({"name": "tabp-admin-ci-plan", "path": "/ci/"}, [t]))
+}
