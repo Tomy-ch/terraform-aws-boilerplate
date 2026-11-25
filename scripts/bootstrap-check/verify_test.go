@@ -459,7 +459,6 @@ func Test_expectDocument(t *testing.T) {
 	})
 }
 
-// stepTexts は、steps の見出し・注記と、確認の desc の並び。
 func stepTexts(steps []step) []string {
 	out := make([]string, 0, len(steps))
 
@@ -563,7 +562,7 @@ func Test_verifySteps(t *testing.T) {
 	}
 }
 
-// writeOps は、aws の操作名が読むだけのもの（get-・list-・describe-・head-・simulate-）でない呼び出し。
+// writeOps は、aws の操作名が読むだけのものでない呼び出し。
 func writeOps(calls []string) []string {
 	var out []string
 
@@ -732,7 +731,7 @@ func Test_checkVerify(t *testing.T) {
 		{verifyOptions{stage: "before-apply"}, "# 結果: 21 件のうち NG 21 件"},
 		{verifyOptions{stage: "stage4"}, "# 結果: 24 件のうち NG 22 件"},
 		{verifyOptions{stage: "stage4", executor: "bob"}, "# 結果: 24 件のうち NG 23 件"},
-		{verifyOptions{stage: "permissions"}, "# 結果: 141 件のうち NG 76 件"},
+		{verifyOptions{stage: "permissions"}, "# 結果: 161 件のうち NG 87 件"},
 		{verifyOptions{stage: "stage5"}, "# 結果: 5 件のうち NG 4 件"},
 		{verifyOptions{stage: "output-policy", policySource: "live"}, "# 結果: 13 件のうち NG 7 件"},
 		{verifyOptions{stage: "output-policy", policySource: "reference"}, "# 結果: 13 件のうち NG 7 件"},
