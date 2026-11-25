@@ -1,0 +1,9 @@
+-- modules/m/main.tf --
+resource "aws_iam_role" "r" {
+  name = "r"
+}
+data "aws_partition" "current" {}
+resource "aws_iam_role_policy_attachment" "a" {
+  role       = aws_iam_role.r.name
+  policy_arn = "xarn:${data.aws_partition.current.partition}:iam::aws:policy/ReadOnlyAccess"
+}

@@ -33,6 +33,12 @@
       },
       {
         "module": "usecases/deployment-identity/internal/github-oidc",
+        "resource": "aws_iam_policy.workload_2",
+        "after": "aws_iam_role_policy.apply_identity",
+        "adr": "usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md"
+      },
+      {
+        "module": "usecases/deployment-identity/internal/github-oidc",
         "resource": "aws_iam_policy.boundary",
         "after": "aws_iam_role_policy.apply_identity",
         "adr": "usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md"
@@ -59,6 +65,18 @@
         "module": "usecases/deployment-identity/internal/github-oidc",
         "resource": "aws_iam_role_policy_attachments_exclusive.this",
         "after": "aws_iam_role_policy_attachment.workload_read",
+        "adr": "usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md"
+      },
+      {
+        "module": "usecases/deployment-identity/internal/github-oidc",
+        "resource": "aws_iam_role_policy_attachments_exclusive.this",
+        "after": "aws_iam_role_policy_attachment.workload_2",
+        "adr": "usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md"
+      },
+      {
+        "module": "usecases/deployment-identity/internal/github-oidc",
+        "resource": "aws_iam_role_policy_attachments_exclusive.this",
+        "after": "aws_iam_role_policy_attachment.plan_workload_read",
         "adr": "usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md"
       }
     ]

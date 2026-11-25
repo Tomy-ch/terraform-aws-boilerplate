@@ -1,0 +1,14 @@
+-- m/providers.tf --
+provider "runner" {
+  settings = merge(var.v, { host = "x" })
+}
+
+variable "v" {}
+-- m/versions.tf --
+terraform {
+  required_providers {
+    runner = {
+      source = "example/runner"
+    }
+  }
+}

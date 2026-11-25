@@ -13,7 +13,18 @@
       "cloudwatch:GetMetricStatistics",
       "cloudwatch:GetMetricWidgetImage",
       "cloudwatch:ListMetrics",
+      "config:DescribeDeliveryChannels",
+      "config:DescribeRetentionConfigurations",
+      "config:PutDeliveryChannel",
+      "config:PutRetentionConfiguration",
+      "ec2:DescribeRegions",
+      "ec2:DescribeVpcBlockPublicAccessOptions",
+      "ec2:EnableEbsEncryptionByDefault",
+      "ec2:GetEbsEncryptionByDefault",
+      "ec2:ModifyVpcBlockPublicAccessOptions",
       "ecr:GetAuthorizationToken",
+      "elasticmapreduce:GetBlockPublicAccessConfiguration",
+      "elasticmapreduce:PutBlockPublicAccessConfiguration",
       "iam:DeleteAccountPasswordPolicy",
       "iam:DisableOrganizationsRootCredentialsManagement",
       "iam:DisableOrganizationsRootSessions",
@@ -31,7 +42,9 @@
       "organizations:EnableAWSServiceAccess",
       "organizations:ListAWSServiceAccessForOrganization",
       "organizations:ListAccounts",
-      "organizations:ListRoots"
+      "organizations:ListRoots",
+      "s3:GetAccountPublicAccessBlock",
+      "s3:PutAccountPublicAccessBlock"
     ],
     "documents": {
       "aws_iam_role": [
@@ -85,6 +98,9 @@
         "policy": "module.deployment_identity.module.github_oidc.aws_iam_role_policy.this[\"plan\"]",
         "read_actions": [
           "budgets:ViewBudget"
+        ],
+        "managed_policies": [
+          "module.deployment_identity.module.github_oidc.aws_iam_policy.workload_read"
         ]
       },
       "apply_role": {
@@ -117,7 +133,6 @@
             "iam:DeleteAccountPasswordPolicy",
             "iam:DisableOrganizationsRoot*",
             "iam:EnableOrganizationsRoot*",
-            "iam:UpdateAccountPasswordPolicy",
             "sso:AttachCustomerManagedPolicyReferenceToPermissionSet",
             "sso:AttachManagedPolicyToPermissionSet",
             "sso:CreateAccountAssignment",
@@ -144,7 +159,11 @@
             "cloudformation:UpdateStackInstances",
             "cloudformation:UpdateStackSet",
             "sts:AssumeRoot"
-          ]
+          ],
+          "management_actions": [
+            "iam:UpdateAccountPasswordPolicy"
+          ],
+          "management_policy": "module.deployment_identity.module.github_oidc.aws_iam_policy.governance[0]"
         },
         "bootstrap": {
           "modules": [
@@ -278,6 +297,7 @@
         "module.deployment_identity.module.github_oidc.aws_iam_policy.governance",
         "module.deployment_identity.module.github_oidc.aws_iam_policy.manage",
         "module.deployment_identity.module.github_oidc.aws_iam_policy.workload",
+        "module.deployment_identity.module.github_oidc.aws_iam_policy.workload_2",
         "module.deployment_identity.module.github_oidc.aws_iam_policy.workload_read"
       ],
       "unlock_roles": [
@@ -299,6 +319,7 @@
       "workload": {
         "policy": "module.deployment_identity.module.github_oidc.aws_iam_policy.workload",
         "read_policy": "module.deployment_identity.module.github_oidc.aws_iam_policy.workload_read",
+        "policy_2": "module.deployment_identity.module.github_oidc.aws_iam_policy.workload_2",
         "boundaries": {
           "ops-notification": "module.deployment_identity.module.github_oidc.aws_iam_policy.boundary[\"ops-notification\"]"
         },
@@ -306,11 +327,16 @@
           "ops-"
         ],
         "service_linked_roles": [
+          "access-analyzer.amazonaws.com",
+          "config.amazonaws.com",
           "management.chatbot.amazonaws.com"
         ],
         "passed_to_services": [
           "chatbot.amazonaws.com",
           "scheduler.amazonaws.com"
+        ],
+        "account_iam_writes": [
+          "iam:UpdateAccountPasswordPolicy"
         ],
         "apply_only_denies": [
           "DenyBoundaryRemoval",
@@ -370,6 +396,7 @@
       "exclusives": [
         "module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachments_exclusive.this[\"apply\"]",
         "module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachments_exclusive.this[\"apply_identity\"]",
+        "module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachments_exclusive.this[\"plan\"]",
         "module.ops_notification.module.chat.aws_iam_role_policy_attachments_exclusive.this",
         "module.organization_baseline.module.break_glass.aws_iam_role_policy_attachments_exclusive.this"
       ]
@@ -656,20 +683,7 @@
         "retention": "aws_config_retention_configuration"
       },
       "public_access_block": "aws_s3_account_public_access_block",
-      "password_policy_keys": ["minimum_password_length", "password_reuse_prevention", "require_lowercase_characters", "require_uppercase_characters", "require_numbers", "require_symbols", "allow_users_to_change_password", "max_password_age", "hard_expiry"],
-      "owners": {
-        "aws_account_alternate_contact": ["account-baseline"],
-        "aws_config_configuration_recorder": ["account-baseline"],
-        "aws_config_configuration_recorder_status": ["account-baseline"],
-        "aws_config_delivery_channel": ["account-baseline"],
-        "aws_config_retention_configuration": ["account-baseline"],
-        "aws_ebs_encryption_by_default": ["account-baseline"],
-        "aws_emr_block_public_access_configuration": ["account-baseline"],
-        "aws_iam_account_password_policy": ["account-baseline", "organization-baseline"],
-        "aws_s3_account_public_access_block": ["account-baseline"],
-        "aws_ssm_service_setting": ["account-baseline"],
-        "aws_vpc_block_public_access_options": ["account-baseline"]
-      }
+      "password_policy_keys": ["minimum_password_length", "password_reuse_prevention", "require_lowercase_characters", "require_uppercase_characters", "require_numbers", "require_symbols", "allow_users_to_change_password", "max_password_age", "hard_expiry"]
     },
     "audit_evidence": {
       "bucket": "module.audit_evidence.module.archive.aws_s3_bucket.this",
