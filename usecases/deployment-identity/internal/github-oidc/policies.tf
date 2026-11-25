@@ -576,7 +576,6 @@ locals {
   # 委任管理者の指定（organization-baseline の internal/delegated-admin。deployment-identity/ADR-0201 決定7）。
   # 指定するサービスの主体。Config と Access Analyzer は Organizations の API で、ほかはサービスの API で指定する。
   delegated_admin_service_principals = ["access-analyzer.amazonaws.com", "cloudtrail.amazonaws.com", "config.amazonaws.com", "guardduty.amazonaws.com", "inspector2.amazonaws.com", "securityhub.amazonaws.com"]
-  org_account_arns                   = "${local.org_arn_prefix}:account/o-*/*"
   cloudtrail_slr_arns = {
     "cloudtrail.amazonaws.com"         = "${local.iam_arn_prefix}:role/aws-service-role/cloudtrail.amazonaws.com/AWSServiceRoleForCloudTrail"
     "context.cloudtrail.amazonaws.com" = "${local.iam_arn_prefix}:role/aws-service-role/context.cloudtrail.amazonaws.com/AWSServiceRoleForCloudTrailEventContext"
@@ -605,7 +604,7 @@ locals {
         Resource  = local.org_account_arns
         Condition = { StringEquals = { "organizations:ServicePrincipal" = local.delegated_admin_service_principals } }
       },
-      # GuardDuty・Inspector・Security Hub の指定は、呼び手の権限で信頼アクセスを有効にし、指定先のアカウントを読む（各サービスの文書）。
+      # GuardDuty・Inspector・Security Hub の指定は、呼び手の権限で信頼アクセスを有効にする（各サービスの文書）。指定先のアカウントの読み取りは ReadMemberAccounts。
       {
         Sid       = "EnableSecurityServiceAccess"
         Effect    = "Allow"
@@ -613,7 +612,6 @@ locals {
         Resource  = "*"
         Condition = { StringEquals = { "organizations:ServicePrincipal" = ["guardduty.amazonaws.com", "inspector2.amazonaws.com", "securityhub.amazonaws.com"] } }
       },
-      { Sid = "DescribeOrganizationAccounts", Effect = "Allow", Action = "organizations:DescribeAccount", Resource = local.org_account_arns },
       { Sid = "CloudtrailRegisterOrganizationDelegatedAdmin", Effect = "Allow", Action = "cloudtrail:RegisterOrganizationDelegatedAdmin", Resource = "*" },
       { Sid = "CloudtrailDeregisterOrganizationDelegatedAdmin", Effect = "Allow", Action = "cloudtrail:DeregisterOrganizationDelegatedAdmin", Resource = "*" },
     ],

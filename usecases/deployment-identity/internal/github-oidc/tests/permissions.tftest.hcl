@@ -1338,7 +1338,7 @@ run "policies" {
         Sid       = "RegisterDelegatedAdministrators"
         Effect    = "Allow"
         Action    = ["organizations:DeregisterDelegatedAdministrator", "organizations:RegisterDelegatedAdministrator"]
-        Resource  = "arn:aws:organizations::123456789012:account/o-*/*"
+        Resource  = ["arn:aws:organizations::123456789012:account/o-*/*"]
         Condition = { StringEquals = { "organizations:ServicePrincipal" = ["access-analyzer.amazonaws.com", "cloudtrail.amazonaws.com", "config.amazonaws.com", "guardduty.amazonaws.com", "inspector2.amazonaws.com", "securityhub.amazonaws.com"] } }
       },
       {
@@ -1348,7 +1348,6 @@ run "policies" {
         Resource  = "*"
         Condition = { StringEquals = { "organizations:ServicePrincipal" = ["guardduty.amazonaws.com", "inspector2.amazonaws.com", "securityhub.amazonaws.com"] } }
       },
-      { Sid = "DescribeOrganizationAccounts", Effect = "Allow", Action = "organizations:DescribeAccount", Resource = "arn:aws:organizations::123456789012:account/o-*/*" },
       { Sid = "CloudtrailRegisterOrganizationDelegatedAdmin", Effect = "Allow", Action = "cloudtrail:RegisterOrganizationDelegatedAdmin", Resource = "*" },
       { Sid = "CloudtrailDeregisterOrganizationDelegatedAdmin", Effect = "Allow", Action = "cloudtrail:DeregisterOrganizationDelegatedAdmin", Resource = "*" },
       {
@@ -3162,7 +3161,7 @@ run "governance_follows_data_sources" {
 
   assert {
     condition = [for s in jsondecode(aws_iam_policy.governance_2[0].policy).Statement : s.Sid] == [
-      "OrganizationsListDelegatedAdministrators", "ReadCloudTrailServiceLinkedRoles", "RegisterDelegatedAdministrators", "EnableSecurityServiceAccess", "DescribeOrganizationAccounts",
+      "OrganizationsListDelegatedAdministrators", "ReadCloudTrailServiceLinkedRoles", "RegisterDelegatedAdministrators", "EnableSecurityServiceAccess",
       "CloudtrailRegisterOrganizationDelegatedAdmin", "CloudtrailDeregisterOrganizationDelegatedAdmin", "CreateCloudTrailServiceLinkedRole", "CreateCloudTrailEventContextServiceLinkedRole",
     ]
     error_message = "repository-wide/ADR-0209 の集合を持たない partition で、委任管理者の policy が GuardDuty・Inspector・Security Hub の文と、リージョンの Deny を外していません。"
@@ -3177,7 +3176,7 @@ run "governance_follows_data_sources" {
     condition = one([for s in jsondecode(aws_iam_policy.governance_2[0].policy).Statement : [s.Resource, s.Condition] if s.Sid == "CreateCloudTrailServiceLinkedRole"]) == [
       "arn:aws-us-gov:iam::210987654321:role/aws-service-role/cloudtrail.amazonaws.com/AWSServiceRoleForCloudTrail",
       { StringEquals = { "iam:AWSServiceName" = "cloudtrail.amazonaws.com" } },
-    ] && one([for s in jsondecode(aws_iam_policy.governance_2[0].policy).Statement : s.Resource if s.Sid == "RegisterDelegatedAdministrators"]) == "arn:aws-us-gov:organizations::210987654321:account/o-*/*"
+    ] && one([for s in jsondecode(aws_iam_policy.governance_2[0].policy).Statement : s.Resource if s.Sid == "RegisterDelegatedAdministrators"]) == ["arn:aws-us-gov:organizations::210987654321:account/o-*/*"]
     error_message = "委任管理者の policy の Resource が、partition・アカウントから組まれていません。"
   }
 
