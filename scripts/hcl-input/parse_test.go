@@ -191,7 +191,7 @@ terraform {
 		want := `[{"file":"m/tests/a.tftest.hcl","line":1,"type":"run","labels":["ok"],
 			"blocks":[{"path":"assert","parent":-1,"line":3,"type":"assert","labels":[],"dynamic":false}],
 			"attributes":[
-				{"path":"command","parent":-1,"line":2,"expr":{"kind":"traversal","root":"plan","steps":[]},"refs":[{"root":"plan","steps":[],"within":[]}]},
+				{"path":"command","parent":-1,"line":2,"expr":{"kind":"traversal","root":"plan","steps":[]},"refs":[{"root":"plan","steps":[],"within":[],"filter":false}]},
 				{"path":"assert.condition","parent":0,"line":4,"expr":{"kind":"literal","value":true},"refs":[]},
 				{"path":"assert.error_message","parent":0,"line":5,"expr":{"kind":"literal","value":"x"},"refs":[]}
 			]}]`

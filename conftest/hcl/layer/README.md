@@ -35,7 +35,7 @@ symlink は実体のファイルで書く）。
 | `LY001` | 宣言（`decl.json`）の形が違う。`attachments` が空でないオブジェクトでない、項目が `parents`・`optional`・`parent_arguments`・`whole_document` だけを持たない、`parent_arguments` の親の型がその項目の `parents` に無い、`whole_document` が `true` なのに親の引数が1つでない、`not_attachments` の理由が空、同じ型が両方の区分に在る、`singletons` が空でないオブジェクトでないか、型の値が持ち主の usecase の名前の重複の無い空でない配列でないか、型が `not_attachments` に無いか Provider の schema（`data.layer_schema`。読めないときは `LY306`）に無い、`unrelated_deprecated_arguments`・`inline_owned` の形が違うか親の型でない型を持つ、同じ引数が `parent_arguments` と `unrelated_deprecated_arguments` の両方に在る、`inline_owned` の引数がどの `parent_arguments` にも無い、同じ引数の書かないときの値が項目の間で食い違う | 宣言を直す |
 | `LY002` | 走査の root に `.tf` も `.tf.json` も無い。または入力（hcl-input）が読んだ `.tf` と `.tf.json` の集合と、構成ファイルの `hcl-tally` の一覧が違う | 一覧の差のファイルを実体のファイルにするか、走査の root から外す |
 | `LY003` | 走査の root に JSON の構成（`.tf.json`）が在る。検査はそれを解釈しない（ADR-0501 決定5、ADR-0103 決定11） | HCL（`.tf`）で書く |
-| `LY004` | 入力の形が違う（`lib.hcl_input` の読む形。block・属性・式・参照・段の形、添字の段の式の種類、`within` が添字の段を指すこと）か、構文として読んだファイルの集合が `hcl-tally` の一覧と、ファイルごとのトップレベルの block の数が行頭の数えと違うか、その独立の数えが渡されていない。このときは `LY004` だけで落ち、入力を読むほかの規則を評価しない | `make layer-check` から起動する。`scripts/hcl-input` の出力の形と `conftest/hcl/lib/hcl_input.rego` の読む形を揃える |
+| `LY004` | 入力の形が違う（`lib.hcl_input` の読む形。block・属性・式・参照・段の形、添字の段の式の種類、`within` が添字の段を指すこと、`filter` が真偽値であること）か、構文として読んだファイルの集合が `hcl-tally` の一覧と、ファイルごとのトップレベルの block の数が行頭の数えと違うか、その独立の数えが渡されていない。このときは `LY004` だけで落ち、入力を読むほかの規則を評価しない | `make layer-check` から起動する。`scripts/hcl-input` の出力の形と `conftest/hcl/lib/hcl_input.rego` の読む形を揃える |
 | `LY101` | `usecases/<use-case>/` 直下の `.tf` に `resource` が在る（決定14） | module に置き、usecase は module を合成する |
 | `LY102` | `usecases/<use-case>/` 直下の `.tf` に `provider` が在る（決定14） | env の root に置く |
 | `LY103` | `usecases/<use-case>/` 直下の `.tf` に root module にしか置けない block（`import`、`terraform` の `backend` と `cloud`）が在る（決定14） | env の root に置く |
@@ -76,6 +76,8 @@ symlink は実体のファイルで書く）。
 - 参照の根と最初の名前の直後の添字（`aws_s3_bucket.this[...]`、`local.all[...]`）の中は、親を選ぶだけなので辿らない。
   その添字の中のさらに入れ子の添字も辿らない。属性の後の添字、2つ目以降の添字、関数の呼び出し・括弧・タプルの後の
   添字、splat の後の式の中の添字は辿る。`count.index` は参照に数えない
+- `for` 式の条件（`if` の後）の中は、要素を絞るだけで親を指す値を作らないので辿らない。その条件の中の `for` 式の
+  collection と値も辿らない。条件を持つ `for` 式の collection・キー・値は辿る
 - 最初の段が名前でない参照（根だけのものを含む）は、根だけのトークンになり、親として通らない
 
 辿った先の参照が無いか、1つでも、同じディレクトリに宣言された、宣言した親の型の resource でなければ違反とする。

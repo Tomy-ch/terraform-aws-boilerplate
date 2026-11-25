@@ -263,7 +263,8 @@ type credentials struct {
 }
 
 // parseCredentials は、`aws sts assume-role-with-web-identity --output json` の応答から資格情報を返します。
-// どれかが空か、改行や空白を含めば失敗します（profile のファイルを壊さないため）。文には値を入れない。
+// どれかが空か、改行や空白・節の見出しの括弧を含めば失敗します（profile のファイルを壊さないため）。文には値を入れない。
+// `=` は拒まない: SessionToken は base64 で末尾に詰め物の `=` が付くことがあり、INI は行の最初の `=` で分けるので値の `=` は壊さない。
 func parseCredentials(raw []byte) (credentials, error) {
 	var resp struct {
 		Credentials credentials `json:"Credentials"`
@@ -273,7 +274,7 @@ func parseCredentials(raw []byte) (credentials, error) {
 	}
 	c := resp.Credentials
 	for _, v := range []string{c.AccessKeyID, c.SecretAccessKey, c.SessionToken} {
-		if v == "" || strings.ContainsAny(v, " \t\r\n[]=") {
+		if v == "" || strings.ContainsAny(v, " \t\r\n[]") {
 			return credentials{}, xerrors.Wrap(errCredResponse, "資格情報が空か、profile に書けない文字を含みます")
 		}
 	}

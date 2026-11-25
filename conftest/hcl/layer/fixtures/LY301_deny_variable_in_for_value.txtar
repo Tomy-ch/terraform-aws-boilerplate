@@ -1,0 +1,8 @@
+-- modules/m/main.tf --
+resource "aws_s3_bucket" "this" {
+  for_each = toset(["a", "b"])
+}
+resource "aws_s3_bucket_policy" "this" {
+  for_each = { for k, b in aws_s3_bucket.this : k => var.bucket if !contains(var.skip, k) }
+  bucket   = each.value
+}
