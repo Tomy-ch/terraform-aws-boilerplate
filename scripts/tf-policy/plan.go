@@ -38,8 +38,7 @@ const policyInput = "tests/policy-input.tftest.hcl"
 // data.json・layer.json・out/plans.txt・out/provider-schema.json・out/inputs）を読みます。Rego のテストは宣言そのもの
 // （decl.json・layer-decl.json）に対して走り、canary が差し替えるのは適用の段の宣言（data.json・layer.json）だけです。
 // provider-schema は PATH のものを起動します（make が、ビルドした置き場を PATH の先頭に置く）。
-func command(dir string, env []string, step string) *exec.Cmd {
-	ctx := context.Background()
+func command(ctx context.Context, dir string, env []string, step string, _ ...string) *exec.Cmd {
 	var cmd *exec.Cmd
 	switch step {
 	case stepDeprecated:
@@ -134,7 +133,7 @@ func planRoots(roots []root, data, out string, w io.Writer, tool toolFunc) error
 	var plans, failed []string
 	for _, r := range roots {
 		var stdout bytes.Buffer
-		cmd := tool(r.path, tfexec.Env(os.Environ(), "TF_DATA_DIR="+tfexec.DataDir(data, r.rel)), stepPlan)
+		cmd := tool(context.Background(), r.path, tfexec.Env(os.Environ(), "TF_DATA_DIR="+tfexec.DataDir(data, r.rel)), stepPlan)
 		cmd.Stdout, cmd.Stderr = &stdout, w
 		code, err := toolrun.Exec(cmd)
 		if err != nil {

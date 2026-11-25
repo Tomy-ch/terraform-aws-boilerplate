@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -17,7 +18,7 @@ func runConfig(config string, w io.Writer, tool toolFunc, env []string) error {
 	if _, err := readCheckerConfig(config); err != nil {
 		return err
 	}
-	r, err := toolrun.Run(tool(".", checkerEnv(env), stepDryRun))
+	r, err := toolrun.Run(tool(context.Background(), ".", checkerEnv(env), stepDryRun))
 	if err != nil {
 		return err
 	}

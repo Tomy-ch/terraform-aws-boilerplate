@@ -3,6 +3,7 @@ package main
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -65,7 +66,7 @@ var pinnedImage = regexp.MustCompile(`^[^\s@]+@sha256:[0-9a-f]{64}$`)
 // 起動することが前提です。docker compose を起動できなければ errTool、0 以外で終われば errImage、出力がちょうど1行の、
 // digest で固定した参照でなければ errImage です。
 func lookupImage(r runner, step string) (string, error) {
-	res, err := toolrun.Run(r.tool("", withoutPrefix(r.environ, "COMPOSE_"), step))
+	res, err := toolrun.Run(r.tool(context.Background(), "", withoutPrefix(r.environ, "COMPOSE_"), step))
 	switch {
 	case err != nil:
 		return "", xerrors.Wrapf(err, "%s", step)
@@ -132,7 +133,7 @@ func runImage(dir, image string, t imageTool, r runner, log io.Writer) (rc int, 
 	}
 	env := withoutPrefix(r.environ, "COMPOSE_")
 	runStep := func(step string) (int, error) {
-		cmd := r.tool(dir, env, step)
+		cmd := r.tool(context.Background(), dir, env, step)
 		cmd.Stdout, cmd.Stderr = log, log
 		if step == stepCopyIn {
 			cmd.Stdin = bytes.NewReader(input)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -79,7 +80,7 @@ func countGoFiles(dir string) (int, error) {
 // runScan は、dir で本走査（gofmt -l .）を走らせます。0 でない終了コードは errExit、挙がったファイルは label からの
 // パスで w へ書いて errFailed です。
 func runScan(dir, label string, n int, w io.Writer, tool toolFunc) error {
-	r, err := toolrun.Run(tool(dir, os.Environ(), stepMain))
+	r, err := toolrun.Run(tool(context.Background(), dir, os.Environ(), stepMain))
 	if err != nil {
 		return err
 	}

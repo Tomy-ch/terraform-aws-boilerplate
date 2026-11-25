@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -57,7 +58,7 @@ func runCheck(args []string, w io.Writer, tool toolFunc, env envFunc, root strin
 // runScan は、リポジトリ直下で本走査（引数なしの editorconfig-checker）を走らせ、出力を w へ写します。0 でない
 // 終了コードは errFailed です。
 func runScan(w io.Writer, tool toolFunc, env []string) error {
-	r, err := toolrun.Run(tool(".", checkerEnv(env), stepScan))
+	r, err := toolrun.Run(tool(context.Background(), ".", checkerEnv(env), stepScan))
 	fmt.Fprint(w, r.Combined)
 	if err != nil {
 		return err

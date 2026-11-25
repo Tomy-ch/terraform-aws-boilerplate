@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -32,7 +33,7 @@ func runCanary(work string, w io.Writer, tool toolFunc) error {
 		return err
 	}
 
-	r, err := toolrun.Run(tool(work, os.Environ(), stepCanary))
+	r, err := toolrun.Run(tool(context.Background(), work, os.Environ(), stepCanary))
 	if err != nil {
 		return err
 	}

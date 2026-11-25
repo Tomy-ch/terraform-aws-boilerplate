@@ -32,8 +32,7 @@ const (
 )
 
 // root の init は lock を書き換えない（ADR-0205 決定9。lock の更新は人が root で行う）。
-func command(dir string, env []string, step string) *exec.Cmd {
-	ctx := context.Background()
+func command(ctx context.Context, dir string, env []string, step string, _ ...string) *exec.Cmd {
 	var cmd *exec.Cmd
 	switch step {
 	case stepFmt:
@@ -118,7 +117,7 @@ func runFmt(args []string, w io.Writer, tool toolFunc) error {
 	}
 	env := tfexec.Env(os.Environ())
 
-	return runEach(name, targets, w, func(t target) *exec.Cmd { return tool(t.path, env, step) })
+	return runEach(name, targets, w, func(t target) *exec.Cmd { return tool(context.Background(), t.path, env, step) })
 }
 
 // parseData は、-data を持つサブコマンドの引数を読み、対象のディレクトリを返します。
@@ -155,7 +154,7 @@ func initTargets(data string, targets []target, w io.Writer, tool toolFunc) erro
 			step = stepInitReadonly
 		}
 
-		return tool(t.path, tfexec.Env(os.Environ(), "TF_DATA_DIR="+tfexec.DataDir(data, t.rel)), step)
+		return tool(context.Background(), t.path, tfexec.Env(os.Environ(), "TF_DATA_DIR="+tfexec.DataDir(data, t.rel)), step)
 	})
 }
 
@@ -211,7 +210,7 @@ func validateTargets(data, out string, targets []target, tool toolFunc) error {
 
 			return xerrors.Wrapf(err, "%s の作成", errPath)
 		}
-		cmd := tool(t.path, tfexec.Env(os.Environ(), "TF_DATA_DIR="+tfexec.DataDir(data, t.rel)), stepValidate)
+		cmd := tool(context.Background(), t.path, tfexec.Env(os.Environ(), "TF_DATA_DIR="+tfexec.DataDir(data, t.rel)), stepValidate)
 		cmd.Stdout, cmd.Stderr = stdout, stderr
 		code, err := toolrun.Exec(cmd)
 		_ = stdout.Close()
@@ -249,7 +248,7 @@ func runTest(args []string, w io.Writer, tool toolFunc) error {
 	}
 
 	return runEach("tf-test", tested, w, func(t target) *exec.Cmd {
-		return tool(t.path, tfexec.Env(os.Environ(), "TF_DATA_DIR="+tfexec.DataDir(data, t.rel)), stepTest)
+		return tool(context.Background(), t.path, tfexec.Env(os.Environ(), "TF_DATA_DIR="+tfexec.DataDir(data, t.rel)), stepTest)
 	})
 }
 
@@ -284,10 +283,10 @@ func runLint(args []string, w io.Writer, tool toolFunc) error {
 	}
 	env := tfexec.Env(os.Environ(), "TFLINT_CONFIG_FILE="+config, "TFLINT_PLUGIN_DIR="+plugins)
 	if err := runEach("tf-lint の ruleset の取得", []target{{rel: ".", path: base}}, w, func(t target) *exec.Cmd {
-		return tool(t.path, env, stepLintInit)
+		return tool(context.Background(), t.path, env, stepLintInit)
 	}); err != nil {
 		return err
 	}
 
-	return runEach("tf-lint", targets, w, func(t target) *exec.Cmd { return tool(t.path, env, stepLint) })
+	return runEach("tf-lint", targets, w, func(t target) *exec.Cmd { return tool(context.Background(), t.path, env, stepLint) })
 }

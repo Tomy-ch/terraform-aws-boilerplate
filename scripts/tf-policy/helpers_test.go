@@ -53,7 +53,7 @@ if [ -e "fail-$step" ]; then echo "$step が落ちた" >&2; exit 1; fi
 exit 0
 `
 	require.NoError(t, os.WriteFile(script, []byte(body), 0o600))
-	tool := func(d string, env []string, step string) *exec.Cmd {
+	tool := func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
 		c := exec.CommandContext(context.Background(), "/bin/sh", script, step)
 		c.Dir, c.Env = d, env
 		return c

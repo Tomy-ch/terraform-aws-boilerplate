@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -28,7 +29,7 @@ func runCanary(work string, cfg []byte, w io.Writer, tool toolFunc) error {
 	defer func() { _ = os.RemoveAll(work) }()
 
 	var failed []string
-	scan, err := toolrun.Run(tool(work, os.Environ(), stepScan))
+	scan, err := toolrun.Run(tool(context.Background(), work, os.Environ(), stepScan))
 	if err != nil {
 		return err
 	}
@@ -36,7 +37,7 @@ func runCanary(work string, cfg []byte, w io.Writer, tool toolFunc) error {
 		failed = append(failed, "隠しディレクトリの誤綴りで落ちませんでした")
 		fmt.Fprintf(w, "--- typos --format brief（rc=%d）:\n%s\n", scan.Code, scan.Combined)
 	}
-	files, err := toolrun.Run(tool(".", os.Environ(), stepFiles))
+	files, err := toolrun.Run(tool(context.Background(), ".", os.Environ(), stepFiles))
 	if err != nil {
 		return err
 	}

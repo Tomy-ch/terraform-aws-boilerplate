@@ -266,9 +266,11 @@ func Test_runCoverage_realGit(t *testing.T) {
 	}
 	env, err := gitEnv()
 	require.NoError(t, err)
-	inRepo := func(_ string, env []string, step string) *exec.Cmd { return command(repo, env, step) }
+	inRepo := func(ctx context.Context, _ string, env []string, step string, _ ...string) *exec.Cmd {
+		return command(context.Background(), repo, env, step)
+	}
 	for _, step := range []string{stepGitInit, stepGitAdd} {
-		r, err := toolrun.Run(inRepo("", env, step))
+		r, err := toolrun.Run(inRepo(context.Background(), "", env, step))
 		require.NoError(t, err)
 		require.Equal(t, 0, r.Code, r.Combined)
 	}

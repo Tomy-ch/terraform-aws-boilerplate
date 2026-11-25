@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -30,7 +31,7 @@ func Test_command(t *testing.T) {
 	} {
 		t.Run(step, func(t *testing.T) {
 			t.Parallel()
-			c := command("/x", []string{"A=1"}, step)
+			c := command(context.Background(), "/x", []string{"A=1"}, step)
 			assert.Equal(t, want, c.Args)
 			assert.Equal(t, "/x", c.Dir)
 			assert.Equal(t, []string{"A=1"}, c.Env)
@@ -39,7 +40,7 @@ func Test_command(t *testing.T) {
 
 	t.Run("deprecated は PATH の provider-schema を起動する", func(t *testing.T) {
 		t.Parallel()
-		c := command("/x", nil, stepDeprecated)
+		c := command(context.Background(), "/x", nil, stepDeprecated)
 		assert.Equal(t, []string{"provider-schema", "plan-deprecated", "-out", "out/provider-schema.json", "-list", "out/plans.txt"}, c.Args)
 	})
 }
@@ -130,11 +131,11 @@ func Test_planRoots(t *testing.T) {
 		return roots
 	}
 	unstartableAt := func(tool toolFunc, path string) toolFunc {
-		return func(d string, env []string, step string) *exec.Cmd {
+		return func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
 			if d == path {
-				return tooltest.Missing(d, env, step)
+				return tooltest.Missing(context.Background(), d, env, step)
 			}
-			return tool(d, env, step)
+			return tool(context.Background(), d, env, step)
 		}
 	}
 

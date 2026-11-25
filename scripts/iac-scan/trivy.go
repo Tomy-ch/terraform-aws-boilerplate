@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -72,7 +73,7 @@ func runTrivyConfig(args []string, stdout, log io.Writer, r runner) error {
 		return err
 	}
 	var out, errOut bytes.Buffer
-	cmd := r.tool(canary, env, scanStep)
+	cmd := r.tool(context.Background(), canary, env, scanStep)
 	cmd.Stdout, cmd.Stderr = &out, &errOut
 	rc, err := toolrun.Exec(cmd)
 	if err != nil {
@@ -86,7 +87,7 @@ func runTrivyConfig(args []string, stdout, log io.Writer, r runner) error {
 	fmt.Fprintln(log, "✅ trivy-config の canary: MEDIUM の誤設定を閾値の内側で検出しました")
 
 	out.Reset()
-	cmd = r.tool(*base, env, scanStep)
+	cmd = r.tool(context.Background(), *base, env, scanStep)
 	cmd.Stdout, cmd.Stderr = &out, log
 	if rc, err = toolrun.Exec(cmd); err != nil {
 		return xerrors.Wrapf(err, "trivy-config の本走査")
@@ -165,7 +166,7 @@ func writeTrivyReport(raw []byte, base, tmp, convertStep string, env []string, r
 		return err
 	}
 	var out bytes.Buffer
-	cmd := r.tool(dir, env, convertStep)
+	cmd := r.tool(context.Background(), dir, env, convertStep)
 	cmd.Stdout, cmd.Stderr = &out, log
 	switch rc, err := toolrun.Exec(cmd); {
 	case err != nil:

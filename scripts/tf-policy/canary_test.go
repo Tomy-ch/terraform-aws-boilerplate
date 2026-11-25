@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -234,11 +235,11 @@ func Test_policyChain(t *testing.T) {
 			t.Parallel()
 			dir := chainDir(t, verifyOK, planOK, resultOK)
 			fake, calls := fakeTool(t)
-			tool := func(d string, env []string, s string) *exec.Cmd {
+			tool := func(ctx context.Context, d string, env []string, s string, _ ...string) *exec.Cmd {
 				if s == step {
-					return tooltest.Missing(d, env, s)
+					return tooltest.Missing(context.Background(), d, env, s)
 				}
-				return fake(d, env, s)
+				return fake(context.Background(), d, env, s)
 			}
 			verified := map[string][]byte{}
 			_, err := policyChain(dir, "/d", tool, verified)
@@ -372,11 +373,11 @@ func Test_runCanary(t *testing.T) {
 	t.Run("落ちることを期待するケースで道具を起動できなくても、期待どおりに落ちたと数えずに errTool", func(t *testing.T) {
 		t.Parallel()
 		fake, _ := fakeTool(t)
-		tool := func(d string, env []string, step string) *exec.Cmd {
+		tool := func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
 			if step == stepVerify && filepath.Base(d) == "failing-rego-test" {
-				return tooltest.Missing(d, env, step)
+				return tooltest.Missing(context.Background(), d, env, step)
 			}
-			return fake(d, env, step)
+			return fake(context.Background(), d, env, step)
 		}
 		var out bytes.Buffer
 		err := runCanary(args(t), &out, tool, tree(t, nil))
@@ -485,9 +486,9 @@ func Test_runCanary(t *testing.T) {
 		require.False(t, filepath.IsAbs(rel))
 		fake, _ := fakeTool(t)
 		var dirs []string
-		tool := func(d string, env []string, step string) *exec.Cmd {
+		tool := func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
 			dirs = append(dirs, d)
-			return fake(d, env, step)
+			return fake(context.Background(), d, env, step)
 		}
 		require.ErrorIs(t, runCanary(argsWith(t, "tmp/c/work"), &bytes.Buffer{}, tool, rel), errCanary)
 		require.NotEmpty(t, dirs)

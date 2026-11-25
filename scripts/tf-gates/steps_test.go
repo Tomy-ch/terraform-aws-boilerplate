@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -48,7 +49,7 @@ func Test_command(t *testing.T) {
 	} {
 		t.Run(step, func(t *testing.T) {
 			t.Parallel()
-			c := command("/x/d", []string{"A=1"}, step)
+			c := command(context.Background(), "/x/d", []string{"A=1"}, step)
 			assert.Equal(t, want, c.Args)
 			assert.Equal(t, "/x/d", c.Dir)
 			assert.Equal(t, []string{"A=1"}, c.Env)
@@ -79,7 +80,9 @@ func Test_runEach(t *testing.T) {
 			targets, err := requireDirs(scan{base: base, roots: []string{"modules", "usecases"}, log: io.Discard})
 			require.NoError(t, err)
 			var out bytes.Buffer
-			err = runEach("tf-x", targets, &out, func(tg target) *exec.Cmd { return tool(tg.path, tfexec.Env(os.Environ()), stepTest) })
+			err = runEach("tf-x", targets, &out, func(tg target) *exec.Cmd {
+				return tool(context.Background(), tg.path, tfexec.Env(os.Environ()), stepTest)
+			})
 			assert.Len(t, calls(), 2, "落ちても残りのディレクトリを走らせる")
 			if c.want == "" {
 				require.NoError(t, err)
@@ -99,9 +102,9 @@ func Test_runEach(t *testing.T) {
 		require.NoError(t, err)
 		return targets, func(tg target) *exec.Cmd {
 			if tg.rel == unstartable {
-				return tooltest.Missing(tg.path, nil, stepTest)
+				return tooltest.Missing(context.Background(), tg.path, nil, stepTest)
 			}
-			return tool(tg.path, tfexec.Env(os.Environ()), stepTest)
+			return tool(context.Background(), tg.path, tfexec.Env(os.Environ()), stepTest)
 		}, calls
 	}
 
@@ -137,7 +140,7 @@ func Test_runEach(t *testing.T) {
 		f := tooltest.New(t)
 		f.Set(stepTest, "kill", "")
 		targets, _, _ := threeTargets(t, map[string]string{}, "")
-		err := runEach("tf-x", targets, &bytes.Buffer{}, func(tg target) *exec.Cmd { return f.Tool()(tg.path, nil, stepTest) })
+		err := runEach("tf-x", targets, &bytes.Buffer{}, func(tg target) *exec.Cmd { return f.Tool()(context.Background(), tg.path, nil, stepTest) })
 		require.ErrorIs(t, err, errTool)
 		assert.Contains(t, err.Error(), "がシグナルで終わりました")
 		assert.Equal(t, 2, exitCode(err))
@@ -474,11 +477,11 @@ func Test_validateTargets(t *testing.T) {
 		require.Len(t, targets, 3)
 		out := tree(t, map[string]string{"manifest.tsv": "stale\t0\tx\ty\n"})
 		tool, calls := fakeTool(t)
-		cmdOf := func(d string, env []string, step string) *exec.Cmd {
+		cmdOf := func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
 			if d == targets[1].path {
-				return tooltest.Missing(d, env, step)
+				return tooltest.Missing(context.Background(), d, env, step)
 			}
-			return tool(d, env, step)
+			return tool(context.Background(), d, env, step)
 		}
 		err = validateTargets("/d", out, targets, cmdOf)
 		require.ErrorIs(t, err, errTool)
@@ -593,11 +596,11 @@ func Test_runLint(t *testing.T) {
 		t.Parallel()
 		base := okTree(t, nil)
 		tool, calls := fakeTool(t)
-		cmdOf := func(d string, env []string, step string) *exec.Cmd {
+		cmdOf := func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
 			if step == stepLintInit {
-				return tooltest.Missing(d, env, step)
+				return tooltest.Missing(context.Background(), d, env, step)
 			}
-			return tool(d, env, step)
+			return tool(context.Background(), d, env, step)
 		}
 		err := runLint([]string{"-base", base, "-config", "c", "-plugin-dir", t.TempDir(), "modules"}, &bytes.Buffer{}, cmdOf)
 		require.ErrorIs(t, err, errTool)
@@ -609,11 +612,11 @@ func Test_runLint(t *testing.T) {
 		t.Parallel()
 		base := okTree(t, nil)
 		tool, calls := fakeTool(t)
-		cmdOf := func(d string, env []string, step string) *exec.Cmd {
+		cmdOf := func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
 			if step == stepLint {
-				return tooltest.Missing(d, env, step)
+				return tooltest.Missing(context.Background(), d, env, step)
 			}
-			return tool(d, env, step)
+			return tool(context.Background(), d, env, step)
 		}
 		err := runLint([]string{"-base", base, "-config", "c", "-plugin-dir", t.TempDir(), "modules", "usecases"}, &bytes.Buffer{}, cmdOf)
 		require.ErrorIs(t, err, errTool)

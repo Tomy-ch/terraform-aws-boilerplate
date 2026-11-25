@@ -35,7 +35,7 @@ if [ "$step" = validate ] && [ -e validate.out ]; then cat validate.out; fi
 exit 0
 `
 	require.NoError(t, os.WriteFile(script, []byte(body), 0o600))
-	tool := func(d string, env []string, step string) *exec.Cmd {
+	tool := func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
 		c := exec.CommandContext(context.Background(), "/bin/sh", script, step)
 		c.Dir = d
 		c.Env = env

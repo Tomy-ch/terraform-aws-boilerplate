@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -45,7 +46,7 @@ func runCheck(args []string, w io.Writer, tool toolFunc, env envFunc, root strin
 // runScan は、リポジトリ直下で本走査（typos --format brief）を走らせ、出力を w へ写します。誤綴りの終了コードは
 // errFailed、それ以外の 0 でない終了コード（不正な引数・設定を読めない）は errTool です。
 func runScan(w io.Writer, tool toolFunc) error {
-	r, err := toolrun.Run(tool(".", os.Environ(), stepMain))
+	r, err := toolrun.Run(tool(context.Background(), ".", os.Environ(), stepMain))
 	fmt.Fprint(w, r.Combined)
 	if err != nil {
 		return err
