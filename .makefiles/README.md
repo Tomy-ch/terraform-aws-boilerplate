@@ -129,6 +129,14 @@ identity root の region で `scripts/bootstrap-check account` を起動する�
 `scripts/bootstrap-check verify` を起動し、`STAGE` と、空でなければ `BOOTSTRAP_EXECUTOR`・`POLICY_SOURCE` を渡す。`POLICY_SOURCE=reference` のときは、`make tf-policy` の出力の置き場（`-out`）も `-reference-dir` で渡す。
 aws の起動は bootstrap-check が持つ。
 
+### `setup/`
+
+手順書の、人が実行する確認と手順の実行の入口。手順書ごとに `.mk` を1つ置き、入口の名前は
+`setup-<手順書>-<手順>` と、読み取りだけの `-check` とする。`local.mk` の `bootstrap-check-account` と同じく
+`tf-local env-unset` の変数を外し、`PROFILE` と identity root の region で `scripts/setup` を起動する。
+書き込みの前の確かめ・差分・確認の入力と aws の起動は `scripts/setup` が持つ（0702 決定26・27）。端末からの
+入力を読むので、ホストで起動する。
+
 ### 直下
 
 `runner.mk`（起動の前置き）、`versions.mk`（版の写しの反映と照合）、`host-tools.mk`（ホストへの道具の導入）。

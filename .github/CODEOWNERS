@@ -39,6 +39,10 @@ scripts/repo-settings/                @Tomy-ch
 scripts/tf-local/                     @Tomy-ch
 scripts/oidc-job-lint/                @Tomy-ch
 
+# 手順書の人の手順の入口。管理アカウントの資格情報で、どの aws の書き込みをどの確かめの後に起動するかを決める（ADR-0702 決定27）。
+.makefiles/setup/                     @Tomy-ch
+scripts/setup/                        @Tomy-ch
+
 # apply の失敗を戻す revert のブランチの経路。リポジトリへ書き込める token がどの job に届き、何を push するかを決める。
 .makefiles/github/operation/apply-revert.mk @Tomy-ch
 scripts/apply-revert/                       @Tomy-ch
