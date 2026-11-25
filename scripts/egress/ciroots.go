@@ -83,10 +83,7 @@ func ciEntries(entries []cientry.Entry) map[string]ciEntry {
 
 // rootPath は env と root の種類から root のディレクトリを返す。配置は ADR-0604 決定5 が決める。
 func rootPath(env string, root cientry.Root) string {
-	if root == cientry.RootIdentity {
-		return "env/" + env + "/identity"
-	}
-	return "env/" + env
+	return root.Dir(env)
 }
 
 // ranRoots は workflow のジョブごとに、そのジョブが CI の入口を通して触れる root を返す。1 つの root を

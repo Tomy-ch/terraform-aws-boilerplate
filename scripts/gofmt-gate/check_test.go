@@ -69,6 +69,33 @@ func Test_runCheck(t *testing.T) {
 		assert.Equal(t, []string{stepCanary}, steps(f.Calls()))
 	})
 
+	t.Run("canary の起動時に -work の前の中身が無く、本走査の起動時には fixture が消えている", func(t *testing.T) {
+		t.Parallel()
+		root := repoRoot(t)
+		writeFile(t, filepath.Join(root, "tmp", "gofmt-gate", "stale.go"), "package stale\n")
+		f := tooltest.New(t, tooltest.WithPrelude(`case "$step" in canary) find . -name stale.go > "$ctl/stale.seen" ;; main) if [ -e ../tmp/gofmt-gate ]; then ls -A ../tmp/gofmt-gate; else echo gone; fi > "$ctl/fixture.seen" ;; esac`))
+		f.Set(stepCanary, "out", canaryOut)
+		require.NoError(t, runCheck(checkArgs, new(bytes.Buffer), f.Tool(), root))
+		assert.Empty(t, f.Read("stale.seen"), "canary の起動時に前の中身が残っていない")
+		assert.Equal(t, "gone\n", f.Read("fixture.seen"), "本走査の起動時に fixture が残っていない")
+	})
+
+	t.Run("-work の前の中身を消して canary を建て、通っても落ちても終わりに消す", func(t *testing.T) {
+		t.Parallel()
+		for name, f := range map[string]*tooltest.Fake{"通る": passingFake(t), "落ちる": tooltest.New(t)} {
+			root := repoRoot(t)
+			writeFile(t, filepath.Join(root, "tmp", "gofmt-gate", "stale.go"), "package stale\n")
+			err := runCheck(checkArgs, new(bytes.Buffer), f.Tool(), root)
+			if name == "通る" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, errCanary)
+			}
+			assert.NoDirExists(t, filepath.Join(root, "tmp", "gofmt-gate"), name)
+			assert.DirExists(t, filepath.Join(root, "tmp"), name)
+		}
+	})
+
 	t.Run(".go が0件なら、道具を起動せずに errNoInput", func(t *testing.T) {
 		t.Parallel()
 		root, err := filepath.EvalSymlinks(t.TempDir())

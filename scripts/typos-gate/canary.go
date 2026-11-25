@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -20,15 +21,14 @@ const hiddenFile = ".hidden/canary.txt"
 const typosFound = 2
 
 // runCanary は、fixture を work に建て、実物の typos が隠しディレクトリの誤綴りで落ち、本走査の対象に .github/ が
-// 入っていることを確かめます。fixture は終わりに消します。
+// 入っていることを確かめます。work は空で渡され、作り直しと後片付けは呼び出し側が持ちます。
 func runCanary(work string, cfg []byte, w io.Writer, tool toolFunc) error {
 	if err := buildFixture(work, cfg); err != nil {
 		return err
 	}
-	defer func() { _ = os.RemoveAll(work) }()
 
 	var failed []string
-	scan, err := toolrun.Run(tool(work, os.Environ(), stepScan))
+	scan, err := toolrun.Run(tool(context.Background(), work, os.Environ(), stepScan))
 	if err != nil {
 		return err
 	}
@@ -36,7 +36,7 @@ func runCanary(work string, cfg []byte, w io.Writer, tool toolFunc) error {
 		failed = append(failed, "隠しディレクトリの誤綴りで落ちませんでした")
 		fmt.Fprintf(w, "--- typos --format brief（rc=%d）:\n%s\n", scan.Code, scan.Combined)
 	}
-	files, err := toolrun.Run(tool(".", os.Environ(), stepFiles))
+	files, err := toolrun.Run(tool(context.Background(), ".", os.Environ(), stepFiles))
 	if err != nil {
 		return err
 	}
@@ -66,11 +66,8 @@ func readConfig(p string) ([]byte, error) {
 	return raw, nil
 }
 
-// buildFixture は、work を作り直し、設定の複写と、隠しディレクトリの中の誤綴りを置きます。
+// buildFixture は、work に設定の複写と、隠しディレクトリの中の誤綴りを置きます。
 func buildFixture(work string, cfg []byte) error {
-	if err := os.RemoveAll(work); err != nil {
-		return xerrors.Wrapf(errRead, "%s の削除: %v", work, err)
-	}
 	hidden := filepath.Join(work, filepath.FromSlash(hiddenFile))
 	if err := os.MkdirAll(filepath.Dir(hidden), 0o750); err != nil {
 		return xerrors.Wrapf(errRead, "%v", err)

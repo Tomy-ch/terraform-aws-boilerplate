@@ -135,86 +135,6 @@ func Test_lockKey(t *testing.T) {
 	})
 }
 
-func Test_runLockETag(t *testing.T) {
-	t.Parallel()
-
-	write := func(t *testing.T, body string) string {
-		t.Helper()
-
-		path := filepath.Join(t.TempDir(), "list.json")
-		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
-
-		return path
-	}
-
-	t.Run("正常系", func(t *testing.T) {
-		t.Parallel()
-
-		got, err := runLockETag([]string{"-key", lockKeyOK, write(t, lockList(lockKeyOK, false, 1, lockObject(lockKeyOK, lockETagA)))}, os.ReadFile)
-		require.NoError(t, err)
-		assert.Equal(t, lockETagA, got)
-	})
-
-	t.Run("-want は lock の有無を wantLock へ渡す", func(t *testing.T) {
-		t.Parallel()
-
-		held := lockList(lockKeyOK, false, 1, lockObject(lockKeyOK, lockETagA))
-		for name, c := range map[string]struct {
-			want, list, etag string
-			err              error
-		}{
-			"present で lock が在れば ETag": {"present", held, lockETagA, nil},
-			"absent で lock が在れば失敗":     {"absent", held, "", errLockExists},
-		} {
-			t.Run(name, func(t *testing.T) {
-				t.Parallel()
-
-				got, err := runLockETag([]string{"-key", lockKeyOK, "-want", c.want, write(t, c.list)}, os.ReadFile)
-				if c.err != nil {
-					require.ErrorIs(t, err, c.err)
-
-					return
-				}
-
-				require.NoError(t, err)
-				assert.Equal(t, c.etag, got)
-			})
-		}
-	})
-
-	t.Run("-want の一覧が読めなければ有無を判定せず errLockList", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := runLockETag([]string{"-key", lockKeyOK, "-want", "absent", write(t, lockList(lockKeyOK, true, 0))}, os.ReadFile)
-		require.ErrorIs(t, err, errLockList)
-	})
-
-	t.Run("異常系", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("ファイルを読めなければ errLockList", func(t *testing.T) {
-			t.Parallel()
-
-			_, err := runLockETag([]string{"-key", lockKeyOK, filepath.Join(t.TempDir(), "none")}, os.ReadFile)
-			require.ErrorIs(t, err, errLockList)
-		})
-
-		for name, args := range map[string][]string{
-			"位置引数が無い":   {"-key", lockKeyOK},
-			"位置引数が2つ":   {"-key", lockKeyOK, "a", "b"},
-			"未知のフラグ":    {"-nope", "a"},
-			"未知の -want": {"-key", lockKeyOK, "-want", "maybe", "a"},
-		} {
-			t.Run(name+"なら errUsage", func(t *testing.T) {
-				t.Parallel()
-
-				_, err := runLockETag(args, os.ReadFile)
-				require.ErrorIs(t, err, errUsage)
-			})
-		}
-	})
-}
-
 func Test_lockETag(t *testing.T) {
 	t.Parallel()
 
@@ -270,56 +190,6 @@ func Test_lockETag(t *testing.T) {
 			_, err := lockETag("", []byte(lockList("", false, 0)))
 			require.ErrorIs(t, err, errLockList)
 		})
-	})
-}
-
-func Test_runLockStale(t *testing.T) {
-	t.Parallel()
-
-	files := func(t *testing.T, meta, body string) (string, string) {
-		t.Helper()
-
-		dir := t.TempDir()
-		m, b := filepath.Join(dir, "meta.json"), filepath.Join(dir, "lock.json")
-		require.NoError(t, os.WriteFile(m, []byte(meta), 0o600))
-		require.NoError(t, os.WriteFile(b, []byte(body), 0o600))
-
-		return m, b
-	}
-	d := deps{readFile: os.ReadFile, now: func() time.Time { return lockNow }}
-
-	t.Run("正常系", func(t *testing.T) {
-		t.Parallel()
-
-		m, b := files(t, lockMeta(lockETagA, lockNow.Add(-time.Hour)), lockBody(lockID, "runner@fv-az1-2"))
-		got, err := runLockStale([]string{"-etag", lockETagA, "-meta", m, b}, d)
-		require.NoError(t, err)
-		assert.Contains(t, got, "ID="+lockID)
-		assert.Contains(t, got, "経過=60 分", "時刻は deps.now から読む")
-	})
-
-	t.Run("異常系", func(t *testing.T) {
-		t.Parallel()
-
-		m, b := files(t, lockMeta(lockETagA, lockNow.Add(-time.Hour)), lockBody(lockID, "runner@fv-az1-2"))
-		none := filepath.Join(t.TempDir(), "none")
-
-		for name, c := range map[string]struct {
-			args []string
-			want error
-		}{
-			"位置引数が無ければ errUsage":            {[]string{"-etag", lockETagA, "-meta", m}, errUsage},
-			"未知のフラグなら errUsage":             {[]string{"-nope", b}, errUsage},
-			"属性のファイルを読めなければ errLockMeta":    {[]string{"-etag", lockETagA, "-meta", none, b}, errLockMeta},
-			"lock file を読めなければ errLockInfo": {[]string{"-etag", lockETagA, "-meta", m, none}, errLockInfo},
-		} {
-			t.Run(name, func(t *testing.T) {
-				t.Parallel()
-
-				_, err := runLockStale(c.args, d)
-				require.ErrorIs(t, err, c.want)
-			})
-		}
 	})
 }
 
@@ -857,42 +727,6 @@ func Test_lockHeld(t *testing.T) {
 	})
 }
 
-func Test_runLockHeld(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	m, b := filepath.Join(dir, "meta.json"), filepath.Join(dir, "lock.json")
-	require.NoError(t, os.WriteFile(m, []byte(lockMeta(lockETagA, lockNow)), 0o600))
-	require.NoError(t, os.WriteFile(b, []byte(lockBodyOp(lockID, "runner@fv-az1-2", planOperation)), 0o600))
-	none := filepath.Join(dir, "none")
-	d := deps{readFile: os.ReadFile, now: func() time.Time { return lockNow }}
-
-	t.Run("正常系", func(t *testing.T) {
-		t.Parallel()
-
-		got, err := runLockHeld([]string{"-etag", lockETagA, "-meta", m, b}, d)
-		require.NoError(t, err)
-		assert.Contains(t, got, "Operation="+planOperation)
-	})
-
-	for name, c := range map[string]struct {
-		args []string
-		want error
-	}{
-		"位置引数が無ければ errUsage":            {[]string{"-etag", lockETagA, "-meta", m}, errUsage},
-		"未知のフラグなら errUsage":             {[]string{"-nope", b}, errUsage},
-		"属性のファイルを読めなければ errLockMeta":    {[]string{"-etag", lockETagA, "-meta", none, b}, errLockMeta},
-		"lock file を読めなければ errLockInfo": {[]string{"-etag", lockETagA, "-meta", m, none}, errLockInfo},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			_, err := runLockHeld(c.args, d)
-			require.ErrorIs(t, err, c.want)
-		})
-	}
-}
-
 // waitDeps は、alive の値を使い切った後は最後の値を返す。
 func waitDeps(alive []bool, sleeps *int) deps {
 	d, _, _ := recordingDeps(alive)
@@ -1051,70 +885,4 @@ func Test_lockWait(t *testing.T) {
 		_, err := lockWait(filepath.Join(t.TempDir(), "none"), 1, time.Second, time.Minute, waitDeps([]bool{true}, &sleeps))
 		require.ErrorIs(t, err, errLockWait)
 	})
-}
-
-func Test_runLockWait(t *testing.T) {
-	t.Parallel()
-
-	path := filepath.Join(t.TempDir(), "out.txt")
-	require.NoError(t, os.WriteFile(path, []byte("data.aws_caller_identity.current: Reading...\n"), 0o600))
-
-	t.Run("正常系", func(t *testing.T) {
-		t.Parallel()
-
-		sleeps := 0
-		got, err := runLockWait([]string{"-pid", "1", "-interval", "500ms", "-limit", "1m", path}, waitDeps([]bool{true}, &sleeps))
-		require.NoError(t, err)
-		assert.Equal(t, "held", got)
-	})
-
-	t.Run("pid と周期と上限をフラグから渡す", func(t *testing.T) {
-		t.Parallel()
-
-		empty := filepath.Join(t.TempDir(), "empty.txt")
-		require.NoError(t, os.WriteFile(empty, nil, 0o600))
-		d, pids, slept := recordingDeps([]bool{true})
-		_, err := runLockWait([]string{"-pid", "42", "-interval", "500ms", "-limit", "1s", empty}, d)
-		require.ErrorIs(t, err, errLockWait)
-		assert.Equal(t, []int{42, 42, 42}, *pids)
-		assert.Equal(t, []time.Duration{500 * time.Millisecond, 500 * time.Millisecond}, *slept)
-	})
-
-	t.Run("周期と上限を省けば1秒と10分", func(t *testing.T) {
-		t.Parallel()
-
-		empty := filepath.Join(t.TempDir(), "empty.txt")
-		require.NoError(t, os.WriteFile(empty, nil, 0o600))
-		d, _, slept := recordingDeps([]bool{true, false})
-		got, err := runLockWait([]string{"-pid", "1", empty}, d)
-		require.NoError(t, err)
-		assert.Empty(t, got)
-		assert.Equal(t, []time.Duration{time.Second}, *slept)
-
-		reads := 0
-		d, _, slept = recordingDeps([]bool{true})
-		d.readFile = func(string) ([]byte, error) { reads++; return nil, nil }
-		_, err = runLockWait([]string{"-pid", "1", empty}, d)
-		require.ErrorIs(t, err, errLockWait)
-		assert.Len(t, *slept, 600, "10分を1秒ずつ待つ")
-	})
-
-	for name, args := range map[string][]string{
-		"位置引数が無い":       {"-pid", "1"},
-		"位置引数が2つ":       {"-pid", "1", path, path},
-		"pid が負":        {"-pid", "-1", path},
-		"pid が無い":       {path},
-		"pid が0以下":      {"-pid", "0", path},
-		"interval が0以下": {"-pid", "1", "-interval", "0s", path},
-		"limit が0以下":    {"-pid", "1", "-limit", "-1s", path},
-		"未知のフラグ":        {"-nope", path},
-	} {
-		t.Run(name+"なら errUsage", func(t *testing.T) {
-			t.Parallel()
-
-			sleeps := 0
-			_, err := runLockWait(args, waitDeps([]bool{true}, &sleeps))
-			require.ErrorIs(t, err, errUsage)
-		})
-	}
 }

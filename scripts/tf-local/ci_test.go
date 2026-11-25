@@ -43,32 +43,6 @@ func change(address, actions string) string {
 	return `{"address":"` + address + `","change":{"actions":[` + actions + `]}}`
 }
 
-func Test_runRoleARN(t *testing.T) {
-	t.Parallel()
-
-	t.Run("フラグから role の ARN を組む", func(t *testing.T) {
-		t.Parallel()
-
-		got, err := runRoleARN([]string{"-project", "tabp", "-env", "admin", "-role", "apply-identity", "-account", account})
-		require.NoError(t, err)
-		assert.Equal(t, "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity", got)
-	})
-
-	t.Run("知らないフラグは失敗する", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := runRoleARN([]string{"-region", "x"})
-		require.ErrorIs(t, err, errUsage)
-	})
-
-	t.Run("余分な引数は失敗する", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := runRoleARN([]string{"-project", "tabp", "-env", "admin", "-role", "plan", "-account", account, "x"})
-		require.ErrorIs(t, err, errUsage)
-	})
-}
-
 func Test_roleARN(t *testing.T) {
 	t.Parallel()
 
@@ -133,73 +107,6 @@ const (
 	deniedStderr = "\naws: [ERROR]: An error occurred (AccessDenied) when calling the AssumeRoleWithWebIdentity operation: Not authorized to perform sts:AssumeRoleWithWebIdentity\n"
 	invalidToken = "\naws: [ERROR]: An error occurred (InvalidIdentityToken) when calling the AssumeRoleWithWebIdentity operation: Incorrect token audience\n"
 )
-
-func Test_runAssumeDenied(t *testing.T) {
-	t.Parallel()
-
-	t.Run("終了コードが非0で AccessDenied なら拒否の行を出す", func(t *testing.T) {
-		t.Parallel()
-
-		got, err := runAssumeDenied([]string{"-role", "apply", "-exitcode", "254", fileWith(t, deniedStderr)}, os.ReadFile)
-		require.NoError(t, err)
-		assert.Equal(t, "✅ apply の role の assume は拒否されました（AccessDenied）", got)
-	})
-
-	t.Run("終了コード 0 は stderr が AccessDenied でも assume が通ったとして失敗する", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := runAssumeDenied([]string{"-role", "apply-identity", "-exitcode", "0", fileWith(t, deniedStderr)}, os.ReadFile)
-		require.ErrorIs(t, err, errAssumeSucceeded)
-	})
-
-	t.Run("終了コード 0 は stderr のファイルが無くても失敗する", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := runAssumeDenied([]string{"-role", "apply", "-exitcode", "0", filepath.Join(t.TempDir(), "none")}, os.ReadFile)
-		require.ErrorIs(t, err, errAssumeSucceeded)
-	})
-
-	t.Run("終了コードが非0で AccessDenied でなければ失敗する", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := runAssumeDenied([]string{"-role", "apply", "-exitcode", "254", fileWith(t, invalidToken)}, os.ReadFile)
-		require.ErrorIs(t, err, errAssumeNotDenied)
-	})
-
-	t.Run("STS のエラーを読めなければ aws の終了コードを文に入れて失敗する", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := runAssumeDenied([]string{"-role", "apply", "-exitcode", "255", fileWith(t, "Could not connect to the endpoint URL\n")}, os.ReadFile)
-		require.ErrorIs(t, err, errAssumeUnreadable)
-		assert.Contains(t, err.Error(), "aws の終了コード 255")
-	})
-
-	t.Run("stderr のファイルを読めなければ失敗する", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := runAssumeDenied([]string{"-role", "apply", "-exitcode", "254", filepath.Join(t.TempDir(), "none")}, os.ReadFile)
-		require.ErrorIs(t, err, errAssumeUnreadable)
-	})
-
-	for name, args := range map[string][]string{
-		"知らない役割は失敗する":           {"-role", "admin", "-exitcode", "254", "f"},
-		"役割が無ければ失敗する":           {"-exitcode", "254", "f"},
-		"終了コードが無ければ失敗する":        {"-role", "apply", "f"},
-		"数でない終了コードは失敗する":        {"-role", "apply", "-exitcode", "x", "f"},
-		"負の終了コードは失敗する":          {"-role", "apply", "-exitcode", "-1", "f"},
-		"256 以上の終了コードは失敗する":     {"-role", "apply", "-exitcode", "256", "f"},
-		"stderr のファイルが無ければ失敗する": {"-role", "apply", "-exitcode", "254"},
-		"余分な引数は失敗する":            {"-role", "apply", "-exitcode", "254", "f", "g"},
-		"知らないフラグは失敗する":          {"-rc", "254", "f"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			_, err := runAssumeDenied(args, os.ReadFile)
-			require.ErrorIs(t, err, errUsage)
-		})
-	}
-}
 
 func Test_assumeDenied(t *testing.T) {
 	t.Parallel()
@@ -266,7 +173,7 @@ func Test_oidcSub(t *testing.T) {
 	t.Run("payload の sub を返す", func(t *testing.T) {
 		t.Parallel()
 
-		got, err := oidcSub(fileWith(t, jwtWith(`{"sub":"`+immutable+`","aud":"sts.amazonaws.com"}`)+"\n"), os.ReadFile)
+		got, err := oidcSub(jwtWith(`{"sub":"`+immutable+`","aud":"sts.amazonaws.com"}`) + "\n")
 		require.NoError(t, err)
 		assert.Equal(t, immutable, got)
 	})
@@ -276,7 +183,7 @@ func Test_oidcSub(t *testing.T) {
 
 		parts := strings.Split(jwtWith(`{"sub":"`+immutable+`"}`), ".")
 		padded := base64.URLEncoding.EncodeToString([]byte(`{"sub":"` + immutable + `"}`))
-		got, err := oidcSub(fileWith(t, parts[0]+"."+padded+"."+parts[2]), os.ReadFile)
+		got, err := oidcSub(parts[0] + "." + padded + "." + parts[2])
 		require.NoError(t, err)
 		assert.Equal(t, immutable, got)
 	})
@@ -299,7 +206,7 @@ func Test_oidcSub(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := oidcSub(fileWith(t, c.token), os.ReadFile)
+			_, err := oidcSub(c.token)
 			require.ErrorIs(t, err, errOIDCToken)
 			assert.Contains(t, err.Error(), c.why)
 		})
@@ -308,23 +215,16 @@ func Test_oidcSub(t *testing.T) {
 	t.Run("上限ちょうどの token は大きさでは失敗しない", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := oidcSub(fileWith(t, sized(maxTokenSize)), os.ReadFile)
+		_, err := oidcSub(sized(maxTokenSize))
 		require.ErrorIs(t, err, errOIDCToken)
 		assert.NotContains(t, err.Error(), "大きすぎます")
-	})
-
-	t.Run("token のファイルが無ければ失敗する", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := oidcSub(filepath.Join(t.TempDir(), "missing"), os.ReadFile)
-		require.ErrorIs(t, err, errOIDCToken)
 	})
 
 	t.Run("エラーの文に token を入れない", func(t *testing.T) {
 		t.Parallel()
 
 		token := jwtWith(`{"sub":"secret-looking-value"}`)
-		_, err := oidcSub(fileWith(t, token), os.ReadFile)
+		_, err := oidcSub(token)
 		require.ErrorIs(t, err, errOIDCToken)
 		assert.NotContains(t, err.Error(), "secret-looking-value")
 		assert.NotContains(t, err.Error(), strings.Split(token, ".")[1])
@@ -380,53 +280,6 @@ func Test_planCounts_String(t *testing.T) {
 
 		got := planCounts{read: 1, outputs: 2}.String()
 		assert.Equal(t, "Plan: 0 to import, 0 to add, 0 to change, 0 to destroy. 1 to read. 2 output changes.", got)
-	})
-}
-
-func Test_runPlanSummary(t *testing.T) {
-	t.Parallel()
-
-	t.Run("ファイルの JSON を要約する", func(t *testing.T) {
-		t.Parallel()
-
-		got, err := runPlanSummary([]string{"-exitcode", "0", fileWith(t, planWith(change("a.b", `"no-op"`), ""))}, os.ReadFile)
-		require.NoError(t, err)
-		assert.Equal(t, "No changes.", got)
-	})
-
-	t.Run("ファイルが無ければ失敗する", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := runPlanSummary([]string{"-exitcode", "0", filepath.Join(t.TempDir(), "missing")}, os.ReadFile)
-		require.ErrorIs(t, err, errPlanJSON)
-	})
-
-	t.Run("終了コードが1なら、ファイルを読まずに plan の失敗として落ちる", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := runPlanSummary([]string{"-exitcode", "1", filepath.Join(t.TempDir(), "missing")}, os.ReadFile)
-		require.ErrorIs(t, err, errPlanFailed)
-	})
-
-	t.Run("終了コードが1なら、JSON が読めても plan の失敗として落ちる", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := runPlanSummary([]string{"-exitcode", "1", fileWith(t, planWith(change("a.b", `"no-op"`), ""))}, os.ReadFile)
-		require.ErrorIs(t, err, errPlanFailed)
-	})
-
-	t.Run("ファイルが1つでなければ失敗する", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := runPlanSummary([]string{"-exitcode", "0"}, os.ReadFile)
-		require.ErrorIs(t, err, errUsage)
-	})
-
-	t.Run("知らないフラグは失敗する", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := runPlanSummary([]string{"-x", "0", "f"}, os.ReadFile)
-		require.ErrorIs(t, err, errUsage)
 	})
 }
 
@@ -615,58 +468,6 @@ func Test_countChanges(t *testing.T) {
 	})
 }
 
-func Test_runPlanKey(t *testing.T) {
-	t.Parallel()
-
-	t.Run("フラグから key を組む", func(t *testing.T) {
-		t.Parallel()
-
-		got, err := runPlanKey([]string{"-pr", "12", "-run", "345", "-attempt", "1", "-root", "admin-identity"})
-		require.NoError(t, err)
-		assert.Equal(t, "pr/12/345-1-admin-identity.txt", got)
-	})
-
-	t.Run("知らないフラグは失敗する", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := runPlanKey([]string{"-sha", "x"})
-		require.ErrorIs(t, err, errUsage)
-	})
-
-	t.Run("余分な引数は失敗する", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := runPlanKey([]string{"-pr", "1", "-run", "1", "-attempt", "1", "-root", "a", "x"})
-		require.ErrorIs(t, err, errUsage)
-	})
-}
-
-func Test_runApplyKey(t *testing.T) {
-	t.Parallel()
-
-	t.Run("フラグから key を組む", func(t *testing.T) {
-		t.Parallel()
-
-		got, err := runApplyKey([]string{"-run", "345", "-attempt", "1", "-root", "admin-identity"})
-		require.NoError(t, err)
-		assert.Equal(t, "apply/345-1-admin-identity.txt", got)
-	})
-
-	t.Run("知らないフラグは失敗する", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := runApplyKey([]string{"-pr", "1", "-run", "1", "-attempt", "1", "-root", "a"})
-		require.ErrorIs(t, err, errUsage)
-	})
-
-	t.Run("余分な引数は失敗する", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := runApplyKey([]string{"-run", "1", "-attempt", "1", "-root", "a", "x"})
-		require.ErrorIs(t, err, errUsage)
-	})
-}
-
 // policyObjectPatterns は、deployment-identity の inline policy の宣言の、line に当たるただ1つの行から、
 // Bucket の変数 bucketVar の object の Resource の key の pattern（`pr/*` など）を取り出します。
 func policyObjectPatterns(t *testing.T, line *regexp.Regexp, bucketVar string) []string {
@@ -754,125 +555,6 @@ func Test_applyKey(t *testing.T) {
 
 			_, err := applyKey(c[0], c[1], c[2])
 			require.ErrorIs(t, err, errApplyKey)
-		})
-	}
-}
-
-func Test_runApplyResult(t *testing.T) {
-	t.Parallel()
-
-	t.Run("終了コード 0 なら成功の行を出す", func(t *testing.T) {
-		t.Parallel()
-
-		got, err := runApplyResult([]string{"-exitcode", "0"})
-		require.NoError(t, err)
-		assert.Equal(t, "✅ apply が終わりました", got)
-	})
-
-	t.Run("終了コード 124 は打ち切りとして失敗する", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := runApplyResult([]string{"-exitcode", "124"})
-		require.ErrorIs(t, err, errApplyTimeout)
-		assert.NotErrorIs(t, err, errApplyFailed)
-	})
-
-	for _, code := range []string{"1", "2", "123", "125", "130", "137", "255"} {
-		t.Run("終了コード "+code+" は apply の失敗として失敗する", func(t *testing.T) {
-			t.Parallel()
-
-			_, err := runApplyResult([]string{"-exitcode", code})
-			require.ErrorIs(t, err, errApplyFailed)
-			assert.NotErrorIs(t, err, errApplyTimeout)
-		})
-	}
-
-	for name, args := range map[string][]string{
-		"終了コードが無ければ失敗する":    {},
-		"空の終了コードは失敗する":      {"-exitcode", ""},
-		"数でない終了コードは失敗する":    {"-exitcode", "x"},
-		"負の終了コードは失敗する":      {"-exitcode", "-1"},
-		"256 以上の終了コードは失敗する": {"-exitcode", "256"},
-		"余分な引数は失敗する":        {"-exitcode", "0", "x"},
-		"知らないフラグは失敗する":      {"-rc", "0"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			_, err := runApplyResult(args)
-			require.ErrorIs(t, err, errUsage)
-		})
-	}
-}
-
-func Test_runFailureKind(t *testing.T) {
-	t.Parallel()
-
-	files := map[string][]byte{
-		"lock.txt":  []byte("plan\n\nError: Error acquiring the state lock\n\nLock Info:\n"),
-		"plan.txt":  []byte("plan\n\nError: Invalid reference\n"),
-		"empty.txt": {},
-	}
-	readFile := func(path string) ([]byte, error) {
-		if b, ok := files[path]; ok {
-			return b, nil
-		}
-		return nil, os.ErrNotExist
-	}
-
-	for name, c := range map[string]struct {
-		args []string
-		want string
-	}{
-		"plan が lock の取得で落ちれば lock":        {[]string{"-step", "plan", "-exitcode", "1", "lock.txt"}, "lock"},
-		"plan がほかの理由で落ちれば plan":            {[]string{"-step", "plan", "-exitcode", "1", "plan.txt"}, "plan"},
-		"全文が空でも、読めれば plan":                 {[]string{"-step", "plan", "-exitcode", "1", "empty.txt"}, "plan"},
-		"plan が通った後の失敗は、全文を読まずに plan":      {[]string{"-step", "plan", "-exitcode", "2", "missing.txt"}, "plan"},
-		"終了コード 0 の plan の後の失敗も plan":       {[]string{"-step", "plan", "-exitcode", "0", "lock.txt"}, "plan"},
-		"apply が lock の取得で落ちれば lock":       {[]string{"-step", "apply", "-exitcode", "1", "lock.txt"}, "lock"},
-		"apply がほかの理由で落ちれば apply":          {[]string{"-step", "apply", "-exitcode", "1", "plan.txt"}, "apply"},
-		"apply の打ち切りは、全文を読まずに timeout":     {[]string{"-step", "apply", "-exitcode", "124", "missing.txt"}, "timeout"},
-		"apply の打ち切りの1つ手前は apply":          {[]string{"-step", "apply", "-exitcode", "123", "lock.txt"}, "apply"},
-		"apply の打ち切りの1つ後は apply":           {[]string{"-step", "apply", "-exitcode", "125", "lock.txt"}, "apply"},
-		"apply が終わった後の失敗は、全文を読まずに applied": {[]string{"-step", "apply", "-exitcode", "0", "missing.txt"}, "applied"},
-		"apply の終了コードの上限 255 は apply":      {[]string{"-step", "apply", "-exitcode", "255", "missing.txt"}, "apply"},
-		"plan の 124 は timeout にせず plan":    {[]string{"-step", "plan", "-exitcode", "124", "missing.txt"}, "plan"},
-		"apply の 2 は、全文を読まずに apply":        {[]string{"-step", "apply", "-exitcode", "2", "missing.txt"}, "apply"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			got, err := runFailureKind(c.args, readFile)
-			require.NoError(t, err)
-			assert.Equal(t, c.want, got)
-		})
-	}
-
-	for _, step := range []string{"plan", "apply"} {
-		t.Run(step+" が落ちたのに全文を読めなければ失敗する", func(t *testing.T) {
-			t.Parallel()
-
-			_, err := runFailureKind([]string{"-step", step, "-exitcode", "1", "missing.txt"}, readFile)
-			require.ErrorIs(t, err, errFailureKind)
-		})
-	}
-
-	for name, args := range map[string][]string{
-		"段が無い":       {"-exitcode", "1", "plan.txt"},
-		"知らない段":      {"-step", "init", "-exitcode", "1", "plan.txt"},
-		"終了コードが無い":   {"-step", "apply", "plan.txt"},
-		"終了コードが範囲の外": {"-step", "apply", "-exitcode", "256", "plan.txt"},
-		"終了コードが負":    {"-step", "apply", "-exitcode", "-1", "plan.txt"},
-		"終了コードが数でない": {"-step", "apply", "-exitcode", "x", "plan.txt"},
-		"全文が無い":      {"-step", "apply", "-exitcode", "1"},
-		"余分な引数がある":   {"-step", "plan", "-exitcode", "1", "plan.txt", "x"},
-		"知らない flag":  {"-x"},
-	} {
-		t.Run(name+"なら失敗する", func(t *testing.T) {
-			t.Parallel()
-
-			_, err := runFailureKind(args, readFile)
-			require.ErrorIs(t, err, errUsage)
 		})
 	}
 }
@@ -1144,7 +826,7 @@ func Test_oidcToken(t *testing.T) {
 		t.Parallel()
 
 		token := "a.b." + strings.Repeat("c", maxTokenSize-4)
-		got, err := oidcToken(fileWith(t, `{"value":"`+token+`"}`), os.ReadFile)
+		got, err := oidcToken([]byte(`{"value":"` + token + `"}`))
 		require.NoError(t, err)
 		assert.Equal(t, token, got)
 	})
@@ -1152,7 +834,7 @@ func Test_oidcToken(t *testing.T) {
 	t.Run("応答の value を返す", func(t *testing.T) {
 		t.Parallel()
 
-		got, err := oidcToken(fileWith(t, `{"count":1,"value":"a.b.c"}`), os.ReadFile)
+		got, err := oidcToken([]byte(`{"count":1,"value":"a.b.c"}`))
 		require.NoError(t, err)
 		assert.Equal(t, "a.b.c", got)
 	})
@@ -1175,18 +857,11 @@ func Test_oidcToken(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := oidcToken(fileWith(t, body), os.ReadFile)
+			_, err := oidcToken([]byte(body))
 			require.ErrorIs(t, err, errOIDCResponse)
 			assert.NotContains(t, err.Error(), "a.b")
 		})
 	}
-
-	t.Run("ファイルが無ければ失敗する", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := oidcToken(filepath.Join(t.TempDir(), "missing"), os.ReadFile)
-		require.ErrorIs(t, err, errOIDCResponse)
-	})
 }
 
 func policyDirWith(t *testing.T, files map[string]string) string {

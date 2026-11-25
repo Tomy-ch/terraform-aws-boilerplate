@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -38,7 +39,7 @@ func runCoverage(config string, cfg []byte, w io.Writer, tool toolFunc, env envF
 		return xerrors.Wrapf(errTool, "%v", err)
 	}
 
-	scanned, err := toolrun.Run(tool(".", os.Environ(), stepFiles))
+	scanned, err := toolrun.Run(tool(context.Background(), ".", os.Environ(), stepFiles))
 	if err != nil {
 		return err
 	}
@@ -97,7 +98,7 @@ func runCoverage(config string, cfg []byte, w io.Writer, tool toolFunc, env envF
 
 // gitList は、リポジトリ直下で段 step の git を起動し、stdout を返します。0 でない終了コードは errTool です。
 func gitList(tool toolFunc, env []string, step string) (string, error) {
-	r, err := toolrun.Run(tool(".", env, step))
+	r, err := toolrun.Run(tool(context.Background(), ".", env, step))
 	if err != nil {
 		return "", err
 	}

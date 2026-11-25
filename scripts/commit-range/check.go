@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -88,7 +89,7 @@ func count(tool toolFunc, env []string, root, from, to string) (int, error) {
 
 // gitOutput は、root で git の段 step を stdin を渡して起動し、stdout を返します。0 でない終了コードは errGit です。
 func gitOutput(tool toolFunc, env []string, root, step, stdin string) (string, error) {
-	cmd := tool(root, env, step)
+	cmd := tool(context.Background(), root, env, step)
 	cmd.Stdin = strings.NewReader(stdin)
 	r, err := toolrun.Run(cmd)
 	if err != nil {

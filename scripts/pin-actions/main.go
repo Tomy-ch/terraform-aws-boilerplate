@@ -30,6 +30,7 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cooldown"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/ghfiles"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lockfile"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/yamlblock"
 )
@@ -81,6 +82,7 @@ var (
 	errLockOrphanKey      = xerrors.New("lockfile に参照されていないエントリがあります")
 	errLockMissingKey     = xerrors.New("lockfile に未登録の参照があります")
 	errPinDrift           = xerrors.New("未固定/古い参照があります")
+	errLsRemote           = xerrors.New("git ls-remote が落ちました")
 )
 
 // ref はアクション参照 1 件。repo は owner/repo、sub はサブパス（codeql-action/init 等）、tag は固定対象の版。
@@ -107,12 +109,39 @@ func (r ref) key() string { return r.repo + "@" + r.tag }
 func main() {
 	log.SetFlags(0)
 
-	if err := run(os.Args[1:], os.Getwd, githubAPIBase); err != nil {
-		log.Fatalf("❌ %v", err)
+	if err := run(os.Args[1:], os.Getwd, githubAPIBase, command); err != nil {
+		log.Printf("❌ %v", err)
+		os.Exit(exitCode(err))
 	}
 }
 
-func run(args []string, wd func() (string, error), apiBase string) error {
+// exitCode は lib/toolrun の取り決めで、固定の不備（解釈できない記法・lockfile の欠けと余り・未固定）を 1、
+// 検査を成り立たせられなかったこと（道具を起動できない、ref を解決できない、使い方の誤りなど）を 2 で返します。
+func exitCode(err error) int {
+	return toolrun.ExitCode(err, errLooseUses, errLockOrphanKey, errLockMissingKey, errPinDrift)
+}
+
+type toolFunc = toolrun.Func
+
+const stepLsRemote = "git-ls-remote"
+
+// command は toolFunc の実物です。ls-remote の operand は URL と ref 名で、ref 名は --end-of-options の後ろに置き、
+// `-` で始まる tag を option と読ませません。URL が無ければ起動せずに落ちる false を返します。
+func command(ctx context.Context, dir string, env []string, step string, operands ...string) *exec.Cmd {
+	var cmd *exec.Cmd
+	switch {
+	case step == stepLsRemote && len(operands) > 1:
+		args := append([]string{"ls-remote", operands[0], "--end-of-options"}, operands[1:]...)
+		cmd = exec.CommandContext(ctx, "git", args...) //nolint:gosec // G204: URL は https://github.com/ に owner/repo を足したもので、ref 名は --end-of-options の後ろだけに置く。道具と option はリテラル。gosec が境の後ろの operand を区別できるようになれば外す
+	default:
+		cmd = exec.CommandContext(ctx, "false")
+	}
+	cmd.Dir, cmd.Env = dir, env
+
+	return cmd
+}
+
+func run(args []string, wd func() (string, error), apiBase string, tool toolFunc) error {
 	if len(args) == 0 {
 		return errUsage
 	}
@@ -140,7 +169,7 @@ func run(args []string, wd func() (string, error), apiBase string) error {
 			return xerrors.Wrap(err, "failed to parse flags")
 		}
 
-		return resolve(root, apiBase, files, *minAge)
+		return resolve(root, apiBase, files, *minAge, tool)
 	case "apply":
 		return applyOrCheck(root, files, false)
 	case "check":
@@ -258,7 +287,7 @@ func looseUsesValue(rest string) (string, bool) {
 }
 
 // resolve は走査対象の参照を SHA へ解決して lockfile を書き直す。
-func resolve(root, apiBase string, files []string, minAgeDays int) error {
+func resolve(root, apiBase string, files []string, minAgeDays int, tool toolFunc) error {
 	keys, err := collectKeys(root, files)
 	if err != nil {
 		return err
@@ -274,7 +303,7 @@ func resolve(root, apiBase string, files []string, minAgeDays int) error {
 	lock := map[string]string{}
 	var notes []string
 	for k, r := range keys {
-		sha, err := resolveSHA(ctx, r.repo, r.tag)
+		sha, err := resolveSHA(ctx, tool, r.repo, r.tag)
 		if err != nil {
 			return xerrors.Wrap(err, "resolve "+k)
 		}
@@ -562,7 +591,6 @@ func sortedChangePaths(changes map[string]string) []string {
 	return paths
 }
 
-// relAll は paths を root からの相対パスへ順序を保って写す。
 func relAll(root string, paths []string) []string {
 	out := make([]string, 0, len(paths))
 	for _, p := range paths {
@@ -572,16 +600,17 @@ func relAll(root string, paths []string) []string {
 }
 
 // resolveSHA は owner/repo の tag/branch を commit SHA へ解決する。annotated tag は ^{} で deref する。
-func resolveSHA(ctx context.Context, repo, tag string) (string, error) {
+func resolveSHA(ctx context.Context, tool toolFunc, repo, tag string) (string, error) {
 	cctx, cancel := context.WithTimeout(ctx, lsRemoteTimeout)
 	defer cancel()
-	url := "https://github.com/" + repo
-	// --end-of-options 以降を確実に ref 名として扱わせ、`-` 始まりの tag のオプション誤解釈を防ぐ。
-	out, err := exec.CommandContext(cctx, "git", "ls-remote", url, "--end-of-options", tag, tag+"^{}").Output() //nolint:gosec // 参照名は workflow 由来
+	r, err := toolrun.Run(tool(cctx, "", nil, stepLsRemote, "https://github.com/"+repo, tag, tag+"^{}"))
 	if err != nil {
 		return "", xerrors.Wrap(err, "git ls-remote")
 	}
-	return selectSHA(string(out), tag)
+	if r.Code != 0 {
+		return "", xerrors.Wrapf(errLsRemote, "exit status %d: %s", r.Code, strings.TrimSpace(r.Combined))
+	}
+	return selectSHA(r.Stdout, tag)
 }
 
 // selectSHA は git ls-remote の生出力から tag に対応する commit SHA を選ぶ。

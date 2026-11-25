@@ -774,6 +774,31 @@ func Test_apply(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
+		t.Run("root を開けなければ何も書き換えない（書き込みは通る root でも）", func(t *testing.T) {
+			t.Parallel()
+			testenv.RequireNonRoot(t, "読めないが辿れて書けるディレクトリを作る")
+			root, list := fixtureTree(t)
+			p, err := build(root, fixtureDomains, func(string) ([]string, error) { return list, nil })
+			require.NoError(t, err)
+			require.NotEmpty(t, p.writes)
+			before := map[string]string{}
+			for f := range p.writes {
+				raw, err := os.ReadFile(filepath.Join(root, f)) //nolint:gosec // root は t.TempDir() 由来
+				require.NoError(t, err)
+				before[f] = string(raw)
+			}
+			// 読めない（開けない）が、辿れて書ける。書き換えだけが先に通る形を作る。
+			require.NoError(t, os.Chmod(root, 0o311))
+			t.Cleanup(func() { _ = os.Chmod(root, 0o755) })
+			require.Error(t, apply(root, p))
+			require.NoError(t, os.Chmod(root, 0o755))
+			for f, want := range before {
+				raw, err := os.ReadFile(filepath.Join(root, f)) //nolint:gosec // root は t.TempDir() 由来
+				require.NoError(t, err)
+				assert.Equal(t, want, string(raw), f)
+			}
+		})
+
 		t.Run("書き換えに失敗したらパスを消さない", func(t *testing.T) {
 			t.Parallel()
 			testenv.RequireNonRoot(t, "読み取り専用のディレクトリへの書き込みを失敗させる")

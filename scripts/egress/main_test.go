@@ -12,6 +12,7 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -74,7 +75,6 @@ var testCIMake = ciMakeFixture([3]string{cientry.Plan, "t", "identity"})
 // 登録簿に無い種別の role は plan にする。
 func ciMakeFixture(entries ...[3]string) string {
 	var b strings.Builder
-	b.WriteString("CI_DENIED_ROLES ?= apply apply-identity unlock-identity unlock\n")
 	var defined []string
 	for _, e := range entries {
 		if !slices.Contains(defined, e[0]) {
@@ -1825,7 +1825,7 @@ func Test_applyOrCheck(t *testing.T) {
 		t.Run("reference の root が 1 件も無ければ弾き、apply でも何も書かない", func(t *testing.T) {
 			t.Parallel()
 			root := newTestRepo(t, map[string]string{"a.yaml": staleWorkflow("one"), "b.yaml": bWorkflow()})
-			require.NoError(t, os.RemoveAll(filepath.Join(root, "usecases")))
+			testenv.RemoveUnder(t, root, "usecases")
 			require.ErrorIs(t, applyOrCheck(root, false), errNoReferenceRoots)
 			got, readErr := openRoot(t, root).ReadFile(".github/workflows/a.yaml")
 			require.NoError(t, readErr)

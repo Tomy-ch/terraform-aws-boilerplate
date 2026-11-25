@@ -482,8 +482,9 @@ For each non-`維持` finding, in descending impact order:
    着地するのか、既存の決定を改訂するのかはリポジトリ方針の判断であって、コメント整理の判断ではない。
    Ask: 「root ADR を新規に起こす」 / 「use-case ADR（`usecases/<use-case>/docs/adr/`）として起こす」 /
    「既存 ADR-NNNN を改訂する」 / 「ADR ではなく README へ」 / 「今回は移設しない」。
-   ADR-0701 決定7 は訳文ペアを禁じているので、正本は日本語の1ファイルだけである。どれを選んでも、
-   `docs/adr/README.md` の索引を同じ変更で更新する —— 索引は ADR の一覧が存在する唯一の場所であり、
+   ADR-0701 決定7 は訳文ペアを禁じているので、正本は日本語の1ファイルだけである。ADR を選んだなら、
+   選んだ scope の索引（root なら `docs/adr/README.md`、use-case なら `usecases/<use-case>/docs/adr/README.md`）
+   を同じ変更で更新する —— 索引はその scope の ADR の一覧が存在する唯一の場所であり、
    そこがずれると読み手は決定へ到達できない。`make adr-lint` がその整合を見る。
 5. 移設先が README で、その追記が README の主張を実質的に変えるなら、README がコードの実状と一致
    しているかは別の確認であることを述べる。それは `/impl-review` の `declaration-drift` レンズの主題である。
@@ -538,7 +539,7 @@ because no human read the edits one at a time.
   looking for package-level prose goes.
 - **生成区間**（terraform-docs のマーカ内、`// Code generated ... DO NOT EDIT`）。
 - **機能を持つコメント / ディレクティブ** — `//go:generate`、`//nolint`、`//go:build`、`//go:embed`、
-  `# tflint-ignore`、`# trivy:ignore`、shebang、`.makefiles/` の `##` ヘルプ注記。これらは散文ではない。
+  `# tflint-ignore`、`# trivy:ignore`、`#checkov:skip`、`# kics-scan disable`、`# nosemgrep`、shebang、`.makefiles/` の `##` ヘルプ注記。これらは散文ではない。
   **抑止（`//nolint` 等）に付いた理由と撤回条件は消さない** —— ADR-0501 決定13 がそれを要求しており、
   消せば抑止が理由を失う。
 - **移設先の文書そのものの品質**。本スキルは移設先へ**書き足す**だけで、既にそこにあるものを監査しない。

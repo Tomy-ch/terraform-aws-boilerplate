@@ -163,6 +163,16 @@ func Test_runCheck(t *testing.T) {
 		require.ErrorIs(t, checkArgs(t).run(new(bytes.Buffer), f.Tool(), isolated), errTool)
 	})
 
+	t.Run("-work の前の中身を消してから canary を建て、canary が落ちても終わりに消す", func(t *testing.T) {
+		t.Parallel()
+		f := tooltest.New(t, tooltest.WithPrelude(`if [ -e ../stale ]; then echo yes; else echo no; fi > "$ctl/stale.seen"`))
+		c := checkArgs(t)
+		writeFile(t, filepath.Join(c.work, "stale"), "")
+		require.ErrorIs(t, c.run(new(bytes.Buffer), f.Tool(), isolated), errCanary)
+		assert.Equal(t, "no\n", f.Read("stale.seen"), "canary の起動時に前の中身が残っていない")
+		assert.NoDirExists(t, c.work)
+	})
+
 	t.Run("git の隔離の一覧を得られなければ、道具を1つも起動せずに errTool", func(t *testing.T) {
 		t.Parallel()
 		f := passingFake(t)

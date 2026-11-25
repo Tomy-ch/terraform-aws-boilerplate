@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -70,13 +71,14 @@ func run(ctx context.Context, args []string, d deps) error {
 	}
 }
 
-// exitCode は、中断を 130 で、ほかの失敗を 1 で返します。
+// exitCode は、中断を 130 で返し、ほかは lib/toolrun の取り決めで、検査が落ちたこと（mise が npm: の道具を入れる、
+// canary が落ちた、lockfile がずれた）を 1、検査を成り立たせられなかったことを 2 で返します。
 func exitCode(err error) int {
 	if xerrors.Is(err, errInterrupted) {
 		return interruptedExit
 	}
 
-	return 1
+	return toolrun.ExitCode(err, errMiseNPM, errCanaryFallback, errCanaryLaunched, errCanaryReason, errLockDrift)
 }
 
 // interruptedExit は、SIGINT で終わったときの慣例の終了コードです。
@@ -86,7 +88,7 @@ const interruptedExit = 130
 // パイプを握ったまま残っても、ここで待ちを打ち切る。
 const stopGrace = 10 * time.Second
 
-type toolFunc func(ctx context.Context, dir string, step string) *exec.Cmd
+type toolFunc = toolrun.Func
 
 const (
 	stepInstall   = "install"
@@ -94,7 +96,7 @@ const (
 	stepMiseLs    = "mise-ls"
 )
 
-func command(ctx context.Context, dir string, step string) *exec.Cmd {
+func command(ctx context.Context, dir string, env []string, step string, _ ...string) *exec.Cmd {
 	var cmd *exec.Cmd
 	switch step {
 	case stepInstall:
@@ -106,7 +108,7 @@ func command(ctx context.Context, dir string, step string) *exec.Cmd {
 	default:
 		panic(fmt.Sprintf("node-tools: 知らない段 %q", step))
 	}
-	cmd.Dir = dir
+	cmd.Dir, cmd.Env = dir, env
 	stopGently(cmd)
 
 	return cmd
