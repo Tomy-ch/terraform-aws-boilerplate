@@ -420,6 +420,9 @@ skipped(refs, r) if {
 	first_step_named(refs[w.ref])
 }
 
+# for の条件（if）は要素を絞るだけで、親を指す値を作らないので、その中の参照を辿らない。
+skipped(_, r) if r.filter
+
 token_node(d, _, tok) := sprintf("local|%s|%s", [d, substring(tok, 6, -1)]) if startswith(tok, "local.")
 
 token_node(_, cid, tok) := sprintf("each|%s", [cid]) if {
