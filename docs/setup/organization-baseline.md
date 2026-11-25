@@ -123,3 +123,15 @@ PolicyStaging に付けた policy の付け先を広げる変更の前に行う�
 4. 結果を、付け先を広げる Pull Request に書く
 
 declarative policy は、付ける前に account status report で影響を見る。RCP は PolicyStaging では本番の文を試せないので、付けた直後に読み取りで確かめ、通らなければ外す変更を昇格する。
+
+### 3.8 セキュリティのサービスの信頼アクセスを有効にする
+
+セキュリティのサービスの委任管理者を security のアカウントに指定する変更の merge より前に、1回行う（[ADR-0602](../adr/0602-bootstrap-and-ci-authentication.md) 決定1）。CloudTrail・AWS Config・IAM Access Analyzer の委任管理者の登録は、信頼アクセスが有効でないと拒まれる（Organizations の `SERVICE_ACCESS_NOT_ENABLED`）。GuardDuty と Inspector は、指定の API が信頼アクセスを有効にするので、ここでは行わない。
+
+1. 管理アカウントのコンソールで、`ap-northeast-1` の AWS Organizations を開き、「サービス」を選ぶ
+2. AWS CloudTrail・AWS Config・IAM Access Analyzer のそれぞれで、「信頼されたアクセスを有効にする」を選ぶ
+3. 3つが「信頼されたアクセス」の列で有効になっていることを確かめ、結果を Pull Request に書く
+
+AWS CLI を使える管理アカウントの資格情報が在るなら、`aws organizations enable-aws-service-access --service-principal <主体>` を `cloudtrail.amazonaws.com`・`config.amazonaws.com`・`access-analyzer.amazonaws.com` について行い、`aws organizations list-aws-service-access-for-organization` で確かめてもよい。
+
+指定の変更が昇格した後に、`aws organizations list-delegated-administrators` で security のアカウントが委任管理者であることを確かめ、結果を Pull Request に書く。
