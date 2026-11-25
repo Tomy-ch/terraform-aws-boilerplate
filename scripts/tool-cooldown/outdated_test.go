@@ -877,7 +877,7 @@ func Test_reportOutdated(t *testing.T) {
 
 			err := reportOutdated(client, []tool{
 				{key: "aqua:owner/repo", version: "1.1.0", file: miseFile},
-			}, options{summaryOut: out}, outdatedNow)
+			}, options{summaryOut: out}, outdatedNow, command)
 
 			require.NoError(t, err)
 			body, readErr := os.ReadFile(out) //nolint:gosec // out は t.TempDir() 配下
@@ -895,7 +895,7 @@ func Test_reportOutdated(t *testing.T) {
 
 			err := reportOutdated(client, []tool{
 				{key: "aqua:owner/repo", version: "1.1.0", file: miseFile},
-			}, options{}, outdatedNow)
+			}, options{}, outdatedNow, command)
 
 			require.NoError(t, err)
 		})
@@ -914,7 +914,7 @@ func Test_reportOutdated(t *testing.T) {
 
 			err := reportOutdated(client, []tool{
 				{key: "aqua:owner/repo", version: "1.1.0", file: miseFile},
-			}, options{summaryOut: filepath.Join(t.TempDir(), "missing", "report.md")}, outdatedNow)
+			}, options{summaryOut: filepath.Join(t.TempDir(), "missing", "report.md")}, outdatedNow, command)
 
 			require.Error(t, err)
 		})
@@ -927,7 +927,7 @@ func Test_reportOutdated(t *testing.T) {
 
 			err := reportOutdated(client, []tool{
 				{key: "aqua:owner/repo", version: "1.1.0", file: miseFile},
-			}, options{summaryOut: out}, outdatedNow)
+			}, options{summaryOut: out}, outdatedNow, command)
 
 			require.ErrorIs(t, err, errUnconfirmed)
 			body, readErr := os.ReadFile(out) //nolint:gosec // out は t.TempDir() 配下

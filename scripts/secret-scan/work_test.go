@@ -93,3 +93,19 @@ func Test_copyInto(t *testing.T) {
 
 	require.ErrorIs(t, copyInto(root, dir, ".gitleaksignore"), errInput, "複写元が無い")
 }
+
+func Test_removeWork(t *testing.T) {
+	t.Parallel()
+
+	t.Run("tmp/secret-scan/<name> だけを消す", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		dir, err := prepareWork(root, "x")
+		require.NoError(t, err)
+		keep := filepath.Join(root, "tmp", "secret-scan", "y")
+		require.NoError(t, os.MkdirAll(keep, 0o750))
+		removeWork(root, "x")
+		assert.NoDirExists(t, dir)
+		assert.DirExists(t, keep)
+	})
+}

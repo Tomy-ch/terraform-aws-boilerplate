@@ -417,9 +417,9 @@ func outdatedReport(cands []candidate, now time.Time) string {
 // reportOutdated は棚卸しを実行し、結果を標準出力と（指定があれば）ファイルへ書きます。
 // gate / audit と違い違反という概念が無いため、上流を確認できなかった場合だけ失敗させます。
 // 失敗させるのは本文と件数を書いた後です —— 何を確認できなかったかは本文が持ちます。
-func reportOutdated(client *http.Client, declared []tool, opt options, now time.Time) error {
+func reportOutdated(client *http.Client, declared []tool, opt options, now time.Time, launch toolFunc) error {
 	ctx := context.Background()
-	resolved, skipped, err := resolveBackends(ctx, declared)
+	resolved, skipped, err := resolveBackends(ctx, launch, declared)
 	if err != nil {
 		return xerrors.Wrap(err, "❌ backend の解決")
 	}

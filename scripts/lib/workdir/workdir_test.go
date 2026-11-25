@@ -715,3 +715,55 @@ func TestRemove(t *testing.T) {
 		assert.Equal(t, map[string]string{"f": "o"}, snapshot(t, outside))
 	})
 }
+
+func Test_recreate(t *testing.T) {
+	t.Parallel()
+
+	t.Run("tmp が symlink で追跡していないことを確かめられなければ ErrInvalid で、何も消さない", func(t *testing.T) {
+		t.Parallel()
+		root, target := t.TempDir(), t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(target, "w"), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(target, "w", "f"), []byte("x"), 0o600))
+		require.NoError(t, os.Symlink(target, filepath.Join(root, "tmp")))
+		_, err := recreate(root, "tmp/w", func(string) ([]byte, error) { return nil, exec.ErrNotFound })
+		require.ErrorIs(t, err, ErrInvalid)
+		assert.Equal(t, map[string]string{"w/f": "x"}, snapshot(t, target))
+	})
+
+	t.Run("tmp が追跡していない symlink なら、その先で作り直す", func(t *testing.T) {
+		t.Parallel()
+		root, target := t.TempDir(), t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(target, "w"), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(target, "w", "f"), []byte("x"), 0o600))
+		require.NoError(t, os.Symlink(target, filepath.Join(root, "tmp")))
+		_, err := recreate(root, "tmp/w", func(string) ([]byte, error) { return nil, nil })
+		require.NoError(t, err)
+		assert.Empty(t, snapshot(t, target))
+		assert.DirExists(t, filepath.Join(target, "w"))
+	})
+}
+
+func Test_remove(t *testing.T) {
+	t.Parallel()
+
+	t.Run("tmp が追跡している symlink なら ErrInvalid で、その先を消さない", func(t *testing.T) {
+		t.Parallel()
+		root, target := t.TempDir(), t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(target, "w"), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(target, "w", "f"), []byte("x"), 0o600))
+		require.NoError(t, os.Symlink(target, filepath.Join(root, "tmp")))
+		err := remove(root, "tmp/w", func(string) ([]byte, error) { return []byte("tmp\x00"), nil })
+		require.ErrorIs(t, err, ErrInvalid)
+		assert.Equal(t, map[string]string{"w/f": "x"}, snapshot(t, target))
+	})
+
+	t.Run("tmp が追跡していない symlink なら、その先の -work を消す", func(t *testing.T) {
+		t.Parallel()
+		root, target := t.TempDir(), t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(target, "w"), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(target, "w", "f"), []byte("x"), 0o600))
+		require.NoError(t, os.Symlink(target, filepath.Join(root, "tmp")))
+		require.NoError(t, remove(root, "tmp/w", func(string) ([]byte, error) { return nil, nil }))
+		assert.NoDirExists(t, filepath.Join(target, "w"))
+	})
+}
