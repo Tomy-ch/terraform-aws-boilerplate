@@ -62,7 +62,7 @@ var scanRoots = []string{"usecases", "modules"}
 
 var (
 	providerVersion = regexp.MustCompile(`AWS Provider v?[0-9]+\.[0-9]+\.[0-9]+`)
-	anyHeading      = regexp.MustCompile(`^#{1,6}( |$)`)
+	anyHeading      = regexp.MustCompile(`^(#{1,6})( |$)`)
 )
 
 // headingTails と dateTails は、見出しと日付の直後に続いてよいもの。行末も許します。
@@ -311,11 +311,18 @@ type hiddenLine struct {
 	Reason string
 }
 
-// scanned は scanReadme の結果です。lines はフェンスの外の行で、HTML コメントの部分を除いた文字を、行の番号を
-// 保って持ちます。headings は参照記録の見出しの lines での添字です。openedAt は末尾まで閉じなかったコメントを
+// scanLine は、フェンスの外の1行です。Text は HTML コメントの部分を除いた文字で、Level は元の行が見出しならその段
+// （1-6）、見出しでなければ 0 です。
+type scanLine struct {
+	Number int
+	Text   string
+	Level  int
+}
+
+// scanned は scanReadme の結果です。lines はフェンスの外の行を、行の番号を保って持ちます。headings は参照記録の見出しの lines での添字です。openedAt は末尾まで閉じなかったコメントを
 // 開いた行の番号で、閉じていれば 0 です。
 type scanned struct {
-	lines    []mdscan.Line
+	lines    []scanLine
 	headings []int
 	hidden   []hiddenLine
 	openedAt int
@@ -323,7 +330,8 @@ type scanned struct {
 
 // scanReadme は、フェンスと HTML コメントの状態を1度の走査で一緒に追います。CommonMark のとおり、フェンスの中の
 // `<!--` はコメントを開かず、コメントの中のフェンスの区切りはフェンスを開きません。見出しは元の行が見出しの形を
-// しているときだけ数え、`<!-- -->## …` のように行頭がコメントの行は見出しではありません。
+// しているときだけ数え（headingLevel）、`<!-- -->## …` のように行頭がコメントの行と、コメントの中で始まる行は、
+// 参照記録の見出しとしても、節と一覧の終わりとしても見出しではありません。
 func scanReadme(content []byte) scanned {
 	var sc scanned
 	var fence mdscan.Fence
@@ -346,6 +354,10 @@ func scanReadme(content []byte) scanned {
 		case !inComment || strings.Contains(text, commentClose):
 			sc.openedAt = number
 		}
+		level := 0
+		if !inComment {
+			level = headingLevel(text)
+		}
 		if isHeading(text) {
 			if inComment {
 				sc.hidden = append(sc.hidden, hiddenLine{Line: number, Reason: reasonComment})
@@ -353,9 +365,18 @@ func scanReadme(content []byte) scanned {
 				sc.headings = append(sc.headings, len(sc.lines))
 			}
 		}
-		sc.lines = append(sc.lines, mdscan.Line{Number: number, Text: visible})
+		sc.lines = append(sc.lines, scanLine{Number: number, Text: visible, Level: level})
 	}
 	return sc
+}
+
+// headingLevel は、text が ATX 見出しならその段（1-6）を、見出しでなければ 0 を返します。
+func headingLevel(text string) int {
+	m := anyHeading.FindStringSubmatch(text)
+	if m == nil {
+		return 0
+	}
+	return len(m[1])
 }
 
 // rawLines は、content の全行を、フェンスを区別せずに1始まりの番号で返します。
@@ -451,10 +472,10 @@ func backtickRun(s string) int {
 }
 
 // section は、lines[start] の見出しの次の行から、次の1段目か2段目の見出しの手前までを返します。
-func section(lines []mdscan.Line, start int) []mdscan.Line {
+func section(lines []scanLine, start int) []scanLine {
 	end := len(lines)
 	for i := start + 1; i < len(lines); i++ {
-		if strings.HasPrefix(lines[i].Text, "# ") || strings.HasPrefix(lines[i].Text, "## ") {
+		if lv := lines[i].Level; lv == 1 || lv == 2 {
 			end = i
 			break
 		}
@@ -462,7 +483,7 @@ func section(lines []mdscan.Line, start int) []mdscan.Line {
 	return lines[start+1 : end]
 }
 
-func checkSection(path string, headingLine int, body []mdscan.Line) []lintreport.Finding {
+func checkSection(path string, headingLine int, body []scanLine) []lintreport.Finding {
 	var findings []lintreport.Finding
 	add := func(line int, msg string) {
 		findings = append(findings, lintreport.Finding{File: path, Line: line, Message: msg})
@@ -490,8 +511,8 @@ func checkSection(path string, headingLine int, body []mdscan.Line) []lintreport
 
 // checkDate は、節の `参照日: ` の行が1つだけ在り、日付として読めるかを返します。違反のとき、行が無ければ
 // line は 0 です。
-func checkDate(body []mdscan.Line) (line int, msg string, ok bool) {
-	var found []mdscan.Line
+func checkDate(body []scanLine) (line int, msg string, ok bool) {
+	var found []scanLine
 	for _, l := range body {
 		if strings.HasPrefix(l.Text, datePrefix) {
 			found = append(found, l)
@@ -513,7 +534,7 @@ func checkDate(body []mdscan.Line) (line int, msg string, ok bool) {
 	return found[0].Number, "", true
 }
 
-func hasProviderVersion(body []mdscan.Line) bool {
+func hasProviderVersion(body []scanLine) bool {
 	for _, l := range body {
 		if providerVersion.MatchString(l.Text) {
 			return true
@@ -528,7 +549,7 @@ func hasProviderVersion(body []mdscan.Line) bool {
 // 一覧は label の行の次から、次の label の行か見出しの手前までです。その中で `- ` で始まる行が項目で、`-` だけの行は
 // 本文が空の項目です。字下げした行は直前の項目の続き、空行は読み飛ばします。それ以外の行は、後ろに項目が続けば
 // 違反で、続かなければ一覧の後の文です。
-func checkList(body []mdscan.Line, label string, needReason bool) []lintreport.Finding {
+func checkList(body []scanLine, label string, needReason bool) []lintreport.Finding {
 	var at []int
 	for i, l := range body {
 		if isLabel(l.Text, label) {
@@ -546,7 +567,7 @@ func checkList(body []mdscan.Line, label string, needReason bool) []lintreport.F
 	items := 0
 	for _, l := range body[at[0]+1:] {
 		text := l.Text
-		if isLabel(text, adoptedLabel) || isLabel(text, rejectedLabel) || anyHeading.MatchString(text) {
+		if isLabel(text, adoptedLabel) || isLabel(text, rejectedLabel) || l.Level > 0 {
 			break
 		}
 		if strings.TrimSpace(text) == "" || strings.HasPrefix(text, " ") || strings.HasPrefix(text, "\t") {

@@ -72,8 +72,8 @@ func lineOf(t *testing.T, body, sub string) string {
 	return strconv.Itoa(strings.Count(body[:i], "\n") + 1)
 }
 
-func lines(body string) []mdscan.Line {
-	return mdscan.Lines([]byte(body))
+func lines(body string) []scanLine {
+	return scanReadme([]byte(body)).lines
 }
 
 func Test_gitEnv(t *testing.T) {
@@ -598,6 +598,32 @@ func Test_section(t *testing.T) {
 
 	ls = lines("## 公式実装の参照\na\nb")
 	assert.Len(t, section(ls, 0), 2, "見出しが続かなければ末尾まで")
+
+	ls = lines("## 公式実装の参照\na\n<!-- -->## 別\nb\n<!--\n## 中\n-->\nc")
+	assert.Len(t, section(ls, 0), 7, "行頭がコメントの行と、コメントの中の行では終わらない")
+}
+
+func Test_headingLevel(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		text string
+		want int
+	}{
+		"1段目":       {"# a", 1},
+		"6段目":       {"###### a", 6},
+		"# だけの行":    {"##", 2},
+		"7段は見出しでない": {"####### a", 0},
+		"空白の無い # は見出しでない": {"#hash", 0},
+		"行頭がコメント":         {"<!-- -->## a", 0},
+		"字下げした行":          {" ## a", 0},
+		"本文":              {"a", 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, headingLevel(c.text))
+		})
+	}
 }
 
 func Test_rawLines(t *testing.T) {
@@ -662,14 +688,14 @@ func Test_hasTail(t *testing.T) {
 func Test_scanReadme(t *testing.T) {
 	t.Parallel()
 
-	type line = mdscan.Line
+	type line = scanLine
 	for name, c := range map[string]struct {
 		content string
 		want    scanned
 	}{
 		"フェンスもコメントも無ければ全行を返し、見出しの添字を持つ": {
 			"a\n" + heading + "\nb",
-			scanned{lines: []line{{Number: 1, Text: "a"}, {Number: 2, Text: heading}, {Number: 3, Text: "b"}}, headings: []int{1}},
+			scanned{lines: []line{{Number: 1, Text: "a"}, {Number: 2, Text: heading, Level: 2}, {Number: 3, Text: "b"}}, headings: []int{1}},
 		},
 		"フェンスの行を返さず、中の見出しをフェンスの理由で報告する": {
 			"a\n```\n" + heading + "\n```\nb",
@@ -681,15 +707,19 @@ func Test_scanReadme(t *testing.T) {
 		},
 		"フェンスの中の閉じない開きはコメントを開かない": {
 			"```\n<!--\n```\n" + heading,
-			scanned{lines: []line{{Number: 4, Text: heading}}, headings: []int{0}},
+			scanned{lines: []line{{Number: 4, Text: heading, Level: 2}}, headings: []int{0}},
 		},
 		"コメントの中のフェンスの区切りはフェンスを開かない": {
 			"<!--\n```\n-->\n" + heading,
-			scanned{lines: []line{{Number: 1}, {Number: 2}, {Number: 3}, {Number: 4, Text: heading}}, headings: []int{3}},
+			scanned{lines: []line{{Number: 1}, {Number: 2}, {Number: 3}, {Number: 4, Text: heading, Level: 2}}, headings: []int{3}},
 		},
 		"行頭がコメントの行は、残りが見出しの形でも見出しではない": {
-			"<!-- -->" + heading,
-			scanned{lines: []line{{Number: 1, Text: heading}}},
+			"<!-- -->" + heading + "\n<!-- -->### 小",
+			scanned{lines: []line{{Number: 1, Text: heading}, {Number: 2, Text: "### 小"}}},
+		},
+		"見出しの段を元の行から読み、コメントの中で始まる行は見出しにしない": {
+			"# 一\n### 三\n<!--\n## 中 -->\n####### 七",
+			scanned{lines: []line{{Number: 1, Text: "# 一", Level: 1}, {Number: 2, Text: "### 三", Level: 3}, {Number: 3}, {Number: 4}, {Number: 5, Text: "####### 七"}}},
 		},
 		"閉じなければ開いた行を返す": {
 			"a\n<!-- b\nc",
@@ -979,6 +1009,10 @@ func Test_checkList(t *testing.T) {
 				{Line: 4, Message: `"採用した知見:" の一覧の途中に項目でない行があります`},
 				{Line: 5, Message: `"採用した知見:" の一覧の途中に項目でない行があります`},
 			},
+		},
+		"行頭がコメントの見出しの形では一覧が終わらない": {
+			"採用した知見:\n- A\n<!-- -->### 小\n- B\n", adoptedLabel, false,
+			[]lintreport.Finding{{Line: 3, Message: `"採用した知見:" の一覧の途中に項目でない行があります`}},
 		},
 		"理由を求めなければコロンを見ない": {
 			"採用した知見:\n- A\n", adoptedLabel, false, nil,
