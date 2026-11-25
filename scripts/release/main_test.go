@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/branchdecl"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/fakeexec"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/reporoot"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
@@ -1528,8 +1529,8 @@ func fakeTools(t *testing.T) (string, func() []string) {
 	log := filepath.Join(bin, "calls")
 	record := fmt.Sprintf("printf '%%s %%s\\n' \"$(basename \"$0\")\" \"$*\" >> %q\n", log)
 	git := "#!/bin/sh\n" + record + fmt.Sprintf("if [ \"$1\" = rev-parse ]; then exec %q \"$@\"; fi\n", realGit)
-	require.NoError(t, os.WriteFile(filepath.Join(bin, "git"), []byte(git), 0o700))                 //nolint:gosec // 偽物の道具は実行できなければならない
-	require.NoError(t, os.WriteFile(filepath.Join(bin, "gh"), []byte("#!/bin/sh\n"+record), 0o700)) //nolint:gosec // 同上
+	fakeexec.Write(t, filepath.Join(bin, "git"), git, 0o700)
+	fakeexec.Write(t, filepath.Join(bin, "gh"), "#!/bin/sh\n"+record, 0o700)
 
 	return "PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"), func() []string {
 		raw, err := os.ReadFile(log)

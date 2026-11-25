@@ -5,8 +5,9 @@
 //	typos-gate check -work <dir> -config <.typos.toml>
 //
 // 範囲の突き合わせは、本走査の対象（typos --files）が git の一覧を覆っていることを、独立の経路の突き合わせで確かめます
-// （ADR-0702 決定15）。外れてよいのは、expectedExcludes に当たるものと、typos が走査から外す自身の設定ファイル
-// だけです。**expectedExcludes は .typos.toml の [files] の extend-exclude と意図して二重に持つ独立の宣言です。**
+// （ADR-0702 決定15）。作業ツリーから消えた追跡ファイル（git ls-files --deleted）は引きます。ほかに外れてよいのは、
+// expectedExcludes に当たるものと、typos が走査から外す自身の設定ファイルだけです。**expectedExcludes は
+// .typos.toml の [files] の extend-exclude と意図して二重に持つ独立の宣言です。**
 // 設定から期待を導くと、設定へ足した除外がそのまま「外れてよい」になり、範囲の縮みが何も赤くしません。両者が集合と
 // して一致しなければ落ちるので、除外を変えるときは両方を変えます。
 //
@@ -21,11 +22,11 @@
 package main
 
 import (
-	"fmt"
 	"io"
 	"os"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/gitenv"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -33,7 +34,7 @@ var (
 	errUsage     = xerrors.New("引数が正しくありません")
 	errRead      = xerrors.New("入力を読めません")
 	errNoInput   = xerrors.New("検査の対象が0件です")
-	errTool      = xerrors.New("道具を起動できません")
+	errTool      = toolrun.ErrTool
 	errUncovered = xerrors.New("追跡ファイルが走査の対象から外れています")
 	errCanary    = xerrors.New("canary が期待どおりではありません")
 	errFailed    = xerrors.New("検査が落ちました")
@@ -47,12 +48,7 @@ func main() {
 	os.Exit(report(run(os.Args[1:], os.Stdout, command, gitEnv), os.Stderr))
 }
 
-func gitEnv() ([]string, error) { return gitEnvFrom(os.Environ()) }
-
-// gitEnvFrom は、environ から外側のリポジトリを指す git の変数を外した写しを返します。
-func gitEnvFrom(environ []string) ([]string, error) {
-	return gitenv.Env(environ)
-}
+func gitEnv() ([]string, error) { return gitenv.Env(os.Environ()) }
 
 func run(args []string, w io.Writer, tool toolFunc, env envFunc) error {
 	if len(args) == 0 {
@@ -69,20 +65,11 @@ func run(args []string, w io.Writer, tool toolFunc, env envFunc) error {
 
 // report は run のエラーを1行で w に書き、終了コードを返します。
 func report(err error, w io.Writer) int {
-	if err != nil {
-		fmt.Fprintf(w, "❌ typos-gate: %v\n", err)
-	}
+	toolrun.Report("typos-gate", err, w)
 
 	return exitCode(err)
 }
 
 func exitCode(err error) int {
-	switch {
-	case err == nil:
-		return 0
-	case xerrors.Is(err, errCanary), xerrors.Is(err, errFailed):
-		return 1
-	default:
-		return 2
-	}
+	return toolrun.ExitCode(err, errCanary, errFailed)
 }
