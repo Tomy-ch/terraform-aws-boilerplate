@@ -75,7 +75,7 @@
 
 ### 記録
 
-8. 参照記録は、対象ユースケース配下のドキュメント（設計ノートまたは当該use-case ADR）へ残す。記録項目は以下とする。
+8. 参照記録は、ユースケースではその配下のドキュメント（設計ノートまたは当該use-case ADR）へ、一般 module（`modules/`）ではその module の README へ残す。記録項目は以下とする。
 
    - 参照した公式ドキュメントまたはmoduleと、その version / 日付
    - 参照時点の AWS Provider version
