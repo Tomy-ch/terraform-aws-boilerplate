@@ -21,6 +21,10 @@
 //	sync   drift と同じ差分を、GitHub への書き込みで解消する（管理者の資格情報を要する）
 //	source デプロイブランチへ入る Pull Request の head を検査する（ADR-0603 決定31。ネットワークを使わない）
 //	deploy-branch  env のデプロイブランチの名前を出す
+//	delete-labels  リポジトリのラベルをすべて消す（make setup-repo の連鎖。管理者の資格情報を要する。以下同じ）
+//	create-labels  labels.json のラベルを作るか、同じ名前のものを宣言へ書き換える
+//	enable-workflows  disabled_fork の workflow を有効にする
+//	create-deploy-branch  env のデプロイブランチを、デフォルトブランチの先頭から作る（在れば失敗する）
 package main
 
 import (
@@ -53,10 +57,10 @@ const (
 )
 
 var (
-	errUsage                             = xerrors.New("usage: repo-settings <apply|check|drift|sync|source|deploy-branch> [-repo owner/name] [-only ruleset|environments|vulnerability-reporting] [-base <ref> -base-sha <sha> -head-sha <sha> -default <branch>] [-env <env>]")
+	errUsage                             = xerrors.New("usage: repo-settings <apply|check|drift|sync|source|deploy-branch|delete-labels|create-labels|enable-workflows|create-deploy-branch> [-repo owner/name] [-only ruleset|environments|vulnerability-reporting] [-base <ref> -base-sha <sha> -head-sha <sha> -default <branch>] [-env <env>]")
 	errIncludeDrift                      = xerrors.New("branch-protection.json の include が branches.json からずれています（make repo-settings-apply）")
 	errDrift                             = xerrors.New("宣言と実態がずれています")
-	errNoToken                           = xerrors.New("GITHUB_TOKEN がありません")
+	errNoToken                           = xerrors.New("GITHUB_TOKEN がありません（gh auth login でログインするか、GITHUB_TOKEN を渡してください）")
 	errNoRepo                            = xerrors.New("対象のリポジトリを解決できません（-repo、GITHUB_REPOSITORY、gh repo view のいずれも空です）")
 	errVulnerabilityReportingUnavailable = xerrors.New("公開でないリポジトリでは Private Vulnerability Reporting を使えません。" +
 		vulnerabilityReportingFile + " の enabled を false にして commit し、SECURITY.md の報告先を差し替えてください")
@@ -91,6 +95,8 @@ func run(args []string, wd func() (string, error), c githubClient, out io.Writer
 		"apply": {}, "check": {}, "drift": {"repo": true}, "sync": {"repo": true, "only": true},
 		"source":        {"base": true, "base-sha": true, "head-sha": true, "default": true},
 		"deploy-branch": {"env": true},
+		"delete-labels": {"repo": true}, "create-labels": {"repo": true}, "enable-workflows": {"repo": true},
+		"create-deploy-branch": {"repo": true, "env": true},
 	}
 	unused := false
 	fs.Visit(func(f *flag.Flag) {
@@ -139,8 +145,33 @@ func run(args []string, wd func() (string, error), c githubClient, out io.Writer
 			return errUsage
 		}
 		return deployBranch(root, *env, out)
+	case "delete-labels", "create-labels", "enable-workflows", "create-deploy-branch":
+		return runSetup(ctx, args[0], root, c, *repo, *env, out)
 	default:
 		return errUsage
+	}
+}
+
+// runSetup は、GitHub へ書き込む初期化のサブコマンドを、対象と資格情報を確かめてから呼びます。
+func runSetup(ctx context.Context, sub, root string, c githubClient, repo, env string, out io.Writer) error {
+	if sub == "create-deploy-branch" && env == "" {
+		return errDeployEnvArg
+	}
+	if repo == "" {
+		return errNoRepo
+	}
+	if c.token == "" {
+		return errNoToken
+	}
+	switch sub {
+	case "delete-labels":
+		return deleteLabels(ctx, root, c, repo, out)
+	case "create-labels":
+		return createLabels(ctx, root, c, repo, out)
+	case "enable-workflows":
+		return enableWorkflows(ctx, c, repo, out)
+	default:
+		return createDeployBranch(ctx, root, c, repo, env, out)
 	}
 }
 

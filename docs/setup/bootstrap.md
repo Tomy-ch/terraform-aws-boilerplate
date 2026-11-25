@@ -449,7 +449,7 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
 
    `No changes.` でなければ、要約と run の URL を Pull Request に記録して**止まる**。
 
-   > **重要**: 再実行を確かめる前に、次を昇格しない。apply-identity の権限を足す変更は、その権限で作る resource の変更より先に昇格して apply する。
+   > **重要**: 手順4 で `No changes.` を確かめる前に、次の変更を昇格しない。
 
 4. 権限を足す変更では、足した Action と期待の判定を、同じ変更で `scripts/bootstrap-check` の `permissionSections` に足す。Condition を持つ Action は、条件キーを `simCtx` の context で与える。apply の後に実行する
 
@@ -618,6 +618,7 @@ credential_process = aws configure export-credentials --profile tabp-bootstrap -
 | 拒否の step が secret の不在で落ちた | secret を置き、「Re-run failed jobs」で再実行する |
 | `admin` の最初の apply が落ちた | 成功した apply が無いので、revert のブランチは用意されない。原因を直す変更をリリース線へ merge して昇格する。戻すなら、リリース線の先頭の上で `git revert -m 1 <失敗した admin の merge>` を行う Pull Request を merge してから昇格する |
 | 昇格の Pull Request で `deploy-source-check` が落ちた | ログの理由を見る。デフォルトブランチがリリース線でない（hotfix の間、最初のリリース線を切る前）なら、デフォルトブランチがリリース線に戻ってから昇格する。到達できない・木が一致しないなら、[`.github/workflows/README.md`](../../.github/workflows/README.md) の「apply の job」に従う |
+| `AccessDenied` で落ち、同じ apply が apply-identity の権限を変えている | CloudTrail で、拒否の時刻が、同じ apply の権限の更新（`PutRolePolicy`・`CreatePolicyVersion`・`AttachRolePolicy`）の成功の直後であれば、IAM の反映の遅れである。「Re-run failed jobs」で走らせ直し、緑になったら、用意された revert のブランチを消す。走らせ直しも同じ `AccessDenied` で落ちるなら、権限の不足である。直す変更を昇格する |
 | 書き込みの拒否を入れる変更か、段3 の値を外す変更の apply が落ちた | 下の診断を行う |
 
 診断: 一時 IAM user で次を読む。
