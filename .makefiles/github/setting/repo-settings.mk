@@ -10,6 +10,7 @@
 .PHONY: apply-vulnerability-reporting ## private-vulnerability-reporting.json を対象リポジトリの Private Vulnerability Reporting へ適用
 .PHONY: deploy-source-check ## [CI] デプロイブランチへ入る Pull Request の head を検査する（ADR-0603 決定31）
 .PHONY: create-deploy-branch ## DEPLOY_ENV のデプロイブランチを、デフォルトブランチの先頭から作る（管理者が bootstrap で1回）
+.PHONY: deploy-branch-exists ## DEPLOY_ENV のデプロイブランチが在ることを確かめる（読み取りのみ。bootstrap の段4 の apply の前）
 
 REPO_SETTINGS_REPO ?= $(or $(GITHUB_REPOSITORY),$(shell gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null))
 
@@ -42,3 +43,6 @@ deploy-source-check:
 # DEPLOY_ENV は人が渡す値なので、deploy-source-check と同じく RUN_SCRIPT_HOST の sh が環境変数から展開する。
 create-deploy-branch:
 	@$(call REPO_SETTINGS_REMOTE,create-deploy-branch -env "$${DEPLOY_ENV:-}")
+
+deploy-branch-exists:
+	@$(call REPO_SETTINGS_REMOTE,deploy-branch-exists -env "$${DEPLOY_ENV:-}")

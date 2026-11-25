@@ -145,11 +145,29 @@ func Test_run(t *testing.T) {
 		{"delete-labels に -env を渡せば usage で失敗する", []string{"delete-labels", "-repo=o/r", "-env", "x"}},
 		{"enable-workflows に -only を渡せば usage で失敗する", []string{"enable-workflows", "-repo=o/r", "-only", "ruleset"}},
 		{"create-deploy-branch に -base を渡せば usage で失敗する", []string{"create-deploy-branch", "-repo=o/r", "-env", "x", "-base", "main"}},
+		{"deploy-branch-exists に -only を渡せば usage で失敗する", []string{"deploy-branch-exists", "-repo=o/r", "-env", "x", "-only", "ruleset"}},
 	}
 
 	t.Run("create-deploy-branch は -env が無ければ errDeployEnvArg", func(t *testing.T) {
 		t.Parallel()
 		require.ErrorIs(t, run([]string{"create-deploy-branch", "-repo=o/r"}, fixedWD(t.TempDir()), githubClient{token: "t"}, &bytes.Buffer{}), errDeployEnvArg)
+	})
+	t.Run("deploy-branch-exists は -env が無ければ errDeployEnvArg", func(t *testing.T) {
+		t.Parallel()
+		require.ErrorIs(t, run([]string{"deploy-branch-exists", "-repo=o/r"}, fixedWD(t.TempDir()), githubClient{token: "t"}, &bytes.Buffer{}), errDeployEnvArg)
+	})
+	t.Run("deploy-branch-exists は -repo が無ければ errNoRepo", func(t *testing.T) {
+		t.Parallel()
+		require.ErrorIs(t, run([]string{"deploy-branch-exists", "-env=admin"}, fixedWD(t.TempDir()), githubClient{token: "t"}, &bytes.Buffer{}), errNoRepo)
+	})
+	t.Run("deploy-branch-exists は -env と -repo を受け付け、読み取りまで届く", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		writeFile(t, root, branchesFile, sourceBranches)
+		f, c := newFakeGitHub(t, map[string]fakeResponse{"GET /repos/o/r/branches/admin": ok(`{"name": "admin"}`)})
+		require.NoError(t, run([]string{"deploy-branch-exists", "-repo=o/r", "-env=admin"}, fixedWD(root), c, &bytes.Buffer{}))
+		assert.Equal(t, 1, requestCount(f))
+		assert.Empty(t, f.writes())
 	})
 	t.Run("enable-workflows は -repo が無ければ errNoRepo", func(t *testing.T) {
 		t.Parallel()

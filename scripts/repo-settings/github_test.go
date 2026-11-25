@@ -138,10 +138,27 @@ func Test_githubClient_do(t *testing.T) {
 		assert.NotContains(t, err.Error(), "...")
 	})
 
-	t.Run("5xx も失敗する", func(t *testing.T) {
+	t.Run("5xx も失敗し、errNotFound にはならない", func(t *testing.T) {
 		t.Parallel()
 		_, c := newFakeGitHub(t, map[string]fakeResponse{"GET /x": {status: http.StatusBadGateway, body: "bad"}})
-		require.ErrorIs(t, c.do(context.Background(), http.MethodGet, "/x", nil, nil), errHTTP)
+		err := c.do(context.Background(), http.MethodGet, "/x", nil, nil)
+		require.ErrorIs(t, err, errHTTP)
+		assert.NotErrorIs(t, err, errNotFound)
+	})
+
+	t.Run("404 は errNotFound で、errHTTP でもある", func(t *testing.T) {
+		t.Parallel()
+		_, c := newFakeGitHub(t, map[string]fakeResponse{})
+		err := c.do(context.Background(), http.MethodGet, "/x", nil, nil)
+		require.ErrorIs(t, err, errNotFound)
+		require.ErrorIs(t, err, errHTTP)
+		assert.Contains(t, err.Error(), "GET /x: 404 ")
+	})
+
+	t.Run("403 は errNotFound にならない", func(t *testing.T) {
+		t.Parallel()
+		_, c := newFakeGitHub(t, map[string]fakeResponse{"GET /x": {status: http.StatusForbidden, body: "no"}})
+		assert.NotErrorIs(t, c.do(context.Background(), http.MethodGet, "/x", nil, nil), errNotFound)
 	})
 
 	t.Run("JSON でない応答は失敗する", func(t *testing.T) {
