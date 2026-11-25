@@ -55,24 +55,10 @@ trust_statements := lib.statements(body(object.get(bg, "role", ""), "assume_role
 
 self_management := {"iam:changepassword", "iam:enablemfadevice", "iam:getuser", "iam:listmfadevices", "iam:resyncmfadevice"}
 
-# stack instance は、それを作る権限を先に昇格する間だけ宣言から外せる（docs/setup/organization-baseline.md）。
-declared_instances := [bg.stack_instances] if "stack_instances" in object.keys(bg)
-
-else := []
-
 deny contains msg if {
-	some a in array.concat(object.get(bg, "users", []), array.concat([object.get(bg, "role", ""), object.get(bg, "group_policy", ""), object.get(bg, "role_attachments", ""), object.get(bg, "role_policy_attachment", ""), object.get(bg, "stack_set", "")], declared_instances))
+	some a in array.concat(object.get(bg, "users", []), [object.get(bg, "role", ""), object.get(bg, "group_policy", ""), object.get(bg, "role_attachments", ""), object.get(bg, "role_policy_attachment", ""), object.get(bg, "stack_set", ""), object.get(bg, "stack_instances", "")])
 	not after(a)
 	msg := sprintf("[PLAN-BG-00] 宣言した break-glass の %s が入力にありません", [a])
-}
-
-# 宣言から外した間に stack instance が plan に現れたら、PLAN-BG-05 が見ないまま通さない。
-deny contains msg if {
-	count(bg) > 0
-	count(declared_instances) == 0
-	some c in lib.changes
-	c.rc.type == "aws_cloudformation_stack_instances"
-	msg := sprintf("[PLAN-BG-00] break-glass の stack instance の宣言が無いのに、%s が入力にあります", [c.rc.address])
 }
 
 deny contains msg if {
