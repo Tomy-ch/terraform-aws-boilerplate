@@ -7,6 +7,10 @@ locals {
   member_accounts = {
     security      = aws_organizations_organizational_unit.top["Security"].id
     "log-archive" = aws_organizations_organizational_unit.top["Security"].id
+    dev           = aws_organizations_organizational_unit.workloads["NonProd"].id
+    stg           = aws_organizations_organizational_unit.workloads["NonProd"].id
+    prd           = aws_organizations_organizational_unit.workloads["Prod"].id
+    sandbox       = aws_organizations_organizational_unit.top["Sandbox"].id
   }
 }
 

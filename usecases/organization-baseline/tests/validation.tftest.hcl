@@ -1,6 +1,6 @@
 mock_provider "aws" {
   mock_data "aws_ssm_parameter" {
-    defaults = { value = "{\"security\":\"security@example.com\",\"log-archive\":\"log-archive@example.com\"}" }
+    defaults = { value = "{\"security\":\"security@example.com\",\"log-archive\":\"log-archive@example.com\",\"dev\":\"dev@example.com\",\"stg\":\"stg@example.com\",\"prd\":\"prd@example.com\",\"sandbox\":\"sandbox@example.com\"}" }
   }
   mock_data "aws_caller_identity" {
     defaults = { account_id = "111111111111" }
@@ -80,7 +80,7 @@ run "accepts_member_envs_in_bootstrapping" {
   command = plan
 
   variables {
-    bootstrapping = ["security", "log-archive"]
+    bootstrapping = ["security", "log-archive", "dev", "stg", "prd", "sandbox"]
   }
 }
 
@@ -88,7 +88,7 @@ run "rejects_unknown_env_in_bootstrapping" {
   command = plan
 
   variables {
-    bootstrapping = ["security", "dev"]
+    bootstrapping = ["security", "admin"]
   }
 
   expect_failures = [var.bootstrapping]

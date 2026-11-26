@@ -21,7 +21,7 @@
 - root の資格情報の中央管理が有効で、この後に作るメンバーアカウントは root の資格情報を持たない
 - 管理アカウントに break-glass の IAM user が2つ在り、それぞれにパスワードと FIDO の MFA（セキュリティキーかパスキー）が設定されている
 - 管理アカウントの password policy が、14文字以上・24世代の再利用の禁止・4種の文字を求める
-- Security OU にメンバーアカウント security と log-archive が在り、それぞれに break-glass の role が StackSet で置かれている
+- メンバーアカウント security と log-archive が Security OU に、dev と stg が NonProd OU に、prd が Prod OU に、sandbox が Sandbox OU に在り、それぞれに break-glass の role が StackSet で置かれている
 
 ## 3. 手順
 

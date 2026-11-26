@@ -36,5 +36,5 @@ module "organization_baseline" {
 
   project = "tabp"
   # 立ち上げを終えたアカウントを外す PR で、OrganizationAccountAccessRole が使えなくなる（docs/setup/organization-baseline.md）。
-  bootstrapping = ["security", "log-archive"]
+  bootstrapping = ["security", "log-archive", "dev", "stg", "prd", "sandbox"]
 }
