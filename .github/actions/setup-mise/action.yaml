@@ -81,3 +81,4 @@ runs:
         # shellcheck disable=SC2086
         mise install $TOOLS
 # 576-measure 1
+# 576-measure 2
