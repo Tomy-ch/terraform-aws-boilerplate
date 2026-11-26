@@ -346,6 +346,11 @@ func Test_client_writeSecret(t *testing.T) {
 		c.notify = func(ch chan<- os.Signal) func() { sig = ch; return func() {} }
 		c.aws = func(args ...string) awsResult {
 			name = strings.TrimPrefix(args[3], "file://")
+
+			info, err := os.Stat(name)
+			require.NoError(t, err)
+			assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+
 			sig <- syscall.SIGINT
 
 			return ok("")

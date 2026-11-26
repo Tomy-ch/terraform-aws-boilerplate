@@ -300,6 +300,11 @@ func Test_exitCode(t *testing.T) {
 		"メールの重複は 2":         {errEmailDuplicate, 2},
 		"確認コードの形の誤りは 2":     {errOTPShape, 2},
 		"読めない応答は 2":         {errAWSResponse, 2},
+		"パスワードの不一致は 2":      {errPasswordMismatch, 2},
+		"MFA の入力の形の誤りは 2":   {errMFAInput, 2},
+		"伏せて読めなければ 2":       {errNoHidden, 2},
+		"中断は 2":             {errInterrupted, 2},
+		"宣言を解釈できなければ 2":     {errDeclShape, 2},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

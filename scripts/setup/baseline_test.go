@@ -151,6 +151,8 @@ func Test_literalStrings(t *testing.T) {
 		"空の要素は errDeclShape":     `a = ["a", ""]` + "\n",
 		"文字列でない要素は errDeclShape": `a = ["a", 1]` + "\n",
 		"toset は errDeclShape":   `a = toset(["a"])` + "\n",
+		"文字列は errDeclShape":      `a = "x"` + "\n",
+		"object は errDeclShape":  "a = { x = 1 }\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -199,6 +201,8 @@ func Test_readOrgShape(t *testing.T) {
 		"IAM の組織の機能の resource が無ければ errDeclShape": strings.Replace(ouMainTF, `"aws_iam_organizations_features"`, `"x"`, 1),
 		"feature_set がリテラルでなければ errDeclShape":     strings.Replace(ouMainTF, `"ALL"`, "var.x", 1),
 		"enabled_policy_types が空なら errDeclShape":  strings.Replace(ouMainTF, `["SERVICE_CONTROL_POLICY", "RESOURCE_CONTROL_POLICY"]`, "[]", 1),
+		"enabled_features が空なら errDeclShape":      strings.Replace(ouMainTF, `["RootCredentialsManagement", "RootSessions"]`, "[]", 1),
+		"enabled_features が無ければ errDeclShape":     strings.Replace(ouMainTF, "enabled_features", "x", 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -255,6 +259,7 @@ func Test_readBreakGlassShape(t *testing.T) {
 	for name, src := range map[string]string{
 		"path が無ければ errDeclShape":        strings.Replace(usecaseMainTF, "break_glass_path ", "x ", 1),
 		"path が / で終わらなければ errDeclShape": strings.Replace(usecaseMainTF, `"/break-glass/"`, `"/break-glass"`, 1),
+		"path が / で始まらなければ errDeclShape": strings.Replace(usecaseMainTF, `"/break-glass/"`, `"break-glass/"`, 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -375,6 +380,15 @@ func Test_readDelegatedShape(t *testing.T) {
 		_, err := readDelegatedShape(readFiles(withFile(files, outputsFile, "")), testUsecase)
 		require.ErrorIs(t, err, errDeclShape)
 	})
+
+	t.Run("outputs.tf が読めなければ errHCL", func(t *testing.T) {
+		t.Parallel()
+
+		f := withFile(files, outputsFile, "")
+		delete(f, testUsecase+"/"+outputsFile)
+		_, err := readDelegatedShape(readFiles(f), testUsecase)
+		require.ErrorIs(t, err, errHCL)
+	})
 }
 
 func Test_accountRefEnv(t *testing.T) {
@@ -393,6 +407,8 @@ func Test_accountRefEnv(t *testing.T) {
 		"id でなければ errDeclShape":      `a = aws_organizations_account.this["security"].arn` + "\n",
 		"index が無ければ errDeclShape":   "a = aws_organizations_account.this.id\n",
 		"参照でなければ errDeclShape":       `a = "222222222222"` + "\n",
+		"env が空なら errDeclShape":      `a = aws_organizations_account.this[""].id` + "\n",
+		"数の添字は errDeclShape":         "a = aws_organizations_account.this[0].id\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -433,6 +449,9 @@ func Test_evalDelegatedPrincipals(t *testing.T) {
 		"重複は errDeclShape":                      out(`concat(["a"], keys(aws_organizations_delegated_administrator.this))`),
 		"空なら errDeclShape":                      out("[]"),
 		"output が2つ在れば errDeclShape":            out(`["a"]`) + out(`["b"]`),
+		"value が無ければ errDeclShape":              "output \"delegated_admin\" {}\n",
+		"文字列でない要素は errDeclShape":                out("[1]"),
+		"リストでない結果は errDeclShape":                out(`"x"`),
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -455,6 +474,8 @@ func Test_requireForEachLocal(t *testing.T) {
 	for name, src := range map[string]string{
 		"別の local は errDeclShape":     "resource \"x\" \"this\" {\n  for_each = local.other\n}\n",
 		"var は errDeclShape":          "resource \"x\" \"this\" {\n  for_each = var.names\n}\n",
+		"local の添字は errDeclShape":     "resource \"x\" \"this\" {\n  for_each = local[\"names\"]\n}\n",
+		"local の下の属性は errDeclShape":   "resource \"x\" \"this\" {\n  for_each = local.names.a\n}\n",
 		"リテラルは errDeclShape":          "resource \"x\" \"this\" {\n  for_each = toset([\"a\"])\n}\n",
 		"for_each が無ければ errDeclShape": "resource \"x\" \"this\" {}\n",
 		"resource が無ければ errDeclShape": "",

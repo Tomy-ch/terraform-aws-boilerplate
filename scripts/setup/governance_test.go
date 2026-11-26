@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"maps"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -45,6 +46,7 @@ func Test_sameSet(t *testing.T) {
 		assert.True(t, sameSet(nil, []string{}))
 		assert.False(t, sameSet([]string{"a"}, []string{"a", "b"}))
 		assert.False(t, sameSet([]string{"a", "a"}, []string{"a"}))
+		assert.False(t, sameSet(nil, []string{"a"}))
 	})
 }
 
@@ -116,9 +118,13 @@ func Test_checkOrganization(t *testing.T) {
 			"❌ Root で ENABLED の policy の種類"},
 		"宣言に無い種類が有効なら NG": {listRoots, `{"Roots":[{"Id":"r-1","PolicyTypes":[{"Type":"SERVICE_CONTROL_POLICY","Status":"ENABLED"},{"Type":"RESOURCE_CONTROL_POLICY","Status":"ENABLED"},{"Type":"TAG_POLICY","Status":"ENABLED"}]}]}`,
 			"❌ Root で ENABLED の policy の種類"},
-		"Root の直下の OU が足りなければ NG": {topOUsCall, `{"OrganizationalUnits":[{"Name":"Security"}]}`, "❌ Root の直下の OU"},
-		"宣言に無い OU が在れば NG":        {topOUsCall, `{"OrganizationalUnits":[{"Name":"Security"},{"Name":"Workloads"},{"Name":"Sandbox"},{"Name":"Extra"}]}`, "❌ Root の直下の OU"},
-		"IAM の機能が足りなければ NG":       {orgFeatures, `{"EnabledFeatures":["RootSessions"]}`, "❌ IAM の組織の機能"},
+		"Root の直下の OU が足りなければ NG":   {topOUsCall, `{"OrganizationalUnits":[{"Name":"Security"}]}`, "❌ Root の直下の OU"},
+		"宣言に無い OU が在れば NG":          {topOUsCall, `{"OrganizationalUnits":[{"Name":"Security"},{"Name":"Workloads"},{"Name":"Sandbox"},{"Name":"Extra"}]}`, "❌ Root の直下の OU"},
+		"IAM の機能が足りなければ NG":         {orgFeatures, `{"EnabledFeatures":["RootSessions"]}`, "❌ IAM の組織の機能"},
+		"Root の直下の OU が0件なら NG":     {topOUsCall, `{"OrganizationalUnits":[]}`, "❌ Root の直下の OU が Sandbox・Security・Workloads（今: なし）"},
+		"IAM の組織の機能の欄が無ければ NG":      {orgFeatures, `{}`, "❌ IAM の組織の機能が RootCredentialsManagement・RootSessions（今: なし）"},
+		"Root の policy の種類が0件なら NG": {listRoots, `{"Roots":[{"Id":"r-1","PolicyTypes":[]}]}`, "❌ Root で ENABLED の policy の種類"},
+		"FeatureSet が無ければ NG":       {"organizations describe-organization", `{"Organization":{}}`, "❌ FeatureSet が ALL（今: ）"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -128,6 +134,8 @@ func Test_checkOrganization(t *testing.T) {
 			err := checkOrganization(testOptionsUC(files), testClient(orgWorld(t, map[string]awsResult{tc.key: ok(tc.stdout)})), &out)
 			require.ErrorIs(t, err, errNG)
 			assert.Contains(t, out.String(), tc.want)
+			assert.Equal(t, 1, strings.Count(out.String(), "❌"))
+			assert.Equal(t, 3, strings.Count(out.String(), "✅"))
 		})
 	}
 
@@ -139,6 +147,21 @@ func Test_checkOrganization(t *testing.T) {
 		require.ErrorIs(t, err, errHCL)
 		assert.Empty(t, f.ops())
 	})
+
+	for name, key := range map[string]string{
+		"describe-organization の失敗は errAWSFailed で NG に数えない": "organizations describe-organization",
+		"list-roots の失敗は errAWSFailed":                       listRoots,
+		"OU の読み取りの失敗は errAWSFailed":                          topOUsCall,
+		"IAM の組織の機能の読み取りの失敗は errAWSFailed":                   orgFeatures,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			err := checkOrganization(testOptionsUC(files), testClient(orgWorld(t, map[string]awsResult{key: fail(t, "AccessDenied")})), &bytes.Buffer{})
+			require.ErrorIs(t, err, errAWSFailed)
+			assert.NotErrorIs(t, err, errNG)
+		})
+	}
 }
 
 func delegatedWorld(t *testing.T, accounts string, admins map[string]string) *fakeAWS {
@@ -215,6 +238,27 @@ func Test_checkDelegatedAdmin(t *testing.T) {
 		require.ErrorIs(t, checkDelegatedAdmin(testOptionsUC(map[string]string{}), testClient(f), &bytes.Buffer{}), errHCL)
 		assert.Empty(t, f.ops())
 	})
+
+	t.Run("2つ目の主体 config だけが NG でも errNG で、cloudtrail は ✅", func(t *testing.T) {
+		t.Parallel()
+
+		var out bytes.Buffer
+
+		f := delegatedWorld(t, mgmt+","+sec, map[string]string{"cloudtrail.amazonaws.com": only("222222222222"), "config.amazonaws.com": only("111111111111")})
+		require.ErrorIs(t, checkDelegatedAdmin(testOptionsUC(files), testClient(f), &out), errNG)
+		assert.Contains(t, out.String(), "✅ cloudtrail.amazonaws.com の委任管理者")
+		assert.Contains(t, out.String(), "❌ config.amazonaws.com の委任管理者")
+	})
+
+	t.Run("list-delegated-administrators の失敗は errAWSFailed で NG に数えない", func(t *testing.T) {
+		t.Parallel()
+
+		f := delegatedWorld(t, mgmt+","+sec, map[string]string{"cloudtrail.amazonaws.com": only("222222222222")})
+		f.responses["organizations list-delegated-administrators --service-principal cloudtrail.amazonaws.com"] = fail(t, "AccessDenied")
+		err := checkDelegatedAdmin(testOptionsUC(files), testClient(f), &bytes.Buffer{})
+		require.ErrorIs(t, err, errAWSFailed)
+		assert.NotErrorIs(t, err, errNG)
+	})
 }
 
 func Test_readSSOInstances(t *testing.T) {
@@ -275,7 +319,7 @@ func Test_checkIdentityCenter(t *testing.T) {
 
 	for name, tc := range map[string]struct{ instances, want string }{
 		"インスタンスが無ければ NG":        {`{"Instances":[]}`, "（今: 0 件）"},
-		"2つ在れば NG":              {`{"Instances":[{"Status":"ACTIVE"},{"Status":"ACTIVE"}]}`, "（今: 2 件）"},
+		"2つ在れば NG":              {`{"Instances":[{"OwnerAccountId":"111111111111","Status":"ACTIVE"},{"OwnerAccountId":"111111111111","Status":"ACTIVE"}]}`, "（今: 2 件）"},
 		"ACTIVE でなければ NG":       {`{"Instances":[{"OwnerAccountId":"111111111111","Status":"CREATE_IN_PROGRESS"}]}`, "❌ インスタンスが ACTIVE"},
 		"メンバーアカウントのインスタンスなら NG": {`{"Instances":[{"OwnerAccountId":"222222222222","Status":"ACTIVE"}]}`, "❌ インスタンスの持ち主"},
 	} {
@@ -287,8 +331,16 @@ func Test_checkIdentityCenter(t *testing.T) {
 			err := checkIdentityCenter(testOptions(), testClient(world(t, tc.instances)), &out)
 			require.ErrorIs(t, err, errNG)
 			assert.Contains(t, out.String(), tc.want)
+			assert.Equal(t, 1, strings.Count(out.String(), "❌"))
 		})
 	}
+
+	t.Run("管理アカウントを読めなければ errAWSFailed", func(t *testing.T) {
+		t.Parallel()
+
+		f := orgWorld(t, map[string]awsResult{listSSO: ok(ssoJSON), "organizations describe-organization": fail(t, "AccessDenied")})
+		require.ErrorIs(t, checkIdentityCenter(testOptions(), testClient(f), &bytes.Buffer{}), errAWSFailed)
+	})
 }
 
 func idcUserWorld(t *testing.T, userID awsResult, users string) *fakeAWS {
@@ -380,5 +432,29 @@ func Test_checkIdentityCenterUser(t *testing.T) {
 
 		f := idcUserWorld(t, fail(t, "AccessDeniedException"), "")
 		require.ErrorIs(t, checkIdentityCenterUser(opts(), testClient(f), &bytes.Buffer{}, testOrg(t)), errAWSFailed)
+	})
+
+	t.Run("list-users が0件なら NG（接尾辞を見る対象が無い）", func(t *testing.T) {
+		t.Parallel()
+
+		var out bytes.Buffer
+		require.ErrorIs(t, checkIdentityCenterUser(opts(), testClient(idcUserWorld(t, found, "")), &out, testOrg(t)), errNG)
+		assert.Contains(t, out.String(), "❌ Identity Center に user が在る")
+	})
+
+	t.Run("get-user-id が成功でも UserId が無ければ NG", func(t *testing.T) {
+		t.Parallel()
+
+		var out bytes.Buffer
+		require.ErrorIs(t, checkIdentityCenterUser(opts(), testClient(idcUserWorld(t, ok(`{"IdentityStoreId":"d-1"}`), `{"UserName":"alice"}`)), &out, testOrg(t)), errNG)
+		assert.Contains(t, out.String(), "❌ user alice が在る（user ID: 無い）")
+	})
+
+	t.Run("IdentityStoreId が空なら、user を読まずに errPrecondition", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeAWS(t, map[string]awsResult{listSSO: ok(`{"Instances":[{"IdentityStoreId":"","Status":"ACTIVE"}]}`)})
+		require.ErrorIs(t, checkIdentityCenterUser(opts(), testClient(f), &bytes.Buffer{}, testOrg(t)), errPrecondition)
+		assert.Equal(t, []string{listSSO}, f.ops())
 	})
 }

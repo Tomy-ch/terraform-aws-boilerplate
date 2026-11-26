@@ -116,6 +116,14 @@ func Test_userExists(t *testing.T) {
 		_, err := userExists(testClient(f), bg1)
 		require.ErrorIs(t, err, errAWSResponse)
 	})
+
+	t.Run("ほかの失敗は「無い」にせず errAWSFailed", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeAWS(t, map[string]awsResult{getUser(bg1): fail(t, "AccessDenied")})
+		_, err := userExists(testClient(f), bg1)
+		require.ErrorIs(t, err, errAWSFailed)
+	})
 }
 
 func Test_requireUsers(t *testing.T) {
@@ -133,6 +141,16 @@ func Test_requireUsers(t *testing.T) {
 		f := bgWorld(t, nil, nil)
 		f.responses[getUser(bg2)] = fail(t, "An error occurred (NoSuchEntity)")
 		require.ErrorIs(t, requireUsers(testClient(f), []string{bg1, bg2}), errPrecondition)
+	})
+
+	t.Run("読めなければ errPrecondition にせず errAWSFailed", func(t *testing.T) {
+		t.Parallel()
+
+		f := bgWorld(t, nil, nil)
+		f.responses[getUser(bg1)] = fail(t, "AccessDenied")
+		err := requireUsers(testClient(f), []string{bg1, bg2})
+		require.ErrorIs(t, err, errAWSFailed)
+		assert.NotErrorIs(t, err, errPrecondition)
 	})
 }
 
@@ -353,6 +371,44 @@ func Test_setBreakGlassLogin(t *testing.T) {
 		require.ErrorIs(t, err, errAWSFailed)
 		assert.Contains(t, err.Error(), "PasswordPolicyViolation")
 	})
+
+	t.Run("2人とも無ければ確認は1回で、順に2件置く", func(t *testing.T) {
+		t.Parallel()
+
+		f := loginWorld(t, nil)
+		term, out := tty("tabp\n")
+		term.hidden = hiddenLines(testPassword, testPassword, testPassword, testPassword)
+
+		require.NoError(t, setBreakGlassLogin(bgOptions(), testClient(f, createLogin), term))
+		assert.Equal(t, []string{createLogin, createLogin}, f.writes())
+		assert.Len(t, f.secrets, 2)
+		assert.Contains(t, f.secrets[0], `"UserName":"`+bg1+`"`)
+		assert.Contains(t, f.secrets[1], `"UserName":"`+bg2+`"`)
+		assert.Equal(t, 1, strings.Count(out.String(), "project の名前"))
+	})
+
+	t.Run("2人目の打ち込みが違えば、1人目だけを置いて errPasswordMismatch", func(t *testing.T) {
+		t.Parallel()
+
+		f := loginWorld(t, nil)
+		term, _ := tty("tabp\n")
+		term.hidden = hiddenLines(testPassword, testPassword, testPassword, testPassword+"x")
+
+		require.ErrorIs(t, setBreakGlassLogin(bgOptions(), testClient(f, createLogin), term), errPasswordMismatch)
+		assert.Equal(t, []string{createLogin}, f.writes())
+		assert.Contains(t, f.secrets[0], `"UserName":"`+bg1+`"`)
+	})
+
+	t.Run("宣言を読めなければ aws を起動しない", func(t *testing.T) {
+		t.Parallel()
+
+		f := bgWorld(t, nil, nil)
+		o := bgOptions()
+		o.readFile = readFiles(map[string]string{})
+		term, _ := tty("tabp\n")
+		require.ErrorIs(t, setBreakGlassLogin(o, testClient(f, createLogin), term), errHCL)
+		assert.Empty(t, f.ops())
+	})
 }
 
 func mfaWorld(t *testing.T, before map[string][]string) *fakeAWS {
@@ -410,6 +466,29 @@ func Test_setBreakGlassMFA(t *testing.T) {
 		term, _ := tty("tabp\n")
 
 		require.ErrorIs(t, setBreakGlassMFA(bgOptions(), testClient(f, enableMFA), term), errPrecondition)
+		assert.Empty(t, f.writes())
+	})
+
+	t.Run("2人目のシリアルの形が誤りなら、1人目だけを登録して errMFAInput", func(t *testing.T) {
+		t.Parallel()
+
+		f := mfaWorld(t, nil)
+		term, _ := tty("tabp\n" + hwSerial + "\n123456\n654321\n" + "short\n123456\n654321\n")
+
+		require.ErrorIs(t, setBreakGlassMFA(bgOptions(), testClient(f, enableMFA), term), errMFAInput)
+		assert.Equal(t, []string{enableMFA}, f.writes())
+		assert.Contains(t, f.secrets[0], `"UserName":"`+bg1+`"`)
+	})
+
+	t.Run("宣言を読めなければ aws を起動しない", func(t *testing.T) {
+		t.Parallel()
+
+		f := bgWorld(t, nil, nil)
+		o := bgOptions()
+		o.readFile = readFiles(map[string]string{})
+		term, _ := tty("tabp\n")
+		require.ErrorIs(t, setBreakGlassMFA(o, testClient(f, enableMFA), term), errHCL)
+		assert.Empty(t, f.ops())
 	})
 }
 
@@ -455,8 +534,52 @@ func Test_registerTOTP(t *testing.T) {
 		t.Parallel()
 
 		term, _ := tty(hwSerial + "\n")
-		require.ErrorIs(t, registerTOTP(bgOptions(), testClient(mfaWorld(t, nil), enableMFA), term, bg1), errNoInput)
+		f := mfaWorld(t, nil)
+		require.ErrorIs(t, registerTOTP(bgOptions(), testClient(f, enableMFA), term, bg1), errNoInput)
+		assert.Empty(t, f.writes())
 	})
+
+	t.Run("書き込みが拒まれれば errAWSFailed で、読み直さず ✅ を出さない", func(t *testing.T) {
+		t.Parallel()
+
+		f := bgWorld(t, nil, nil)
+		f.responses[enableMFA] = fail(t, "An error occurred (InvalidAuthenticationCode)")
+		term, out := tty(hwSerial + "\n123456\n654321\n")
+
+		require.ErrorIs(t, registerTOTP(bgOptions(), testClient(f, enableMFA), term, bg1), errAWSFailed)
+		assert.NotContains(t, out.String(), "✅")
+		assert.Equal(t, enableMFA, f.ops()[len(f.ops())-1])
+	})
+
+	for name, serial := range map[string]string{
+		"9文字のシリアルは受ける":   strings.Repeat("A", 9),
+		"256文字のシリアルは受ける": strings.Repeat("A", 256),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			f := bgWorld(t, nil, nil)
+			f.responses[enableMFA] = ok("")
+			f.onWrite(enableMFA, map[string]awsResult{listMFA(bg1): mfaJSON(serial)})
+			term, _ := tty(serial + "\n123456\n654321\n")
+			require.NoError(t, registerTOTP(bgOptions(), testClient(f, enableMFA), term, bg1))
+		})
+	}
+
+	for name, input := range map[string]string{
+		"8文字のシリアルは errMFAInput":   strings.Repeat("A", 8) + "\n123456\n654321\n",
+		"257文字のシリアルは errMFAInput": strings.Repeat("A", 257) + "\n123456\n654321\n",
+		"7桁のコードは errMFAInput":     hwSerial + "\n1234567\n654321\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			f := mfaWorld(t, nil)
+			term, _ := tty(input)
+			require.ErrorIs(t, registerTOTP(bgOptions(), testClient(f, enableMFA), term, bg1), errMFAInput)
+			assert.Empty(t, f.writes())
+		})
+	}
 }
 
 func Test_checkBreakGlass(t *testing.T) {
@@ -485,7 +608,7 @@ func Test_checkBreakGlass(t *testing.T) {
 		"仮想 MFA が在れば NG":         {listMFA(bg1), func(*testing.T) awsResult { return mfaJSON(hwSerial, virtualMFA) }, "❌ " + bg1 + " にハードウェアの MFA"},
 		"アクセスキーが在れば NG":          {listKeys(bg1), func(*testing.T) awsResult { return ok(`{"AccessKeyMetadata":[{"AccessKeyId":"AKIA"}]}`) }, "❌ " + bg1 + " にアクセスキーが無い（今: 1 件）"},
 		"password policy の値が違えば NG": {passwordPol, func(*testing.T) awsResult {
-			return ok(`{"PasswordPolicy":{"MinimumPasswordLength":8,"RequireSymbols":true,"HardExpiry":false}}`)
+			return ok(strings.Replace(bgPolicyJSON, `"MinimumPasswordLength":14`, `"MinimumPasswordLength":8`, 1))
 		}, "❌ password policy の MinimumPasswordLength が 14（今: 8）"},
 		"password policy の数の field が無ければ NG": {passwordPol, func(*testing.T) awsResult {
 			return ok(strings.Replace(bgPolicyJSON, `"MaxPasswordAge":90,`, "", 1))
@@ -507,6 +630,7 @@ func Test_checkBreakGlass(t *testing.T) {
 			var out bytes.Buffer
 			require.ErrorIs(t, checkBreakGlass(bgOptions(), testClient(f), &out), errNG)
 			assert.Contains(t, out.String(), tc.want)
+			assert.Equal(t, 1, strings.Count(out.String(), "❌"))
 		})
 	}
 
@@ -519,6 +643,21 @@ func Test_checkBreakGlass(t *testing.T) {
 		require.ErrorIs(t, checkBreakGlass(o, testClient(f), &bytes.Buffer{}), errHCL)
 		assert.Empty(t, f.ops())
 	})
+
+	for name, key := range map[string]string{
+		"list-users の失敗は errAWSFailed で NG に数えない":       listBGUsers,
+		"list-access-keys の失敗は errAWSFailed で NG に数えない": listKeys(bg1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			f := bgWorld(t, bothLogin(), bothMFA())
+			f.responses[key] = fail(t, "AccessDenied")
+			err := checkBreakGlass(bgOptions(), testClient(f), &bytes.Buffer{})
+			require.ErrorIs(t, err, errAWSFailed)
+			assert.NotErrorIs(t, err, errNG)
+		})
+	}
 }
 
 func Test_checkBreakGlassUser(t *testing.T) {
@@ -536,9 +675,11 @@ func Test_checkBreakGlassUser(t *testing.T) {
 		t.Parallel()
 
 		f := newFakeAWS(t, map[string]awsResult{getUser(bg1): fail(t, "An error occurred (NoSuchEntity)")})
-		r := newReport(&bytes.Buffer{}, "T")
-		require.NoError(t, checkBreakGlassUser(testClient(f), r, bg1))
-		assert.Equal(t, 1, r.ngs)
+
+		var out bytes.Buffer
+
+		require.NoError(t, checkBreakGlassUser(testClient(f), newReport(&out, "T"), bg1))
+		assert.Equal(t, "# T\n❌ "+bg1+" が在る\n", out.String())
 		assert.Equal(t, []string{"iam get-user"}, f.ops())
 	})
 }
@@ -560,10 +701,35 @@ func Test_checkPasswordPolicy(t *testing.T) {
 		t.Parallel()
 
 		f := newFakeAWS(t, map[string]awsResult{passwordPol: ok(`{"PasswordPolicy":{"MinimumPasswordLength":14}}`)})
-		r := newReport(&bytes.Buffer{}, "T")
-		require.NoError(t, checkPasswordPolicy(testClient(f), r, map[string]string{"HardExpiry": "false", "RequireSymbols": "true"}))
-		assert.Equal(t, 2, r.count)
-		assert.Equal(t, 1, r.ngs)
+
+		var out bytes.Buffer
+
+		require.NoError(t, checkPasswordPolicy(testClient(f), newReport(&out, "T"), map[string]string{"HardExpiry": "false", "RequireSymbols": "true"}))
+		assert.Contains(t, out.String(), "✅ password policy の HardExpiry が false（今: false）")
+		assert.Contains(t, out.String(), "❌ password policy の RequireSymbols が true（今: 無い）")
+	})
+
+	t.Run("宣言の false に対して応答が true なら NG", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeAWS(t, map[string]awsResult{passwordPol: ok(`{"PasswordPolicy":{"HardExpiry":true}}`)})
+
+		var out bytes.Buffer
+
+		require.NoError(t, checkPasswordPolicy(testClient(f), newReport(&out, "T"), map[string]string{"HardExpiry": "false"}))
+		assert.Contains(t, out.String(), "❌ password policy の HardExpiry が false（今: true）")
+	})
+
+	t.Run("空の PasswordPolicy なら、真と数の項目が NG で、偽の項目だけが ✅", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeAWS(t, map[string]awsResult{passwordPol: ok(`{"PasswordPolicy":{}}`)})
+
+		var out bytes.Buffer
+
+		require.NoError(t, checkPasswordPolicy(testClient(f), newReport(&out, "T"), map[string]string{"HardExpiry": "false", "RequireSymbols": "true", "MaxPasswordAge": "90"}))
+		assert.Equal(t, 2, strings.Count(out.String(), "❌"))
+		assert.Equal(t, 1, strings.Count(out.String(), "✅"))
 	})
 
 	t.Run("ほかの失敗は errAWSFailed", func(t *testing.T) {
@@ -636,6 +802,45 @@ func Test_checkBreakGlassUsage(t *testing.T) {
 		assert.Contains(t, out.String(), "❌ "+bg2+" が在る")
 		assert.Contains(t, out.String(), "❌ role tabp-break-glass が在る")
 	})
+
+	for name, tc := range map[string]struct{ key, stdout string }{
+		"get-user の UserName が無ければ errAWSResponse": {getUser(bg1), `{"User":{"PasswordLastUsed":"` + daysAgo(1) + `"}}`},
+		"get-role の RoleName が無ければ errAWSResponse": {"iam get-role --role-name tabp-break-glass", `{"Role":{"RoleLastUsed":{"LastUsedDate":"` + daysAgo(1) + `"}}}`},
+		"PasswordLastUsed が日時でなければ errAWSResponse": {getUser(bg1), `{"User":{"UserName":"` + bg1 + `","PasswordLastUsed":"yesterday"}}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			f := usageWorld(t, daysAgo(1), daysAgo(1), daysAgo(1))
+			f.responses[tc.key] = ok(tc.stdout)
+			require.ErrorIs(t, checkBreakGlassUsage(bgOptions(), testClient(f), &bytes.Buffer{}), errAWSResponse)
+		})
+	}
+
+	for name, key := range map[string]string{
+		"get-user の失敗は errAWSFailed で NG に数えない": getUser(bg1),
+		"get-role の失敗は errAWSFailed で NG に数えない": "iam get-role --role-name tabp-break-glass",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			f := usageWorld(t, daysAgo(1), daysAgo(1), daysAgo(1))
+			f.responses[key] = fail(t, "AccessDenied")
+			err := checkBreakGlassUsage(bgOptions(), testClient(f), &bytes.Buffer{})
+			require.ErrorIs(t, err, errAWSFailed)
+			assert.NotErrorIs(t, err, errNG)
+		})
+	}
+
+	t.Run("宣言を読めなければ aws を起動しない", func(t *testing.T) {
+		t.Parallel()
+
+		f := usageWorld(t, daysAgo(1), daysAgo(1), daysAgo(1))
+		o := bgOptions()
+		o.readFile = readFiles(map[string]string{})
+		require.ErrorIs(t, checkBreakGlassUsage(o, testClient(f), &bytes.Buffer{}), errHCL)
+		assert.Empty(t, f.ops())
+	})
 }
 
 func Test_recent(t *testing.T) {
@@ -686,7 +891,22 @@ func Test_reread(t *testing.T) {
 
 		var reads int
 
-		require.ErrorIs(t, reread(bgOptions(), func() (bool, error) { reads++; return false, nil }), errAWSResponse)
+		var waits int
+
+		o := bgOptions()
+		o.sleep = func(time.Duration) { waits++ }
+
+		require.ErrorIs(t, reread(o, func() (bool, error) { reads++; return false, nil }), errAWSResponse)
+		assert.Equal(t, rereadTries, reads)
+		assert.Equal(t, rereadTries-1, waits)
+	})
+
+	t.Run("最後の回で見えれば nil", func(t *testing.T) {
+		t.Parallel()
+
+		var reads int
+
+		require.NoError(t, reread(bgOptions(), func() (bool, error) { reads++; return reads == rereadTries, nil }))
 		assert.Equal(t, rereadTries, reads)
 	})
 
