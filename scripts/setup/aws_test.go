@@ -287,6 +287,54 @@ func Test_client_readOptional(t *testing.T) {
 	})
 }
 
+func Test_client_readOptionalIn(t *testing.T) {
+	t.Parallel()
+
+	t.Run("渡した region で読み、在れば true", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeAWS(t, map[string]awsResult{"kms describe-key": ok("{}")})
+
+		var v struct{}
+		found, err := testClient(f).readOptionalIn("us-east-1", "NotFoundException", &v, "kms", "describe-key")
+		require.NoError(t, err)
+		assert.True(t, found)
+		assert.Equal(t, "us-east-1", f.calls[0][len(f.calls[0])-1])
+	})
+
+	t.Run("notFound の失敗は、無い（false）として返す", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeAWS(t, map[string]awsResult{"kms describe-key": fail(t, "An error occurred (NotFoundException)")})
+
+		var v struct{}
+		found, err := testClient(f).readOptionalIn("us-east-1", "NotFoundException", &v, "kms", "describe-key")
+		require.NoError(t, err)
+		assert.False(t, found)
+	})
+
+	t.Run("ほかの失敗はエラーのまま返す", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeAWS(t, map[string]awsResult{"kms describe-key": fail(t, "An error occurred (AccessDeniedException)")})
+
+		var v struct{}
+		_, err := testClient(f).readOptionalIn("us-east-1", "NotFoundException", &v, "kms", "describe-key")
+		require.ErrorIs(t, err, errAWSFailed)
+	})
+
+	t.Run("region が空なら client の region で読む", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeAWS(t, map[string]awsResult{"kms describe-key": ok("{}")})
+
+		var v struct{}
+		_, err := testClient(f).readOptionalIn("", "NotFoundException", &v, "kms", "describe-key")
+		require.NoError(t, err)
+		assert.Equal(t, testRegion, f.calls[0][len(f.calls[0])-1])
+	})
+}
+
 func Test_client_write(t *testing.T) {
 	t.Parallel()
 

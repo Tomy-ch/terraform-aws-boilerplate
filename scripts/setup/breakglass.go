@@ -205,7 +205,7 @@ const (
 	rereadWait  = 2 * time.Second
 )
 
-// reread は、書いた後の読み直し。IAM は結果整合なので、見えるまで数回やり直す。見えなければ errAWSResponse。
+// reread は、書いた後の読み直し。反映に時間がかかりうるので、見えるまで数回やり直す。見えなければ errAWSResponse。
 func reread(o options, seen func() (bool, error)) error {
 	for i := range rereadTries {
 		ok, err := seen()
