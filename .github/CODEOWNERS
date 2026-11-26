@@ -68,6 +68,7 @@ scripts/hcl-tally/                         @Tomy-ch
 scripts/provider-schema/                   @Tomy-ch
 scripts/lib/adrdoc/                        @Tomy-ch
 scripts/lib/atomicwrite/                   @Tomy-ch
+scripts/lib/awsenv/                        @Tomy-ch
 scripts/lib/gitenv/                        @Tomy-ch
 scripts/lib/lintreport/                    @Tomy-ch
 scripts/lib/mdscan/                        @Tomy-ch

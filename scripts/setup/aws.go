@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"os/exec"
 	"slices"
 	"strings"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/awsenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -22,25 +24,12 @@ var (
 	// errNotAllowed は、入口の一覧に無い書き込みの操作か、読み取りでも書き込みでもない操作を起動しようとしたこと。
 	errNotAllowed = xerrors.New("この入口が起動してよい aws の操作ではありません")
 
-	// staticCredentials は、AWS_PROFILE より優先されるか、profile の読み先を変える環境変数。
-	staticCredentials = []string{
-		"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_ROLE_ARN", "AWS_WEB_IDENTITY_TOKEN_FILE",
-		"AWS_CONTAINER_CREDENTIALS_FULL_URI", "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE",
-	}
 	readOnlyPrefixes = []string{"get-", "list-", "describe-"}
 )
 
 // awsProfile は、aws に使わせる profile。静的な資格情報が環境に在るか、AWS_PROFILE が空なら、aws を起動せずに止める。
 func awsProfile(getenv func(string) string) (string, error) {
-	var found []string
-
-	for _, k := range staticCredentials {
-		if getenv(k) != "" {
-			found = append(found, k)
-		}
-	}
-
-	if len(found) > 0 {
+	if found := awsenv.Found(getenv); len(found) > 0 {
 		return "", xerrors.Wrap(errStaticCredentials, strings.Join(found, "・"))
 	}
 
@@ -140,6 +129,11 @@ func (c *client) readIn(region string, v any, args ...string) error {
 		return err
 	}
 
+	// null と object でない応答は、読む先をゼロ値のまま成功させるので受け入れない。
+	if b := bytes.TrimSpace(r.stdout); len(b) == 0 || b[0] != '{' {
+		return xerrors.Wrap(errAWSResponse, "aws "+op(args)+": JSON の object ではありません")
+	}
+
 	if err := json.Unmarshal(r.stdout, v); err != nil {
 		return xerrors.Join(errAWSResponse, xerrors.Wrap(err, "aws "+op(args)))
 	}
@@ -168,6 +162,46 @@ func (c *client) write(args ...string) error {
 	}
 
 	_, err := c.call("", args...)
+
+	return err
+}
+
+// writeSecret は write と同じだが、secret を引数に載せず、所有者だけが読める一時ファイルの JSON として
+// --cli-input-json で渡す（ADR-0702 決定27）。一時ファイルは起動の後に消す。
+func (c *client) writeSecret(secret map[string]string, args ...string) error {
+	if isRead(args) {
+		return xerrors.Wrap(errNotAllowed, "aws "+op(args))
+	}
+
+	body, err := json.Marshal(secret)
+	if err != nil {
+		return err
+	}
+
+	f, err := os.CreateTemp("", "setup-*.json")
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = os.Remove(f.Name()) }()
+
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
+
+		return err
+	}
+
+	if _, err := f.Write(body); err != nil {
+		_ = f.Close()
+
+		return err
+	}
+
+	if err := f.Close(); err != nil {
+		return err
+	}
+
+	_, err = c.call("", append(append([]string{}, args...), "--cli-input-json", "file://"+f.Name())...)
 
 	return err
 }

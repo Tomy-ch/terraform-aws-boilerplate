@@ -2,9 +2,12 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/awsenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/fakeexec"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 	"github.com/stretchr/testify/assert"
@@ -29,18 +32,33 @@ func Test_awsProfile(t *testing.T) {
 		require.ErrorIs(t, err, errNoProfile)
 	})
 
-	t.Run("静的な資格情報が在れば、その名前を添えて errStaticCredentials", func(t *testing.T) {
+	for _, k := range awsenv.StaticCredentials {
+		t.Run(k+" が在れば、AWS_PROFILE が在っても errStaticCredentials", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := awsProfile(func(name string) string {
+				if name == k || name == "AWS_PROFILE" {
+					return "x"
+				}
+
+				return ""
+			})
+			require.ErrorIs(t, err, errStaticCredentials)
+			assert.Contains(t, err.Error(), k)
+		})
+	}
+
+	t.Run("静的な資格情報が在り AWS_PROFILE が空なら、errStaticCredentials を先に返す", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := awsProfile(func(k string) string {
-			if k == "AWS_ACCESS_KEY_ID" || k == "AWS_PROFILE" {
+		_, err := awsProfile(func(name string) string {
+			if name == "AWS_SESSION_TOKEN" {
 				return "x"
 			}
 
 			return ""
 		})
 		require.ErrorIs(t, err, errStaticCredentials)
-		assert.Contains(t, err.Error(), "AWS_ACCESS_KEY_ID")
 	})
 }
 
@@ -66,8 +84,10 @@ func Test_hostAWS(t *testing.T) {
 		fakeexec.Write(t, bin, "#!/bin/sh\nexit 3\n", 0o700)
 
 		r := hostAWS(bin)("x", "y")
-		require.Error(t, r.err)
-		assert.Equal(t, 3, r.err.(interface{ ExitCode() int }).ExitCode())
+
+		var exitErr *exec.ExitError
+		require.ErrorAs(t, r.err, &exitErr)
+		assert.Equal(t, 3, exitErr.ExitCode())
 	})
 
 	t.Run("起動できなければ err を返す", func(t *testing.T) {
@@ -152,7 +172,7 @@ func Test_client_call(t *testing.T) {
 		f := newFakeAWS(t, map[string]awsResult{"ssm put-parameter": ok("")})
 		_, err := testClient(f, "ssm put-parameter").call("", "ssm", "put-parameter")
 		require.NoError(t, err)
-		assert.Equal(t, []string{"ssm put-parameter"}, f.ops())
+		assert.Equal(t, []string{"ssm put-parameter"}, f.writes())
 	})
 
 	t.Run("非ゼロの終了は、標準エラーの最初の行を添えて errAWSFailed", func(t *testing.T) {
@@ -187,14 +207,22 @@ func Test_client_read(t *testing.T) {
 		assert.Equal(t, "a@b.c", v.PrimaryEmail)
 	})
 
-	t.Run("JSON でない応答は errAWSResponse", func(t *testing.T) {
-		t.Parallel()
+	for name, stdout := range map[string]string{
+		"JSON でない応答は errAWSResponse":     "not json",
+		"空の応答は errAWSResponse":           " \n",
+		"null の応答は errAWSResponse":       "null",
+		"配列の応答は errAWSResponse":          `[{"PrimaryEmail":"a@b.c"}]`,
+		"壊れた object の応答は errAWSResponse": `{"PrimaryEmail":`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-		f := newFakeAWS(t, map[string]awsResult{"account get-primary-email": ok("not json")})
+			f := newFakeAWS(t, map[string]awsResult{"account get-primary-email": ok(stdout)})
 
-		var v struct{}
-		require.ErrorIs(t, testClient(f).read(&v, "account", "get-primary-email"), errAWSResponse)
-	})
+			var v struct{ PrimaryEmail string }
+			require.ErrorIs(t, testClient(f).read(&v, "account", "get-primary-email"), errAWSResponse)
+		})
+	}
 
 	t.Run("書き込みの操作は、一覧に在っても read からは起動しない", func(t *testing.T) {
 		t.Parallel()
@@ -264,9 +292,9 @@ func Test_client_write(t *testing.T) {
 	t.Run("一覧に在る書き込みを起動する", func(t *testing.T) {
 		t.Parallel()
 
-		f := newFakeAWS(t, map[string]awsResult{"ssm put-parameter": ok("")})
+		f := newFakeAWS(t, map[string]awsResult{"ssm put-parameter --name n": ok("")})
 		require.NoError(t, testClient(f, "ssm put-parameter").write("ssm", "put-parameter", "--name", "n"))
-		assert.Equal(t, []string{"ssm put-parameter"}, f.writes())
+		assert.Equal(t, []string{"ssm put-parameter --name n"}, f.writes())
 	})
 
 	t.Run("読み取りの操作は write からは起動しない", func(t *testing.T) {
@@ -282,6 +310,7 @@ func Test_client_write(t *testing.T) {
 
 		f := newFakeAWS(t, map[string]awsResult{"ssm put-parameter": fail(t, "boom")})
 		err := testClient(f, "ssm put-parameter").write("ssm", "put-parameter")
+		assert.False(t, f.written)
 		require.ErrorIs(t, err, errAWSFailed)
 		assert.False(t, xerrors.Is(err, errNotAllowed))
 	})
@@ -298,5 +327,52 @@ func Test_firstLine(t *testing.T) {
 	t.Run("無ければ「不明」", func(t *testing.T) {
 		t.Parallel()
 		assert.Equal(t, "不明", firstLine(" \n"))
+	})
+}
+
+func Test_client_writeSecret(t *testing.T) {
+	t.Parallel()
+
+	const accept = "account accept-primary-email-update --account-id 222222222222 --primary-email n@x.y"
+
+	t.Run("秘密を引数に載せず、所有者だけが読める一時ファイルで渡し、起動の後に消す", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeAWS(t, map[string]awsResult{accept: ok("")})
+		require.NoError(t, testClient(f, "account accept-primary-email-update").writeSecret(map[string]string{"Otp": "ABC123"}, strings.Fields(accept)...))
+		assert.Equal(t, []string{`{"Otp":"ABC123"}`}, f.secrets)
+		assert.NotContains(t, strings.Join(f.joined(), " "), "ABC123")
+
+		file := strings.TrimPrefix(f.calls[0][len(f.calls[0])-5], "file://")
+		_, err := os.Stat(file)
+		require.ErrorIs(t, err, os.ErrNotExist)
+	})
+
+	t.Run("書き込みが失敗しても一時ファイルを消し、errAWSFailed を返す", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeAWS(t, map[string]awsResult{accept: fail(t, "ValidationException")})
+		err := testClient(f, "account accept-primary-email-update").writeSecret(map[string]string{"Otp": "ABC123"}, strings.Fields(accept)...)
+		require.ErrorIs(t, err, errAWSFailed)
+
+		file := strings.TrimPrefix(f.calls[0][len(f.calls[0])-5], "file://")
+		_, statErr := os.Stat(file)
+		require.ErrorIs(t, statErr, os.ErrNotExist)
+	})
+
+	t.Run("一覧に無い書き込みは、一時ファイルを作らずに errNotAllowed", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeAWS(t, nil)
+		require.ErrorIs(t, testClient(f).writeSecret(map[string]string{"Otp": "x"}, strings.Fields(accept)...), errNotAllowed)
+		assert.Empty(t, f.calls)
+	})
+
+	t.Run("読み取りの操作は errNotAllowed", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeAWS(t, nil)
+		require.ErrorIs(t, testClient(f).writeSecret(nil, "ssm", "get-parameter"), errNotAllowed)
+		assert.Empty(t, f.calls)
 	})
 }
