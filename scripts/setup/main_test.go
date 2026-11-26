@@ -65,6 +65,9 @@ func Test_entries(t *testing.T) {
 			"break-glass-login":          {"iam create-login-profile"},
 			"break-glass-check":          nil,
 			"break-glass-usage-check":    nil,
+			"bootstrap-contacts":         {"account put-contact-information", "account put-alternate-contact"},
+			"bootstrap-anomaly-tag":      {"ce tag-resource"},
+			"bootstrap-env-secrets":      {"gh secret set"},
 		}
 		require.Equal(t, slices.Sorted(maps.Keys(want)), slices.Sorted(maps.Keys(entries)))
 
@@ -89,7 +92,7 @@ func Test_entries(t *testing.T) {
 		assert.Equal(t, 12, checks)
 	})
 
-	// 各入口を run から起動し、入口に固有の操作が起動されることで、entries の配線（run・usecase・needsEnv）を固定する。
+	// 各入口を run から起動し、入口に固有の操作が起動されることで、entries の配線を固定する。
 	runs := map[string]struct {
 		args  []string
 		world func(t *testing.T) *fakeAWS
@@ -160,6 +163,11 @@ func Test_entries(t *testing.T) {
 		"break-glass-usage-check": {[]string{"-usecase", testUsecase}, func(t *testing.T) *fakeAWS {
 			return usageWorld(t, daysAgo(1), daysAgo(1), daysAgo(1))
 		}, "", "iam get-role --role-name tabp-break-glass"},
+		"bootstrap-contacts": {nil, contactsWorld, contactInput + alternateInput + "tabp\n", putContact},
+		"bootstrap-anomaly-tag": {nil, func(t *testing.T) *fakeAWS {
+			return anomalyWorld(t, map[string]bool{monitorARN: true})
+		}, "tabp\n", tagResource(subARN)},
+		"bootstrap-env-secrets": {[]string{"-environments", "admin-plan", "-repo", testRepo}, callerWorld, "tabp\n", "sts get-caller-identity"},
 	}
 
 	t.Run("run の表が entries のすべての入口を覆う", func(t *testing.T) {
@@ -173,7 +181,17 @@ func Test_entries(t *testing.T) {
 
 			f := tc.world(t)
 			args := append([]string{name, "-project", testProject, "-region", testRegion}, tc.args...)
-			require.NoError(t, run(args, &bytes.Buffer{}, testDeps(f, tc.input, nil)))
+			d := testDeps(f, tc.input, nil)
+			g := ghWorld(t)
+			d.gh = g.fn()
+			require.NoError(t, run(args, &bytes.Buffer{}, d))
+
+			if name == "bootstrap-env-secrets" {
+				assert.Equal(t, []string{listPlan, setPlan, listPlan}, g.calls)
+				assert.Equal(t, "111111111111", g.stdins[1])
+			} else {
+				assert.Empty(t, g.calls)
+			}
 			assert.Contains(t, append(f.joined(), f.writes()...), tc.want)
 
 			if len(entries[name].writes) > 0 {
@@ -386,13 +404,18 @@ func Test_parseArgs(t *testing.T) {
 		"region が無い":  {[]string{"stacksets-access", "-project", "p"}, "-project と -region は必須です"},
 		"余分な引数がある":    {[]string{"stacksets-access", "-project", "p", "-region", "r", "x"}, "余分な引数があります"},
 		"知らない旗":       {[]string{"stacksets-access", "-project", "p", "-region", "r", "-x"}, "flag provided but not defined"},
-		"Terraform を読む入口に -usecase が無い":          {[]string{"member-emails", "-project", "p", "-region", "r"}, "-usecase は"},
-		"Terraform を読まない入口に -usecase":            {[]string{"stacksets-access", "-project", "p", "-region", "r", "-usecase", "a"}, "-usecase は"},
-		"member-email-update に -env が無い":         {[]string{"member-email-update", "-project", "p", "-region", "r", "-usecase", "a"}, "-env は"},
-		"ほかの入口に -env":                            {[]string{"member-emails", "-project", "p", "-region", "r", "-usecase", "a", "-env", "x"}, "-env は"},
-		"identity-center-user-check に -user が無い": {[]string{"identity-center-user-check", "-project", "p", "-region", "r", "-usecase", "a"}, "-user は"},
-		"ほかの入口に -user":                           {[]string{"break-glass-check", "-project", "p", "-region", "r", "-usecase", "a", "-user", "x"}, "-user は"},
-		"member-accounts-check でない入口に -ids":      {[]string{"member-emails-check", "-project", "p", "-region", "r", "-usecase", "a", "-ids"}, "-ids は"},
+		"Terraform を読む入口に -usecase が無い":             {[]string{"member-emails", "-project", "p", "-region", "r"}, "-usecase は"},
+		"Terraform を読まない入口に -usecase":               {[]string{"stacksets-access", "-project", "p", "-region", "r", "-usecase", "a"}, "-usecase は"},
+		"member-email-update に -env が無い":            {[]string{"member-email-update", "-project", "p", "-region", "r", "-usecase", "a"}, "-env は"},
+		"ほかの入口に -env":                               {[]string{"member-emails", "-project", "p", "-region", "r", "-usecase", "a", "-env", "x"}, "-env は"},
+		"identity-center-user-check に -user が無い":    {[]string{"identity-center-user-check", "-project", "p", "-region", "r", "-usecase", "a"}, "-user は"},
+		"ほかの入口に -user":                              {[]string{"break-glass-check", "-project", "p", "-region", "r", "-usecase", "a", "-user", "x"}, "-user は"},
+		"bootstrap-env-secrets に -environments が無い": {[]string{"bootstrap-env-secrets", "-project", "p", "-region", "r"}, "-environments と -repo は"},
+		"ほかの入口に -environments":                      {[]string{"bootstrap-contacts", "-project", "p", "-region", "r", "-environments", "x"}, "-environments と -repo は"},
+		"bootstrap-env-secrets に -repo が無い":         {[]string{"bootstrap-env-secrets", "-project", "p", "-region", "r", "-environments", "x"}, "-environments と -repo は"},
+		"ほかの入口に -repo だけ":                           {[]string{"bootstrap-contacts", "-project", "p", "-region", "r", "-repo", "a/b"}, "-environments と -repo は"},
+		"ほかの入口に -replace":                           {[]string{"bootstrap-contacts", "-project", "p", "-region", "r", "-replace"}, "-replace は"},
+		"member-accounts-check でない入口に -ids":         {[]string{"member-emails-check", "-project", "p", "-region", "r", "-usecase", "a", "-ids"}, "-ids は"},
 	}
 	for name, tc := range bad {
 		t.Run(name+"なら errUsage", func(t *testing.T) {
@@ -403,6 +426,17 @@ func Test_parseArgs(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.msg)
 		})
 	}
+
+	t.Run("bootstrap-env-secrets は -environments・-repo・-replace を受ける", func(t *testing.T) {
+		t.Parallel()
+
+		o, e, err := parseArgs([]string{"bootstrap-env-secrets", "-project", "p", "-region", "r", "-environments", "a,b", "-repo", "x/y", "-replace"})
+		require.NoError(t, err)
+		assert.Equal(t, "a,b", o.environments)
+		assert.Equal(t, "x/y", o.repo)
+		assert.True(t, o.replace)
+		assert.True(t, e.needsEnvironments)
+	})
 }
 
 func Test_run(t *testing.T) {
