@@ -17,3 +17,13 @@ variable "bootstrapping" {
   description = "立ち上げ中のメンバーアカウントの env。ここに無いアカウントには、OrganizationAccountAccessRole の使用を拒む SCP を付ける。"
   type        = set(string)
 }
+
+variable "bootstrap_read_role_name" {
+  description = "メンバーの立ち上げの読み取りの role の名前。SCP がこの role を守り、立ち上げの外のアカウントでその使用を拒む。"
+  type        = string
+}
+
+variable "bootstrap_read_role_path" {
+  description = "メンバーの立ち上げの読み取りの role の IAM の path。`/` で始まり `/` で終わる。"
+  type        = string
+}

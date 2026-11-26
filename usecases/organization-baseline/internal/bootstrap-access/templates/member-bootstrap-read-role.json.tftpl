@@ -1,0 +1,78 @@
+${jsonencode({
+  AWSTemplateFormatVersion = "2010-09-09"
+  Resources = {
+    BootstrapReadRole = {
+      Type = "AWS::IAM::Role"
+      Properties = {
+        RoleName           = role_name
+        Path               = role_path
+        MaxSessionDuration = 3600
+        AssumeRolePolicyDocument = {
+          Version = "2012-10-17"
+          Statement = [{
+            Effect    = "Allow"
+            Principal = { AWS = "arn:${partition}:iam::${management_account_id}:root" }
+            Action    = "sts:AssumeRole"
+            Condition = { ArnEquals = { "aws:PrincipalArn" = trusted_principal_arn } }
+          }]
+        }
+        Policies = [{
+          PolicyName = "bootstrap-read"
+          PolicyDocument = {
+            Version = "2012-10-17"
+            Statement = [
+              { Sid = "ListBuckets", Effect = "Allow", Action = "s3:ListBucket", Resource = [for s in ["tfstate", "tfplan", "tfapply"] : { "Fn::Sub" = "arn:$${AWS::Partition}:s3:::${project}-*-${s}-$${AWS::AccountId}-*" }] },
+              {
+                Sid    = "ReadBucketConfiguration"
+                Effect = "Allow"
+                Action = [
+                  "s3:GetAccelerateConfiguration",
+                  "s3:GetBucketAcl",
+                  "s3:GetBucketCORS",
+                  "s3:GetBucketLogging",
+                  "s3:GetBucketObjectLockConfiguration",
+                  "s3:GetBucketOwnershipControls",
+                  "s3:GetBucketPolicy",
+                  "s3:GetBucketPublicAccessBlock",
+                  "s3:GetBucketRequestPayment",
+                  "s3:GetBucketTagging",
+                  "s3:GetBucketVersioning",
+                  "s3:GetBucketWebsite",
+                  "s3:GetEncryptionConfiguration",
+                  "s3:GetLifecycleConfiguration",
+                  "s3:GetReplicationConfiguration",
+                ]
+                Resource = [for s in ["tfstate", "tfplan", "tfapply"] : { "Fn::Sub" = "arn:$${AWS::Partition}:s3:::${project}-*-${s}-$${AWS::AccountId}-*" }]
+              },
+              {
+                Sid      = "ReadStateKey"
+                Effect   = "Allow"
+                Action   = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags"]
+                Resource = { "Fn::Sub" = "arn:$${AWS::Partition}:kms:$${AWS::Region}:$${AWS::AccountId}:key/*" }
+              },
+              { Sid = "ListKeyAliases", Effect = "Allow", Action = "kms:ListAliases", Resource = "*" },
+              {
+                Sid      = "ReadGitHubProvider"
+                Effect   = "Allow"
+                Action   = ["iam:GetOpenIDConnectProvider", "iam:ListOpenIDConnectProviderTags"]
+                Resource = { "Fn::Sub" = "arn:$${AWS::Partition}:iam::$${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com" }
+              },
+              {
+                Sid      = "ReadCiRoles"
+                Effect   = "Allow"
+                Action   = ["iam:GetRole", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:ListRolePolicies", "iam:ListRoleTags"]
+                Resource = { "Fn::Sub" = "arn:$${AWS::Partition}:iam::$${AWS::AccountId}:role/${project}-*-ci-*" }
+              },
+              {
+                Sid      = "ReadCiPolicies"
+                Effect   = "Allow"
+                Action   = ["iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyTags", "iam:ListPolicyVersions"]
+                Resource = { "Fn::Sub" = "arn:$${AWS::Partition}:iam::$${AWS::AccountId}:policy/${project}-*-ci-*" }
+              },
+            ]
+          }
+        }]
+      }
+    }
+  }
+})}

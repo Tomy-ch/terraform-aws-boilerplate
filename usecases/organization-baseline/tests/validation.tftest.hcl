@@ -25,7 +25,8 @@ mock_provider "aws" {
 }
 
 variables {
-  project = "tabp"
+  project                      = "tabp"
+  bootstrap_read_principal_arn = "arn:aws:iam::111111111111:role/tabp-admin-ci-plan"
 }
 
 run "accepts_38_character_project" {
@@ -92,4 +93,24 @@ run "rejects_unknown_env_in_bootstrapping" {
   }
 
   expect_failures = [var.bootstrapping]
+}
+
+run "rejects_wildcard_bootstrap_read_principal" {
+  command = plan
+
+  variables {
+    bootstrap_read_principal_arn = "arn:aws:iam::111111111111:role/tabp-*"
+  }
+
+  expect_failures = [var.bootstrap_read_principal_arn]
+}
+
+run "rejects_non_role_bootstrap_read_principal" {
+  command = plan
+
+  variables {
+    bootstrap_read_principal_arn = "arn:aws:iam::111111111111:user/tabp-admin"
+  }
+
+  expect_failures = [var.bootstrap_read_principal_arn]
 }

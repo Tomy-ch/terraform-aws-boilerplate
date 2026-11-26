@@ -28,7 +28,7 @@ const (
 
 var (
 	// errDeclShape は、手順が守るべき形を Terraform の宣言から決められないこと（resource が無い・2つ在る、値がリテラルでない）。
-	errDeclShape = xerrors.New("organization-baseline の Terraform の宣言を解釈できません")
+	errDeclShape = xerrors.New("ユースケースの Terraform の宣言を解釈できません")
 
 	// passwordPolicyFields は、aws_iam_account_password_policy の argument と、get-account-password-policy の応答の field の対応。
 	// 値は Terraform から読む。対応に無い argument と、対応に在って宣言に無い argument は確かめられないので、

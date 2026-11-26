@@ -108,6 +108,14 @@
         "language": "hcl",
         "adr": "organization-baseline/member-break-glass-via-stacksets",
         "reasons": ["type"]
+      },
+      {
+        "id": "usecases/organization-baseline/internal/bootstrap-access#resource.aws_cloudformation_stack_set.this",
+        "owner": "repository",
+        "source": "usecases/organization-baseline/internal/bootstrap-access/templates/member-bootstrap-read-role.json.tftpl",
+        "language": "hcl",
+        "adr": "organization-baseline/member-bootstrap-read-role",
+        "reasons": ["type"]
       }
     ]
   }

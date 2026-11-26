@@ -12,3 +12,11 @@ output "bootstrapping_account_ids" {
   description = "`bootstrapping` に入れたメンバーアカウントの env から ID への map。管理アカウントの identity root が、立ち上げの provider の引き受け先に使う。"
   value       = module.organization.bootstrapping_account_ids
 }
+
+output "bootstrap_read_role" {
+  description = "メンバーアカウントへ配る、立ち上げの plan の読み取りの role の名前と path。`deployment-identity` が、その role を配る StackSet の権限と、plan の role の引き受けの Resource に使う。"
+  value = {
+    name = local.bootstrap_read_role_name
+    path = local.bootstrap_read_path
+  }
+}

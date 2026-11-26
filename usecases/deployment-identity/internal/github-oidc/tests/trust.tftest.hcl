@@ -17,6 +17,7 @@ mock_provider "aws" {
 variables {
   name_prefix             = "tabp-admin"
   env                     = "admin"
+  bootstrap_read_role     = { name = "tabp-bootstrap-read", path = "/bootstrap/" }
   github                  = { owner = "octo-org", owner_id = "123456", repository = "octo-repo", repository_id = "456789" }
   state_bucket_arn        = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an"
   state_key_arn           = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
@@ -164,8 +165,10 @@ run "names_follow_inputs" {
   command = apply
 
   variables {
-    name_prefix = "t4bp-dev"
-    env         = "dev"
+    name_prefix                  = "t4bp-dev"
+    env                          = "dev"
+    bootstrap_read_role          = null
+    bootstrap_member_account_ids = {}
   }
 
   assert {
