@@ -229,6 +229,7 @@ run "policies" {
       },
       { Sid = "IamGetAccountPasswordPolicy", Effect = "Allow", Action = "iam:GetAccountPasswordPolicy", Resource = "*" },
       { Sid = "IamListOrganizationsFeatures", Effect = "Allow", Action = "iam:ListOrganizationsFeatures", Resource = "*" },
+      { Sid = "OrganizationsDescribeCreateAccountStatus", Effect = "Allow", Action = "organizations:DescribeCreateAccountStatus", Resource = "*" },
       { Sid = "OrganizationsDescribeOrganization", Effect = "Allow", Action = "organizations:DescribeOrganization", Resource = "*" },
       {
         Sid      = "OrganizationsListAWSServiceAccessForOrganization"
@@ -258,6 +259,12 @@ run "policies" {
           "organizations:ListTargetsForPolicy",
         ]
         Resource = "arn:aws:organizations::123456789012:policy/o-*/*/p-*"
+      },
+      {
+        Sid      = "ReadMemberAccounts"
+        Effect   = "Allow"
+        Action   = ["organizations:DescribeAccount", "organizations:ListParents", "organizations:ListTagsForResource"]
+        Resource = ["arn:aws:organizations::123456789012:account/o-*/*"]
       },
       {
         Sid      = "ReadMemberAccountEmails"
@@ -640,6 +647,7 @@ run "policies" {
       },
       { Sid = "IamGetAccountPasswordPolicy", Effect = "Allow", Action = "iam:GetAccountPasswordPolicy", Resource = "*" },
       { Sid = "IamListOrganizationsFeatures", Effect = "Allow", Action = "iam:ListOrganizationsFeatures", Resource = "*" },
+      { Sid = "OrganizationsDescribeCreateAccountStatus", Effect = "Allow", Action = "organizations:DescribeCreateAccountStatus", Resource = "*" },
       { Sid = "OrganizationsDescribeOrganization", Effect = "Allow", Action = "organizations:DescribeOrganization", Resource = "*" },
       {
         Sid      = "OrganizationsListAWSServiceAccessForOrganization"
@@ -669,6 +677,12 @@ run "policies" {
           "organizations:ListTargetsForPolicy",
         ]
         Resource = "arn:aws:organizations::123456789012:policy/o-*/*/p-*"
+      },
+      {
+        Sid      = "ReadMemberAccounts"
+        Effect   = "Allow"
+        Action   = ["organizations:DescribeAccount", "organizations:ListParents", "organizations:ListTagsForResource"]
+        Resource = ["arn:aws:organizations::123456789012:account/o-*/*"]
       },
       {
         Sid      = "ReadMemberAccountEmails"
@@ -1304,6 +1318,7 @@ run "policies" {
       },
       { Sid = "IamEnableOrganizationsRootSessions", Effect = "Allow", Action = "iam:EnableOrganizationsRootSessions", Resource = "*" },
       { Sid = "IamUpdateAccountPasswordPolicy", Effect = "Allow", Action = "iam:UpdateAccountPasswordPolicy", Resource = "*" },
+      { Sid = "OrganizationsCreateAccount", Effect = "Allow", Action = "organizations:CreateAccount", Resource = "*" },
       { Sid = "OrganizationsCreateOrganization", Effect = "Allow", Action = "organizations:CreateOrganization", Resource = "*" },
       {
         Sid       = "CloudformationCreateStackSet"
@@ -1353,6 +1368,16 @@ run "policies" {
         Effect   = "Allow"
         Action   = "organizations:UpdateOrganizationalUnit"
         Resource = ["arn:aws:organizations::123456789012:ou/o-*/ou-*"]
+      },
+      {
+        Sid    = "MoveMemberAccounts"
+        Effect = "Allow"
+        Action = "organizations:MoveAccount"
+        Resource = [
+          "arn:aws:organizations::123456789012:account/o-*/*",
+          "arn:aws:organizations::123456789012:root/o-*/r-*",
+          "arn:aws:organizations::123456789012:ou/o-*/ou-*",
+        ]
       },
       {
         Sid      = "ManageOrganizationPolicies"

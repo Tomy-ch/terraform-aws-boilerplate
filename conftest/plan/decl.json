@@ -39,7 +39,9 @@
       "kms:CreateKey",
       "kms:ListAliases",
       "logs:DescribeLogGroups",
+      "organizations:CreateAccount",
       "organizations:CreateOrganization",
+      "organizations:DescribeCreateAccountStatus",
       "organizations:DescribeOrganization",
       "organizations:DisableAWSServiceAccess",
       "organizations:EnableAWSServiceAccess",
@@ -501,6 +503,7 @@
         "aws_kms_key_policy",
         "aws_organizations_organization",
         "aws_organizations_organizational_unit",
+        "aws_organizations_account",
         "aws_iam_user",
         "aws_ecr_repository",
         "aws_ecr_lifecycle_policy",
@@ -549,6 +552,16 @@
         "PolicyStaging": "module.organization_baseline.module.organization.aws_organizations_organizational_unit.top[\"PolicyStaging\"]",
         "Prod": "module.organization_baseline.module.organization.aws_organizations_organizational_unit.workloads[\"Prod\"]",
         "NonProd": "module.organization_baseline.module.organization.aws_organizations_organizational_unit.workloads[\"NonProd\"]"
+      },
+      "accounts": {
+        "security": {
+          "address": "module.organization_baseline.module.organization.aws_organizations_account.this[\"security\"]",
+          "ou": "Security"
+        },
+        "log-archive": {
+          "address": "module.organization_baseline.module.organization.aws_organizations_account.this[\"log-archive\"]",
+          "ou": "Security"
+        }
       },
       "policies": {
         "deny-leave-and-close": "module.organization_baseline.module.organization.aws_organizations_policy.this[\"deny-leave-and-close\"]",

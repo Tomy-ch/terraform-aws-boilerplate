@@ -1,5 +1,8 @@
 # 公開 output の名前と、それが返す値の配線を固定する（repository-wide/ADR-0202 決定4）。
 mock_provider "aws" {
+  mock_data "aws_ssm_parameter" {
+    defaults = { value = "{\"security\":\"security@example.com\",\"log-archive\":\"log-archive@example.com\"}" }
+  }
   mock_data "aws_caller_identity" {
     defaults = { account_id = "111111111111" }
   }
@@ -47,5 +50,15 @@ run "outputs" {
   assert {
     condition     = [for a in output.break_glass_arns : split("/", split(":", a)[5])[0]] == ["user", "user", "group", "role"]
     error_message = "break_glass_arns は user 2つ・group・role の順の4つです。"
+  }
+
+  assert {
+    condition     = output.account_ids == module.organization.account_ids && keys(output.account_ids) == ["log-archive", "security"]
+    error_message = "account_ids が、メンバーアカウントの env から ID への map を返していません。"
+  }
+
+  assert {
+    condition     = output.bootstrapping_account_ids == {}
+    error_message = "bootstrapping の既定（空）で、bootstrapping_account_ids が空になっていません。"
   }
 }
