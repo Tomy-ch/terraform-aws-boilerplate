@@ -461,6 +461,10 @@ func checkBreakGlassUsage(o options, c *client, w io.Writer) error {
 			continue
 		}
 
+		if resp.User.UserName != u {
+			return xerrors.Wrap(errAWSResponse, "iam get-user: "+u+" の UserName がありません")
+		}
+
 		r.check(recent(now, resp.User.PasswordLastUsed), u+" の最後のサインイン: "+lastUsed(now, resp.User.PasswordLastUsed))
 	}
 
@@ -478,9 +482,12 @@ func checkBreakGlassUsage(o options, c *client, w io.Writer) error {
 		return err
 	}
 
-	if !found {
+	switch {
+	case !found:
 		r.ng("role " + bg.role + " が在る")
-	} else {
+	case role.Role.RoleName != bg.role:
+		return xerrors.Wrap(errAWSResponse, "iam get-role: "+bg.role+" の RoleName がありません")
+	default:
 		r.check(recent(now, role.Role.RoleLastUsed.LastUsedDate), "role "+bg.role+" の最後の引き受け: "+lastUsed(now, role.Role.RoleLastUsed.LastUsedDate))
 	}
 
