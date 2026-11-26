@@ -25,7 +25,7 @@ const (
 )
 
 var (
-	errHCL = xerrors.New("organization の Terraform を HCL として読めません")
+	errHCL = xerrors.New("ユースケースの Terraform を HCL として読めません")
 	// errNoMemberAccounts は、対応表（locals の member_accounts）が無いか、行が0件なこと。
 	errNoMemberAccounts = xerrors.New("locals の member_accounts が無いか、行がありません")
 	// errMemberAccountsShape は、対応表の形を解釈できないこと（key がリテラルでない、値が OU の参照でない、key の重複）。

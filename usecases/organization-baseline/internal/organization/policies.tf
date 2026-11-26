@@ -14,6 +14,7 @@ locals {
   ])
   break_glass_role_arn_pattern    = "arn:aws:iam::*:role${var.break_glass_role_path}${var.break_glass_role_name}"
   stacksets_exec_role_arn_pattern = "arn:aws:iam::*:role/stacksets-exec-*"
+  bootstrap_read_role_arn_pattern = "arn:aws:iam::*:role${var.bootstrap_read_role_path}${var.bootstrap_read_role_name}"
   baseline_apply_role_patterns    = [for env in ["security", "log-archive", "sandbox", "dev", "stg", "prd"] : "arn:aws:iam::*:role/${var.project}-${env}-ci-apply"]
 
   service_control_policies = {
@@ -27,13 +28,13 @@ locals {
       }]
     }
     deny-bootstrap-role = {
-      description = "立ち上げの後、メンバーの OrganizationAccountAccessRole の使用を拒む。"
+      description = "立ち上げの後、メンバーの OrganizationAccountAccessRole と立ち上げの読み取りの role の使用を拒む。"
       statements = [{
         Sid       = "DenyOrganizationAccountAccessRole"
         Effect    = "Deny"
         Action    = "*"
         Resource  = "*"
-        Condition = { ArnLike = { "aws:PrincipalArn" = "arn:aws:iam::*:role/OrganizationAccountAccessRole" } }
+        Condition = { ArnLike = { "aws:PrincipalArn" = ["arn:aws:iam::*:role/OrganizationAccountAccessRole", local.bootstrap_read_role_arn_pattern] } }
       }]
     }
     deny-state-write = {
@@ -49,7 +50,7 @@ locals {
       }]
     }
     protect-governance-roles = {
-      description = "メンバーの break-glass の role の変更を拒む。"
+      description = "メンバーの break-glass の role と立ち上げの読み取りの role の変更を拒む。"
       statements = [{
         Sid      = "DenyBreakGlassRoleChange"
         Effect   = "Deny"
@@ -63,6 +64,13 @@ locals {
         Effect   = "Deny"
         Action   = ["iam:Attach*", "iam:Create*", "iam:Delete*", "iam:Detach*", "iam:PassRole", "iam:Put*", "iam:Tag*", "iam:Untag*", "iam:Update*"]
         Resource = local.stacksets_exec_role_arn_pattern
+        }, {
+        # 立ち上げの読み取りの role も StackSet が置く（organization-baseline/ADR-0203）。
+        Sid       = "DenyBootstrapReadRoleChange"
+        Effect    = "Deny"
+        Action    = ["iam:Attach*", "iam:Create*", "iam:Delete*", "iam:Detach*", "iam:PassRole", "iam:Put*", "iam:Tag*", "iam:Untag*", "iam:Update*"]
+        Resource  = local.bootstrap_read_role_arn_pattern
+        Condition = { ArnNotLike = { "aws:PrincipalArn" = local.stacksets_exec_role_arn_pattern } }
       }]
     }
     deny-guardduty-stop = {

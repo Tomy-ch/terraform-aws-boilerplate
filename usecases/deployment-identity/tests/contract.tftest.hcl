@@ -16,14 +16,16 @@ mock_provider "aws" {
 }
 
 variables {
-  project                 = "tabp"
-  env                     = "admin"
-  github                  = { owner = "octo-org", owner_id = "123456", repository = "octo-repo", repository_id = "456789" }
-  state_bucket_arn        = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an"
-  state_key_arn           = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
-  plan_output_bucket_arn  = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an"
-  apply_output_bucket_arn = "arn:aws:s3:::tabp-admin-tfapply-123456789012-ap-northeast-1-an"
-  break_glass_arns        = ["arn:aws:iam::123456789012:user/break-glass/break-glass-1", "arn:aws:iam::123456789012:user/break-glass/break-glass-2", "arn:aws:iam::123456789012:group/break-glass/break-glass", "arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
+  project                      = "tabp"
+  env                          = "admin"
+  github                       = { owner = "octo-org", owner_id = "123456", repository = "octo-repo", repository_id = "456789" }
+  state_bucket_arn             = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an"
+  state_key_arn                = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+  plan_output_bucket_arn       = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an"
+  apply_output_bucket_arn      = "arn:aws:s3:::tabp-admin-tfapply-123456789012-ap-northeast-1-an"
+  break_glass_arns             = ["arn:aws:iam::123456789012:user/break-glass/break-glass-1", "arn:aws:iam::123456789012:user/break-glass/break-glass-2", "arn:aws:iam::123456789012:group/break-glass/break-glass", "arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
+  bootstrap_read_role          = { name = "tabp-bootstrap-read", path = "/bootstrap/" }
+  bootstrap_member_account_ids = { dev = "111111111111" }
 }
 
 run "outputs" {
@@ -71,6 +73,17 @@ run "outputs" {
     ]
     error_message = "break_glass_arns が内部の module の権限へ渡っていません。"
   }
+
+  assert {
+    condition = [
+      one([for s in jsondecode(module.github_oidc.role_policies["plan"]).Statement : s.Resource if s.Sid == "AssumeBootstrapReadRoles"]),
+      one([for s in jsondecode(module.github_oidc.role_policies["plan"]).Statement : s.Resource if s.Sid == "ReadMemberRoleStackSets"]),
+      ] == [
+      ["arn:aws:iam::111111111111:role/bootstrap/tabp-bootstrap-read"],
+      ["arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-break-glass:*", "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-bootstrap-read:*"],
+    ]
+    error_message = "bootstrap_read_role と bootstrap_member_account_ids が内部の module の権限へ渡っていません。"
+  }
 }
 
 # 取り違えが見えるよう、上の admin とは別の値を渡す。
@@ -78,13 +91,15 @@ run "wiring" {
   command = apply
 
   variables {
-    project                 = "t4bp"
-    env                     = "dev"
-    state_bucket_arn        = "arn:aws:s3:::t4bp-dev-tfstate-123456789012-ap-northeast-1-an"
-    state_key_arn           = "arn:aws:kms:ap-northeast-1:123456789012:key/abcdef01-2345-6789-abcd-ef0123456789"
-    plan_output_bucket_arn  = "arn:aws:s3:::t4bp-dev-tfplan-123456789012-ap-northeast-1-an"
-    apply_output_bucket_arn = "arn:aws:s3:::t4bp-dev-tfapply-123456789012-ap-northeast-1-an"
-    break_glass_arns        = ["arn:aws:iam::123456789012:role/break-glass/t4bp-break-glass"]
+    project                      = "t4bp"
+    env                          = "dev"
+    bootstrap_read_role          = null
+    bootstrap_member_account_ids = {}
+    state_bucket_arn             = "arn:aws:s3:::t4bp-dev-tfstate-123456789012-ap-northeast-1-an"
+    state_key_arn                = "arn:aws:kms:ap-northeast-1:123456789012:key/abcdef01-2345-6789-abcd-ef0123456789"
+    plan_output_bucket_arn       = "arn:aws:s3:::t4bp-dev-tfplan-123456789012-ap-northeast-1-an"
+    apply_output_bucket_arn      = "arn:aws:s3:::t4bp-dev-tfapply-123456789012-ap-northeast-1-an"
+    break_glass_arns             = ["arn:aws:iam::123456789012:role/break-glass/t4bp-break-glass"]
   }
 
   assert {

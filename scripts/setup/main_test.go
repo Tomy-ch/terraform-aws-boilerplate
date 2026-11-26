@@ -68,6 +68,15 @@ func Test_entries(t *testing.T) {
 			"bootstrap-contacts":         {"account put-contact-information", "account put-alternate-contact"},
 			"bootstrap-anomaly-tag":      {"ce tag-resource"},
 			"bootstrap-env-secrets":      {"gh secret set"},
+			"ops-chatbot-role-check":     nil,
+			"ops-workspace-check":        nil,
+			"ops-subscriptions-check":    nil,
+			"ops-resubscribe":            {"chatbot update-slack-channel-configuration"},
+			"dns-delegation-values":      nil,
+			"dns-signing-check":          nil,
+			"dns-ksk-activate":           {"route53 activate-key-signing-key"},
+			"dns-registrar-ns":           {"route53domains update-domain-nameservers"},
+			"dns-registrar-ds":           {"route53domains associate-delegation-signer-to-domain"},
 		}
 		require.Equal(t, slices.Sorted(maps.Keys(want)), slices.Sorted(maps.Keys(entries)))
 
@@ -89,7 +98,7 @@ func Test_entries(t *testing.T) {
 			}
 		}
 
-		assert.Equal(t, 12, checks)
+		assert.Equal(t, 16, checks)
 	})
 
 	// 各入口を run から起動し、入口に固有の操作が起動されることで、entries の配線を固定する。
@@ -168,6 +177,51 @@ func Test_entries(t *testing.T) {
 			return anomalyWorld(t, map[string]bool{monitorARN: true})
 		}, "tabp\n", tagResource(subARN)},
 		"bootstrap-env-secrets": {[]string{"-environments", "admin-plan", "-repo", testRepo}, callerWorld, "tabp\n", "sts get-caller-identity"},
+		"ops-chatbot-role-check": {[]string{"-env", "dev"}, func(t *testing.T) *fakeAWS {
+			return newFakeAWS(t, map[string]awsResult{getChatRole: ok(`{"Role":{"RoleName":"AWSServiceRoleForAWSChatbot"}}`)})
+		}, "", getChatRole},
+		"ops-workspace-check": {[]string{"-usecase", testUsecase, "-env", "dev"}, func(t *testing.T) *fakeAWS {
+			return newFakeAWS(t, map[string]awsResult{"chatbot describe-slack-workspaces": ok(`{"SlackWorkspaces":[{"SlackTeamId":"T1","SlackTeamName":"w","State":"ENABLED"}]}`)})
+		}, "", "chatbot describe-slack-workspaces"},
+		"ops-subscriptions-check": {[]string{"-usecase", testUsecase, "-env", "dev"}, func(t *testing.T) *fakeAWS {
+			return newFakeAWS(t, map[string]awsResult{listSubs: subsJSON(chatbotSub(opsTopicARN), chatbotSub(opsUSTopicARN))})
+		}, "", listSubs},
+		"ops-resubscribe": {[]string{"-usecase", testUsecase, "-env", "dev"}, func(t *testing.T) *fakeAWS {
+			f := resubscribeWorld(t, subsJSON(chatbotSub(opsUSTopicARN)))
+			maps.Copy(f.responses, callerResult("111111111111", roleCaller))
+
+			return f
+		}, "tabp\n", updateCall(opsUSTopicARN)},
+		"dns-delegation-values": {[]string{"-usecase", testUsecase, "-env", "dev", "-zone", devZone}, func(t *testing.T) *fakeAWS {
+			return zoneWorld(t, devZone, serveSigning, testKSK(kskActive))
+		}, "", getZoneNS},
+		"dns-signing-check": {[]string{"-usecase", testUsecase, "-env", "dev", "-zone", devZone}, func(t *testing.T) *fakeAWS {
+			return zoneWorld(t, devZone, serveSigning, testKSK(kskActive))
+		}, "", describeKey},
+		"dns-ksk-activate": {[]string{"-usecase", testUsecase, "-env", "dev", "-zone", devZone}, func(t *testing.T) *fakeAWS {
+			f := activateWorld(t, testKSK(kskActionNeeded))
+			maps.Copy(f.responses, callerResult("111111111111", roleCaller))
+
+			return f
+		}, "tabp\n", activateWrite},
+		"dns-registrar-ns": {[]string{"-usecase", testUsecase, "-env", "prd", "-zone", apexZone}, func(t *testing.T) *fakeAWS {
+			f := registrarWorld(t, oldNS)
+			maps.Copy(f.responses, callerResult("111111111111", roleCaller))
+
+			return f
+		}, "tabp\n", nsWrite(zoneNS...)},
+		"dns-registrar-ds": {[]string{"-usecase", testUsecase, "-env", "prd", "-zone", apexZone}, func(t *testing.T) *fakeAWS {
+			f := registrarWorld(t, zoneNS)
+			maps.Copy(f.responses, callerResult("111111111111", roleCaller))
+
+			return f
+		}, "tabp\n", dsWrite()},
+	}
+
+	runFiles := map[string]map[string]string{
+		"ops-workspace-check": opsFiles(), "ops-subscriptions-check": opsFiles(), "ops-resubscribe": opsFiles(),
+		"dns-delegation-values": dnsFiles(), "dns-signing-check": dnsFiles(), "dns-ksk-activate": dnsFiles(),
+		"dns-registrar-ns": dnsFiles(), "dns-registrar-ds": dnsFiles(),
 	}
 
 	t.Run("run の表が entries のすべての入口を覆う", func(t *testing.T) {
@@ -182,6 +236,10 @@ func Test_entries(t *testing.T) {
 			f := tc.world(t)
 			args := append([]string{name, "-project", testProject, "-region", testRegion}, tc.args...)
 			d := testDeps(f, tc.input, nil)
+			if files, found := runFiles[name]; found {
+				d.readFile = readFiles(files)
+			}
+
 			g := ghWorld(t)
 			d.gh = g.fn()
 			require.NoError(t, run(args, &bytes.Buffer{}, d))
@@ -242,6 +300,37 @@ func Test_execute(t *testing.T) {
 		code := execute([]string{"member-accounts-check", "-project", testProject, "-region", testRegion, "-usecase", testUsecase}, &out, testDeps(f, "", nil))
 		assert.Equal(t, 1, code)
 		assert.True(t, strings.HasSuffix(out.String(), "❌ "+errNG.Error()+"\n"))
+	})
+
+	digitsArgs := []string{"dns-delegation-values", "-project", testProject, "-region", testRegion, "-usecase", testUsecase, "-env", "dev", "-zone", devZone}
+	digitsWorld := func(t *testing.T) deps {
+		t.Helper()
+
+		ksk := testKSK(kskActive)
+		ksk.DSRecord = digitsDS
+
+		d := testDeps(zoneWorld(t, devZone, serveSigning, ksk), "", nil)
+		d.readFile = readFiles(dnsFiles())
+
+		return d
+	}
+
+	t.Run("DS に12桁続く数字が在れば、-ids でなければ 1 で、伏せて壊した DS を出さない", func(t *testing.T) {
+		t.Parallel()
+
+		var out bytes.Buffer
+		assert.Equal(t, 1, execute(digitsArgs, &out, digitsWorld(t)))
+		assert.NotContains(t, out.String(), "ds_record")
+		assert.NotContains(t, out.String(), "<account>")
+		assert.Contains(t, out.String(), "IDS=1")
+	})
+
+	t.Run("DS に12桁続く数字が在っても、-ids なら DS をそのまま出す", func(t *testing.T) {
+		t.Parallel()
+
+		var out bytes.Buffer
+		assert.Equal(t, 0, execute(append(slices.Clone(digitsArgs), "-ids"), &out, digitsWorld(t)))
+		assert.Contains(t, out.String(), `  ds_record    = "`+digitsDS+`"`+"\n")
 	})
 
 	t.Run("引数の誤りは 2 で、-ids を付けても伏せる", func(t *testing.T) {
@@ -319,6 +408,9 @@ func Test_exitCode(t *testing.T) {
 		"伏せて読めなければ 2":       {errNoHidden, 2},
 		"中断は 2":             {errInterrupted, 2},
 		"宣言を解釈できなければ 2":     {errDeclShape, 2},
+		"宣言に無い env は 2":     {xerrors.Wrap(errEnvName, "x"), 2},
+		"宣言の形でない zone は 2":  {xerrors.Wrap(errZoneName, "x"), 2},
+		"その env で行わない入口は 2": {xerrors.Wrap(errEnvNotApplicable, "x"), 2},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -394,6 +486,14 @@ func Test_parseArgs(t *testing.T) {
 		assert.True(t, o.showIDs)
 	})
 
+	t.Run("dns-delegation-values は -ids を受ける", func(t *testing.T) {
+		t.Parallel()
+
+		o, _, err := parseArgs([]string{"dns-delegation-values", "-project", "p", "-region", "r", "-usecase", "u", "-env", "dev", "-zone", "dev.example.com", "-ids"})
+		require.NoError(t, err)
+		assert.True(t, o.showIDs)
+	})
+
 	bad := map[string]struct {
 		args []string
 		msg  string
@@ -416,6 +516,12 @@ func Test_parseArgs(t *testing.T) {
 		"ほかの入口に -repo だけ":                           {[]string{"bootstrap-contacts", "-project", "p", "-region", "r", "-repo", "a/b"}, "-environments と -repo は"},
 		"ほかの入口に -replace":                           {[]string{"bootstrap-contacts", "-project", "p", "-region", "r", "-replace"}, "-replace は"},
 		"member-accounts-check でない入口に -ids":         {[]string{"member-emails-check", "-project", "p", "-region", "r", "-usecase", "a", "-ids"}, "-ids は"},
+		"dns-delegation-values でない dns- の入口に -ids":  {[]string{"dns-signing-check", "-project", "p", "-region", "r", "-usecase", "a", "-env", "dev", "-zone", "z", "-ids"}, "-ids は"},
+		"ops- の入口に -env が無い":                        {[]string{"ops-chatbot-role-check", "-project", "p", "-region", "r"}, "-env は"},
+		"ops- の Terraform を読む入口に -usecase が無い":      {[]string{"ops-subscriptions-check", "-project", "p", "-region", "r", "-env", "dev"}, "-usecase は"},
+		"ops-chatbot-role-check に -usecase":         {[]string{"ops-chatbot-role-check", "-project", "p", "-region", "r", "-env", "dev", "-usecase", "a"}, "-usecase は"},
+		"dns- の入口に -zone が無い":                       {[]string{"dns-signing-check", "-project", "p", "-region", "r", "-usecase", "a", "-env", "dev"}, "-zone は"},
+		"ほかの入口に -zone":                              {[]string{"ops-subscriptions-check", "-project", "p", "-region", "r", "-usecase", "a", "-env", "dev", "-zone", "z"}, "-zone は"},
 	}
 	for name, tc := range bad {
 		t.Run(name+"なら errUsage", func(t *testing.T) {
@@ -426,6 +532,16 @@ func Test_parseArgs(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.msg)
 		})
 	}
+
+	t.Run("dns- の入口は -usecase・-env・-zone を受ける", func(t *testing.T) {
+		t.Parallel()
+
+		o, e, err := parseArgs([]string{"dns-registrar-ds", "-project", "p", "-region", "r", "-usecase", "u", "-env", "prd", "-zone", "example.com"})
+		require.NoError(t, err)
+		assert.Equal(t, options{entry: "dns-registrar-ds", project: "p", region: "r", usecase: "u", env: "prd", zone: "example.com"}, o)
+		assert.True(t, e.account)
+		assert.True(t, e.terraform)
+	})
 
 	t.Run("bootstrap-env-secrets は -environments・-repo・-replace を受ける", func(t *testing.T) {
 		t.Parallel()
@@ -466,6 +582,35 @@ func Test_run(t *testing.T) {
 		maps.Copy(f.responses, managementWorld("222222222222", "111111111111"))
 		require.ErrorIs(t, run(args, &bytes.Buffer{}, testDeps(f, "la@x.y\nsec@x.y\ntabp\n", nil)), errPrecondition)
 		assert.Equal(t, []string{"sts get-caller-identity", "organizations describe-organization"}, f.joined())
+	})
+
+	t.Run("各アカウントの書き込みの入口は、管理アカウントを求めず、資格情報の主体を出してから入口を走らせる", func(t *testing.T) {
+		t.Parallel()
+
+		f := activateWorld(t, testKSK(kskActionNeeded))
+		maps.Copy(f.responses, callerResult("111111111111", roleCaller))
+
+		d := testDeps(f, "tabp\n", nil)
+		d.readFile = readFiles(dnsFiles())
+
+		var out bytes.Buffer
+		require.NoError(t, run([]string{"dns-ksk-activate", "-project", testProject, "-region", testRegion, "-usecase", testUsecase, "-env", "dev", "-zone", devZone}, &out, d))
+		assert.True(t, strings.HasPrefix(out.String(), "# 書き込む先: profile p、region ap-northeast-1、role tabp-dev-admin、アカウント ID の末尾 1111\n"))
+		assert.NotContains(t, f.ops(), "organizations describe-organization")
+		assert.Equal(t, []string{activateWrite}, f.writes())
+	})
+
+	t.Run("各アカウントの書き込みの入口で root の資格情報なら、入口を走らせずに errPrecondition", func(t *testing.T) {
+		t.Parallel()
+
+		f := activateWorld(t, testKSK(kskActionNeeded))
+		maps.Copy(f.responses, callerResult("111111111111", "arn:aws:iam::111111111111:root"))
+
+		d := testDeps(f, "tabp\n", nil)
+		d.readFile = readFiles(dnsFiles())
+
+		require.ErrorIs(t, run([]string{"dns-ksk-activate", "-project", testProject, "-region", testRegion, "-usecase", testUsecase, "-env", "dev", "-zone", devZone}, &bytes.Buffer{}, d), errPrecondition)
+		assert.Equal(t, []string{"sts get-caller-identity"}, f.joined())
 	})
 
 	t.Run("profile が無ければ aws を起動しない", func(t *testing.T) {

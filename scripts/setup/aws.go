@@ -141,7 +141,12 @@ func (c *client) readIn(region string, v any, args ...string) error {
 
 // readOptional は read と同じだが、stderr が notFound の error code を含む失敗を「無い」（false）として返す。
 func (c *client) readOptional(notFound string, v any, args ...string) (bool, error) {
-	err := c.read(v, args...)
+	return c.readOptionalIn("", notFound, v, args...)
+}
+
+// readOptionalIn は readOptional と同じだが、region が空でなければ client の region の代わりに使う。
+func (c *client) readOptionalIn(region, notFound string, v any, args ...string) (bool, error) {
+	err := c.readIn(region, v, args...)
 	if err == nil {
 		return true, nil
 	}

@@ -236,13 +236,19 @@ func governanceGate(q *query, n names) (gateResult, error) {
 		return gateResult{}, err
 	}
 
+	// StackSet の行は members の policy に、ほかの行は統制の policy に依る。片方だけなら、どちらの行も確かめられない。
+	governance := slices.Contains(got, n.roleName(n.applyIdentity+"-governance"))
+	members := slices.Contains(got, n.roleName(n.applyIdentity+"-members"))
+
 	switch {
 	case reason != "":
-		return gateResult{state: gateUnknown, ng: fixedCheck(n.applyIdentity+": list-attached-role-policies を読めないので、統制の policy が付いているかを決められない", verdict{reason: reason})}, nil
-	case slices.Contains(got, n.roleName(n.applyIdentity+"-governance")):
+		return gateResult{state: gateUnknown, ng: fixedCheck(n.applyIdentity+": list-attached-role-policies を読めないので、統制の policy とメンバーの role の policy が付いているかを決められない", verdict{reason: reason})}, nil
+	case governance && members:
 		return gateResult{state: gateAttached}, nil
-	default:
+	case !governance && !members:
 		return gateResult{state: gateAbsent}, nil
+	default:
+		return gateResult{state: gateUnknown, ng: fixedCheck(n.applyIdentity+" に、統制の policy とメンバーの role の policy の片方だけが付いている", verdict{reason: strings.Join(got, "、")})}, nil
 	}
 }
 
@@ -293,6 +299,10 @@ func permissionSections(n names, sk, skReason string) []section {
 
 	gp := n.policyARN(ai + "-governance")
 	mp := n.policyARN(ai + "-manage")
+	mbp := n.policyARN(ai + "-members")
+	// 管理アカウントの OrganizationAccountAccessRole の ARN。引き受けの Resource がアカウントの wildcard へ広がったことを見つける。
+	// 立ち上げの中のメンバーの引き受けは、アカウントを入力に持たないので確かめない（Policy Test の PLAN-ASSUME-* が見る）。
+	oaar := iam + ":role/OrganizationAccountAccessRole"
 	bg := iam + ":role/break-glass/" + n.project + "-break-glass"
 	admin := "arn:aws:iam::aws:policy/AdministratorAccess"
 	slr := iam + ":role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot"
@@ -385,7 +395,7 @@ func permissionSections(n names, sk, skReason string) []section {
 			simCtx(explicitDeny, ai, "*", bypass, "kms:PutKeyPolicy"),
 		}},
 		{
-			heading: "# 統制の構成物と " + ai + " の policy（deployment-identity/ADR-0201 決定3・5・7）",
+			heading: "# 統制の構成物と " + ai + " の policy（deployment-identity/ADR-0201 決定3・5・7・22）",
 			rows: []simRow{
 				sim(allowed, ai, gp, manage...),
 				sim(implicitDeny, ai, iam+":policy/other", "iam:CreatePolicy", "iam:CreatePolicyVersion", "iam:GetPolicy"),
@@ -396,6 +406,13 @@ func permissionSections(n names, sk, skReason string) []section {
 				simCtx(implicitDeny, ai, n.roleARN(apply), policyARN(mp), "iam:AttachRolePolicy"),
 				sim(allowed, plan, mp, "iam:GetPolicy", "iam:GetPolicyVersion"),
 				sim(explicitDeny, apply, mp, "iam:CreatePolicyVersion"),
+				sim(allowed, ai, mbp, manage...),
+				simCtx(allowed, ai, n.roleARN(ai), policyARN(mbp), "iam:AttachRolePolicy"),
+				sim(allowed, plan, mbp, "iam:GetPolicy", "iam:GetPolicyVersion"),
+				sim(explicitDeny, apply, mbp, "iam:CreatePolicyVersion"),
+				// plan の role は立ち上げの読み取りの role だけを引き受ける。apply の role は引き受けない（deployment-identity/ADR-0201 決定22）。
+				sim(implicitDeny, plan, oaar, "sts:AssumeRole"),
+				sim(implicitDeny, apply, oaar, "sts:AssumeRole"),
 				sim(allowed, plan, "*", "organizations:DescribeOrganization", "organizations:ListRoots", "organizations:ListAccounts", "iam:ListOrganizationsFeatures", "iam:GetAccountPasswordPolicy"),
 				sim(allowed, plan, gp, "iam:GetPolicy", "iam:GetPolicyVersion"),
 				sim(implicitDeny, plan, "*", "organizations:CreateOrganization", "iam:UpdateAccountPasswordPolicy"),
@@ -414,7 +431,7 @@ func permissionSections(n names, sk, skReason string) []section {
 				sim(implicitDeny, ai, "*", "organizations:DeleteOrganization"),
 				sim(implicitDeny, ai, bg, "iam:DeleteRole"),
 			}, stackInstanceRows(n, otherRegion(n))...),
-			absentNote: "  統制の policy がまだ付いていないので、作成と設定の権限は確かめない（統制の policy を作って付ける apply の後にもう一度走らせる）",
+			absentNote: "  統制の policy とメンバーの role の policy がまだ付いていないので、作成と設定の権限は確かめない（2つの policy を作って付ける apply の後にもう一度走らせる）",
 			reportGate: true,
 		},
 		{heading: "# Chatbot の service-linked role（deployment-identity/ADR-0201 決定3）", rows: []simRow{
@@ -555,7 +572,7 @@ func stackSetARNs(n names, name string) (string, string, string) {
 		"arn:aws:cloudformation:*::type/resource/AWS-IAM-Role"
 }
 
-// stackInstanceRows は、apply-identity が break-glass の stack instance を provider の region にだけ作り・更新でき、削除
+// stackInstanceRows は、apply-identity が break-glass と立ち上げの読み取りの stack instance を provider の region にだけ作り・更新でき、削除
 // できず、別の名前の StackSet には及ばないことの行（名前の prefix を共有する名前は、Resource を名前の prefix へ広げた policy を
 // 見つける）。1つの要求が3つの resource に当たり、simCheck は返った action を数えるので、resource ごとに行を分ける。
 func stackInstanceRows(n names, other string) []simRow {
@@ -563,6 +580,9 @@ func stackInstanceRows(n names, other string) []simRow {
 	// policy の type の Resource はアカウントが `*` で StackSet の名前を含まないので、type には別の名前の行を持たない。
 	xss, xst, _ := stackSetARNs(n, n.project+"-other")
 	yss, yst, _ := stackSetARNs(n, n.project+"-break-glass-x")
+	// 立ち上げの読み取りの role の StackSet も、同じ文で作り・更新でき、削除できない（organization-baseline/ADR-0203）。
+	rss, rst, _ := stackSetARNs(n, n.project+"-bootstrap-read")
+	zss, zst, _ := stackSetARNs(n, n.project+"-bootstrap-read-x")
 	ai := n.applyIdentity
 	inst := []string{"cloudformation:CreateStackInstances", "cloudformation:UpdateStackInstances"}
 	// TargetRegion は type の評価にだけ付き、stackset と stackset-target の評価には付かない（実際の要求での観測。
@@ -597,6 +617,14 @@ func stackInstanceRows(n names, other string) []simRow {
 		sim(implicitDeny, ai, xst, upd),
 		sim(implicitDeny, ai, yss, upd),
 		sim(implicitDeny, ai, yst, upd),
+		sim(allowed, ai, rss, inst...),
+		sim(allowed, ai, rst, inst...),
+		sim(allowed, ai, rss, upd),
+		sim(implicitDeny, ai, rss, "cloudformation:DeleteStackInstances"),
+		sim(implicitDeny, ai, zss, inst...),
+		sim(implicitDeny, ai, zst, inst...),
+		sim(implicitDeny, ai, zss, upd),
+		sim(implicitDeny, ai, zst, upd),
 	}
 }
 

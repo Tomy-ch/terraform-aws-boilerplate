@@ -25,3 +25,13 @@ variable "bootstrapping" {
     error_message = "bootstrapping はメンバーアカウントの env（security・log-archive）だけにしてください。"
   }
 }
+
+variable "bootstrap_read_principal_arn" {
+  description = "メンバーアカウントの立ち上げの読み取りの role（`<project>-bootstrap-read`）を引き受けてよい、管理アカウントの role の ARN。管理アカウントの identity root の plan の role を渡す。"
+  type        = string
+
+  validation {
+    condition     = can(regex("^arn:aws[a-z-]*:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$", var.bootstrap_read_principal_arn)) && !strcontains(var.bootstrap_read_principal_arn, "*")
+    error_message = "bootstrap_read_principal_arn は、wildcard を含まない IAM role の ARN にしてください。"
+  }
+}

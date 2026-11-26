@@ -99,3 +99,4 @@ scripts/tf-job-lint/                       @Tomy-ch
 .github/settings/branch-protection.json    @Tomy-ch
 .github/CODEOWNERS                         @Tomy-ch
 usecases/organization-baseline/internal/break-glass/templates/member-break-glass-role.json.tftpl @Tomy-ch
+usecases/organization-baseline/internal/bootstrap-access/templates/member-bootstrap-read-role.json.tftpl @Tomy-ch
