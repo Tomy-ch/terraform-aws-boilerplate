@@ -54,12 +54,15 @@ backend = "aqua:aws/aws-cli"
 specifiers = ["2.36.40"]
 
 [tools."aqua:aws/aws-cli"."platforms.linux-arm64"]
+checksum = "sha256:f26e08d0d64d9f35f304a9df94d63cbd11ffe8881c8b4bf60be934cf9e4d13a9"
 url = "https://awscli.amazonaws.com/awscli-exe-linux-aarch64-2.36.40.zip"
 
 [tools."aqua:aws/aws-cli"."platforms.linux-x64"]
+checksum = "sha256:a904e314340ad4c4b62beb50e9259d4becb2acf3dffc86c96c553c834d7fdf7a"
 url = "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.36.40.zip"
 
 [tools."aqua:aws/aws-cli"."platforms.macos-arm64"]
+checksum = "sha256:05c061370c107a5214cb6477b80923ab837d4ba194fc04b8d01062882c080d1f"
 url = "https://awscli.amazonaws.com/AWSCLIV2-2.36.40.pkg"
 
 [[tools."aqua:crate-ci/typos"]]

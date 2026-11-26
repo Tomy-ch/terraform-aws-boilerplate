@@ -316,7 +316,13 @@ func Test_checkSources(t *testing.T) {
 	t.Run("照合値を持てない配布元は、照合値が無くても問題を返さない", func(t *testing.T) {
 		t.Parallel()
 
-		assert.Empty(t, checkSources("aqua:aws/aws-cli", awscli, []string{"linux-x64"}, repoTables))
+		assert.Empty(t, checkSources("aqua:aws/aws-cli", awscli, []string{"linux-x64"}, lockTables))
+	})
+
+	t.Run("表に無い配布元は、照合値が無ければ名指す", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Equal(t, []string{`aqua:aws/aws-cli の linux-x64 の照合値 "" が sha256 ではありません`}, checkSources("aqua:aws/aws-cli", awscli, []string{"linux-x64"}, repoTables))
 	})
 
 	t.Run("照合値を持てない配布元が照合値を持てば名指す", func(t *testing.T) {
@@ -324,7 +330,7 @@ func Test_checkSources(t *testing.T) {
 		e := awscli
 		e.Platforms = map[string]misetoml.LockPlatform{"linux-x64": {URL: awscli.Platforms["linux-x64"].URL, Checksum: sum}}
 
-		assert.Equal(t, []string{"aqua:aws/aws-cli の linux-x64 が照合値を持ちます（unverifiedSources から外す）"}, checkSources("aqua:aws/aws-cli", e, []string{"linux-x64"}, repoTables))
+		assert.Equal(t, []string{"aqua:aws/aws-cli の linux-x64 が照合値を持ちます（unverifiedSources から外す）"}, checkSources("aqua:aws/aws-cli", e, []string{"linux-x64"}, lockTables))
 	})
 
 	t.Run("url と照合値の両方に問題があれば両方を名指す", func(t *testing.T) {

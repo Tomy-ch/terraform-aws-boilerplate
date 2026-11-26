@@ -170,10 +170,7 @@ var shortBackends = map[string]string{
 
 // unverifiedSources は、配布元が照合値を公開しないので mise.lock に照合値を持てない backend と、その理由です。
 // ここに載る道具は TLS だけで配布元を信じて入る。
-var unverifiedSources = map[string]string{
-	// 撤回: AWS CLI の配布物の照合値を宣言して照合するようになったとき（#131）。
-	"aqua:aws/aws-cli": "AWS は awscli.amazonaws.com の配布物の照合値を公開しない",
-}
+var unverifiedSources = map[string]string{}
 
 // checksumRe は mise.lock の照合値の形です。
 var checksumRe = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
