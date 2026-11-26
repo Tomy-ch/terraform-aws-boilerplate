@@ -206,6 +206,7 @@ run "policies" {
         Action   = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags"]
         Resource = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
       },
+      { Sid = "SimulatePolicyDocuments", Effect = "Allow", Action = "iam:SimulateCustomPolicy", Resource = "*" },
       {
         Sid      = "ReadGitHubProvider"
         Effect   = "Allow"
@@ -2721,7 +2722,7 @@ run "no_governance_in_dev" {
   }
 
   assert {
-    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases", "ReadCiPolicies", "DenyBaselineOutsideRegions"]
+    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "SimulatePolicyDocuments", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases", "ReadCiPolicies", "DenyBaselineOutsideRegions"]
     error_message = "dev の plan の role に、統制の構成物の読み取りが入っています。"
   }
 
@@ -2855,7 +2856,7 @@ run "no_governance_in_security" {
   }
 
   assert {
-    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases", "ReadCiPolicies", "DenyBaselineOutsideRegions"]
+    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "SimulatePolicyDocuments", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases", "ReadCiPolicies", "DenyBaselineOutsideRegions"]
     error_message = "security の plan の role に、統制の構成物の読み取りが入っています。"
   }
 
@@ -2971,7 +2972,7 @@ run "no_governance_in_log_archive" {
   }
 
   assert {
-    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases", "ReadCiPolicies", "DenyBaselineOutsideRegions"]
+    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "SimulatePolicyDocuments", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases", "ReadCiPolicies", "DenyBaselineOutsideRegions"]
     error_message = "log-archive の plan の role に、統制の構成物の読み取りが入っています。"
   }
 

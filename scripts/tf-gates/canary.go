@@ -146,7 +146,7 @@ func validateFixture(base, data, ignore string, tool toolFunc) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := initTargets(data, targets, &out, tool); err != nil {
+	if err := initTargets(data, targets, &out, tool, nil); err != nil {
 		return out.String(), err
 	}
 	results := filepath.Join(base, "tmp", "tf-validate")

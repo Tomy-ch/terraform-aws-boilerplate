@@ -383,7 +383,7 @@ func Test_runLockGenerate(t *testing.T) {
 func Test_runLockSync(t *testing.T) {
 	t.Parallel()
 
-	withNewRoot := tracked("env/admin/.terraform.lock.hcl", "usecases/u/reference/.terraform.lock.hcl", "usecases/v/reference/.terraform.lock.hcl")
+	withNewRoot := tracked("env/admin/.terraform.lock.hcl", "usecases/u/reference/.terraform.lock.hcl", "usecases/v/reference/.terraform.lock.hcl", "providers/.terraform.lock.hcl")
 
 	t.Run("root の lock が正本と同じなら、check も apply も何も書かない", func(t *testing.T) {
 		t.Parallel()
@@ -431,11 +431,19 @@ func Test_runLockSync(t *testing.T) {
 	t.Run("check は、lock が追跡されていない root を名指して落とす。apply はそれを求めない", func(t *testing.T) {
 		t.Parallel()
 		_, args := lockRepo(t, testLock, nil)
-		lsFiles := tracked("env/admin/.terraform.lock.hcl")
+		lsFiles := tracked("env/admin/.terraform.lock.hcl", "providers/.terraform.lock.hcl")
 		err := runLockSync("lock-check", false, args, &bytes.Buffer{}, lsFiles)
 		require.ErrorIs(t, err, errLock)
 		assert.Contains(t, err.Error(), "lock が追跡されていない root: usecases/u/reference")
 		require.NoError(t, runLockSync("lock-apply", true, args, &bytes.Buffer{}, lsFiles))
+	})
+
+	t.Run("check は、正本の lock が追跡されていなければ落とす", func(t *testing.T) {
+		t.Parallel()
+		_, args := lockRepo(t, testLock, nil)
+		err := runLockSync("lock-check", false, args, &bytes.Buffer{}, tracked("env/admin/.terraform.lock.hcl", "usecases/u/reference/.terraform.lock.hcl"))
+		require.ErrorIs(t, err, errLock)
+		assert.Contains(t, err.Error(), "正本の lock（providers/.terraform.lock.hcl）が追跡されていません")
 	})
 
 	t.Run("root でないディレクトリの lock が追跡されていれば、どちらも書かずに落とす", func(t *testing.T) {
@@ -550,31 +558,40 @@ func Test_checkTracked(t *testing.T) {
 
 	s := scan{base: "/b", roots: []string{"usecases", "env"}}
 	roots := []target{{rel: "env/admin"}, {rel: "usecases/u/reference"}}
-	both := []string{"env/admin/.terraform.lock.hcl", "usecases/u/reference/.terraform.lock.hcl"}
+	const canonical = "providers/.terraform.lock.hcl"
+	both := []string{"env/admin/.terraform.lock.hcl", "usecases/u/reference/.terraform.lock.hcl", canonical}
 
 	t.Run("root と走査の外の lock だけなら nil", func(t *testing.T) {
 		t.Parallel()
-		require.NoError(t, checkTracked(s, roots, tracked(append(both, "providers/.terraform.lock.hcl", "modules/m/.terraform.lock.hcl", "usecases/u/main.tf")...), true))
+		require.NoError(t, checkTracked(s, roots, tracked(append(both, "providers/.terraform.lock.hcl", "modules/m/.terraform.lock.hcl", "usecases/u/main.tf")...), true, canonical))
 	})
 
 	t.Run("走査の root の下の root でない lock を名指す", func(t *testing.T) {
 		t.Parallel()
-		err := checkTracked(s, roots, tracked(append(both, "usecases/u/.terraform.lock.hcl", "env/admin/sub/.terraform.lock.hcl")...), false)
+		err := checkTracked(s, roots, tracked(append(both, "usecases/u/.terraform.lock.hcl", "env/admin/sub/.terraform.lock.hcl")...), false, canonical)
 		require.ErrorIs(t, err, errLock)
 		assert.Contains(t, err.Error(), "env/admin/sub usecases/u")
 	})
 
 	t.Run("requireRoots なら、lock が追跡されていない root を名指す", func(t *testing.T) {
 		t.Parallel()
-		err := checkTracked(s, roots, tracked("env/admin/.terraform.lock.hcl"), true)
+		err := checkTracked(s, roots, tracked("env/admin/.terraform.lock.hcl", canonical), true, canonical)
 		require.ErrorIs(t, err, errLock)
 		assert.Contains(t, err.Error(), "usecases/u/reference")
-		require.NoError(t, checkTracked(s, roots, tracked("env/admin/.terraform.lock.hcl"), false), "requireRoots でなければ求めない")
+		require.NoError(t, checkTracked(s, roots, tracked("env/admin/.terraform.lock.hcl"), false, canonical), "requireRoots でなければ求めない")
 	})
 
 	t.Run("追跡しているファイルが0件なら errLock", func(t *testing.T) {
 		t.Parallel()
-		require.ErrorIs(t, checkTracked(s, roots, tracked(), false), errLock)
+		require.ErrorIs(t, checkTracked(s, roots, tracked(), false, canonical), errLock)
+	})
+
+	t.Run("requireRoots なら、正本の lock が追跡されていないことを名指す", func(t *testing.T) {
+		t.Parallel()
+		err := checkTracked(s, roots, tracked(both[:2]...), true, canonical)
+		require.ErrorIs(t, err, errLock)
+		assert.Contains(t, err.Error(), "正本の lock")
+		require.NoError(t, checkTracked(s, roots, tracked(both[:2]...), false, canonical), "requireRoots でなければ求めない")
 	})
 }
 

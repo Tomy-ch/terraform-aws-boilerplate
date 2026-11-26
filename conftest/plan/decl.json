@@ -40,6 +40,7 @@
       "iam:EnableOrganizationsRootSessions",
       "iam:GetAccountPasswordPolicy",
       "iam:ListOrganizationsFeatures",
+      "iam:SimulateCustomPolicy",
       "iam:UpdateAccountPasswordPolicy",
       "inspector2:DisableDelegatedAdminAccount",
       "inspector2:EnableDelegatedAdminAccount",
@@ -111,7 +112,8 @@
         "role": "module.deployment_identity.module.github_oidc.aws_iam_role.this[\"plan\"]",
         "policy": "module.deployment_identity.module.github_oidc.aws_iam_role_policy.this[\"plan\"]",
         "read_actions": [
-          "budgets:ViewBudget"
+          "budgets:ViewBudget",
+          "iam:SimulateCustomPolicy"
         ],
         "managed_policies": [
           "module.deployment_identity.module.github_oidc.aws_iam_policy.workload_read"
@@ -671,6 +673,7 @@
           {"action": "iam:GetUser", "reason": "管理アカウントの break-glass の user（organization-baseline/ADR-0201）"},
           {"action": "iam:ListOrganizationsFeatures", "reason": "組織の root の資格情報の中央管理（organization-baseline/ADR-0001）"},
           {"action": "iam:ListUserTags", "reason": "管理アカウントの break-glass の user（organization-baseline/ADR-0201）"},
+          {"action": "iam:SimulateCustomPolicy", "reason": "管理アカウントの plan の job の bootstrap-check の simulate（deployment-identity/ADR-0201 決定8）。メンバーの refresh には要らない（organization-baseline/ADR-0203 決定4）"},
           {"action": "inspector2:ListDelegatedAdminAccounts", "reason": "管理アカウントのセキュリティのサービスの委任管理者の指定（repository-wide/ADR-0602 決定1）"},
           {"action": "organizations:DescribeAccount", "reason": "組織・OU・policy・メンバーアカウント（管理アカウントの API）"},
           {"action": "organizations:DescribeCreateAccountStatus", "reason": "組織・OU・policy・メンバーアカウント（管理アカウントの API）"},
