@@ -275,10 +275,11 @@ func Test_lockField(t *testing.T) {
 	t.Run("entry の version と backend を書き、specifiers を読み飛ばす", func(t *testing.T) {
 		t.Parallel()
 		e := &LockEntry{Platforms: map[string]LockPlatform{}}
+		fields := map[string]bool{}
 
-		require.NoError(t, lockField(e, "", `version = "1"`))
-		require.NoError(t, lockField(e, "", `backend = "aqua:o/a"`))
-		require.NoError(t, lockField(e, "", `specifiers = ["1"]`))
+		require.NoError(t, lockField(e, "", `version = "1"`, fields))
+		require.NoError(t, lockField(e, "", `backend = "aqua:o/a"`, fields))
+		require.NoError(t, lockField(e, "", `specifiers = ["1"]`, fields))
 
 		assert.Equal(t, "1", e.Version)
 		assert.Equal(t, "aqua:o/a", e.Backend)
@@ -287,9 +288,10 @@ func Test_lockField(t *testing.T) {
 	t.Run("platform の url と checksum を書き、url_api と provenance を読み飛ばす", func(t *testing.T) {
 		t.Parallel()
 		e := &LockEntry{Platforms: map[string]LockPlatform{"linux-x64": {}}}
+		fields := map[string]bool{}
 
 		for _, line := range []string{`url = "https://x/1"`, `checksum = "sha256:a"`, `url_api = "https://api/1"`, `provenance = "github-attestations"`} {
-			require.NoError(t, lockField(e, "linux-x64", line))
+			require.NoError(t, lockField(e, "linux-x64", line, fields))
 		}
 
 		assert.Equal(t, LockPlatform{URL: "https://x/1", Checksum: "sha256:a"}, e.Platforms["linux-x64"])
@@ -303,8 +305,30 @@ func Test_lockField(t *testing.T) {
 		t.Run(name+"は ErrInvalidLock", func(t *testing.T) {
 			t.Parallel()
 			e := &LockEntry{Platforms: map[string]LockPlatform{"linux-x64": {}}}
+			fields := map[string]bool{}
 
-			require.ErrorIs(t, lockField(e, tt.platform, tt.line), ErrInvalidLock)
+			require.ErrorIs(t, lockField(e, tt.platform, tt.line, fields), ErrInvalidLock)
 		})
 	}
+}
+
+func Test_markSeen(t *testing.T) {
+	t.Parallel()
+
+	t.Run("初めての key は控え、同じ所の2度目は ErrInvalidLock", func(t *testing.T) {
+		t.Parallel()
+		seen := map[string]bool{}
+
+		require.NoError(t, markSeen(seen, "", "version"))
+		require.ErrorIs(t, markSeen(seen, "", "version"), ErrInvalidLock)
+	})
+
+	t.Run("entry と platform、platform どうしは別に数える", func(t *testing.T) {
+		t.Parallel()
+		seen := map[string]bool{}
+
+		require.NoError(t, markSeen(seen, "", "url"))
+		require.NoError(t, markSeen(seen, "linux-x64", "url"))
+		require.NoError(t, markSeen(seen, "linux-arm64", "url"))
+	})
 }

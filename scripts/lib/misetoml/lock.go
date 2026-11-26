@@ -66,6 +66,7 @@ func ParseLock(content []byte) ([]LockEntry, error) {
 		format   bool
 	)
 	seen := map[string]bool{}
+	var fields map[string]bool
 
 	sc := bufio.NewScanner(bytes.NewReader(content))
 	for lineNo := 1; sc.Scan(); lineNo++ {
@@ -81,7 +82,7 @@ func ParseLock(content []byte) ([]LockEntry, error) {
 			}
 			seen[key] = true
 			entries = append(entries, LockEntry{Key: key, Platforms: map[string]LockPlatform{}})
-			cur, platform = &entries[len(entries)-1], ""
+			cur, platform, fields = &entries[len(entries)-1], "", map[string]bool{}
 
 			continue
 		}
@@ -109,7 +110,7 @@ func ParseLock(content []byte) ([]LockEntry, error) {
 
 			continue
 		}
-		if err := lockField(cur, platform, line); err != nil {
+		if err := lockField(cur, platform, line, fields); err != nil {
 			return nil, xerrors.Wrap(err, where)
 		}
 	}
@@ -129,7 +130,7 @@ func ParseLock(content []byte) ([]LockEntry, error) {
 }
 
 // lockField は entry か platform の中の1行を cur へ書きます。
-func lockField(cur *LockEntry, platform, line string) error {
+func lockField(cur *LockEntry, platform, line string, seen map[string]bool) error {
 	if platform == "" {
 		if m := lockArrayRe.FindStringSubmatch(line); m != nil && m[1] == "specifiers" {
 			return nil
@@ -138,16 +139,13 @@ func lockField(cur *LockEntry, platform, line string) error {
 		if m == nil {
 			return ErrInvalidLock
 		}
+		if err := markSeen(seen, "", m[1]); err != nil {
+			return err
+		}
 		switch m[1] {
 		case "version":
-			if cur.Version != "" {
-				return xerrors.Wrap(ErrInvalidLock, "version の重複")
-			}
 			cur.Version = m[2]
 		case "backend":
-			if cur.Backend != "" {
-				return xerrors.Wrap(ErrInvalidLock, "backend の重複")
-			}
 			cur.Backend = m[2]
 		default:
 			return xerrors.Wrap(ErrInvalidLock, "知らない key "+m[1])
@@ -160,17 +158,14 @@ func lockField(cur *LockEntry, platform, line string) error {
 	if m == nil {
 		return ErrInvalidLock
 	}
+	if err := markSeen(seen, platform, m[1]); err != nil {
+		return err
+	}
 	p := cur.Platforms[platform]
 	switch m[1] {
 	case "url":
-		if p.URL != "" {
-			return xerrors.Wrap(ErrInvalidLock, "url の重複")
-		}
 		p.URL = m[2]
 	case "checksum":
-		if p.Checksum != "" {
-			return xerrors.Wrap(ErrInvalidLock, "checksum の重複")
-		}
 		p.Checksum = m[2]
 	case "url_api", "provenance":
 		// 取得には使わない（url_api は locked のとき引かず、provenance は lock の生成のときの記録）。
@@ -195,4 +190,16 @@ func ParseLockFile(path string) ([]LockEntry, error) {
 	}
 
 	return entries, nil
+}
+
+// markSeen は、entry（platform が空）か platform の中で key を見たことを控え、2度目ならエラーにします。値が空でも
+// 重複として数えます —— 値で見ると、空の値の後に書いた2つ目が黙って勝ちます。
+func markSeen(seen map[string]bool, platform, key string) error {
+	k := platform + "\x00" + key
+	if seen[k] {
+		return xerrors.Wrap(ErrInvalidLock, key+" の重複")
+	}
+	seen[k] = true
+
+	return nil
 }

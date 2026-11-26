@@ -31,13 +31,19 @@ var (
 	errLockFailed = xerrors.New("mise lock が失敗しました")
 )
 
+// offGitHubSource は、GitHub Release の外の配布元の host と、url の path が始まるべき接頭辞の一覧です。
+type offGitHubSource struct {
+	host     string
+	prefixes []string
+}
+
 // offGitHubHosts は、GitHub Release の外から配布物を取る backend と、その配布元です。ほかの backend の url は
 // github.com の、backend が名指す owner/repo の Release でなければなりません。
-var offGitHubHosts = map[string]string{
-	"core:go":                  "dl.google.com",
-	"core:node":                "nodejs.org",
-	"aqua:hashicorp/terraform": "releases.hashicorp.com",
-	"aqua:aws/aws-cli":         "awscli.amazonaws.com",
+var offGitHubHosts = map[string]offGitHubSource{
+	"core:go":                  {"dl.google.com", []string{"/go/"}},
+	"core:node":                {"nodejs.org", []string{"/dist/"}},
+	"aqua:hashicorp/terraform": {"releases.hashicorp.com", []string{"/terraform/"}},
+	"aqua:aws/aws-cli":         {"awscli.amazonaws.com", []string{"/awscli-exe-", "/AWSCLIV2-"}},
 }
 
 func command(ctx context.Context, dir string, env []string, _ string, operands ...string) *exec.Cmd {
@@ -134,7 +140,7 @@ func checkLock(root string, tables sourceTables) error {
 
 			continue
 		}
-		problems = append(problems, checkSources(t.Key, e, platforms)...)
+		problems = append(problems, checkSources(t.Key, e, platforms, tables)...)
 	}
 	for _, e := range locked {
 		if _, extra := byKey[e.Key]; extra {
@@ -172,10 +178,11 @@ var unverifiedSources = map[string]string{
 // checksumRe は mise.lock の照合値の形です。
 var checksumRe = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
-// sourceTables は、宣言の道具と突き合わせる3つの表です。孤児の検査が、どの表を宣言と突き合わせるかを
-// 呼び出し側から受けるために束ねます。
+// sourceTables は、取得元の検査と孤児の検査が使う3つの表です。どの表で検めるかを呼び出し側から受けるために
+// 束ねます。
 type sourceTables struct {
-	short, offGitHub, unverified map[string]string
+	short, unverified map[string]string
+	offGitHub         map[string]offGitHubSource
 }
 
 // repoTables は、このリポジトリの mise.toml と mise.lock に当てる表です。
@@ -217,22 +224,22 @@ func orphanEntries(tools []misetoml.Entry, locked []misetoml.LockEntry, tables s
 }
 
 // expectedBackend は、mise.toml のキーが解決されるべき backend を返します。
-func expectedBackend(key string) (string, bool) {
+func expectedBackend(key string, tables sourceTables) (string, bool) {
 	if _, ok := repoOf(key); ok {
 		return key, true
 	}
 	if strings.HasPrefix(key, "go:") || strings.HasPrefix(key, "npm:") {
 		return key, true
 	}
-	b, ok := shortBackends[key]
+	b, ok := tables.short[key]
 
 	return b, ok
 }
 
 // checkSources は1つの道具の backend と、platform ごとの取得元と照合値を検めます。go: と npm: は配布物を持たない
 // backend なので、platform を持たないことだけを見ます。
-func checkSources(key string, e misetoml.LockEntry, platforms []string) []string {
-	want, ok := expectedBackend(key)
+func checkSources(key string, e misetoml.LockEntry, platforms []string, tables sourceTables) []string {
+	want, ok := expectedBackend(key, tables)
 	if !ok {
 		return []string{key + " の解決されるべき backend を決められません（shortBackends に足す）"}
 	}
@@ -248,7 +255,7 @@ func checkSources(key string, e misetoml.LockEntry, platforms []string) []string
 	}
 
 	var problems []string
-	_, unverified := unverifiedSources[e.Backend]
+	_, unverified := tables.unverified[e.Backend]
 	for _, p := range platforms {
 		src, ok := e.Platforms[p]
 		if !ok || src.URL == "" {
@@ -256,7 +263,7 @@ func checkSources(key string, e misetoml.LockEntry, platforms []string) []string
 
 			continue
 		}
-		if msg := checkURL(e.Backend, e.Version, src.URL); msg != "" {
+		if msg := checkURL(e.Backend, e.Version, src.URL, tables); msg != "" {
 			problems = append(problems, fmt.Sprintf("%s の %s の url %s: %s", key, p, src.URL, msg))
 		}
 		switch {
@@ -277,10 +284,15 @@ func checkSources(key string, e misetoml.LockEntry, platforms []string) []string
 
 // checkURL は、url が backend の配布元を https で指し、正規化した path に版を含むかを見ます。問題が無ければ
 // 空を返します。
-func checkURL(backend, version, raw string) string {
+func checkURL(backend, version, raw string, tables sourceTables) string {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return "query・fragment・利用者を持たない https の url ではありません"
+	}
+	// mise が url を読む WHATWG の解釈は、https の `\` を `/` として扱い、符号化した文字も復号して解決する。
+	// Go の解釈と食い違う url は、ここで検めた先と mise が取る先が別になりうるので拒む。
+	if strings.Contains(raw, "\\") || u.EscapedPath() != u.Path {
+		return "\\ や符号化した文字を含みます"
 	}
 	if path.Clean(u.Path) != u.Path {
 		return "path が正規化されていません"
@@ -288,9 +300,9 @@ func checkURL(backend, version, raw string) string {
 	if !versionIn(u.Path, version) {
 		return "版 " + version + " を含みません"
 	}
-	if host, ok := offGitHubHosts[backend]; ok {
-		if u.Host != host {
-			return "配布元は " + host + " です"
+	if src, ok := tables.offGitHub[backend]; ok {
+		if u.Host != src.host || !slices.ContainsFunc(src.prefixes, func(p string) bool { return strings.HasPrefix(u.Path, p) }) {
+			return "配布元は " + src.host + strings.Join(src.prefixes, " か "+src.host) + " です"
 		}
 
 		return ""
@@ -308,7 +320,7 @@ func checkURL(backend, version, raw string) string {
 
 // versionIn は、p の中に version が別の版の一部としてでなく現れるかを見ます。前は数字と `.` 以外、後ろは数字以外
 // （`.` なら、その次が数字以外）でなければなりません。`go1.27.4.linux-amd64` は 1.27.4 を含み、`v0.50.0` は 0.5 を
-// 含みません。
+// 含みません。`-rc1` のような後ろの語は、配布物の名前の `-linux` などと区別できないので通します。
 func versionIn(p, version string) bool {
 	re := regexp.MustCompile(`(?:^|[^0-9.])` + regexp.QuoteMeta(version) + `(?:$|[^0-9.]|\.[^0-9])`)
 
@@ -356,12 +368,26 @@ func checkLockedInstalls(root string) error {
 	return nil
 }
 
-// miseInstallsRe は、run の中で mise が道具を入れる起動です。install のほか、入っていない道具を入れる use・exec と
-// その略記も数えます。
-var miseInstallsRe = regexp.MustCompile(`\bmise\s+(?:install|i|use|u|exec|x)\b`)
+// miseCallRe は、コマンドの位置で mise を呼ぶ行の中の呼び出しです。前は行頭か区切り（`;`・`&`・`|`・`(`）と空白、
+// 後ろは同じ行の空白に限ります（文の中の mise の語は拾わない）。Dockerfile の行頭の RUN の後もコマンドの位置です。どのサブコマンドが道具を入れるかを数え上げると、option を挟んだ起動や新しい
+// サブコマンドを取りこぼすので、呼び出しそのものを拾います。
+var miseCallRe = regexp.MustCompile(`(?m)(?:^[ \t]*(?:RUN[ \t]+)?|[;&|(][ \t]*)mise[ \t]+(\S+)`)
 
-// lockedAction は、composite action の、mise が道具を入れる step がどれも env の MISE_LOCKED を "1" に持ち、
-// そうした step が1つ以上あるかを見ます。問題が無ければ空を返します。
+// miseCalls は、text の中の mise の呼び出しのうち、`mise --version` を除いたものの位置を返します。
+func miseCalls(text string) []int {
+	var at []int
+	for _, m := range miseCallRe.FindAllStringSubmatchIndex(text, -1) {
+		if text[m[2]:m[3]] == "--version" {
+			continue
+		}
+		at = append(at, m[0])
+	}
+
+	return at
+}
+
+// lockedAction は、composite action の、mise を呼ぶ step がどれも env の MISE_LOCKED を "1" に持ち、run の本文で
+// MISE_LOCKED を書き換えず、そうした step が1つ以上あるかを見ます。問題が無ければ空を返します。
 func lockedAction(content []byte) string {
 	var action struct {
 		Runs struct {
@@ -375,58 +401,94 @@ func lockedAction(content []byte) string {
 	if err := yaml.Unmarshal(content, &action); err != nil {
 		return "読めません: " + err.Error()
 	}
-	installs := 0
+	calls := 0
 	for _, st := range action.Runs.Steps {
-		if !miseInstallsRe.MatchString(st.Run) {
+		if strings.Contains(st.Run, "MISE_LOCKED") {
+			return fmt.Sprintf("step %q が run の中で MISE_LOCKED を書き換えます", st.Name)
+		}
+		if len(miseCalls(st.Run)) == 0 {
 			continue
 		}
-		installs++
+		calls++
 		if st.Env["MISE_LOCKED"] != "1" {
 			return fmt.Sprintf("step %q が MISE_LOCKED を \"1\" にしていません", st.Name)
 		}
 	}
-	if installs == 0 {
-		return "mise が道具を入れる step がありません"
+	if calls == 0 {
+		return "mise を呼ぶ step がありません"
 	}
 
 	return ""
 }
 
-// lockedAssignRe は、MISE_LOCKED の代入です。
+// lockedAssignRe は、ENV と ARG の命令の中の MISE_LOCKED の代入です。
 var lockedAssignRe = regexp.MustCompile(`\bMISE_LOCKED=(\S*)`)
 
-// lockedDockerfile は、Dockerfile の MISE_LOCKED の代入がちょうど1つで 1 であり、mise が最初に道具を入れるより前に
-// あるかを見ます。`#` で始まる行はコメントとして読みません。問題が無ければ空を返します。
+// dockerInstructionRe は、Dockerfile の命令の行の頭です。継続行はこれに当たりません。
+var dockerInstructionRe = regexp.MustCompile(`(?i)^\s*([a-z]+)\b`)
+
+// lockedDockerfile は、mise を呼ぶ stage の ENV・ARG の命令が MISE_LOCKED をちょうど1つ 1 に代入し、それが
+// その stage で最初に mise を呼ぶより前にあり、mise を呼ぶ stage が1つだけであるかを見ます。`#` で始まる行は
+// コメントとして読みません。問題が無ければ空を返します。
 func lockedDockerfile(content []byte) string {
-	var (
-		assigns []string
-		at      int
-		install = -1
-		offset  int
-	)
+	type stage struct {
+		assigns  []string
+		assigned int
+		call     int
+	}
+	cur := &stage{call: -1}
+	stages := []*stage{cur}
+	kind := ""
+	cont := false
+	offset := 0
 	for line := range strings.Lines(string(content)) {
-		if !strings.HasPrefix(strings.TrimSpace(line), "#") {
-			for _, m := range lockedAssignRe.FindAllStringSubmatchIndex(line, -1) {
-				assigns = append(assigns, line[m[2]:m[3]])
-				at = offset + m[0]
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			offset += len(line)
+
+			continue
+		}
+		if !cont {
+			kind = ""
+			if m := dockerInstructionRe.FindStringSubmatch(line); m != nil {
+				kind = strings.ToUpper(m[1])
 			}
-			if loc := miseInstallsRe.FindStringIndex(line); loc != nil && install < 0 {
-				install = offset + loc[0]
+			if kind == "FROM" {
+				cur = &stage{call: -1}
+				stages = append(stages, cur)
 			}
 		}
+		if kind == "ENV" || kind == "ARG" {
+			for _, m := range lockedAssignRe.FindAllStringSubmatchIndex(line, -1) {
+				cur.assigns = append(cur.assigns, line[m[2]:m[3]])
+				cur.assigned = offset + m[0]
+			}
+		}
+		if at := miseCalls(line); len(at) > 0 && cur.call < 0 {
+			cur.call = offset + at[0]
+		}
+		cont = strings.HasSuffix(trimmed, "\\")
 		offset += len(line)
 	}
-	if len(assigns) != 1 {
-		return fmt.Sprintf("MISE_LOCKED の代入が %d 件です（1件にする）", len(assigns))
+
+	var calling []*stage
+	for _, st := range stages {
+		if st.call >= 0 {
+			calling = append(calling, st)
+		}
 	}
-	if assigns[0] != "1" {
-		return "MISE_LOCKED が " + assigns[0] + " です"
+	if len(calling) != 1 {
+		return fmt.Sprintf("mise を呼ぶ stage が %d 個です（1つにする）", len(calling))
 	}
-	if install < 0 {
-		return "mise が道具を入れる行がありません"
+	st := calling[0]
+	if len(st.assigns) != 1 {
+		return fmt.Sprintf("mise を呼ぶ stage の ENV・ARG の MISE_LOCKED の代入が %d 件です（1件にする）", len(st.assigns))
 	}
-	if at > install {
-		return "MISE_LOCKED の代入が、mise が最初に道具を入れるより後ろにあります"
+	if st.assigns[0] != "1" {
+		return "MISE_LOCKED が " + st.assigns[0] + " です"
+	}
+	if st.assigned > st.call {
+		return "MISE_LOCKED の代入が、その stage で最初に mise を呼ぶより後ろにあります"
 	}
 
 	return ""

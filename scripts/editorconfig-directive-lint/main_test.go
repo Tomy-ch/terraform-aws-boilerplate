@@ -184,11 +184,13 @@ func Test_check(t *testing.T) {
 			body:  "a\n" + disable + "\nb\n",
 			lines: []int{2},
 			count: 1,
+			say:   "範囲を開いたまま閉じていない",
 		},
 		"範囲の中でまた開く": {
 			body:  disable + "\n" + disable + "\n" + enable + "\n",
 			lines: []int{2},
 			count: 3,
+			say:   "また範囲を開いている",
 		},
 		"入れ子のまま閉じなければ最初に開いた行で報告する": {
 			body:  disable + "\n" + disable + "\n",
@@ -199,31 +201,37 @@ func Test_check(t *testing.T) {
 			body:  enable + "\n",
 			lines: []int{1},
 			count: 1,
+			say:   "開いていない範囲を閉じている",
 		},
 		"理由が無い": {
 			body:  "// " + prefix + "disable\n" + enable + "\n",
 			lines: []int{1},
 			count: 2,
+			say:   "理由>。撤回: <条件>` が無い",
 		},
 		"理由はあるが撤回条件が無い": {
 			body:  "// " + prefix + "disable -- 理由だけ\n" + enable + "\n",
 			lines: []int{1},
 			count: 2,
+			say:   "理由>。撤回: <条件>` が無い",
 		},
 		"ファイル単位の印": {
 			body:  "// " + prefix + "disable-file\n",
 			lines: []int{1},
 			count: 1,
+			say:   "ファイル・行の単位で外す印は使わない",
 		},
 		"行単位の印": {
 			body:  "x // " + prefix + "disable-line\n",
 			lines: []int{1},
 			count: 1,
+			say:   "ファイル・行の単位で外す印は使わない",
 		},
 		"次の行の印": {
 			body:  "// " + prefix + "disable-next-line\nx\n",
 			lines: []int{1},
 			count: 1,
+			say:   "ファイル・行の単位で外す印は使わない",
 		},
 		"散文の中の引用も印として数える": {
 			body:  "## 抑止は `// " + prefix + "disable` / `-enable` で囲む\nx\n",
