@@ -204,11 +204,21 @@ func (c *client) writeSecret(secret map[string]any, args ...string) error {
 		return err
 	}
 
+	select {
+	case sig := <-sigs:
+		return xerrors.Wrap(errInterrupted, sig.String()+"。書き込む前に止めました")
+	default:
+	}
+
 	_, err = c.call("", append(append([]string{}, args...), "--cli-input-json", "file://"+f.Name())...)
 
 	select {
 	case sig := <-sigs:
-		return xerrors.Wrap(errInterrupted, sig.String())
+		if err != nil {
+			return xerrors.Join(xerrors.Wrap(errInterrupted, sig.String()), err)
+		}
+
+		return xerrors.Wrap(errInterrupted, sig.String()+"。書き込みは終わっています。確認の入口で確かめてください")
 	default:
 		return err
 	}

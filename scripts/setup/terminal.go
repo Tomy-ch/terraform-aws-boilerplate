@@ -20,12 +20,14 @@ var (
 )
 
 type terminal struct {
-	in      *bufio.Reader
-	out     io.Writer
-	isTTY   bool
-	hidden  func() ([]byte, error)
-	restore func()
-	notify  notifier
+	in     *bufio.Reader
+	out    io.Writer
+	isTTY  bool
+	hidden func() ([]byte, error)
+	// begin は、読む前に端末の状態を控え、それへ戻す関数を返す。読み取りを別に走らせる前に呼ぶので、中断が
+	// 読み取りの始まりより先に届いても、戻す先が決まっている。nil なら戻すものが無い。
+	begin  func() (restore func(), err error)
+	notify notifier
 }
 
 func newTerminal(in io.Reader, out io.Writer, isTTY bool) *terminal {
@@ -113,6 +115,17 @@ func (t *terminal) secret(prompt string) (string, error) {
 		return "", err
 	}
 
+	restore := func() {}
+
+	if t.begin != nil {
+		r, err := t.begin()
+		if err != nil {
+			return "", xerrors.Join(errNoHidden, err)
+		}
+
+		restore = r
+	}
+
 	type result struct {
 		b   []byte
 		err error
@@ -134,9 +147,7 @@ func (t *terminal) secret(prompt string) (string, error) {
 	case r = <-done:
 	case s := <-sigs:
 		// 伏せた入力は端末の表示を止めている。中断で戻さずに終えると、表示が止まったまま残る。
-		if t.restore != nil {
-			t.restore()
-		}
+		restore()
 
 		r = result{err: xerrors.Wrap(errInterrupted, s.String())}
 	}

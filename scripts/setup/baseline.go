@@ -1,6 +1,7 @@
 package main
 
 import (
+	"maps"
 	"path"
 	"slices"
 	"strconv"
@@ -330,10 +331,16 @@ func readPasswordPolicy(body *hclsyntax.Body) (map[string]string, error) {
 		}
 	}
 
-	for name, field := range passwordPolicyFields {
-		if _, ok := policy[field]; !ok {
-			return nil, xerrors.Wrap(errDeclShape, "password policy に "+name+" がありません。書かれていない argument は確かめられません")
+	var missing []string
+
+	for _, name := range slices.Sorted(maps.Keys(passwordPolicyFields)) {
+		if _, ok := policy[passwordPolicyFields[name]]; !ok {
+			missing = append(missing, name)
 		}
+	}
+
+	if len(missing) > 0 {
+		return nil, xerrors.Wrap(errDeclShape, "password policy に "+strings.Join(missing, "・")+" がありません。書かれていない argument は確かめられません")
 	}
 
 	return policy, nil

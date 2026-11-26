@@ -39,6 +39,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"sync"
 	"time"
 
 	"golang.org/x/term"
@@ -59,10 +60,9 @@ type deps struct {
 	stdin    io.Reader
 	isTTY    bool
 	hidden   func() ([]byte, error)
-	// restore は、伏せた入力の途中で中断したときに、端末を元の状態へ戻す。
-	restore func()
-	now     func() time.Time
-	sleep   func(time.Duration)
+	begin    func() (func(), error)
+	now      func() time.Time
+	sleep    func(time.Duration)
 }
 
 type options struct {
@@ -195,38 +195,57 @@ var entries = map[string]entry{
 }
 
 func main() {
-	hidden, restore := passwordReader(os.Stdin)
+	begin, hidden := passwordReader(os.Stdin)
 
 	os.Exit(execute(os.Args[1:], os.Stdout, deps{
 		aws: hostAWS("aws"), getenv: os.Getenv, readFile: os.ReadFile, stdin: os.Stdin, isTTY: isTerminal(os.Stdin),
-		hidden: hidden, restore: restore, now: time.Now, sleep: time.Sleep,
+		hidden: hidden, begin: begin, now: time.Now, sleep: time.Sleep,
 	}))
 }
 
-// passwordReader は、f から打ち込みを表示せずに1行を読む関数と、読む前の端末の状態へ戻す関数。
-func passwordReader(f *os.File) (func() ([]byte, error), func()) {
-	fd := int(f.Fd()) //nolint:gosec // 標準入力の記述子は int に収まる。
+// passwordReader は、f の端末の状態を控えて戻す関数を返す begin と、打ち込みを表示せずに1行を読む read。
+// 戻した後の read は読まない（中断の後に表示を止め直さない）。
+func passwordReader(f *os.File) (func() (func(), error), func() ([]byte, error)) {
+	fd := int(f.Fd())
 
-	var state *term.State
+	var (
+		mu      sync.Mutex
+		stopped bool
+	)
 
-	read := func() ([]byte, error) {
-		s, err := term.GetState(fd)
+	begin := func() (func(), error) {
+		state, err := term.GetState(fd)
 		if err != nil {
-			return nil, err
+			return nil, xerrors.Join(errNotTerminal, err)
 		}
 
-		state = s
+		mu.Lock()
+		stopped = false
+		mu.Unlock()
+
+		return func() {
+			mu.Lock()
+			stopped = true
+			mu.Unlock()
+
+			// 中断の後始末で、戻せなくても続きの終了は止めない。
+			_ = term.Restore(fd, state)
+		}, nil
+	}
+
+	read := func() ([]byte, error) {
+		mu.Lock()
+		s := stopped
+		mu.Unlock()
+
+		if s {
+			return nil, errInterrupted
+		}
 
 		return term.ReadPassword(fd)
 	}
 
-	restore := func() {
-		if state != nil {
-			_ = term.Restore(fd, state)
-		}
-	}
-
-	return read, restore
+	return begin, read
 }
 
 // isTerminal は、f が端末か。文字デバイスでも /dev/null は端末として扱わない（< /dev/null で起動した書き込みを
@@ -353,7 +372,7 @@ func run(args []string, out io.Writer, d deps) error {
 
 	c := &client{aws: d.aws, region: o.region, writes: e.writes}
 	t := newTerminal(d.stdin, out, d.isTTY)
-	t.hidden, t.restore = d.hidden, d.restore
+	t.hidden, t.begin = d.hidden, d.begin
 
 	if len(e.writes) > 0 {
 		if err := requireManagementAccount(c, profile, out); err != nil {

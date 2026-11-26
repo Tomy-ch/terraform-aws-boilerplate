@@ -293,6 +293,9 @@ func registerTOTP(o options, c *client, t *terminal, user string) error {
 	return nil
 }
 
+// omittedWhenFalse は、偽のとき get-account-password-policy の応答から省かれうる field。
+var omittedWhenFalse = []string{"HardExpiry"}
+
 const (
 	rereadTries = 5
 	rereadWait  = 2 * time.Second
@@ -421,8 +424,7 @@ func checkPasswordPolicy(c *client, r *report, want map[string]string) error {
 
 	for _, field := range slices.Sorted(maps.Keys(want)) {
 		got := strings.TrimSpace(string(resp.PasswordPolicy[field]))
-		if got == "" && want[field] == "false" {
-			// 偽の真偽の field は応答から省かれうる。
+		if got == "" && want[field] == "false" && slices.Contains(omittedWhenFalse, field) {
 			got = "false"
 		}
 		r.check(got == want[field], fmt.Sprintf("password policy の %s が %s（今: %s）", field, want[field], map[bool]string{true: got, false: "無い"}[got != ""]))
