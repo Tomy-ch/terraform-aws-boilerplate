@@ -6,6 +6,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -500,24 +501,119 @@ func Test_run(t *testing.T) {
 		require.NoError(t, run([]string{"service-access-check", "-project", testProject, "-region", testRegion}, &bytes.Buffer{}, testDeps(f, "", &read)))
 		assert.Empty(t, read)
 	})
+
+	t.Run("伏せた入力の begin と read を terminal へ渡す", func(t *testing.T) {
+		t.Parallel()
+
+		var begins, reads atomic.Int32
+
+		d := testDeps(loginWorld(t, map[string]bool{bg1: true}), "tabp\n", nil)
+		lines := hiddenLines(testPassword, testPassword)
+		d.hidden = func() ([]byte, error) { reads.Add(1); return lines() }
+		d.begin = func() (func(), error) { begins.Add(1); return func() {}, nil }
+
+		require.NoError(t, run([]string{"break-glass-login", "-project", testProject, "-region", testRegion, "-usecase", testUsecase}, &bytes.Buffer{}, d))
+		assert.Equal(t, int32(2), begins.Load())
+		assert.Equal(t, int32(2), reads.Load())
+	})
 }
 
 func Test_passwordReader(t *testing.T) {
 	t.Parallel()
 
-	t.Run("端末でなければ、状態を控えられず errNotTerminal", func(t *testing.T) {
+	t.Run("端末でなければ、状態を控えられず errTerminalState", func(t *testing.T) {
 		t.Parallel()
 
 		r, w, err := os.Pipe()
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = r.Close(); _ = w.Close() })
 
-		begin, read := passwordReader(r)
+		begin, _ := passwordReader(r)
 		restore, err := begin()
-		require.ErrorIs(t, err, errNotTerminal)
+		require.ErrorIs(t, err, errTerminalState)
 		assert.Nil(t, restore)
+	})
+}
+
+func Test_newHiddenReader(t *testing.T) {
+	t.Parallel()
+
+	type world struct {
+		reads, restores int
+	}
+
+	build := func(w *world, getErr error) (func() (func(), error), func() ([]byte, error)) {
+		return newHiddenReader(
+			func() (func() error, error) {
+				if getErr != nil {
+					return nil, getErr
+				}
+
+				return func() error { w.restores++; return nil }, nil
+			},
+			func() ([]byte, error) { w.reads++; return []byte("s3cret"), nil },
+		)
+	}
+
+	t.Run("begin の後の read は読む", func(t *testing.T) {
+		t.Parallel()
+
+		var w world
+
+		begin, read := build(&w, nil)
+		_, err := begin()
+		require.NoError(t, err)
+
+		got, err := read()
+		require.NoError(t, err)
+		assert.Equal(t, "s3cret", string(got))
+		assert.Equal(t, 1, w.reads)
+	})
+
+	t.Run("戻した後の read は読まずに errInterrupted で、状態を1回戻す", func(t *testing.T) {
+		t.Parallel()
+
+		var w world
+
+		begin, read := build(&w, nil)
+		restore, err := begin()
+		require.NoError(t, err)
+
+		restore()
 
 		_, err = read()
-		require.Error(t, err)
+		require.ErrorIs(t, err, errInterrupted)
+		assert.Equal(t, 0, w.reads)
+		assert.Equal(t, 1, w.restores)
+	})
+
+	t.Run("もう一度 begin すれば、また読む", func(t *testing.T) {
+		t.Parallel()
+
+		var w world
+
+		begin, read := build(&w, nil)
+		restore, err := begin()
+		require.NoError(t, err)
+		restore()
+
+		_, err = begin()
+		require.NoError(t, err)
+
+		_, err = read()
+		require.NoError(t, err)
+		assert.Equal(t, 1, w.reads)
+	})
+
+	t.Run("状態を読めなければ errTerminalState で、戻す関数を返さない", func(t *testing.T) {
+		t.Parallel()
+
+		var w world
+
+		begin, _ := build(&w, os.ErrInvalid)
+		restore, err := begin()
+		require.ErrorIs(t, err, errTerminalState)
+		require.ErrorIs(t, err, os.ErrInvalid)
+		assert.Nil(t, restore)
 	})
 }

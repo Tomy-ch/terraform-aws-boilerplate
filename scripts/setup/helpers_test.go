@@ -211,7 +211,20 @@ func newFakeAWS(t *testing.T, responses map[string]awsResult) *fakeAWS {
 		responses = map[string]awsResult{}
 	}
 
-	return &fakeAWS{t: t, responses: responses}
+	f := &fakeAWS{t: t, responses: responses}
+
+	t.Cleanup(func() {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+
+		for k, q := range f.seq {
+			if len(q) > 0 {
+				t.Errorf("順の応答が %d 件残りました: %s", len(q), k)
+			}
+		}
+	})
+
+	return f
 }
 
 func (f *fakeAWS) fn() awsFunc {

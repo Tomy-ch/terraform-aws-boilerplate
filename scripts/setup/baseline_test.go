@@ -342,7 +342,7 @@ func Test_readPasswordPolicy(t *testing.T) {
 		src := strings.Replace(strings.Replace(allPolicyArgs, "require_symbols = true\n", "", 1), "hard_expiry = false\n", "", 1)
 		_, err := readPasswordPolicy(parseHCL(t, policy(src)))
 		require.ErrorIs(t, err, errDeclShape)
-		assert.Contains(t, err.Error(), "hard_expiry・require_symbols")
+		assert.Contains(t, err.Error(), "password policy に hard_expiry・require_symbols がありません")
 	})
 
 	for name, body := range map[string]string{

@@ -463,5 +463,6 @@ func Test_checkIdentityCenterUser(t *testing.T) {
 
 		f := newFakeAWS(t, map[string]awsResult{listSSO: ok(`{"Instances":[{"IdentityStoreId":"d-1"}]}`)})
 		require.ErrorIs(t, checkIdentityCenterUser(opts(), testClient(f), &bytes.Buffer{}, testOrg(t)), errPrecondition)
+		assert.Equal(t, []string{listSSO}, f.ops())
 	})
 }

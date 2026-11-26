@@ -444,5 +444,6 @@ func Test_client_writeSecret(t *testing.T) {
 		require.ErrorIs(t, err, errInterrupted)
 		require.ErrorIs(t, err, errAWSFailed)
 		assert.Contains(t, err.Error(), "PasswordPolicyViolation")
+		assert.Contains(t, err.Error(), "書き込まれたかは分かりません")
 	})
 }

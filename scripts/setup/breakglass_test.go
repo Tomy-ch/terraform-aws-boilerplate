@@ -635,6 +635,25 @@ func Test_registerTOTP(t *testing.T) {
 		assert.Equal(t, 2, waits)
 		assert.Contains(t, out.String(), "✅ "+bg1+" に MFA を登録しました")
 	})
+
+	t.Run("読み直しを尽くしても装置が見えなければ errAWSResponse で、break-glass-check を案内し ✅ を出さない", func(t *testing.T) {
+		t.Parallel()
+
+		f := bgWorld(t, nil, nil)
+		f.responses[enableMFA] = ok("")
+		term, out := tty(hwSerial + "\n123456\n654321\n")
+
+		var waits int
+
+		o := bgOptions()
+		o.sleep = func(time.Duration) { waits++ }
+
+		err := registerTOTP(o, testClient(f, enableMFA), term, bg1)
+		require.ErrorIs(t, err, errAWSResponse)
+		assert.Contains(t, err.Error(), "break-glass-check")
+		assert.Equal(t, rereadTries-1, waits)
+		assert.NotContains(t, out.String(), "MFA を登録しました")
+	})
 }
 
 func Test_checkBreakGlass(t *testing.T) {

@@ -210,12 +210,12 @@ func Test_terminal_secret(t *testing.T) {
 		t.Parallel()
 
 		term, _ := tty("")
-		term.begin = func() (func(), error) { return nil, errNotTerminal }
+		term.begin = func() (func(), error) { return nil, errTerminalState }
 		term.hidden = func() ([]byte, error) { t.Error("読んだ"); return nil, nil }
 
 		_, err := term.secret("P: ")
 		require.ErrorIs(t, err, errNoHidden)
-		require.ErrorIs(t, err, errNotTerminal)
+		require.ErrorIs(t, err, errTerminalState)
 	})
 
 	t.Run("戻す状態が無くても、中断は errInterrupted でシグナルの名前を添える", func(t *testing.T) {
@@ -230,6 +230,20 @@ func Test_terminal_secret(t *testing.T) {
 		close(block)
 		require.ErrorIs(t, err, errInterrupted)
 		assert.Contains(t, err.Error(), syscall.SIGTERM.String())
+	})
+
+	t.Run("begin が戻す関数を返さなくても、中断は errInterrupted", func(t *testing.T) {
+		t.Parallel()
+
+		term, _ := tty("")
+		block := make(chan struct{})
+		term.begin = func() (func(), error) { return nil, nil }
+		term.notify = func(c chan<- os.Signal) func() { c <- syscall.SIGINT; return func() {} }
+		term.hidden = func() ([]byte, error) { <-block; return nil, nil }
+
+		_, err := term.secret("P: ")
+		close(block)
+		require.ErrorIs(t, err, errInterrupted)
 	})
 }
 
@@ -253,6 +267,35 @@ func Test_notifyInterrupt(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("stop の後は届かない", func(t *testing.T) {
+		// 受けるのをやめた後もプロセスが既定の動作で終わらないよう、別の受け口を残しておく。
+		keep := make(chan os.Signal, 1)
+		t.Cleanup(notifyInterrupt(keep))
+
+		c := make(chan os.Signal, 1)
+		notifyInterrupt(c)()
+
+		p, err := os.FindProcess(os.Getpid())
+		require.NoError(t, err)
+		require.NoError(t, p.Signal(syscall.SIGHUP))
+
+		select {
+		case <-keep:
+		case <-time.After(5 * time.Second):
+			t.Fatal("シグナルが届きません")
+		}
+
+		select {
+		case got := <-c:
+			t.Errorf("stop の後に %v が届きました", got)
+		default:
+		}
+	})
+
+	t.Run("中断のシグナルは INT・TERM・HUP", func(t *testing.T) {
+		assert.ElementsMatch(t, []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP}, interruptSignals)
+	})
 }
 
 func Test_notifier_start(t *testing.T) {
