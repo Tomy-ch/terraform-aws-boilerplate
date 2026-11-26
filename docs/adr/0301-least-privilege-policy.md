@@ -13,7 +13,7 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
 
 さらに、権限拡張の入力を任意のpolicy JSONとして受け取ると、拡張の内容がboilerplateの検証対象外になる。最小権限であるかどうかを機械的に判定できなくなる。
 
-人の到達経路を IAM Identity Center の1本に限ると、その障害（リージョンの障害、外部 IdP や MFA の設定の誤り、permission set の割当の削除）で、誰もアカウントへ入れなくなる。AWS は、Identity Center を複数のリージョンへ複製していても、Identity Center から独立した緊急の到達経路（break-glass）を持つことを勧めている。本リポジトリは `organization-baseline` で組織と Identity Center の permission set を作るので、その経路を組織の外の運用へ委ねられない。
+人の到達経路を IAM Identity Center の1本に限ると、その障害（リージョンの障害、外部 IdP や MFA の設定の誤り、permission set の割当の削除）で、誰もアカウントへ入れなくなる。AWS は、Identity Center を複数のリージョンへ複製していても、Identity Center から独立した緊急の到達経路（break-glass）を持つことを勧めている。本リポジトリは `organization-baseline` で組織と Identity Center の permission set を作るので、その経路を組織の外の運用へ委ねられない。IAM User Guide は、パスキーとセキュリティキーのようなフィッシングに強い MFA をできる限り使い（"We recommend that you use phishing-resistant MFA such as passkeys and security keys whenever possible"）、物理の装置ならハードウェアの TOTP の代わりにセキュリティキーを使う（"we recommend that you use security keys as an alternative to hardware TOTP devices"）ことを勧める。Security Hub の IAM.6 がハードウェア MFA を求めるのは root だけで、IAM user の IAM.5・IAM.19 は MFA の種類を問わない。
 
 ## Decision
 
@@ -89,7 +89,7 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
 19. 人の通常の到達経路（IAM Identity Center）が使えないときの緊急の到達経路（break-glass）を、組織を作るユースケース（`organization-baseline`）が提供する。形を次に限る。
 
     - 置き場は管理アカウントとする。管理アカウントは組織のすべてのアカウントへ届く権限をもともと持つので、そこへ置いても到達できる範囲は増えない。ほかのアカウントへ置くと、そのアカウントが全アカウントへ届く経路を新たに持つ
-    - 管理アカウントに break-glass の IAM user を2つ置く（1つが使えなくなったときの予備）。コンソールへのサインインだけを持ち、アクセスキーを持たず、自身にアクセスキーを作ることを拒否する。MFA はハードウェアの MFA とする。パスワードと MFA は Terraform で作らず、人が設定して保管する。名前は個人を表さない
+    - 管理アカウントに break-glass の IAM user を2つ置く（1つが使えなくなったときの予備）。コンソールへのサインインだけを持ち、アクセスキーを持たず、自身にアクセスキーを作ることを拒否する。MFA はフィッシングに強い FIDO の MFA（セキュリティキーかパスキー）とし、TOTP（仮想の装置もハードウェアの装置も）は使わない。FIDO の物理のセキュリティキーを強く勧め、次点は端末の外へ同期されないパスキーとする。同期されるパスキーは、break-glass が個人のクラウドのアカウントに頼ることになるので避ける。推奨の側は API で見分けられないので、守るのは FIDO であることだけとする。パスワードと MFA は Terraform で作らず、人が設定して保管する。名前は個人を表さない
     - IAM user が自身に持つ権限は、各アカウントの break-glass の role を引き受けることと、自身の MFA とパスワードの管理だけとする。管理アカウントの中の作業も、管理アカウントの break-glass の role を経由する
     - すべてのアカウント（管理アカウントを含む）に break-glass の role を置く。信頼条件は、管理アカウントの break-glass の IAM user に限り、MFA で認証したことを要求する。権限は AWS managed policy の `AdministratorAccess` とする。これは決定8・10 の例外である。緊急時に要る作業を前もって列挙できないためであり、例外は break-glass の role に限る
     - メンバーアカウントの break-glass の role を SCP の拒否から外すのは、回復を妨げる拒否（state の書き込みの拒否。ADR-0602 決定11）に限り、外すのは break-glass の role の ARN に限る。検知を止めることの拒否と、監査ログとその鍵を守る拒否からは外さない。緊急の作業にそれらは要らず、外すと管理アカウントの側が自分の記録を読めなくする経路になる
@@ -171,7 +171,7 @@ IAM Identity Center の文書の手順である。外部 IdP を前提とし、I
 - 保証しないこと: boilerplate外部で付与された権限、および利用者アカウント側のIAM運用
 - 保証すること: role への managed policy の付与（`aws_iam_role_policy_attachment`）が、同じ module の `aws_iam_policy` を参照するか、AWS managed policy の ARN を付けること（決定21）。参照が欠けると、破棄と置換で policy の削除が付け外しより先に走り、削除が失敗する
 - 保証しないこと: 人の permission set に付く AWS managed policy の中身。AWS が改訂すると、宣言を変えずに人の権限が変わる
-- 保証しないこと: break-glass のパスワードと MFA の保管。メンテナが1人の間は、パスワードと MFA を別の人に分けて持てない（AWS は管理アカウントの root について、1人が両方を持たないことを勧めている）。break-glass で実際に入れること（MFA が要るので自動では確かめられない。人が定期的に試す）
+- 保証しないこと: break-glass のパスワードと MFA の保管。メンテナが1人の間は、パスワードと MFA を別の人に分けて持てない（AWS は管理アカウントの root について、1人が両方を持たないことを勧めている）。break-glass で実際に入れること（MFA が要るので自動では確かめられない。人が定期的に試す）。FIDO の MFA のうち、物理のセキュリティキーか、同期されないパスキーか、同期されるパスキーか（API で見分けられない）
 
 ## 検証方法
 
