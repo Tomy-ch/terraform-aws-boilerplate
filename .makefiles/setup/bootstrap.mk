@@ -2,8 +2,9 @@
 ## ADR-0702 決定26・27）。資格情報は bootstrap の一時 IAM user の profile（TF_LOCAL_PROFILE）で、組織より前に行う。
 ## 端末からの入力を読むので、ホストで起動する（ADR-0504 決定1・3）。
 
-# ENVIRONMENTS は人が渡す値（.makefiles/README.md の `setup/`）。
+# ENVIRONMENTS・REPO は人が渡す値（.makefiles/README.md の `setup/`）。
 setup-bootstrap-%: export SETUP_ENVIRONMENTS = $(call literal_value,ENVIRONMENTS)
+setup-bootstrap-%: export SETUP_REPO = $(call literal_value,REPO)
 
 # $(1)=入口 $(2)=入口に足す引数
 define SETUP_BOOTSTRAP_RUN
@@ -18,6 +19,6 @@ setup-bootstrap-contacts:
 setup-bootstrap-anomaly-tag:
 	$(call SETUP_BOOTSTRAP_RUN,bootstrap-anomaly-tag,)
 
-.PHONY: setup-bootstrap-env-secrets ## 段4・段5: environment に secret AWS_ACCOUNT_ID（管理アカウントの ID）を置く（ENVIRONMENTS=<env>[,<env>...]）
+.PHONY: setup-bootstrap-env-secrets ## 段4・段5: environment に secret AWS_ACCOUNT_ID（管理アカウントの ID）を置く。在れば書かない（ENVIRONMENTS=<env>[,<env>...] REPO=<owner>/<repo>、置き直すなら REPLACE=1）
 setup-bootstrap-env-secrets:
-	$(call SETUP_BOOTSTRAP_RUN,bootstrap-env-secrets,-environments "$$SETUP_ENVIRONMENTS")
+	$(call SETUP_BOOTSTRAP_RUN,bootstrap-env-secrets,-environments "$$SETUP_ENVIRONMENTS" -repo "$$SETUP_REPO"$(if $(filter 1,$(REPLACE)), -replace))

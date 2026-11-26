@@ -304,10 +304,10 @@ Billing and Cost Management コンソール →「Cost Explorer」→「Launch C
 
   作成の push は `terraform-apply.yaml` を起動する。その run は、`apply-admin-identity` の `Refuse stale commits` の step で secret の不在により落ちる（apply 系の secret は段5 で置き、CI の role は段4 の apply まで無い）。この赤は想定どおりである。**この run を再実行しない**。再実行は作成の時点の commit を apply しようとする。`admin` の最初の apply は、段5 でリリース線から `admin` への最初の Pull Request を merge した run が行う
 
-- `admin-plan` に secret `AWS_ACCOUNT_ID`（値は管理アカウントの ID）を置く。一時 IAM user の資格情報（`make aws-login`）で、管理アカウントの ID を読んで gh の標準入力へ渡す。値は画面にも引数にも出ない
+- `admin-plan` に secret `AWS_ACCOUNT_ID`（値は管理アカウントの ID）を置く。一時 IAM user の資格情報（`make aws-login`）で、管理アカウントの ID を読んで gh の標準入力へ渡す。値は画面にも引数にも出ない。`REPO` は secret を置くこのリポジトリ（`<owner>/<リポジトリ>`）で、確認の前に宛先として出る。既に在る secret は書かず、置き直すときだけ `REPLACE=1` を付ける
 
   ```bash
-  make setup-bootstrap-env-secrets ENVIRONMENTS=admin-plan
+  make setup-bootstrap-env-secrets ENVIRONMENTS=admin-plan REPO=<owner>/<リポジトリ>
   ```
 
 1. Pull Request の head を checkout する。`git status` が空であることを確かめ、`git rev-parse HEAD` を控える
@@ -417,7 +417,7 @@ Billing and Cost Management コンソール →「Cost Explorer」→「Launch C
    2. secret を置く（値は管理アカウントの ID）。`admin-apply` と `admin-unlock` は workload root の apply と lock の解除の job が読む
 
       ```bash
-      make setup-bootstrap-env-secrets ENVIRONMENTS=admin-apply-identity,admin-apply,admin-unlock
+      make setup-bootstrap-env-secrets ENVIRONMENTS=admin-apply-identity,admin-apply,admin-unlock REPO=<owner>/<リポジトリ>
       ```
 
    3. 管理アカウントで Slack の workspace を認可し、team ID と channel ID を `env/admin/main.tf` に書いた変更をリリース線へ merge しておく。最初の run が workload root を apply するからである。手順は [`ops-notification.md`](ops-notification.md)
@@ -471,7 +471,7 @@ Billing and Cost Management コンソール →「Cost Explorer」→「Launch C
 
    ```bash
    make apply-environments
-   make setup-bootstrap-env-secrets ENVIRONMENTS=admin-unlock-identity
+   make setup-bootstrap-env-secrets ENVIRONMENTS=admin-unlock-identity REPO=<owner>/<リポジトリ>
    ```
 
    `make repo-settings-drift` で、宣言と実態が一致することを確かめてもよい。
