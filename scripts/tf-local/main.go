@@ -14,8 +14,13 @@
 //
 // 入口の段は、1回の起動で1つの目的の道具（aws か terraform か conftest）だけを、固定の引数で起動する
 // （ADR-0702 決定3・24）。人の手元の段は local.go、CI の資格情報の段は cicred.go、plan と apply の段は ciflow.go、
-// lock の解除と lock を残す段は cihold.go が持つ。値を決められない入力はすべて非ゼロで終わり、make はその時点で
+// lock の解除と lock を残す段は cihold.go が持つ。値を決められない入力はすべて失敗し（終了コードは下）、make はその時点で
 // 後の段を起動しない。make のレシピに分岐を置かず、判断はすべてここのテストで固定する。
+//
+// 終了コードは lib/toolrun の取り決めで、対象について否と言えた失敗（plan の失敗、Policy の違反、apply の失敗、
+// lock の衝突など。verdicts）を 1、道具を起動できない・値を決められない・入力を読めない・使い方の誤りを 2 にする。
+// ci-finish は、失敗した段が判定まで届いていなければ 2 で終わる。-work（ci-credentials・ci-assume-denied・
+// ci-policy）はリポジトリ直下の tmp/ の下に限り（lib/workdir）、その下に作る一時ディレクトリだけを消す。
 //
 // backend block は式を持てないので、Bucket 名・state の鍵の alias 名・role 名の規則をここに写す。Bucket 名と alias 名の正本は
 // modules/s3 と usecases/state-backend、role 名の正本は usecases/deployment-identity で、写しのずれはテストが
@@ -38,6 +43,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/policyresult"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -89,14 +96,33 @@ type deps struct {
 	tool     toolFunc
 	fetch    fetchFunc
 	stderr   io.Writer
+	// root は、-work を検証するリポジトリ直下です。
+	root string
 }
 
 func main() {
 	log.SetFlags(0)
 
-	if err := run(os.Args[1:], os.Stdout, deps{readFile: os.ReadFile, environ: os.Environ(), git: gitOutput, now: time.Now, alive: processAlive, sleep: time.Sleep, tool: command, fetch: fetchOIDC, stderr: os.Stderr}); err != nil {
-		log.Fatalf("%v", err)
+	if err := run(os.Args[1:], os.Stdout, deps{readFile: os.ReadFile, environ: os.Environ(), git: gitOutput, now: time.Now, alive: processAlive, sleep: time.Sleep, tool: command, fetch: fetchOIDC, stderr: os.Stderr, root: "."}); err != nil {
+		log.Printf("%v", err)
+		os.Exit(exitCode(err))
 	}
+}
+
+// verdicts は、対象について否と言えた失敗です。終了コード 1 にし、ほかの失敗（道具を起動できない、値を決められない、
+// 入力を読めない、使い方の誤りなど）は 2 にします（lib/toolrun の取り決め）。
+var verdicts = []error{
+	errRootCredentials, errStateKeyMissing, errStateKeyMismatch,
+	errPlanFailed, errPlanErrored, errLocalPlan,
+	errCIPolicy, policyresult.ErrViolation,
+	errApplyFailed, errApplyTimeout, errAssumeSucceeded,
+	errLockFresh, errLockForeign, errLockExists,
+	errCIFailed, errCIUnfinish,
+}
+
+// exitCode は err の終了コードです。
+func exitCode(err error) int {
+	return toolrun.ExitCode(err, verdicts...)
 }
 
 // argCounts は、位置引数だけを取るサブコマンドの、サブコマンド名を含む引数の数。

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -19,6 +20,8 @@ import (
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cientry"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/policyresult"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workdir"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -62,14 +65,15 @@ const (
 )
 
 var (
-	errCIState    = xerrors.New("❌ CI の入口の state を読めません")
-	errCIInit     = xerrors.New("❌ init が失敗しました。全文はランナーの外に出しません")
-	errCIHeader   = xerrors.New("❌ plan した commit の行を読めません")
-	errCIPolicy   = xerrors.New("❌ Policy を通りません（理由は上の行）")
-	errCIUpload   = xerrors.New("❌ 全文を出力の Bucket に置けません")
-	errCIUnfinish = xerrors.New("❌ 終わっていない段があります")
-	errCIFailed   = xerrors.New("❌ 全文は上の key にあります")
-	errCIOutput   = xerrors.New("❌ job summary か GITHUB_OUTPUT に書けません")
+	errCIState          = xerrors.New("❌ CI の入口の state を読めません")
+	errCIInit           = xerrors.New("❌ init が失敗しました。全文はランナーの外に出しません")
+	errCIHeader         = xerrors.New("❌ plan した commit の行を読めません")
+	errCIPolicy         = xerrors.New("❌ Policy を通りません（理由は上の行）")
+	errCIUpload         = xerrors.New("❌ 全文を出力の Bucket に置けません")
+	errCIUnfinish       = xerrors.New("❌ 終わっていない段があります")
+	errCINotEstablished = xerrors.New("❌ 失敗した段が判定まで届いていません（道具を起動できない、値を決められないなど）")
+	errCIFailed         = xerrors.New("❌ 全文は上の key にあります")
+	errCIOutput         = xerrors.New("❌ job summary か GITHUB_OUTPUT に書けません")
 )
 
 // ciState は、段の間で運ぶ値です。アカウント ID を含むので、所有者だけが読める権限で書きます。
@@ -88,11 +92,13 @@ type ciState struct {
 	TFPlan    string   `json:"tfplan"`
 	Done      []string `json:"done"`
 	// Stage は失敗した段の種類。空なら失敗していない。
-	Stage   string `json:"stage"`
-	Applied bool   `json:"applied"`
-	Summary string `json:"summary"`
-	SHA     string `json:"sha"`
-	Version string `json:"version"`
+	Stage string `json:"stage"`
+	// Established は、Stage の失敗が対象について否と言えた判定であることです。無ければ成り立たない側に倒します。
+	Established bool   `json:"established"`
+	Applied     bool   `json:"applied"`
+	Summary     string `json:"summary"`
+	SHA         string `json:"sha"`
+	Version     string `json:"version"`
 }
 
 func loadCIState(path string) (ciState, error) {
@@ -143,6 +149,10 @@ func (s *ciState) done(step string) {
 	if !slices.Contains(s.Done, step) {
 		s.Done = append(s.Done, step)
 	}
+}
+
+func isVerdict(err error) bool {
+	return exitCode(err) == 1
 }
 
 // fail は失敗の種類を残します。先に残した種類を上書きしません。
@@ -279,11 +289,11 @@ func ciPrepareState(d deps, stdout io.Writer, mode, project, env, root, profile,
 	if s.Region, err = rootRegion(dir, d.readFile); err != nil {
 		return s, err
 	}
-	work, err := os.MkdirTemp(filepath.Dir(out), "prepare-")
+	work, cleanup, err := workdir.Temp(filepath.Dir(out), "prepare-")
 	if err != nil {
 		return s, xerrors.Wrap(errCIState, err.Error())
 	}
-	defer func() { _ = os.RemoveAll(work) }()
+	defer cleanup()
 	awsEnv := localEnv(d.environ, profile, "AWS_REGION="+s.Region)
 	identity, err := runTool(d.tool, work, awsEnv, stepCallerIdentity, d.stderr)
 	if err != nil {
@@ -386,26 +396,17 @@ func ciRunInit(s ciState, d deps) error {
 		return err
 	}
 	defer func() { _ = f.Close() }()
-	cmd := d.tool(s.Dir, localEnv(d.environ, s.Profile, "TF_CLI_ARGS_init="+strings.Join(s.InitArgs, " ")), stepCIInit)
+	cmd := d.tool(context.Background(), s.Dir, localEnv(d.environ, s.Profile, "TF_CLI_ARGS_init="+strings.Join(s.InitArgs, " ")), stepCIInit)
 	cmd.Stdout, cmd.Stderr = f, f
-	if err := cmd.Run(); err != nil {
-		return errCIInit
+	code, err := toolrun.Exec(cmd)
+	if err != nil {
+		return xerrors.Wrap(err, "init")
+	}
+	if code != 0 {
+		return xerrors.Wrapf(errCIInit, "exit status %d", code)
 	}
 
 	return nil
-}
-
-// exitCode は、道具の終了コードを返します。起動できなければ失敗します。
-func exitCode(err error) (int, error) {
-	var exit *exec.ExitError
-	switch {
-	case err == nil:
-		return 0, nil
-	case errors.As(err, &exit):
-		return exit.ExitCode(), nil
-	default:
-		return 0, err
-	}
 }
 
 // failureKind は、plan か apply の段の失敗の種類を返します。種類は revert の対象かの判定（scripts/apply-revert）が
@@ -440,6 +441,7 @@ func ciPlanStep(args []string, d deps, stdout io.Writer) (string, error) {
 	}
 	summary, err := ciRunPlan(&s, d, stdout)
 	if err != nil {
+		s.Established = isVerdict(err)
 		if serr := s.save(statePath); serr != nil {
 			return "", errors.Join(err, serr)
 		}
@@ -464,11 +466,11 @@ func ciRunPlan(s *ciState, d deps, stdout io.Writer) (string, error) {
 	if k, ok := cientry.Lookup(s.Mode); ok && k.Lock == cientry.LockSkip {
 		step = stepCIPlanNoLock
 	}
-	cmd := d.tool(s.Dir, localEnv(d.environ, s.Profile, "TF_CLI_ARGS_plan=-out="+s.TFPlan), step)
+	cmd := d.tool(context.Background(), s.Dir, localEnv(d.environ, s.Profile, "TF_CLI_ARGS_plan=-out="+s.TFPlan), step)
 	cmd.Stdout, cmd.Stderr = f, f
-	code, err := exitCode(cmd.Run())
+	code, err := toolrun.Exec(cmd)
 	if err != nil {
-		return "", xerrors.Wrapf(errLocalTF, "plan: %v", err)
+		return "", xerrors.Wrap(err, "plan")
 	}
 	if _, err := fmt.Fprintf(stdout, "plan の終了コード: %d\n", code); err != nil {
 		return "", err
@@ -477,7 +479,7 @@ func ciRunPlan(s *ciState, d deps, stdout io.Writer) (string, error) {
 	if err != nil {
 		return "", xerrors.Wrap(err, "plan の JSON")
 	}
-	cmd = d.tool(s.Dir, localEnv(d.environ, s.Profile, "TF_CLI_ARGS_show=-json "+s.TFPlan), stepCIShow)
+	cmd = d.tool(context.Background(), s.Dir, localEnv(d.environ, s.Profile, "TF_CLI_ARGS_show=-json "+s.TFPlan), stepCIShow)
 	cmd.Stdout, cmd.Stderr = show, f
 	_ = cmd.Run()
 	if err := show.Close(); err != nil {
@@ -534,6 +536,7 @@ func ciPolicyStep(args []string, d deps, stdout io.Writer) (string, error) {
 	}
 	if err := ciRunPolicy(s, d, stdout, work, policy, decl, layer, namespaces); err != nil {
 		s.fail(stagePolicy)
+		s.Established = isVerdict(err)
 		if serr := s.save(statePath); serr != nil {
 			return "", errors.Join(err, serr)
 		}
@@ -557,14 +560,11 @@ func (l *stringList) Set(v string) error {
 }
 
 func ciRunPolicy(s ciState, d deps, stdout io.Writer, parent, policy, decl, layer string, namespaces []string) error {
-	if err := os.MkdirAll(parent, 0o700); err != nil {
-		return xerrors.Wrap(err, "作業ディレクトリ")
-	}
-	work, err := os.MkdirTemp(parent, "policy-")
+	work, cleanup, err := ciWorkUnder(d.root, parent, "policy-", d.stderr)
 	if err != nil {
-		return xerrors.Wrap(err, "作業ディレクトリ")
+		return err
 	}
-	defer func() { _ = os.RemoveAll(work) }()
+	defer cleanup()
 	if err := copyTree(policy, filepath.Join(work, "rego")); err != nil {
 		return xerrors.Wrap(errPolicyRules, err.Error())
 	}
@@ -574,17 +574,18 @@ func ciRunPolicy(s ciState, d deps, stdout io.Writer, parent, policy, decl, laye
 		}
 	}
 	var result bytes.Buffer
-	cmd := d.tool(work, localEnv(d.environ, s.Profile), stepCIConftest)
+	cmd := d.tool(context.Background(), work, localEnv(d.environ, s.Profile), stepCIConftest)
 	cmd.Stdout, cmd.Stderr = &result, d.stderr
 	// 違反があれば conftest は非ゼロで終わる。判定は結果の JSON で行う。
-	if _, err := exitCode(cmd.Run()); err != nil {
-		return xerrors.Wrapf(errLocalTF, "conftest: %v", err)
+	if _, err := toolrun.Exec(cmd); err != nil {
+		return xerrors.Wrap(err, "conftest")
 	}
 	entries, err := policyresult.Parse(result.Bytes())
 	if err != nil {
 		return err
 	}
 	var failed []string
+	var unestablished []error
 	for _, ns := range namespaces {
 		rego, err := readInRoot(filepath.Join(policy, strings.TrimPrefix(ns, "plan.")+".rego"))
 		if err != nil {
@@ -601,12 +602,21 @@ func ciRunPolicy(s ciState, d deps, stdout io.Writer, parent, policy, decl, laye
 				return werr
 			}
 			failed = append(failed, ns)
+			if !xerrors.Is(err, policyresult.ErrViolation) {
+				unestablished = append(unestablished, xerrors.Wrap(err, ns))
+			}
 
 			continue
 		}
 		if _, err := fmt.Fprintln(stdout, line); err != nil {
 			return err
 		}
+	}
+	// 評価が0件・件数の食い違いなど、違反のほかの理由で落ちた名前空間が1つでもあれば、Policy を評価できなかった
+	// ことになる（ADR-0702 決定13）。ほかの名前空間に違反があっても評価できなかった側を優先し、違反だけのときに
+	// 限って判定（errCIPolicy）にする。
+	if len(unestablished) > 0 {
+		return xerrors.Wrapf(errors.Join(unestablished...), "Policy を評価できません（%s）", strings.Join(failed, " "))
 	}
 	if len(failed) > 0 {
 		return xerrors.Wrap(errCIPolicy, strings.Join(failed, " "))
@@ -698,6 +708,7 @@ func ciApplyStep(args []string, d deps, stdout io.Writer) (string, error) {
 	kind := failureKind(stageApply, code, out)
 	if kind != "applied" {
 		s.fail(kind)
+		s.Established = true
 		if serr := s.save(statePath); serr != nil {
 			return "", serr
 		}
@@ -713,29 +724,48 @@ func ciApplyStep(args []string, d deps, stdout io.Writer) (string, error) {
 	return "✅ apply が終わりました", s.save(statePath)
 }
 
+// waitCode は、Start した道具の Wait の結果を終了コードに分けます。シグナルで終わった・待てなかったときは
+// toolrun.ErrTool です（toolrun.Exec と同じ分類）。
+func waitCode(err error) (int, error) {
+	var exit *exec.ExitError
+	switch {
+	case err == nil:
+		return 0, nil
+	case errors.As(err, &exit) && exit.ExitCode() >= 0:
+		return exit.ExitCode(), nil
+	default:
+		return 0, xerrors.Wrapf(toolrun.ErrTool, "%v", err)
+	}
+}
+
 func ciRunApply(s ciState, d deps, limit time.Duration) (int, error) {
 	f, err := appendOut(s)
 	if err != nil {
 		return 0, err
 	}
 	defer func() { _ = f.Close() }()
-	cmd := d.tool(s.Dir, localEnv(d.environ, s.Profile, "TF_CLI_ARGS_apply=-input=false -no-color "+s.TFPlan), stepCIApply)
+	cmd := d.tool(context.Background(), s.Dir, localEnv(d.environ, s.Profile, "TF_CLI_ARGS_apply=-input=false -no-color "+s.TFPlan), stepCIApply)
 	cmd.Stdout, cmd.Stderr = f, f
 	if err := cmd.Start(); err != nil {
-		return 0, xerrors.Wrapf(errLocalTF, "apply: %v", err)
+		return 0, xerrors.Wrapf(toolrun.ErrTool, "apply: %v", err)
 	}
 	var timedOut atomic.Bool
 	timer := time.AfterFunc(limit, func() {
-		timedOut.Store(true)
-		_ = cmd.Process.Signal(os.Interrupt)
+		// 割り込みを届けられたときだけ打ち切りとする。終わった後に発火しても timeout に読み替えない。
+		if err := cmd.Process.Signal(os.Interrupt); err == nil {
+			timedOut.Store(true)
+		}
 	})
-	code, err := exitCode(cmd.Wait())
+	waitErr := cmd.Wait()
 	timer.Stop()
-	if err != nil {
-		return 0, xerrors.Wrapf(errLocalTF, "apply: %v", err)
-	}
-	if timedOut.Load() {
+	// 打ち切りの割り込みで終わったときだけ timeout とする。Wait が戻ってから timer を止めるまでに発火しても、0 で
+	// 終わった apply を timeout（revert の対象）に読み替えない。
+	if timedOut.Load() && waitErr != nil {
 		return applyTimedOut, nil
+	}
+	code, err := waitCode(waitErr)
+	if err != nil {
+		return 0, xerrors.Wrapf(err, "apply")
 	}
 
 	return code, nil
@@ -754,6 +784,10 @@ func ciUploadStep(args []string, d deps, stdout io.Writer) (string, error) {
 	}
 	if err := ciRunUpload(&s, d, stdout); err != nil {
 		s.fail(stageUpload)
+		// 先の段の失敗が残っていれば、その判定を上書きしない。
+		if s.Stage == stageUpload {
+			s.Established = isVerdict(err)
+		}
 		if serr := s.save(statePath); serr != nil {
 			return "", errors.Join(err, serr)
 		}
@@ -774,11 +808,11 @@ func ciRunUpload(s *ciState, d deps, stdout io.Writer) error {
 	if _, err := fmt.Fprintf(stdout, "全文: key=%s sha256=%s\n", s.Key, sha); err != nil {
 		return err
 	}
-	work, err := os.MkdirTemp("", "tf-local-upload-")
+	work, cleanup, err := workdir.Temp("", "tf-local-upload-")
 	if err != nil {
 		return xerrors.Wrap(errCIUpload, err.Error())
 	}
-	defer func() { _ = os.RemoveAll(work) }()
+	defer cleanup()
 	if err := copyFile(s.Out, filepath.Join(work, "body.txt")); err != nil {
 		return xerrors.Wrap(errCIUpload, err.Error())
 	}
@@ -836,6 +870,10 @@ func ciFinishStep(args []string, d deps) (string, error) {
 		err := errCIUnfinish
 		if slices.Contains(s.Done, stageUpload) {
 			err = errCIFailed
+		}
+		// 判定に届いていなければ、判定の sentinel を連鎖に残さない（残すと終了コードが 1 になる）。
+		if !s.Established {
+			err = xerrors.Wrapf(errCINotEstablished, "%v", err)
 		}
 		if s.Mode == ciModeApply {
 			if werr := writeFailure(d.environ, s.Stage); werr != nil {
