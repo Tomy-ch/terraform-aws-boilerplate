@@ -23,7 +23,9 @@ var (
 	errGHResponse  = xerrors.New("gh の応答を読めません")
 	errEnvironment = xerrors.New("environment が .github/settings/environments.json にありません")
 
-	accountID = regexp.MustCompile(`^[0-9]{12}$`)
+	accountID  = regexp.MustCompile(`^[0-9]{12}$`)
+	repoName   = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+	errGHStart = xerrors.New("gh を起動できません")
 	// ghRepoEnv は、gh の書き込みの宛先のリポジトリを変える環境変数。
 	ghRepoEnv = []string{"GH_REPO", "GH_HOST"}
 )
@@ -66,13 +68,13 @@ func runGH(gh ghFunc, stdin []byte, args ...string) ([]byte, error) {
 	case xerrors.As(r.err, &exitErr):
 		return nil, xerrors.Wrap(errGHFailed, "gh "+args[0]+" "+args[1]+": "+firstLine(r.stderr))
 	default:
-		return nil, xerrors.Join(errAWSStart, r.err)
+		return nil, xerrors.Join(errGHStart, r.err)
 	}
 }
 
 // secretUpdated は、environment の secret AWS_ACCOUNT_ID の更新日時。無ければ nil。
-func secretUpdated(gh ghFunc, env string) (*time.Time, error) {
-	out, err := runGH(gh, nil, "secret", "list", "--env", env, "--json", "name,updatedAt")
+func secretUpdated(gh ghFunc, repo, env string) (*time.Time, error) {
+	out, err := runGH(gh, nil, "secret", "list", "--repo", repo, "--env", env, "--json", "name,updatedAt")
 	if err != nil {
 		return nil, err
 	}
@@ -91,6 +93,10 @@ func secretUpdated(gh ghFunc, env string) (*time.Time, error) {
 	}
 
 	for _, s := range secrets {
+		if s.Name == "" {
+			return nil, xerrors.Wrap(errGHResponse, "gh secret list: name の無い secret があります")
+		}
+
 		if s.Name == accountIDName {
 			if s.UpdatedAt.IsZero() {
 				return nil, xerrors.Wrap(errGHResponse, "gh secret list: "+accountIDName+" の updatedAt がありません")
@@ -163,8 +169,13 @@ func targetEnvironments(o options) ([]string, error) {
 }
 
 // setEnvSecrets は、bootstrap の段4・段5: environment に secret AWS_ACCOUNT_ID（管理アカウントの ID）を置く。値は
-// gh の標準入力で渡し、出力にも引数にも出さない。値は読み返せないので、置いたことは更新日時が新しくなることで確かめる。
+// gh の標準入力で渡し、出力にも引数にも出さない。値は読み返せないので、在る secret は -replace のときだけ置き直し、
+// 置いたことは更新日時が新しくなることで確かめる。宛先のリポジトリは -repo で固定する。
 func setEnvSecrets(o options, c *client, t *terminal, gh ghFunc) error {
+	if !repoName.MatchString(o.repo) {
+		return xerrors.Wrap(errUsage, "-repo は <owner>/<リポジトリ> の形で渡します")
+	}
+
 	for _, k := range ghRepoEnv {
 		if o.getenv(k) != "" {
 			return xerrors.Wrap(errPrecondition, k+" が環境に在ります。gh の宛先が変わるので書き込みません")
@@ -190,39 +201,54 @@ func setEnvSecrets(o options, c *client, t *terminal, gh ghFunc) error {
 
 	before := map[string]*time.Time{}
 
+	var targets []string
+
 	for _, e := range envs {
-		u, err := secretUpdated(gh, e)
+		u, err := secretUpdated(gh, o.repo, e)
 		if err != nil {
 			return err
 		}
 
 		before[e] = u
 
-		state := "無い"
-		if u != nil {
-			state = "在る（更新 " + u.UTC().Format(time.DateTime) + "。値は読めないので置き直す）"
-		}
+		switch {
+		case u == nil:
+			fmt.Fprintf(t.out, "  %s: %s 無い\n", e, accountIDName)
 
-		fmt.Fprintf(t.out, "  %s: %s %s\n", e, accountIDName, state)
+			targets = append(targets, e)
+		case o.replace:
+			fmt.Fprintf(t.out, "  %s: %s 在る（更新 %s）。置き直す\n", e, accountIDName, u.UTC().Format(time.DateTime))
+
+			targets = append(targets, e)
+		default:
+			fmt.Fprintf(t.out, "  %s: %s 在る（更新 %s）。書かない（置き直すなら REPLACE=1）\n", e, accountIDName, u.UTC().Format(time.DateTime))
+		}
 	}
 
-	fmt.Fprintf(t.out, "置くもの: %s に %s（管理アカウントの ID）\n", strings.Join(envs, "・"), accountIDName)
+	if len(targets) == 0 {
+		fmt.Fprintln(t.out, "✅ すべての environment に secret が在ります。書き込みません")
+
+		return nil
+	}
+
+	fmt.Fprintf(t.out, "置くもの: リポジトリ %s の %s に %s（アカウント ID の末尾 %s）\n",
+		o.repo, strings.Join(targets, "・"), accountIDName, caller.Account[len(caller.Account)-4:])
 
 	if err := t.confirm(o.project); err != nil {
 		return err
 	}
 
-	for _, e := range envs {
-		if _, err := runGH(gh, []byte(caller.Account), "secret", "set", accountIDName, "--env", e); err != nil {
+	for _, e := range targets {
+		if _, err := runGH(gh, []byte(caller.Account), "secret", "set", accountIDName, "--repo", o.repo, "--env", e); err != nil {
 			return err
 		}
 
 		if err := reread(o, func() (bool, error) {
-			u, err := secretUpdated(gh, e)
+			u, err := secretUpdated(gh, o.repo, e)
 
 			return u != nil && (before[e] == nil || u.After(*before[e])), err
 		}); err != nil {
-			return xerrors.Wrap(err, "置いた後に "+e+" の "+accountIDName+" の更新を読めません。gh secret list --env "+e+" で確かめてください")
+			return xerrors.Wrap(err, "置いた後に "+e+" の "+accountIDName+" の更新を読めません。gh secret list --repo "+o.repo+" --env "+e+" で確かめてください")
 		}
 
 		fmt.Fprintf(t.out, "✅ %s に %s を置きました\n", e, accountIDName)

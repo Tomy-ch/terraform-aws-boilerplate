@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -33,37 +34,47 @@ var (
 // root と role の資格情報では書かない。組織はまだ無いので、組織の管理アカウントであることは確かめない。
 func requireBootstrapUser(c *client, profile string, w io.Writer) error {
 	var caller struct {
-		Arn string `json:"Arn"`
+		Account string `json:"Account"`
+		Arn     string `json:"Arn"`
 	}
 
 	if err := c.read(&caller, "sts", "get-caller-identity"); err != nil {
 		return err
 	}
 
-	if caller.Arn == "" {
-		return xerrors.Wrap(errAWSResponse, "資格情報の ARN を読めません")
+	if caller.Arn == "" || !accountID.MatchString(caller.Account) {
+		return xerrors.Wrap(errAWSResponse, "資格情報の ARN かアカウント ID を読めません")
 	}
 
-	if !strings.Contains(caller.Arn, ":user/") {
+	m := iamUserARN.FindStringSubmatch(caller.Arn)
+	if m == nil {
 		return xerrors.Wrap(errPrecondition, "profile "+profile+" の資格情報は IAM user のものではありません（bootstrap の一時 IAM user で行います）")
 	}
 
-	fmt.Fprintf(w, "# 書き込む先: profile %s、bootstrap の一時 IAM user\n", profile)
+	// 人が profile の取り違えに気づけるよう、user の名前とアカウント ID の末尾を出す（12桁は出力で伏せる）。
+	fmt.Fprintf(w, "# 書き込む先: profile %s、IAM user %s、アカウント ID の末尾 %s\n", profile, m[1], caller.Account[len(caller.Account)-4:])
 
 	return nil
 }
 
+// iamUserARN は、IAM user の ARN。user の名前（path を除く）を取り出す。
+var iamUserARN = regexp.MustCompile(`^arn:[a-z-]+:iam::[0-9]{12}:user/(?:.+/)?([^/]+)$`)
+
 // contactInformation は、主の連絡先（put-contact-information の ContactInformation）。
 type contactInformation struct {
-	FullName      string `json:"FullName"`
-	CompanyName   string `json:"CompanyName,omitempty"`
-	AddressLine1  string `json:"AddressLine1"`
-	AddressLine2  string `json:"AddressLine2,omitempty"`
-	City          string `json:"City"`
-	StateOrRegion string `json:"StateOrRegion,omitempty"`
-	PostalCode    string `json:"PostalCode"`
-	CountryCode   string `json:"CountryCode"`
-	PhoneNumber   string `json:"PhoneNumber"`
+	FullName     string `json:"FullName"`
+	CompanyName  string `json:"CompanyName,omitempty"`
+	AddressLine1 string `json:"AddressLine1"`
+	AddressLine2 string `json:"AddressLine2,omitempty"`
+	// AddressLine3・DistrictOrCounty・WebsiteUrl は入力で問わず、今の値を引き継ぐ（put は全体を置き換える）。
+	AddressLine3     string `json:"AddressLine3,omitempty"`
+	DistrictOrCounty string `json:"DistrictOrCounty,omitempty"`
+	WebsiteURL       string `json:"WebsiteUrl,omitempty"`
+	City             string `json:"City"`
+	StateOrRegion    string `json:"StateOrRegion,omitempty"`
+	PostalCode       string `json:"PostalCode"`
+	CountryCode      string `json:"CountryCode"`
+	PhoneNumber      string `json:"PhoneNumber"`
 }
 
 // alternateContact は、代替連絡先の1つ（put-alternate-contact の引数）。
@@ -238,6 +249,8 @@ func setContacts(o options, c *client, t *terminal) error {
 		prev = &a
 	}
 
+	desired.AddressLine3, desired.DistrictOrCounty, desired.WebsiteURL = current.AddressLine3, current.DistrictOrCounty, current.WebsiteURL
+
 	writeContact := !hasCurrent || current != desired
 
 	var writeTypes []string
@@ -279,21 +292,27 @@ func setContacts(o options, c *client, t *terminal) error {
 }
 
 func verifyContacts(o options, c *client, w io.Writer, desired contactInformation, desiredAlt map[string]alternateContact) error {
-	if err := reread(o, func() (bool, error) {
-		got, found, err := readContact(c)
+	var got contactInformation
 
-		return found && got == desired, err
+	if err := reread(o, func() (bool, error) {
+		g, found, err := readContact(c)
+		got = g
+
+		return found && g == desired, err
 	}); err != nil {
-		return xerrors.Wrap(err, "書いた後の主の連絡先が入力と一致しません。make bootstrap-check-account で確かめてください")
+		return xerrors.Wrap(err, "書いた後の主の連絡先が入力と一致しません（"+joinOrNone(differingFields(got, desired))+"）。make bootstrap-check-account で確かめてください")
 	}
 
 	for _, typ := range alternateTypes {
-		if err := reread(o, func() (bool, error) {
-			got, found, err := readAlternate(c, typ)
+		var gotAlt alternateContact
 
-			return found && got == desiredAlt[typ], err
+		if err := reread(o, func() (bool, error) {
+			g, found, err := readAlternate(c, typ)
+			gotAlt = g
+
+			return found && g == desiredAlt[typ], err
 		}); err != nil {
-			return xerrors.Wrap(err, "書いた後の代替連絡先 "+typ+" が入力と一致しません。make bootstrap-check-account で確かめてください")
+			return xerrors.Wrap(err, "書いた後の代替連絡先 "+typ+" が入力と一致しません（"+joinOrNone(differingFields(gotAlt, desiredAlt[typ]))+"）。make bootstrap-check-account で確かめてください")
 		}
 	}
 
@@ -333,10 +352,27 @@ func anomalyTargets(c *client) (string, string, error) {
 	return monitor, sub, nil
 }
 
+// differingFields は、a と b で値の違う field の名前。値は出さない（個人の情報）。
+func differingFields[T any](a, b T) []string {
+	va, vb := reflect.ValueOf(a), reflect.ValueOf(b)
+
+	var out []string
+
+	for i := range va.NumField() {
+		if va.Field(i).Interface() != vb.Field(i).Interface() {
+			out = append(out, va.Type().Field(i).Name)
+		}
+	}
+
+	return out
+}
+
 // hasCostTag は、Cost Explorer の resource が key の tag を持つか。値は見ない。
 func hasCostTag(c *client, arn, key string) (bool, error) {
+	// ResourceTags の欠けは tag が無いと読む（bootstrap-check の確認と同じ）。付けた後の読み直しが tag を求めるので、
+	// 欠けを読み違えても書いたまま成功にはならない。
 	var resp struct {
-		ResourceTags *[]struct {
+		ResourceTags []struct {
 			Key string `json:"Key"`
 		} `json:"ResourceTags"`
 	}
@@ -345,11 +381,7 @@ func hasCostTag(c *client, arn, key string) (bool, error) {
 		return false, err
 	}
 
-	if resp.ResourceTags == nil {
-		return false, xerrors.Wrap(errAWSResponse, "ce list-tags-for-resource: ResourceTags がありません")
-	}
-
-	for _, t := range *resp.ResourceTags {
+	for _, t := range resp.ResourceTags {
 		if t.Key == key {
 			return true, nil
 		}

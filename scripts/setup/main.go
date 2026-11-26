@@ -5,6 +5,7 @@
 // 読み取りで確かめ、差分を示し、project の名前の打ち込みを受けてから書き込み、読み直して確かめる。
 //
 //	setup <入口> -project <project> -region <region> [-usecase <dir>] [-env <env>] [-user <user>] [-ids]
+//	      [-environments <env>[,<env>...] -repo <owner>/<repo> [-replace]]
 //
 // 入口（organization-baseline の手順書。-usecase は usecases/organization-baseline）:
 //
@@ -31,7 +32,7 @@
 //
 //	bootstrap-contacts     2-1: 主の連絡先と、BILLING・OPERATIONS・SECURITY の代替連絡先を置く
 //	bootstrap-anomaly-tag  2-4: AWS services monitor とその subscription に tag <project>:bootstrap を付ける
-//	bootstrap-env-secrets  段4・段5: environment に secret AWS_ACCOUNT_ID を gh で置く（-environments）
+//	bootstrap-env-secrets  段4・段5: environment に secret AWS_ACCOUNT_ID を gh で置く（-environments・-repo。在れば -replace のときだけ置き直す）
 //
 // env の一覧、OU の階層、メールの形、break-glass の user と role と password policy、委任管理者のサービスの主体は、
 // -usecase の Terraform から毎回読む。
@@ -83,6 +84,8 @@ type options struct {
 	showIDs bool
 
 	environments string
+	repo         string
+	replace      bool
 
 	readFile func(string) ([]byte, error)
 	getenv   func(string) string
@@ -377,6 +380,8 @@ func parseArgs(args []string) (options, entry, error) {
 	fs.StringVar(&o.env, "env", "", "")
 	fs.StringVar(&o.user, "user", "", "")
 	fs.StringVar(&o.environments, "environments", "", "")
+	fs.StringVar(&o.repo, "repo", "", "")
+	fs.BoolVar(&o.replace, "replace", false, "")
 	fs.BoolVar(&o.showIDs, "ids", false, "")
 
 	if err := fs.Parse(args[1:]); err != nil {
@@ -394,8 +399,10 @@ func parseArgs(args []string) (options, entry, error) {
 		return options{}, entry{}, xerrors.Wrap(errUsage, "-env は member-email-update にだけ渡します")
 	case e.needsUser != (o.user != ""):
 		return options{}, entry{}, xerrors.Wrap(errUsage, "-user は identity-center-user-check にだけ渡します")
-	case e.needsEnvironments != (o.environments != ""):
-		return options{}, entry{}, xerrors.Wrap(errUsage, "-environments は bootstrap-env-secrets にだけ渡します")
+	case e.needsEnvironments != (o.environments != ""), e.needsEnvironments != (o.repo != ""):
+		return options{}, entry{}, xerrors.Wrap(errUsage, "-environments と -repo は bootstrap-env-secrets にだけ、両方を渡します")
+	case o.replace && !e.needsEnvironments:
+		return options{}, entry{}, xerrors.Wrap(errUsage, "-replace は bootstrap-env-secrets にだけ渡します")
 	case o.showIDs && o.entry != "member-accounts-check":
 		return options{}, entry{}, xerrors.Wrap(errUsage, "-ids は member-accounts-check にだけ渡します")
 	}
