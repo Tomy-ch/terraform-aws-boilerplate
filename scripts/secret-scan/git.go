@@ -2,11 +2,13 @@ package main
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/gitrev"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
@@ -32,27 +34,27 @@ func gitOutput(r runner, env []string, dir, step, rev, stdin string) (string, er
 	return res.Stdout, nil
 }
 
-// resolveFrom は、範囲の起点 from を dir のリポジトリで commit へ解決し、完全な sha を返します。from は引数ではなく
-// git cat-file --batch-check の stdin で渡します。空は errFromEmpty、改行を含むか `-` で始まるもの、解決できない
-// もの、commit へ剥けないものは errFromUnresolved です。
+// resolveFrom は、範囲の起点 from を dir のリポジトリで commit へ解決し、完全な sha を返します（取り決めは
+// [gitrev]）。空は errFromEmpty、解決できないものは errFromUnresolved です。
 func resolveFrom(r runner, env []string, dir, from string) (string, error) {
-	if from == "" {
+	unresolved := xerrors.Wrapf(errFromUnresolved, "走査範囲の起点 %q が解決できません", from)
+	stdin, err := gitrev.Query(from)
+	if errors.Is(err, gitrev.ErrEmpty) {
 		return "", errFromEmpty
 	}
-	unresolved := xerrors.Wrapf(errFromUnresolved, "走査範囲の起点 %q が解決できません", from)
-	if strings.ContainsAny(from, "\n\r\x00") || strings.HasPrefix(from, "-") {
+	if err != nil {
 		return "", unresolved
 	}
-	out, err := gitOutput(r, env, dir, stepResolve, "", from+"^{commit}\n")
+	out, err := gitOutput(r, env, dir, stepResolve, "", stdin)
 	if err != nil {
 		return "", err
 	}
-	fields := strings.Fields(out)
-	if len(fields) != 2 || fields[1] != "commit" || !isHash(fields[0]) {
+	sha, err := gitrev.Parse(out)
+	if err != nil {
 		return "", unresolved
 	}
 
-	return fields[0], nil
+	return sha, nil
 }
 
 // numstat は、dir のリポジトリの範囲 rev..HEAD（rev が空なら HEAD の全履歴）の、runCount が読む numstat を返します。

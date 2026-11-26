@@ -9,6 +9,7 @@
 | ID | タイトル | Status |
 | --- | --- | --- |
 | [0001](0001-ci-roles-in-management-account.md) | 管理アカウントに、IAM を変更できる CI の role を置く | Accepted |
+| [0002](0002-account-prerequisite-service-linked-roles.md) | workload root の usecase が前提にする service-linked role を、identity root で先に作る | Accepted |
 
 ### 01 信頼条件
 

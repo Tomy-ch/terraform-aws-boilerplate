@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"flag"
 	"io"
 	"log"
@@ -17,10 +18,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun/tooltest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/fakeexec"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/misetoml"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
@@ -99,7 +101,6 @@ func respondJSON(path, body string) http.HandlerFunc {
 	}
 }
 
-// respondStatus は、常に code を返すハンドラを組みます。
 func respondStatus(code int) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(code) }
 }
@@ -228,10 +229,10 @@ func writeWorkTreeBypass(t *testing.T, dir, body string) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, bypassFile), []byte(body), 0o600))
 }
 
-func runCaptured(t *testing.T, args []string, client *http.Client, now time.Time) (string, error) {
+func runCaptured(t *testing.T, args []string, client *http.Client, now time.Time, launch toolFunc) (string, error) {
 	t.Helper()
 	var err error
-	out := captureLog(t, func() { err = run(args, client, now) })
+	out := captureLog(t, func() { err = run(args, client, now, launch) })
 	return out, err
 }
 
@@ -410,7 +411,6 @@ func Test_readDeclarations(t *testing.T) {
 			assert.Equal(t, miseOneAquaTool, string(got[0].content))
 		})
 
-		// 理由は readDeclarations の .tflint.hcl を飛ばす分岐のコメントが持つ。
 		t.Run(".tflint.hcl が無ければ飛ばす", func(t *testing.T) {
 			t.Parallel()
 			got, err := readDeclarations([]string{filepath.Join(t.TempDir(), tflintFile)})
@@ -592,7 +592,6 @@ func Test_escapeModulePath(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		// 化け方は escapeModulePath の doc コメントが持つ。
 		t.Run("大文字を ! + 小文字へ変換する", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, "github.com/!burnt!sushi/toml", escapeModulePath("github.com/BurntSushi/toml"))
@@ -924,7 +923,7 @@ func Test_added(t *testing.T) {
 			require.NoError(t, err)
 			require.NotEmpty(t, base)
 
-			got, err := added("HEAD", []string{miseFile}, append(slices.Clone(base), tool{key: "aqua:fake/tool", version: "9.9.9"}))
+			got, err := added("HEAD", []string{miseFile}, append(slices.Clone(base), tool{key: "aqua:fake/tool", version: "9.9.9"}), command)
 			require.NoError(t, err)
 			require.Len(t, got, 1)
 			assert.Equal(t, "aqua:fake/tool@9.9.9", got[0].id())
@@ -935,7 +934,7 @@ func Test_added(t *testing.T) {
 			useMiseGateRepo(t, miseOneAquaTool, miseOneAquaTool)
 
 			got, err := added("HEAD", []string{"python/no-such-file-for-cooldown-test.in"},
-				[]tool{{key: "pypi:example", version: "1.0.0"}})
+				[]tool{{key: "pypi:example", version: "1.0.0"}}, command)
 			require.NoError(t, err)
 			require.Len(t, got, 1)
 			assert.Equal(t, "pypi:example@1.0.0", got[0].id())
@@ -948,7 +947,7 @@ func Test_added(t *testing.T) {
 		t.Run("base の ref を解決できなければエラーにする", func(t *testing.T) {
 			useMiseGateRepo(t, miseOneAquaTool, miseOneAquaTool)
 
-			_, err := added("refs/heads/no-such-branch-for-cooldown-test", []string{miseFile}, nil)
+			_, err := added("refs/heads/no-such-branch-for-cooldown-test", []string{miseFile}, nil, command)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "base を取得できていない可能性があります")
 		})
@@ -962,7 +961,7 @@ func Test_baseDeclarations(t *testing.T) {
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 		t.Run("base 時点の中身をパスごと返す", func(t *testing.T) {
 			useMiseGateRepo(t, miseOneAquaTool, miseOneAquaTool)
-			got, err := baseDeclarations("HEAD", []string{miseFile})
+			got, err := baseDeclarations("HEAD", []string{miseFile}, command)
 			require.NoError(t, err)
 			require.Len(t, got, 1)
 			assert.Equal(t, miseFile, got[0].path)
@@ -972,7 +971,7 @@ func Test_baseDeclarations(t *testing.T) {
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 		t.Run("作業ツリーではなく base 時点の中身を返す", func(t *testing.T) {
 			useMiseGateRepo(t, miseOneAquaTool, "[tools]\n")
-			got, err := baseDeclarations("HEAD", []string{miseFile})
+			got, err := baseDeclarations("HEAD", []string{miseFile}, command)
 			require.NoError(t, err)
 			require.Len(t, got, 1)
 			assert.Equal(t, miseOneAquaTool, string(got[0].content))
@@ -981,7 +980,7 @@ func Test_baseDeclarations(t *testing.T) {
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 		t.Run("base に無い宣言ファイルは飛ばす", func(t *testing.T) {
 			useMiseGateRepo(t, miseOneAquaTool, miseOneAquaTool)
-			got, err := baseDeclarations("HEAD", []string{"python/no-such-file-for-cooldown-test.in"})
+			got, err := baseDeclarations("HEAD", []string{"python/no-such-file-for-cooldown-test.in"}, command)
 			require.NoError(t, err)
 			assert.Empty(t, got)
 		})
@@ -993,7 +992,7 @@ func Test_baseDeclarations(t *testing.T) {
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 		t.Run("base の ref を解決できなければエラーにする", func(t *testing.T) {
 			useMiseGateRepo(t, miseOneAquaTool, miseOneAquaTool)
-			_, err := baseDeclarations("refs/heads/no-such-branch-for-cooldown-test", []string{miseFile})
+			_, err := baseDeclarations("refs/heads/no-such-branch-for-cooldown-test", []string{miseFile}, command)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "base を取得できていない可能性があります")
 		})
@@ -1001,7 +1000,7 @@ func Test_baseDeclarations(t *testing.T) {
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 		t.Run("mise.toml 以外の宣言ファイルでも ref を解決できなければエラーにする", func(t *testing.T) {
 			useMiseGateRepo(t, miseOneAquaTool, miseOneAquaTool)
-			_, err := baseDeclarations("refs/heads/no-such-branch-for-cooldown-test", []string{"python/no-such-file-for-cooldown-test.in"})
+			_, err := baseDeclarations("refs/heads/no-such-branch-for-cooldown-test", []string{"python/no-such-file-for-cooldown-test.in"}, command)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "base を取得できていない可能性があります")
 		})
@@ -1011,9 +1010,73 @@ func Test_baseDeclarations(t *testing.T) {
 		t.Run("base に mise.toml が無ければエラーにする", func(t *testing.T) {
 			useRepoWithoutMise(t)
 
-			_, err := baseDeclarations("HEAD", []string{miseFile})
+			_, err := baseDeclarations("HEAD", []string{miseFile}, command)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "base を取得できていない可能性があります")
+		})
+	})
+
+	t.Run("偽の git で: 終了コードと sentinel", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("mise.toml の git show が 0 以外なら errBaseUnresolved で終了コード 2", func(t *testing.T) {
+			t.Parallel()
+			f := tooltest.New(t)
+			f.Set(stepGitShow, "rc", "128")
+			_, err := baseDeclarations("b", []string{miseFile}, f.Tool())
+			require.ErrorIs(t, err, errBaseUnresolved)
+			assert.Equal(t, 2, exitCode(err))
+			assert.Equal(t, []string{stepGitShow + " b:" + miseFile}, f.Args())
+		})
+
+		t.Run("git を起動できなければ ErrTool で終了コード 2（宣言なしとして飛ばさない）", func(t *testing.T) {
+			t.Parallel()
+			_, err := baseDeclarations("b", []string{"python/x.in"}, noTool)
+			require.ErrorIs(t, err, toolrun.ErrTool)
+			assert.Equal(t, 2, exitCode(err))
+		})
+
+		t.Run("mise.toml 以外の git show が 0 以外で rev-parse が通れば、その宣言を飛ばす", func(t *testing.T) {
+			t.Parallel()
+			f := tooltest.New(t)
+			f.Set(stepGitShow, "rc", "128")
+			got, err := baseDeclarations("b", []string{"python/x.in"}, f.Tool())
+			require.NoError(t, err)
+			assert.Empty(t, got)
+			assert.Equal(t, []string{stepGitShow + " b:python/x.in", stepGitRevParse + " b^{commit}"}, f.Args())
+		})
+
+		t.Run("mise.toml 以外の git show が 0 以外で rev-parse も 0 以外なら errBaseUnresolved", func(t *testing.T) {
+			t.Parallel()
+			f := tooltest.New(t)
+			f.Set(stepGitShow, "rc", "128")
+			f.Set(stepGitRevParse, "rc", "1")
+			_, err := baseDeclarations("b", []string{"python/x.in"}, f.Tool())
+			require.ErrorIs(t, err, errBaseUnresolved)
+		})
+
+		t.Run("mise.toml 以外の git show が 0 以外で rev-parse を起動できなければ ErrTool で終了コード 2（宣言なしとして飛ばさない）", func(t *testing.T) {
+			t.Parallel()
+			f := tooltest.New(t)
+			f.Set(stepGitShow, "rc", "128")
+			launch := func(ctx context.Context, dir string, env []string, step string, ops ...string) *exec.Cmd {
+				if step == stepGitRevParse {
+					return tooltest.Missing(ctx, dir, env, step, ops...)
+				}
+				return f.Tool()(ctx, dir, env, step, ops...)
+			}
+			_, err := baseDeclarations("b", []string{"python/x.in"}, launch)
+			require.ErrorIs(t, err, toolrun.ErrTool)
+			assert.Equal(t, 2, exitCode(err))
+		})
+
+		t.Run("git show が 0 で何も出さなければ、空の宣言として返す（0件の判定は呼び出し側）", func(t *testing.T) {
+			t.Parallel()
+			f := tooltest.New(t)
+			got, err := baseDeclarations("b", []string{miseFile}, f.Tool())
+			require.NoError(t, err)
+			require.Len(t, got, 1)
+			assert.Empty(t, got[0].content)
 		})
 	})
 }
@@ -1025,7 +1088,7 @@ func Test_verifyRef(t *testing.T) {
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 		t.Run("commit へ解決できる ref は通す", func(t *testing.T) {
 			useMiseGateRepo(t, miseOneAquaTool, miseOneAquaTool)
-			require.NoError(t, verifyRef(t.Context(), "HEAD"))
+			require.NoError(t, verifyRef(t.Context(), command, nil, "HEAD"))
 		})
 	})
 
@@ -1034,8 +1097,17 @@ func Test_verifyRef(t *testing.T) {
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 		t.Run("解決できない ref はエラーにする", func(t *testing.T) {
 			useMiseGateRepo(t, miseOneAquaTool, miseOneAquaTool)
-			require.Error(t, verifyRef(t.Context(), "refs/heads/no-such-branch-for-cooldown-test"))
+			require.Error(t, verifyRef(t.Context(), command, nil, "refs/heads/no-such-branch-for-cooldown-test"))
 		})
+	})
+
+	t.Run("rev-parse が 0 以外なら errBaseUnresolved、起動できなければ ErrTool", func(t *testing.T) {
+		t.Parallel()
+		f := tooltest.New(t)
+		f.Set(stepGitRevParse, "rc", "1")
+		require.ErrorIs(t, verifyRef(t.Context(), f.Tool(), nil, "b"), errBaseUnresolved)
+		assert.Equal(t, []string{stepGitRevParse + " b^{commit}"}, f.Args())
+		require.ErrorIs(t, verifyRef(t.Context(), noTool, nil, "b"), toolrun.ErrTool)
 	})
 }
 
@@ -1093,69 +1165,103 @@ func Test_addedFrom(t *testing.T) {
 	})
 }
 
-// stubMise は PATH の先頭へ偽の mise を置きます。境界で差し替える理由は scripts/README.md の
-// Test Strategy 節が持ちます。
-func stubMise(t *testing.T, script string) {
+// miseTool は、mise の段だけを、command が組んだ argv を位置引数にした script の sh へ差し替える偽の道具です。
+// git の段は実物を起動します。
+func miseTool(t *testing.T, script string) toolFunc {
 	t.Helper()
-
-	dir := t.TempDir()
-	body := "#!/bin/sh\n" + script + "\n"
-	fakeexec.Write(t, filepath.Join(dir, "mise"), body, 0o700)
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return func(ctx context.Context, dir string, env []string, step string, operands ...string) *exec.Cmd {
+		built := command(ctx, dir, env, step, operands...)
+		if step != stepMiseRegistry {
+			return built
+		}
+		c := exec.CommandContext(ctx, "/bin/sh", append([]string{"-c", script, "mise"}, built.Args[1:]...)...)
+		c.Dir, c.Env = built.Dir, built.Env
+		return c
+	}
 }
 
-//nolint:paralleltest // PATH を t.Setenv で差し替えるため並列化できない
+// noTool は、起動されれば落ちる偽の道具です。
+var noTool toolFunc = tooltest.Missing
+
 func Test_miseRegistry(t *testing.T) {
+	t.Parallel()
 	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
 		t.Run("候補が複数あっても先頭だけを backend にする", func(t *testing.T) {
-			stubMise(t, `echo "aqua:sqlc-dev/sqlc ubi:sqlc-dev/sqlc"`)
-			got, err := miseRegistry(t.Context(), "sqlc")
+			t.Parallel()
+			launch := miseTool(t, `echo "aqua:sqlc-dev/sqlc ubi:sqlc-dev/sqlc"`)
+			got, err := miseRegistry(t.Context(), launch, "sqlc")
 			require.NoError(t, err)
 			assert.Equal(t, "aqua:sqlc-dev/sqlc", got)
 			assert.NotContains(t, got, " ")
 		})
 
 		t.Run("言語ランタイムは core backend として解決される", func(t *testing.T) {
-			stubMise(t, `echo "core:go"`)
-			got, err := miseRegistry(t.Context(), "go")
+			t.Parallel()
+			launch := miseTool(t, `echo "core:go"`)
+			got, err := miseRegistry(t.Context(), launch, "go")
 			require.NoError(t, err)
 			assert.Equal(t, "core:go", got)
 		})
 
 		t.Run("渡した名前がそのまま引数になる", func(t *testing.T) {
+			t.Parallel()
 			// 引数の組み立てを取り違えると、別の道具の backend を黙って返す。
-			stubMise(t, `printf "aqua:x/%s" "$2"`)
-			got, err := miseRegistry(t.Context(), "actionlint")
+			launch := miseTool(t, `printf "aqua:x/%s" "$3"`)
+			got, err := miseRegistry(t.Context(), launch, "actionlint")
 			require.NoError(t, err)
 			assert.Equal(t, "aqua:x/actionlint", got)
 		})
 
 		t.Run("前後の空白を落とす", func(t *testing.T) {
-			stubMise(t, `printf "  core:node  \n"`)
-			got, err := miseRegistry(t.Context(), "node")
+			t.Parallel()
+			launch := miseTool(t, `printf "  core:node  \n"`)
+			got, err := miseRegistry(t.Context(), launch, "node")
 			require.NoError(t, err)
 			assert.Equal(t, "core:node", got)
 		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+		t.Run("mise が 0 以外で終われば errMiseRegistry で、名前と終了コードを名指す", func(t *testing.T) {
+			t.Parallel()
+			launch := miseTool(t, `echo "boom" >&2; exit 3`)
+			_, err := miseRegistry(t.Context(), launch, "x")
+			require.ErrorIs(t, err, errMiseRegistry)
+			assert.ErrorContains(t, err, "exit status 3")
+			assert.ErrorContains(t, err, "boom")
+			assert.Equal(t, 2, exitCode(err))
+		})
+
+		t.Run("- で始まる名前も -- の後ろに渡す", func(t *testing.T) {
+			t.Parallel()
+			launch := miseTool(t, `[ "$2" = "--" ] && printf "aqua:x/%s" "$3"`)
+			got, err := miseRegistry(t.Context(), launch, "-x")
+			require.NoError(t, err)
+			assert.Equal(t, "aqua:x/-x", got)
+		})
+
 		t.Run("registry が知らない名前はエラーにする", func(t *testing.T) {
-			stubMise(t, `exit 1`)
-			_, err := miseRegistry(t.Context(), "no-such-tool")
+			t.Parallel()
+			launch := miseTool(t, `exit 1`)
+			_, err := miseRegistry(t.Context(), launch, "no-such-tool")
 			require.Error(t, err)
 		})
 
 		t.Run("空の出力はエラーにする", func(t *testing.T) {
+			t.Parallel()
 			// 空を通すと、backend が決まらないまま「解決できた」ことになる。
-			stubMise(t, `printf ""`)
-			_, err := miseRegistry(t.Context(), "x")
+			launch := miseTool(t, `printf ""`)
+			_, err := miseRegistry(t.Context(), launch, "x")
 			require.Error(t, err)
 		})
 
 		t.Run("mise が PATH に無ければエラーにする", func(t *testing.T) {
+			t.Parallel()
 			// 握り潰すと、version manager が無い環境で検査が「違反なし」に化ける。
-			t.Setenv("PATH", t.TempDir())
-			_, err := miseRegistry(t.Context(), "go")
+			launch := noTool
+			_, err := miseRegistry(t.Context(), launch, "go")
 			require.Error(t, err)
 		})
 	})
@@ -1187,13 +1293,15 @@ func Test_firstBackend(t *testing.T) {
 	})
 }
 
-//nolint:paralleltest // PATH を t.Setenv で差し替えるため並列化できない
 func Test_resolveBackends(t *testing.T) {
+	t.Parallel()
 	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
 		t.Run("コロンを含むキーはそのまま backend にする", func(t *testing.T) {
+			t.Parallel()
 			// registry を引かないので、mise が無くても解決できる。
-			t.Setenv("PATH", t.TempDir())
-			targets, skipped, err := resolveBackends(t.Context(), []tool{{key: "aqua:owner/repo", version: "1.2.3"}})
+			launch := noTool
+			targets, skipped, err := resolveBackends(t.Context(), launch, []tool{{key: "aqua:owner/repo", version: "1.2.3"}})
 			require.NoError(t, err)
 			require.Len(t, targets, 1)
 			assert.Equal(t, "aqua:owner/repo", targets[0].backend)
@@ -1202,8 +1310,9 @@ func Test_resolveBackends(t *testing.T) {
 
 		// 言語ランタイムの除外は明示的に受容したリスクなので、短縮名から core へ解決される経路ごと固定する。
 		t.Run("短縮名のランタイムは registry 解決を経て除外される", func(t *testing.T) {
-			stubMise(t, `echo "core:go"`)
-			targets, skipped, err := resolveBackends(t.Context(), []tool{{key: "go", version: "1.26.5"}})
+			t.Parallel()
+			launch := miseTool(t, `echo "core:go"`)
+			targets, skipped, err := resolveBackends(t.Context(), launch, []tool{{key: "go", version: "1.26.5"}})
 			require.NoError(t, err)
 			assert.Empty(t, targets)
 			require.Len(t, skipped, 1)
@@ -1211,17 +1320,19 @@ func Test_resolveBackends(t *testing.T) {
 		})
 
 		t.Run("core backend を明示したキーも除外する", func(t *testing.T) {
-			t.Setenv("PATH", t.TempDir())
-			targets, skipped, err := resolveBackends(t.Context(), []tool{{key: "core:node", version: "24.0.0"}})
+			t.Parallel()
+			launch := noTool
+			targets, skipped, err := resolveBackends(t.Context(), launch, []tool{{key: "core:node", version: "24.0.0"}})
 			require.NoError(t, err)
 			assert.Empty(t, targets)
 			assert.Len(t, skipped, 1)
 		})
 
 		t.Run("短縮名が core 以外へ解決されれば検査対象に残る", func(t *testing.T) {
+			t.Parallel()
 			// 除外の条件は「解決先が core であること」であって「短縮名であること」ではない。
-			stubMise(t, `echo "aqua:rhysd/actionlint"`)
-			targets, skipped, err := resolveBackends(t.Context(), []tool{{key: "actionlint", version: "1.7.12"}})
+			launch := miseTool(t, `echo "aqua:rhysd/actionlint"`)
+			targets, skipped, err := resolveBackends(t.Context(), launch, []tool{{key: "actionlint", version: "1.7.12"}})
 			require.NoError(t, err)
 			require.Len(t, targets, 1)
 			assert.Equal(t, "aqua:rhysd/actionlint", targets[0].backend)
@@ -1229,8 +1340,9 @@ func Test_resolveBackends(t *testing.T) {
 		})
 
 		t.Run("検査対象と除外を同時に扱う", func(t *testing.T) {
-			stubMise(t, `case "$2" in go) echo "core:go" ;; *) echo "aqua:x/$2" ;; esac`)
-			targets, skipped, err := resolveBackends(t.Context(), []tool{
+			t.Parallel()
+			launch := miseTool(t, `case "$3" in go) echo "core:go" ;; *) echo "aqua:x/$3" ;; esac`)
+			targets, skipped, err := resolveBackends(t.Context(), launch, []tool{
 				{key: "go", version: "1.27.1"},
 				{key: "actionlint", version: "1.7.12"},
 			})
@@ -1242,8 +1354,9 @@ func Test_resolveBackends(t *testing.T) {
 		})
 
 		t.Run("入力が0件なら何も返さない", func(t *testing.T) {
-			t.Setenv("PATH", t.TempDir())
-			targets, skipped, err := resolveBackends(t.Context(), nil)
+			t.Parallel()
+			launch := noTool
+			targets, skipped, err := resolveBackends(t.Context(), launch, nil)
 			require.NoError(t, err)
 			assert.Empty(t, targets)
 			assert.Empty(t, skipped)
@@ -1251,18 +1364,21 @@ func Test_resolveBackends(t *testing.T) {
 	})
 
 	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
 		// 解決できないキーを黙って落とすと、そのツールだけ検査されないまま gate が通る。
 		t.Run("backend を解決できないキーはエラーにする", func(t *testing.T) {
-			stubMise(t, `exit 1`)
-			targets, _, err := resolveBackends(t.Context(), []tool{{key: "no-such-tool", version: "1.0.0"}})
+			t.Parallel()
+			launch := miseTool(t, `exit 1`)
+			targets, _, err := resolveBackends(t.Context(), launch, []tool{{key: "no-such-tool", version: "1.0.0"}})
 			require.Error(t, err)
 			assert.Empty(t, targets)
 		})
 
 		t.Run("1件でも解決できなければ全体をエラーにする", func(t *testing.T) {
+			t.Parallel()
 			// 解決できたものだけで続けると、検査範囲が黙って縮む。
-			stubMise(t, `case "$2" in actionlint) echo "aqua:x/actionlint" ;; *) exit 1 ;; esac`)
-			_, _, err := resolveBackends(t.Context(), []tool{
+			launch := miseTool(t, `case "$3" in actionlint) echo "aqua:x/actionlint" ;; *) exit 1 ;; esac`)
+			_, _, err := resolveBackends(t.Context(), launch, []tool{
 				{key: "actionlint", version: "1.7.12"},
 				{key: "unknown", version: "1.0.0"},
 			})
@@ -1342,7 +1458,6 @@ func Test_inspect(t *testing.T) {
 			assert.Empty(t, unresolved)
 		})
 
-		// 並べ直す理由は "unresolved は識別子順に並べる" と同じ。
 		t.Run("findings は経過日数の短い順に並べる", func(t *testing.T) {
 			t.Parallel()
 			client := fakeUpstream(t, func(w http.ResponseWriter, r *http.Request) {
@@ -1378,7 +1493,6 @@ func Test_getJSON(t *testing.T) {
 			assert.Equal(t, "ok", body["name"])
 		})
 
-		// 理由は fetchBody のコメントと同じ。
 		t.Run("GitHub API にはトークンを Authorization ヘッダで載せる", func(t *testing.T) {
 			t.Setenv("GITHUB_TOKEN", "test-token")
 			auth := make(chan string, 1)
@@ -1544,7 +1658,6 @@ func Test_npmPackageAt(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		// 理由は publishedAt のコメントと同じ。
 		t.Run("time に載っていないバージョンはエラーにする", func(t *testing.T) {
 			t.Parallel()
 			client := fakeUpstream(t, respondJSON("/@redocly/cli", `{"time":{"2.31.3":"2026-07-01T00:00:00Z"}}`))
@@ -1728,7 +1841,6 @@ func Test_renderAquaURL(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		// 理由は renderAquaURL の doc コメントが持つ。
 		t.Run("replacements を適用してから展開する", func(t *testing.T) {
 			t.Parallel()
 
@@ -1741,7 +1853,6 @@ func Test_renderAquaURL(t *testing.T) {
 			assert.Equal(t, "https://cdn.example.com/tool-linux-x86_64-1.2.3.zip", got)
 		})
 
-		// 理由は renderAquaURL の trimV についてのコメントが持つ。
 		t.Run("aqua の trimV を展開できる", func(t *testing.T) {
 			t.Parallel()
 
@@ -1770,8 +1881,7 @@ func Test_renderAquaURL(t *testing.T) {
 			require.ErrorIs(t, err, errUnsupportedPackage)
 		})
 
-		// 対応範囲は renderAquaURL の trimV についてのコメントが持つ。素通しではなく失敗へ
-		// 倒れることを、ここで固定する。
+		// 素通しではなく失敗へ倒れることを固定する。
 		t.Run("未対応のテンプレート関数を使う定義はエラーにする", func(t *testing.T) {
 			t.Parallel()
 
@@ -1786,7 +1896,6 @@ func Test_renderAquaURL(t *testing.T) {
 			require.Error(t, err)
 		})
 
-		// 理由は renderAquaURL の doc コメントが持つ。
 		t.Run("版を指さない URL は errUnversionedArtifact を返す", func(t *testing.T) {
 			t.Parallel()
 
@@ -1812,7 +1921,6 @@ func Test_renderAquaURL(t *testing.T) {
 			require.ErrorIs(t, err, errUnversionedArtifact)
 		})
 
-		// 理由は hostIsLiteral の doc コメントが持つ。
 		t.Run("ホストが補間で作られる URL はエラーにする", func(t *testing.T) {
 			t.Parallel()
 
@@ -1869,8 +1977,7 @@ func Test_aquaRegistryBase(t *testing.T) {
 func Test_hostIsLiteral(t *testing.T) {
 	t.Parallel()
 
-	// 理由は hostIsLiteral の doc コメントが持つ。renderAquaURL 経由では踏めない枝があるため、
-	// ここで直接固定する。
+	// renderAquaURL 経由では踏めない枝があるため、ここで直接固定する。
 	for name, tc := range map[string]struct {
 		tmpl string
 		want bool
@@ -1925,7 +2032,6 @@ func Test_lastModified(t *testing.T) {
 			require.ErrorIs(t, err, errUpstreamStatus)
 		})
 
-		// 理由は publishedAt のコメントと同じ。
 		t.Run("Last-Modified が無ければ errNoLastModified を返す", func(t *testing.T) {
 			t.Parallel()
 			client := fakeUpstream(t, respondLastModified("/a.zip", ""))
@@ -1975,7 +2081,6 @@ func Test_aquaArtifactURL(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		// 理由は aquaArtifactURL の Overrides フィールドのコメントが持つ。
 		t.Run("probe の goos に一致する override を base より優先する", func(t *testing.T) {
 			t.Parallel()
 			body := aquaHTTPRegistry + "    overrides:\n" +
@@ -2058,7 +2163,6 @@ func Test_aquaArtifactURL(t *testing.T) {
 			require.Error(t, err)
 		})
 
-		// 決められない理由は aquaArtifactURL の当該分岐が持つ。
 		t.Run("packages が 1 件でなければ errUnsupportedPackage を返す", func(t *testing.T) {
 			t.Parallel()
 
@@ -2085,7 +2189,6 @@ func Test_aquaArtifactURL(t *testing.T) {
 			require.ErrorIs(t, err, errUnsupportedPackage)
 		})
 
-		// 理由は aquaArtifactURL の override ループのコメントが持つ。
 		t.Run("該当 goos の override の url が空なら base へ退かない", func(t *testing.T) {
 			t.Parallel()
 			body := aquaHTTPRegistry + "    overrides:\n" +
@@ -2171,7 +2274,6 @@ func Test_hasBypass(t *testing.T) {
 			assert.False(t, hasBypass(map[string]bypass{}, map[string]struct{}{}, target))
 		})
 
-		// 理由は Test_classify の同種ケースと同じ。
 		t.Run("無効化されたキーは登録があっても無効と判定する", func(t *testing.T) {
 			t.Parallel()
 			assert.False(t, hasBypass(bypasses, map[string]struct{}{"aqua:owner/repo@1.2.3": {}}, target))
@@ -2394,7 +2496,7 @@ func Test_run(t *testing.T) {
 			dir := useMiseWorkTree(t, miseOneAquaTool)
 			require.NoError(t, os.WriteFile(filepath.Join(dir, tflintFile), []byte(tflintFixture), 0o600))
 
-			out, err := runCaptured(t, []string{"check"}, &http.Client{Transport: unreachableUpstream{}}, now)
+			out, err := runCaptured(t, []string{"check"}, &http.Client{Transport: unreachableUpstream{}}, now, command)
 
 			require.NoError(t, err)
 			assert.Contains(t, out, "宣言 3 件を読めました")
@@ -2404,7 +2506,7 @@ func Test_run(t *testing.T) {
 		t.Run("audit は窓内のツールを報告しつつ正常終了する", func(t *testing.T) {
 			useMiseWorkTree(t, miseOneAquaTool)
 
-			out, err := runCaptured(t, []string{"audit"}, releasedOn(t, fresh), now)
+			out, err := runCaptured(t, []string{"audit"}, releasedOn(t, fresh), now, command)
 
 			require.NoError(t, err)
 			assert.Contains(t, out, "aqua:owner/repo@1.2.3（aqua:owner/repo）は公開 1 日で cooldown 14 日")
@@ -2417,7 +2519,7 @@ func Test_run(t *testing.T) {
 		t.Run("見出しの内側に空白がある宣言も検査の対象にする", func(t *testing.T) {
 			useMiseWorkTree(t, "[ tools ]\n\"aqua:owner/repo\" = \"1.2.3\"\n")
 
-			out, err := runCaptured(t, []string{"audit"}, releasedOn(t, fresh), now)
+			out, err := runCaptured(t, []string{"audit"}, releasedOn(t, fresh), now, command)
 
 			require.NoError(t, err)
 			assert.Contains(t, out, "aqua:owner/repo@1.2.3")
@@ -2427,7 +2529,7 @@ func Test_run(t *testing.T) {
 		t.Run("gate は base に無いツールでも窓を越えていれば通す", func(t *testing.T) {
 			useMiseGateRepo(t, "[tools]\n", miseOneAquaTool)
 
-			out, err := runCaptured(t, []string{"gate", "--base=HEAD"}, releasedOn(t, aged), now)
+			out, err := runCaptured(t, []string{"gate", "--base=HEAD"}, releasedOn(t, aged), now, command)
 
 			require.NoError(t, err)
 			assert.Contains(t, out, "違反なし")
@@ -2438,7 +2540,7 @@ func Test_run(t *testing.T) {
 			useMiseGateRepo(t, miseOneAquaTool, miseOneAquaTool)
 			require.NoError(t, os.WriteFile(semgrepFile, []byte("SEMGREP_RULES_COMMIT := "+semgrepNewer+"\n"), 0o600))
 
-			out, err := runCaptured(t, []string{"gate", "--base=HEAD", "--github"}, semgrepCommitOn(t, semgrepNewer, aged), now)
+			out, err := runCaptured(t, []string{"gate", "--base=HEAD", "--github"}, semgrepCommitOn(t, semgrepNewer, aged), now, command)
 
 			require.NoError(t, err)
 			assert.Contains(t, out, "違反なし")
@@ -2449,7 +2551,7 @@ func Test_run(t *testing.T) {
 			dir := useMiseWorkTree(t, miseOneAquaTool)
 			path := filepath.Join(dir, "summary.md")
 
-			_, err := runCaptured(t, []string{"audit", "--summary-out=" + path}, releasedOn(t, fresh), now)
+			_, err := runCaptured(t, []string{"audit", "--summary-out=" + path}, releasedOn(t, fresh), now, command)
 
 			require.NoError(t, err)
 			body, readErr := os.ReadFile(path) //nolint:gosec // テスト内の一時ファイル
@@ -2463,7 +2565,7 @@ func Test_run(t *testing.T) {
 			path := filepath.Join(dir, "github-output")
 			t.Setenv("GITHUB_OUTPUT", path)
 
-			_, err := runCaptured(t, []string{"audit"}, releasedOn(t, fresh), now)
+			_, err := runCaptured(t, []string{"audit"}, releasedOn(t, fresh), now, command)
 
 			require.NoError(t, err)
 			body, readErr := os.ReadFile(path) //nolint:gosec // テスト内の一時ファイル
@@ -2476,7 +2578,7 @@ func Test_run(t *testing.T) {
 		// ヘルプ要求を解析失敗と同じ扱いにすると、`-h` が異常終了に化ける。
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 		t.Run("ヘルプ要求は失敗にしない", func(t *testing.T) {
-			_, err := runCaptured(t, []string{"audit", "-h"}, offlineClient(), now)
+			_, err := runCaptured(t, []string{"audit", "-h"}, offlineClient(), now, command)
 
 			require.NoError(t, err)
 		})
@@ -2484,8 +2586,7 @@ func Test_run(t *testing.T) {
 
 	//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 	t.Run("異常系", func(t *testing.T) {
-		// 宣言0件を成功で終わらせない理由は run のガード注記が持つ。`[tools]` 節が無い場合と
-		// 空の場合の両方で、そのガードが働くことを固定する。
+		// `[tools]` 節が無い場合と空の場合の両方で、宣言0件を成功にしないことを固定する。
 		for name, content := range map[string]string{
 			"[tools] 節が無い": "[settings]\nfoo = \"1\"\n",
 			"[tools] 節が空":  "[tools]\n",
@@ -2494,7 +2595,7 @@ func Test_run(t *testing.T) {
 			t.Run(name+"なら audit を成功で終わらせない", func(t *testing.T) {
 				useMiseWorkTree(t, content)
 
-				_, err := runCaptured(t, []string{"audit"}, releasedOn(t, aged), now)
+				_, err := runCaptured(t, []string{"audit"}, releasedOn(t, aged), now, command)
 
 				require.ErrorIs(t, err, errNoDeclarations)
 			})
@@ -2518,20 +2619,20 @@ func Test_run(t *testing.T) {
 				_, _ = io.WriteString(w, `{"published_at":"`+published+`T00:00:00Z"}`)
 			})
 
-			out, err := runCaptured(t, []string{"gate", "--base=HEAD", "--github"}, client, now)
+			out, err := runCaptured(t, []string{"gate", "--base=HEAD", "--github"}, client, now, command)
 
 			require.ErrorIs(t, err, errBlocking)
 			assert.Contains(t, out, "::error file=.tflint.hcl::github:terraform-linters/tflint-ruleset-aws@0.49.0")
 		})
 
-		// check は tflint --init の前に走る。上流へ問い合わせずに、許さない取得元で落ちる必要がある。
+		// check は TFLint の起動の前に走る。上流へ問い合わせずに、許さない取得元で落ちる必要がある。
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 		t.Run("check は上流に問い合わせず、許さない取得元の plugin で失敗する", func(t *testing.T) {
 			dir := useMiseWorkTree(t, miseOneAquaTool)
 			untrusted := "plugin \"x\" {\n  version = \"1.0.0\"\n  source = \"github.com/someone/tflint-ruleset-x\"\n}\n"
 			require.NoError(t, os.WriteFile(filepath.Join(dir, tflintFile), []byte(untrusted), 0o600))
 
-			_, err := runCaptured(t, []string{"check"}, &http.Client{Transport: unreachableUpstream{}}, now)
+			_, err := runCaptured(t, []string{"check"}, &http.Client{Transport: unreachableUpstream{}}, now, command)
 
 			require.ErrorIs(t, err, ErrUntrustedPlugin)
 		})
@@ -2542,7 +2643,7 @@ func Test_run(t *testing.T) {
 			dir := useMiseWorkTree(t, "[tools]\n")
 			require.NoError(t, os.WriteFile(filepath.Join(dir, tflintFile), []byte(tflintFixture), 0o600))
 
-			_, err := runCaptured(t, []string{"audit"}, releasedOn(t, aged), now)
+			_, err := runCaptured(t, []string{"audit"}, releasedOn(t, aged), now, command)
 
 			require.ErrorIs(t, err, errNoDeclarations)
 		})
@@ -2552,7 +2653,7 @@ func Test_run(t *testing.T) {
 			dir := useMiseWorkTree(t, miseOneAquaTool)
 			require.NoError(t, os.WriteFile(filepath.Join(dir, semgrepFile), []byte("SEMGREP_RULES_COMMIT := main\n"), 0o600))
 
-			_, err := runCaptured(t, []string{"check"}, &http.Client{Transport: unreachableUpstream{}}, now)
+			_, err := runCaptured(t, []string{"check"}, &http.Client{Transport: unreachableUpstream{}}, now, command)
 
 			require.ErrorIs(t, err, ErrInvalidSemgrep)
 		})
@@ -2561,7 +2662,7 @@ func Test_run(t *testing.T) {
 		t.Run("gate は窓内に公開された semgrep-rules の commit への更新を失敗にする", func(t *testing.T) {
 			useMiseGateRepo(t, miseOneAquaTool, miseOneAquaTool)
 			require.NoError(t, os.WriteFile(semgrepFile, []byte("SEMGREP_RULES_COMMIT := "+semgrepNewer+"\n"), 0o600))
-			out, err := runCaptured(t, []string{"gate", "--base=HEAD", "--github"}, semgrepCommitOn(t, semgrepNewer, fresh), now)
+			out, err := runCaptured(t, []string{"gate", "--base=HEAD", "--github"}, semgrepCommitOn(t, semgrepNewer, fresh), now, command)
 
 			require.ErrorIs(t, err, errBlocking)
 			assert.Contains(t, out, "::error file="+semgrepFile+"::"+semgrepRulesKey+"@"+semgrepNewer+"（"+semgrepRulesKey+"）は公開 1 日")
@@ -2573,7 +2674,7 @@ func Test_run(t *testing.T) {
 		t.Run("gate は base に semgrep.mk が無ければ現在の commit を足されたものとして窓に掛ける", func(t *testing.T) {
 			useGateRepo(t, miseOneAquaTool, miseOneAquaTool, miseFile)
 
-			out, err := runCaptured(t, []string{"gate", "--base=HEAD", "--github"}, semgrepCommitOn(t, semgrepPin, fresh), now)
+			out, err := runCaptured(t, []string{"gate", "--base=HEAD", "--github"}, semgrepCommitOn(t, semgrepPin, fresh), now, command)
 
 			require.ErrorIs(t, err, errBlocking)
 			assert.Contains(t, out, "::error file="+semgrepFile+"::"+semgrepRulesKey+"@"+semgrepPin+"（"+semgrepRulesKey+"）は公開 1 日")
@@ -2583,7 +2684,7 @@ func Test_run(t *testing.T) {
 		t.Run("gate は base に無い窓内のツールを失敗にする", func(t *testing.T) {
 			useMiseGateRepo(t, "[tools]\n", miseOneAquaTool)
 
-			out, err := runCaptured(t, []string{"gate", "--base=HEAD"}, releasedOn(t, fresh), now)
+			out, err := runCaptured(t, []string{"gate", "--base=HEAD"}, releasedOn(t, fresh), now, command)
 
 			require.ErrorIs(t, err, errBlocking)
 			assert.Contains(t, out, "窓明けを待つか")
@@ -2593,7 +2694,7 @@ func Test_run(t *testing.T) {
 		t.Run("github 指定のときだけアノテーションを出す", func(t *testing.T) {
 			useMiseGateRepo(t, "[tools]\n", miseOneAquaTool)
 
-			out, err := runCaptured(t, []string{"gate", "--base=HEAD", "--github"}, releasedOn(t, fresh), now)
+			out, err := runCaptured(t, []string{"gate", "--base=HEAD", "--github"}, releasedOn(t, fresh), now, command)
 
 			require.ErrorIs(t, err, errBlocking)
 			assert.Contains(t, out, "::error file="+miseFile+"::aqua:owner/repo@1.2.3")
@@ -2605,14 +2706,14 @@ func Test_run(t *testing.T) {
 			writeWorkTreeBypass(t, dir,
 				`"aqua:owner/repo@1.2.3" = { expires = 2000-01-01, issue = 1, reason = "済んだ緊急対応" }`+"\n")
 
-			_, err := runCaptured(t, []string{"audit"}, releasedOn(t, aged), now)
+			_, err := runCaptured(t, []string{"audit"}, releasedOn(t, aged), now, command)
 
 			require.ErrorIs(t, err, errBlocking)
 		})
 
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 		t.Run("使い方の誤りはそのまま失敗にする", func(t *testing.T) {
-			_, err := runCaptured(t, nil, offlineClient(), now)
+			_, err := runCaptured(t, nil, offlineClient(), now, command)
 
 			require.ErrorIs(t, err, errUsage)
 		})
@@ -2621,7 +2722,7 @@ func Test_run(t *testing.T) {
 		t.Run("mise.toml が無ければ失敗にする", func(t *testing.T) {
 			t.Chdir(t.TempDir())
 
-			_, err := runCaptured(t, []string{"audit"}, offlineClient(), now)
+			_, err := runCaptured(t, []string{"audit"}, offlineClient(), now, command)
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "宣言ファイルの読み取り: "+miseFile)
@@ -2632,7 +2733,7 @@ func Test_run(t *testing.T) {
 		t.Run("mise.toml を読み切れなければ失敗にする", func(t *testing.T) {
 			useMiseWorkTree(t, "[tools]\n"+strings.Repeat("a", bufio.MaxScanTokenSize+1)+"\n")
 
-			_, err := runCaptured(t, []string{"audit"}, offlineClient(), now)
+			_, err := runCaptured(t, []string{"audit"}, offlineClient(), now, command)
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "token too long")
@@ -2643,7 +2744,7 @@ func Test_run(t *testing.T) {
 			dir := useMiseWorkTree(t, miseOneAquaTool)
 			writeWorkTreeBypass(t, dir, "これは行として解釈できない\n")
 
-			_, err := runCaptured(t, []string{"audit"}, offlineClient(), now)
+			_, err := runCaptured(t, []string{"audit"}, offlineClient(), now, command)
 
 			require.ErrorIs(t, err, errBypassInvalidLine)
 		})
@@ -2652,18 +2753,17 @@ func Test_run(t *testing.T) {
 		t.Run("gate の base を解決できなければ失敗にする", func(t *testing.T) {
 			useMiseWorkTree(t, miseOneAquaTool)
 
-			_, err := runCaptured(t, []string{"gate", "--base=HEAD"}, offlineClient(), now)
+			_, err := runCaptured(t, []string{"gate", "--base=HEAD"}, offlineClient(), now, command)
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "base との差分")
 		})
 
-		// 理由は Test_resolveBackends と同じ。
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 		t.Run("backend を解決できないキーがあれば失敗にする", func(t *testing.T) {
 			useMiseWorkTree(t, "[tools]\nno-such-tool-for-cooldown-test = \"1.0.0\"\n")
 
-			_, err := runCaptured(t, []string{"audit"}, offlineClient(), now)
+			_, err := runCaptured(t, []string{"audit"}, offlineClient(), now, command)
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "backend の解決")
@@ -2673,7 +2773,7 @@ func Test_run(t *testing.T) {
 		t.Run("サマリを書き出せなければ失敗にする", func(t *testing.T) {
 			dir := useMiseWorkTree(t, miseOneAquaTool)
 
-			_, err := runCaptured(t, []string{"audit", "--summary-out=" + dir}, releasedOn(t, aged), now)
+			_, err := runCaptured(t, []string{"audit", "--summary-out=" + dir}, releasedOn(t, aged), now, command)
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "write summary")
@@ -2684,7 +2784,7 @@ func Test_run(t *testing.T) {
 			dir := useMiseWorkTree(t, miseOneAquaTool)
 			t.Setenv("GITHUB_OUTPUT", dir)
 
-			_, err := runCaptured(t, []string{"audit"}, releasedOn(t, aged), now)
+			_, err := runCaptured(t, []string{"audit"}, releasedOn(t, aged), now, command)
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "write GITHUB_OUTPUT")
@@ -2707,7 +2807,6 @@ func Test_fetchBody(t *testing.T) {
 			assert.JSONEq(t, `{"name":"ok"}`, string(out))
 		})
 
-		// 理由は Test_getJSON と同じ。
 		t.Run("GitHub API にだけトークンを載せる", func(t *testing.T) {
 			t.Setenv("GITHUB_TOKEN", "test-token")
 			auth := make(chan string, 2)
@@ -2794,4 +2893,64 @@ func Test_getText(t *testing.T) {
 			require.Error(t, err)
 		})
 	})
+}
+
+func Test_command(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		step string
+		want []string
+	}{
+		"git show は --end-of-options の後ろに rev を置く":      {stepGitShow, []string{"git", "-c", "core.hooksPath=/dev/null", "show", "--end-of-options", "-x"}},
+		"git rev-parse は --end-of-options の後ろに rev を置く": {stepGitRevParse, []string{"git", "-c", "core.hooksPath=/dev/null", "rev-parse", "--verify", "--quiet", "--end-of-options", "-x"}},
+		"mise registry は -- の後ろに名前を置く":                  {stepMiseRegistry, []string{"mise", "registry", "--", "-x"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cmd := command(t.Context(), "/d", []string{"A=1"}, c.step, "-x")
+			assert.Equal(t, c.want, append([]string{filepath.Base(cmd.Args[0])}, cmd.Args[1:]...))
+			assert.Equal(t, "/d", cmd.Dir)
+			assert.Equal(t, []string{"A=1"}, cmd.Env)
+		})
+	}
+
+	for name, c := range map[string]struct {
+		step     string
+		operands []string
+	}{
+		"operand が無ければ false":  {stepGitShow, nil},
+		"operand が2つあれば false": {stepMiseRegistry, []string{"a", "b"}},
+		"知らない段は false":         {"unknown", []string{"a"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cmd := command(t.Context(), "", nil, c.step, c.operands...)
+			assert.Equal(t, "false", filepath.Base(cmd.Args[0]))
+			assert.Len(t, cmd.Args, 1)
+		})
+	}
+}
+
+func Test_exitCode(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		err  error
+		want int
+	}{
+		"成功は 0":                {nil, 0},
+		"backend を決められないのは 2":  {errUnsupportedBackend, 2},
+		"違反が残ったのは 1":           {errBlocking, 1},
+		"base を解決できないのは 2":     {errBaseUnresolved, 2},
+		"mise registry の失敗は 2": {errMiseRegistry, 2},
+		"道具を起動できないのは 2":        {toolrun.ErrTool, 2},
+		"宣言が0件なのは 2":           {errNoDeclarations, 2},
+		"使い方の誤りは 2":            {errUsage, 2},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, exitCode(c.err))
+		})
+	}
 }

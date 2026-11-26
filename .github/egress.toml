@@ -188,6 +188,9 @@ hosts = ["scheduler.ap-northeast-1.amazonaws.com", "scheduler.us-east-1.amazonaw
 [type.aws_sns_]
 hosts = ["sns.ap-northeast-1.amazonaws.com", "sns.us-east-1.amazonaws.com"]
 
+[job."api-budget.yaml:api-budget"]
+classes = []
+
 [job."actions-lint.yaml:actions-lint"]
 classes = ["mise"]
 
@@ -249,6 +252,9 @@ classes = ["mise"]
 classes = ["mise"]
 
 [job."md-lint.yaml:skill-lint"]
+classes = ["mise"]
+
+[job."md-lint.yaml:ref-record-lint"]
 classes = ["mise"]
 
 [job."notify.yaml:notify"]

@@ -2,7 +2,7 @@
 # ここに含めない理由は docker/tools/README.md が持つ（ADR-0503 決定1・2・5・10・11）。
 # **terraform をここへ足さない。**
 
-ARG MISE_VERSION=v2026.9.9
+ARG MISE_VERSION=v2026.11.7
 
 
 # ==============================================================================
@@ -25,7 +25,9 @@ ENV MISE_DATA_DIR=/root/.local/share/mise \
     PATH="/root/.local/bin:/root/.local/share/mise/shims:$PATH" \
     # ホスト側の MISE_DISABLE_TOOLS をコンテナへ持ち込ませない。導入する道具は [tools] の
     # 宣言だけで決まる。
-    MISE_DISABLE_TOOLS=""
+    MISE_DISABLE_TOOLS="" \
+    # 道具を mise.lock の取得元と照合値からだけ入れる（ADR-0503 決定2）。
+    MISE_LOCKED=1
 # パイプのままだとリトライ時に部分受信分が sh へ流れ込むため、ファイルへ落としてから実行する。
 RUN curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors https://mise.run -o /tmp/mise-install.sh \
     && MISE_VERSION=${MISE_VERSION} sh /tmp/mise-install.sh \
@@ -33,7 +35,7 @@ RUN curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors https://mise.run -o 
     && /root/.local/bin/mise --version
 
 WORKDIR /app
-COPY mise.toml ./
+COPY mise.toml mise.lock ./
 RUN mise trust mise.toml
 
 # ベースイメージの Go が mise.toml の宣言と一致することを強制する（ADR-0503 決定3）。
@@ -59,6 +61,7 @@ RUN --mount=type=secret,id=github_token \
     && mise install golangci-lint \
     && MISE_DISABLE_TOOLS=go mise install "go:golang.org/x/vuln/cmd/govulncheck" \
     && mise install "aqua:terraform-linters/tflint" \
+    && mise install "github:terraform-linters/tflint-ruleset-aws" \
     && mise install "aqua:aquasecurity/trivy" \
     && mise install "aqua:gitleaks/gitleaks" \
     && mise install "aqua:trufflesecurity/trufflehog" \
@@ -74,6 +77,7 @@ RUN mkdir /out \
     && cp "$(mise which golangci-lint)"  /out/ \
     && cp "$(mise which govulncheck)"    /out/ \
     && cp "$(mise which tflint)"         /out/ \
+    && cp "$(mise where github:terraform-linters/tflint-ruleset-aws)/tflint-ruleset-aws" /out/ \
     && cp "$(mise which trivy)"          /out/ \
     && cp "$(mise which gitleaks)"       /out/ \
     && cp "$(mise which trufflehog)"     /out/ \
@@ -101,7 +105,6 @@ ENV GOCACHE=/tmp/go-build \
 
 # root で動かさない。bind mount した生成物が root 所有になると、道具が直した行を直した本人が
 # 消せない状態がリポジトリに残る。compose も user を渡すが、イメージ単体でも既定を非 root にする。
-# 数値で書くのは、ホスト側が名前を解決できるとは限らないため（hadolint DL3066）。
 # 65534 は nobody:nogroup。この段に mise も home も残していないため、書き込む先を持たない。
 USER 65534:65534
 
@@ -126,9 +129,9 @@ RUN apk add --no-cache ca-certificates curl
 # 版と照合値は make pin-pnpm-resolve が mise.toml の宣言から書く写しで、make pin-pnpm-check が守る。
 ARG TARGETARCH
 RUN set -eu; \
-    pnpm_version="12.17.0"; \
-    pnpm_sha256_amd64="0a3f8f12f4d894ba5013c7d445136eec5260dcffb63477247ca9b1c23d4fe27f"; \
-    pnpm_sha256_arm64="57f5f13647270dd55f4c463b5ad8e6e9157fc0463bb1ac62216da7c18531cb5b"; \
+    pnpm_version="12.19.0"; \
+    pnpm_sha256_amd64="b41d7b2d8f47187fdf9b3df170f984ffb02ef14bd27d353ccff704cef0d1af6e"; \
+    pnpm_sha256_arm64="cf6a59cbbd06800575d8274cd5f84eb9de74794ec495630b554bfef341ecd0d8"; \
     case "${TARGETARCH:-}" in \
       amd64) asset=x64; sum="$pnpm_sha256_amd64" ;; \
       arm64) asset=arm64; sum="$pnpm_sha256_arm64" ;; \
@@ -149,7 +152,7 @@ COPY docker/tools/node/package.json docker/tools/node/pnpm-lock.yaml docker/tool
 RUN pnpm install --frozen-lockfile --prod --store-dir /tmp/pnpm-store
 
 # ==============================================================================
-# node_tools: npm エコシステムの道具。markdownlint-cli2 / commitlint
+# node_tools: npm エコシステムの道具
 # ==============================================================================
 # pnpm と curl はこの段へ持ち込まない（ADR-0503 決定11）。
 FROM node:26.13.1-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS node_tools

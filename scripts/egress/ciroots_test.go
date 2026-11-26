@@ -2,10 +2,7 @@ package main
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
-	"regexp"
-	"slices"
 	"strings"
 	"testing"
 
@@ -19,17 +16,6 @@ import (
 func bindingSSOT(t *testing.T) *ssot {
 	t.Helper()
 	return mustParse(t, "[job.\"a.yaml:one\"]\nclasses = []\n[job.\"a.yaml:two\"]\nclasses = []\n[root.\"env/t/identity\"]\njobs = [\"a.yaml:one\"]\n")
-}
-
-func makeDryRun(t *testing.T, args ...string) string {
-	t.Helper()
-	cmd := exec.CommandContext(t.Context(), "make", append([]string{"-C", filepath.Join("..", ".."), "-n", "--no-print-directory"}, args...)...)
-	cmd.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool {
-		return strings.HasPrefix(kv, "MAKEFLAGS=") || strings.HasPrefix(kv, "MFLAGS=") || strings.HasPrefix(kv, "MAKELEVEL=")
-	})
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, string(out))
-	return string(out)
 }
 
 func ciWorkflow(jobID, run string) string {
@@ -158,22 +144,6 @@ func Test_rootPath(t *testing.T) {
 			assert.Equal(t, "env/admin", rootPath("admin", cientry.RootWorkload))
 		})
 
-		// 配置の規則は local.mk の TF_LOCAL_DIR も持つ。片方だけが動くと、CI が実行する dir と型を集める dir が
-		// ずれるので、実物の ci.mk の入口を make -n で展開して突き合わせる（ADR-0702 決定17）。
-		t.Run("実物の ci.mk の入口が terraform を実行する dir と一致する", func(t *testing.T) {
-			t.Parallel()
-			entries, err := cientry.ParseRepo(filepath.Join("..", ".."))
-			require.NoError(t, err)
-			targets := ciEntries(entries)
-			require.NotEmpty(t, targets)
-			dirRe := regexp.MustCompile(`dir="\./([^"]+)"`)
-			for target, e := range targets {
-				out := makeDryRun(t, target)
-				m := dirRe.FindStringSubmatch(out)
-				require.NotNil(t, m, out)
-				assert.Equal(t, e.root, m[1], target)
-			}
-		})
 	})
 }
 

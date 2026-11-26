@@ -76,7 +76,7 @@ Dockerfile と compose の検査、image digest の固定。
 
 ### `github/`
 
-workflow と action の検査、commit message、egress の SSOT、action と runner の固定、ベースブランチの解決。
+workflow と action の検査、commit message、egress の SSOT、action と runner の固定、ベースブランチの解決。commit message の範囲の判定は `scripts/commit-range` が持つ。
 
 ### `github/operation/`
 
@@ -86,11 +86,11 @@ workflow と action の検査、commit message、egress の SSOT、action と ru
 
 ### `github/setting/`
 
-ブランチ保護・ラベル・リポジトリ設定の適用。
+ブランチ保護・ラベル・リポジトリ設定の適用。判定と GitHub への書き込みは `scripts/repo-settings` が持つ。
 
 ### `go/`
 
-運用機構（`scripts/`）の Go の整形・Lint・テスト。
+運用機構（`scripts/`）の Go の整形・Lint・テスト。整形の検査の判定と canary は `scripts/gofmt-gate` が持つ。
 
 ### `hygiene/`
 
@@ -116,16 +116,17 @@ Terraform を動かす入口。`local.mk` は人の手元（AWS へのログイ�
 CI（OIDC で role を assume しての plan と apply）。
 
 検査の起動の表の外にあり、ホストの terraform と AWS CLI を人か CI の role の資格情報で起動する。
-`TF_ENV`（資格情報を外す）を経由しない。aws と terraform に渡す値（region、Bucket 名、外す環境変数、
-plan の log の1行目）は `$(call RUN_SCRIPT_HOST,tf-local,...)` で `scripts/tf-local` が返し、aws の出力は
-`-identity` の引数で tf-local に渡す。tf-local は aws も terraform も起動しない。
+`TF_ENV`（資格情報を外す）を経由しない。`local.mk` の init と plan は、`scripts/tf-local` の段
+（`local-prepare` が aws で init の値を算出し、`local-init` と `local-plan` が terraform を起動する）を順に起動する。
+`ci.mk` の資格情報・plan・apply・lock の解除・lock を残す入口も、`scripts/tf-local` の段（`ci-*`）を順に
+起動する。aws・terraform・conftest は段が起動し、make は段の順序だけを持つ。
 
 `bootstrap-check-plan` は、保存した plan を `terraform show -json` で読み、`scripts/bootstrap-check` へ標準入力で
 渡して段2-4 の期待値と突き合わせる。plan のパスと標準入力がホストのものなので `RUN_SCRIPT_HOST` で起動し、
 `terraform show` は `env -i` で起動して資格情報を渡さない。`PARTIAL` は make の引数でだけ渡せる。
 `bootstrap-check-account` は、`aws-login` と同じく `tf-local env-unset` の変数を外し、bootstrap の profile と
 identity root の region で `scripts/bootstrap-check account` を起動する。`bootstrap-verify` も同じ形で
-`scripts/bootstrap-check verify` を起動し、`STAGE` と、空でなければ `BOOTSTRAP_EXECUTOR`・`POLICY_SOURCE` を渡す。
+`scripts/bootstrap-check verify` を起動し、`STAGE` と、空でなければ `BOOTSTRAP_EXECUTOR`・`POLICY_SOURCE` を渡す。`POLICY_SOURCE=reference` のときは、`make tf-policy` の出力の置き場（`-out`）も `-reference-dir` で渡す。
 aws の起動は bootstrap-check が持つ。
 
 ### 直下

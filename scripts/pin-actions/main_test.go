@@ -11,9 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/fakeexec"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cooldown"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lockfile"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun/tooltest"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 
 	"github.com/stretchr/testify/assert"
@@ -1323,32 +1325,72 @@ func Test_refAgeDays(t *testing.T) {
 	})
 }
 
-//nolint:paralleltest // useGitStub が t.Setenv を使うため並列化できない
 func Test_resolveSHA(t *testing.T) {
-	//nolint:paralleltest // 親が t.Setenv を使うため並列化できない
+	t.Parallel()
 	t.Run("正常系", func(t *testing.T) {
-		//nolint:paralleltest // 親が t.Setenv を使うため並列化できない
+		t.Parallel()
 		t.Run("ls-remote の出力から tag に対応する SHA を返す", func(t *testing.T) {
-			useGitStub(t)
+			t.Parallel()
 
-			sha, err := resolveSHA(t.Context(), "actions/checkout", "v7.0.0")
+			f := tooltest.New(t)
+			f.Set(stepLsRemote, "out", shaCheckout+"\trefs/tags/v7.0.0\n")
+
+			sha, err := resolveSHA(t.Context(), f.Tool(), "actions/checkout", "v7.0.0")
 
 			require.NoError(t, err)
 			assert.Equal(t, shaCheckout, sha)
+			assert.Equal(t, []string{stepLsRemote + " https://github.com/actions/checkout v7.0.0 v7.0.0^{}"}, f.Args())
 		})
 	})
 
-	//nolint:paralleltest // 親が t.Setenv を使うため並列化できない
 	t.Run("異常系", func(t *testing.T) {
-		//nolint:paralleltest // 親が t.Setenv を使うため並列化できない
-		t.Run("ls-remote が失敗したら SHA を返さずエラーを伝播する", func(t *testing.T) {
+		t.Parallel()
+		t.Run("取り消し済みの ctx では起動できず ErrTool で、SHA を返さない", func(t *testing.T) {
+			t.Parallel()
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
 
-			sha, err := resolveSHA(ctx, "actions/checkout", "v7.0.0")
+			sha, err := resolveSHA(ctx, gitFake(t), "actions/checkout", "v7.0.0")
 
-			require.ErrorIs(t, err, context.Canceled)
+			require.ErrorIs(t, err, toolrun.ErrTool)
+			assert.Equal(t, 2, exitCode(err))
 			assert.Empty(t, sha)
+		})
+
+		t.Run("ls-remote が 0 以外で終われば errLsRemote で、SHA を返さない", func(t *testing.T) {
+			t.Parallel()
+			f := tooltest.New(t)
+			f.Set(stepLsRemote, "err", "fatal: repository not found\n")
+			f.Set(stepLsRemote, "rc", "128")
+
+			sha, err := resolveSHA(t.Context(), f.Tool(), "actions/checkout", "v7.0.0")
+
+			require.ErrorIs(t, err, errLsRemote)
+			assert.ErrorContains(t, err, "exit status 128")
+			assert.ErrorContains(t, err, "repository not found")
+			assert.Equal(t, 2, exitCode(err))
+			assert.Empty(t, sha)
+		})
+
+		t.Run("ls-remote が 0 で何も返さなければ errRefNotFound", func(t *testing.T) {
+			t.Parallel()
+			f := tooltest.New(t)
+
+			sha, err := resolveSHA(t.Context(), f.Tool(), "actions/checkout", "v7.0.0")
+
+			require.ErrorIs(t, err, errRefNotFound)
+			assert.Equal(t, 2, exitCode(err))
+			assert.Empty(t, sha)
+		})
+
+		t.Run("ls-remote が形の違う行だけを返せば errRefNotFound", func(t *testing.T) {
+			t.Parallel()
+			f := tooltest.New(t)
+			f.Set(stepLsRemote, "out", "garbage\n")
+
+			_, err := resolveSHA(t.Context(), f.Tool(), "actions/checkout", "v7.0.0")
+
+			require.ErrorIs(t, err, errRefNotFound)
 		})
 	})
 }
@@ -1535,59 +1577,57 @@ func Test_applyOrCheck(t *testing.T) {
 	})
 }
 
-//nolint:paralleltest // useGitStub が t.Setenv を使うため並列化できない
 func Test_resolve(t *testing.T) {
+	t.Parallel()
 	const uses = "      - uses: actions/checkout@v7.0.0\n"
 
-	//nolint:paralleltest // 親が t.Setenv を使うため並列化できない
 	t.Run("正常系", func(t *testing.T) {
-		//nolint:paralleltest // 親が t.Setenv を使うため並列化できない
+		t.Parallel()
 		t.Run("参照されなくなったエントリは書き直しで lockfile から消える", func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			writeLockAt(t, root, testLock())
 
-			require.NoError(t, resolve(root, "", nil, 0))
+			require.NoError(t, resolve(root, "", nil, 0, gitFake(t)))
 
 			got, err := lockFormat.Read(filepath.Join(root, lockFile))
 			require.NoError(t, err)
 			assert.Empty(t, got, "走査で参照が見つからなければ lockfile は空になる")
 		})
 
-		//nolint:paralleltest // 親が t.Setenv を使うため並列化できない
 		t.Run("ローカル参照しか無いファイルからはエントリを作らない", func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			writeLockAt(t, root, map[string]string{})
 			path := writeFile(t, root, ".github/workflows/a.yml", "      - uses: ./.github/actions/setup-postgres\n")
 
-			require.NoError(t, resolve(root, "", []string{path}, 0))
+			require.NoError(t, resolve(root, "", []string{path}, 0, gitFake(t)))
 
 			got, err := lockFormat.Read(filepath.Join(root, lockFile))
 			require.NoError(t, err)
 			assert.Empty(t, got)
 		})
 
-		//nolint:paralleltest // useGitStub が t.Setenv を使うため並列化できない
 		t.Run("解決した SHA を lockfile へ書き出す", func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			writeLockAt(t, root, map[string]string{})
 			path := writeFile(t, root, ".github/workflows/a.yml", uses)
-			useGitStub(t)
 
-			require.NoError(t, resolve(root, "", []string{path}, 0))
+			require.NoError(t, resolve(root, "", []string{path}, 0, gitFake(t)))
 
 			got, err := lockFormat.Read(filepath.Join(root, lockFile))
 			require.NoError(t, err)
 			assert.Equal(t, map[string]string{"actions/checkout@v7.0.0": shaCheckout}, got)
 		})
 
-		//nolint:paralleltest // useGitStub が t.Setenv を使うため並列化できない
 		t.Run("検疫期間より新しい解決先は既存ピンを維持する", func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			writeLockAt(t, root, map[string]string{"actions/checkout@v7.0.0": shaSetupGo})
 			path := writeFile(t, root, ".github/workflows/a.yml", uses)
-			useGitStub(t)
 
-			require.NoError(t, resolve(root, githubTimesStub(t, 1, 1), []string{path}, 14))
+			require.NoError(t, resolve(root, githubTimesStub(t, 1, 1), []string{path}, 14, gitFake(t)))
 
 			got, err := lockFormat.Read(filepath.Join(root, lockFile))
 			require.NoError(t, err)
@@ -1595,28 +1635,26 @@ func Test_resolve(t *testing.T) {
 				got, "出来立ての解決先を採用すると検疫が素通りする")
 		})
 
-		//nolint:paralleltest // useGitStub が t.Setenv を使うため並列化できない
 		t.Run("既存ピンが無く検疫期間より新しい解決先は lockfile へ載せない", func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			writeLockAt(t, root, map[string]string{})
 			path := writeFile(t, root, ".github/workflows/a.yml", uses)
-			useGitStub(t)
 
-			require.NoError(t, resolve(root, githubTimesStub(t, 1, 1), []string{path}, 14))
+			require.NoError(t, resolve(root, githubTimesStub(t, 1, 1), []string{path}, 14, gitFake(t)))
 
 			got, err := lockFormat.Read(filepath.Join(root, lockFile))
 			require.NoError(t, err)
 			assert.Empty(t, got, "退行先の無い出来立ての解決先を載せると未検証 SHA が固定される")
 		})
 
-		//nolint:paralleltest // useGitStub が t.Setenv を使うため並列化できない
 		t.Run("検疫期間より古い解決先は新しい SHA を採用する", func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			writeLockAt(t, root, map[string]string{"actions/checkout@v7.0.0": shaSetupGo})
 			path := writeFile(t, root, ".github/workflows/a.yml", uses)
-			useGitStub(t)
 
-			require.NoError(t, resolve(root, githubTimesStub(t, 100, 100), []string{path}, 14))
+			require.NoError(t, resolve(root, githubTimesStub(t, 100, 100), []string{path}, 14, gitFake(t)))
 
 			got, err := lockFormat.Read(filepath.Join(root, lockFile))
 			require.NoError(t, err)
@@ -1625,14 +1663,14 @@ func Test_resolve(t *testing.T) {
 	})
 
 	t.Run("異常系", func(t *testing.T) {
-		t.Run("解釈できない lockfile は既存ピン無しと見なさずエラーを返す", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
+		t.Run("解釈できない lockfile は既存ピン無しと見なさずエラーを返す", func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			body := "\"actions/checkout@v7.0.0\" = \"" + shaCheckout + "\"\n" + "invalid line\n"
 			lockPath := writeFile(t, root, lockFile, body)
 			path := writeFile(t, root, ".github/workflows/a.yml", uses)
-			useGitStub(t)
 
-			err := resolve(root, "", []string{path}, 0)
+			err := resolve(root, "", []string{path}, 0, gitFake(t))
 
 			require.ErrorIs(t, err, lockfile.ErrInvalidLine)
 			assert.ErrorContains(t, err, "pin-actions-resolve", "直し方の案内が相手のツール名になっている")
@@ -1727,17 +1765,13 @@ func writeLockAt(t *testing.T, root string, lock map[string]string) {
 	require.NoError(t, lockFormat.Write(path, lock))
 }
 
-// useGitStub は実 git を呼ばずに ls-remote の出力を差し替えるダミーを PATH 先頭へ載せる。
-// testLock の全 tag を 1 度に出力するので、呼び出し側が要求した tag だけを選べているかも合わせて検証できる。
-func useGitStub(t *testing.T) {
+func gitFake(t *testing.T) toolFunc {
 	t.Helper()
-	out := shaCheckout + "\trefs/tags/v7.0.0\n" +
-		shaSetupGo + "\trefs/tags/v6\n" +
-		shaCodeQL + "\trefs/tags/v4\n"
-	dir := t.TempDir()
-	script := "#!/bin/sh\ncat <<'GITSTUB'\n" + out + "GITSTUB\n"
-	fakeexec.Write(t, filepath.Join(dir, "git"), script, 0o755)
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	f := tooltest.New(t)
+	f.Set(stepLsRemote, "out", shaCheckout+"\trefs/tags/v7.0.0\n"+
+		shaSetupGo+"\trefs/tags/v6\n"+
+		shaCodeQL+"\trefs/tags/v4\n")
+	return f.Tool()
 }
 
 // githubAPIStub は GitHub API の代わりに応答するテストサーバを立て、その base URL を返す。
@@ -1774,12 +1808,10 @@ func githubTimesStub(t *testing.T, publishedAgo, committedAgo int) string {
 	})
 }
 
-// writePublishedAt は releases/tags の応答として daysAgo 日前の published_at を書く。
 func writePublishedAt(w http.ResponseWriter, daysAgo int) {
 	_, _ = fmt.Fprintf(w, `{"published_at":%q}`, agoRFC3339(daysAgo))
 }
 
-// writeCommitDate は commits の応答として daysAgo 日前の committer date を書く。
 func writeCommitDate(w http.ResponseWriter, daysAgo int) {
 	_, _ = fmt.Fprintf(w, `{"commit":{"committer":{"date":%q}}}`, agoRFC3339(daysAgo))
 }
@@ -1796,7 +1828,6 @@ func stubWD(root string) func() (string, error) {
 
 func Test_run(t *testing.T) {
 	t.Parallel()
-
 	lock := map[string]string{"actions/setup-go@v6": shaSetupGo}
 	unpinned := "      - uses: actions/setup-go@v6\n"
 	pinned := "      - uses: actions/setup-go@" + shaSetupGo + " # v6\n"
@@ -1809,7 +1840,7 @@ func Test_run(t *testing.T) {
 			root := t.TempDir()
 			writeLockAt(t, root, testLock())
 
-			require.NoError(t, run([]string{"resolve"}, stubWD(root), ""))
+			require.NoError(t, run([]string{"resolve"}, stubWD(root), "", gitFake(t)))
 
 			got, err := lockFormat.Read(filepath.Join(root, lockFile))
 			require.NoError(t, err)
@@ -1822,7 +1853,7 @@ func Test_run(t *testing.T) {
 			writeLockAt(t, root, lock)
 			path := writeFile(t, root, ".github/workflows/a.yml", unpinned)
 
-			require.NoError(t, run([]string{"apply"}, stubWD(root), ""))
+			require.NoError(t, run([]string{"apply"}, stubWD(root), "", gitFake(t)))
 
 			data, err := os.ReadFile(path) //nolint:gosec // path は t.TempDir() 由来
 			require.NoError(t, err)
@@ -1835,7 +1866,7 @@ func Test_run(t *testing.T) {
 			writeLockAt(t, root, lock)
 			path := writeFile(t, root, ".github/workflows/a.yml", pinned)
 
-			require.NoError(t, run([]string{"check"}, stubWD(root), ""))
+			require.NoError(t, run([]string{"check"}, stubWD(root), "", gitFake(t)))
 
 			data, err := os.ReadFile(path) //nolint:gosec // path は t.TempDir() 由来
 			require.NoError(t, err)
@@ -1851,7 +1882,7 @@ func Test_run(t *testing.T) {
 			root := t.TempDir()
 			writeLockAt(t, root, lock)
 
-			require.NoError(t, run([]string{"resolve", "-h"}, stubWD(root), ""))
+			require.NoError(t, run([]string{"resolve", "-h"}, stubWD(root), "", gitFake(t)))
 
 			got, err := lockFormat.Read(filepath.Join(root, lockFile))
 			require.NoError(t, err)
@@ -1865,7 +1896,7 @@ func Test_run(t *testing.T) {
 		t.Run("サブコマンドが無ければ使い方を返す", func(t *testing.T) {
 			t.Parallel()
 
-			err := run(nil, stubWD(t.TempDir()), "")
+			err := run(nil, stubWD(t.TempDir()), "", gitFake(t))
 
 			require.ErrorIs(t, err, errUsage)
 		})
@@ -1873,7 +1904,7 @@ func Test_run(t *testing.T) {
 		t.Run("未知のサブコマンドは使い方を返す", func(t *testing.T) {
 			t.Parallel()
 
-			err := run([]string{"bogus"}, stubWD(t.TempDir()), "")
+			err := run([]string{"bogus"}, stubWD(t.TempDir()), "", gitFake(t))
 
 			require.ErrorIs(t, err, errUsage)
 		})
@@ -1881,7 +1912,7 @@ func Test_run(t *testing.T) {
 		t.Run("作業ディレクトリを取得できなければ失敗する", func(t *testing.T) {
 			t.Parallel()
 
-			err := run([]string{"check"}, func() (string, error) { return "", errWD }, "")
+			err := run([]string{"check"}, func() (string, error) { return "", errWD }, "", gitFake(t))
 
 			require.ErrorIs(t, err, errWD)
 			assert.ErrorContains(t, err, "getwd")
@@ -1890,7 +1921,7 @@ func Test_run(t *testing.T) {
 		t.Run("走査対象を集められなければ失敗する", func(t *testing.T) {
 			t.Parallel()
 
-			err := run([]string{"check"}, stubWD(filepath.Join(t.TempDir(), "x[")), "")
+			err := run([]string{"check"}, stubWD(filepath.Join(t.TempDir(), "x[")), "", gitFake(t))
 
 			require.ErrorIs(t, err, filepath.ErrBadPattern)
 		})
@@ -1898,9 +1929,125 @@ func Test_run(t *testing.T) {
 		t.Run("未知のフラグはヘルプ要求と混同せず失敗する", func(t *testing.T) {
 			t.Parallel()
 
-			err := run([]string{"resolve", "-bogus"}, stubWD(t.TempDir()), "")
+			err := run([]string{"resolve", "-bogus"}, stubWD(t.TempDir()), "", gitFake(t))
 
 			require.ErrorContains(t, err, "failed to parse flags")
 		})
 	})
+
+	t.Run("既定の窓", func(t *testing.T) {
+		t.Parallel()
+		const (
+			key  = "actions/checkout@v7.0.0"
+			uses = "      - uses: " + key + "\n"
+		)
+		setup := func(t *testing.T, existing map[string]string) string {
+			t.Helper()
+			root := t.TempDir()
+			writeLockAt(t, root, existing)
+			writeFile(t, root, ".github/workflows/a.yml", uses)
+			return root
+		}
+
+		t.Run("フラグが無ければ PinWindowDays に1日足りない解決先を採らず既存ピンを維持する", func(t *testing.T) {
+			t.Parallel()
+			root := setup(t, map[string]string{key: shaSetupGo})
+			base := githubTimesStub(t, cooldown.PinWindowDays-1, cooldown.PinWindowDays-1)
+
+			require.NoError(t, run([]string{"resolve"}, stubWD(root), base, gitFake(t)))
+
+			got, err := lockFormat.Read(filepath.Join(root, lockFile))
+			require.NoError(t, err)
+			assert.Equal(t, map[string]string{key: shaSetupGo}, got)
+		})
+
+		t.Run("フラグが無ければ PinWindowDays ちょうどの解決先を採用する", func(t *testing.T) {
+			t.Parallel()
+			root := setup(t, map[string]string{key: shaSetupGo})
+			base := githubTimesStub(t, cooldown.PinWindowDays, cooldown.PinWindowDays)
+
+			require.NoError(t, run([]string{"resolve"}, stubWD(root), base, gitFake(t)))
+
+			got, err := lockFormat.Read(filepath.Join(root, lockFile))
+			require.NoError(t, err)
+			assert.Equal(t, map[string]string{key: shaCheckout}, got)
+		})
+
+		t.Run("フラグが無く既存ピンも無ければ PinWindowDays に1日足りない解決先を lockfile へ載せずに成功する", func(t *testing.T) {
+			t.Parallel()
+			root := setup(t, map[string]string{})
+			base := githubTimesStub(t, cooldown.PinWindowDays-1, cooldown.PinWindowDays-1)
+
+			require.NoError(t, run([]string{"resolve"}, stubWD(root), base, gitFake(t)))
+
+			got, err := lockFormat.Read(filepath.Join(root, lockFile))
+			require.NoError(t, err)
+			assert.Empty(t, got)
+		})
+
+		t.Run("--min-age-days=0 なら PinWindowDays に1日足りない解決先も採用する", func(t *testing.T) {
+			t.Parallel()
+			root := setup(t, map[string]string{key: shaSetupGo})
+			base := githubTimesStub(t, cooldown.PinWindowDays-1, cooldown.PinWindowDays-1)
+
+			require.NoError(t, run([]string{"resolve", "--min-age-days=0"}, stubWD(root), base, gitFake(t)))
+
+			got, err := lockFormat.Read(filepath.Join(root, lockFile))
+			require.NoError(t, err)
+			assert.Equal(t, map[string]string{key: shaCheckout}, got)
+		})
+	})
+}
+
+func Test_command(t *testing.T) {
+	t.Parallel()
+
+	t.Run("ls-remote は URL の後に --end-of-options を置き、- で始まる tag もその後ろに置く", func(t *testing.T) {
+		t.Parallel()
+		c := command(t.Context(), "/d", []string{"A=1"}, stepLsRemote, "https://github.com/o/r", "-x", "-x^{}")
+		assert.Equal(t, []string{"git", "ls-remote", "https://github.com/o/r", "--end-of-options", "-x", "-x^{}"}, c.Args)
+		assert.Equal(t, "/d", c.Dir)
+		assert.Equal(t, []string{"A=1"}, c.Env)
+	})
+
+	for name, c := range map[string]struct {
+		step     string
+		operands []string
+	}{
+		"ls-remote に ref 名が無ければ false":    {stepLsRemote, []string{"https://github.com/o/r"}},
+		"ls-remote に operand が無ければ false": {stepLsRemote, nil},
+		"知らない段は false":                    {"unknown", []string{"a", "b"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cmd := command(t.Context(), "", nil, c.step, c.operands...)
+			assert.Equal(t, "false", filepath.Base(cmd.Args[0]))
+			assert.Len(t, cmd.Args, 1)
+		})
+	}
+}
+
+func Test_exitCode(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		err  error
+		want int
+	}{
+		"成功は 0":                {nil, 0},
+		"未固定は 1":               {errPinDrift, 1},
+		"解釈できない記法は 1":          {errLooseUses, 1},
+		"lockfile の欠けは 1":      {errLockMissingKey, 1},
+		"lockfile の余りは 1":      {errLockOrphanKey, 1},
+		"ls-remote の失敗は 2":     {errLsRemote, 2},
+		"ref が見つからないのは 2":      {errRefNotFound, 2},
+		"道具を起動できないのは 2":        {toolrun.ErrTool, 2},
+		"使い方の誤りは 2":            {errUsage, 2},
+		"GitHub API の応答の誤りは 2": {errGitHubAPIStatus, 2},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, exitCode(c.err))
+		})
+	}
 }

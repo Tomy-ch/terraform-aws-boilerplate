@@ -3,11 +3,10 @@
 .PHONY: pin-actions-apply ## lockfile を元に uses: を SHA へ固定
 .PHONY: pin-actions-check ## uses: が lockfile 通り固定済みか検証（書き換えなし・CI/hook用）
 
-# supply-chain quarantine: N 日未満の新しすぎるコミットは採用しない（0 で無効）
-PIN_ACTIONS_MIN_AGE_DAYS ?= 14
-
+# supply-chain quarantine: N 日未満の新しすぎるコミットは採用しない（0 で無効）。既定は scripts/lib/cooldown の
+# PinWindowDays で、PIN_ACTIONS_MIN_AGE_DAYS を与えたときだけ上書きする。
 pin-actions-resolve:
-	@$(call RUN_SCRIPT,pin-actions,resolve --min-age-days=$(PIN_ACTIONS_MIN_AGE_DAYS))
+	@$(call RUN_SCRIPT,pin-actions,resolve $(if $(PIN_ACTIONS_MIN_AGE_DAYS),--min-age-days=$(PIN_ACTIONS_MIN_AGE_DAYS)))
 
 pin-actions-apply:
 	@$(call RUN_SCRIPT,pin-actions,apply)

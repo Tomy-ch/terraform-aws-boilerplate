@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/shellcheck"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
 // RequireNonRootEnv は、root 実行による skip を失敗へ変える環境変数の名前です。
@@ -110,7 +111,6 @@ var (
 	errGitUnset   = errors.New("git の環境変数を外せません")
 )
 
-// runner は *testing.M の部分です。
 type runner interface {
 	Run() int
 }
@@ -131,7 +131,6 @@ func RunGitIsolated(m runner) int {
 	return m.Run()
 }
 
-// isolateGitEnv は、gitEnvVars の変数をすべてプロセスから外します。1つでも外せなければ、そこで止めます。
 func isolateGitEnv() error {
 	names, err := gitEnvVars()
 	if err != nil {
@@ -139,7 +138,7 @@ func isolateGitEnv() error {
 	}
 	for _, name := range names {
 		if err := unsetenv(name); err != nil {
-			return fmt.Errorf("%w: %s: %w", errGitUnset, name, err)
+			return xerrors.Join(errGitUnset, xerrors.Wrap(err, name))
 		}
 	}
 
@@ -151,7 +150,7 @@ func isolateGitEnv() error {
 func gitEnvVars() ([]string, error) {
 	out, err := localEnvVars()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", errGitEnvVars, err)
+		return nil, xerrors.Join(errGitEnvVars, err)
 	}
 	names := strings.Fields(string(out))
 	if len(names) == 0 {
@@ -159,4 +158,18 @@ func gitEnvVars() ([]string, error) {
 	}
 
 	return names, nil
+}
+
+// RemoveUnder は、base を開いた [os.Root] の中で rel（スラッシュ区切り）を中身ごと消します。消せなければテストを
+// 落とします。テストの fixture から一部を外すときに使い、base の外へは辿りません。
+func RemoveUnder(t testing.TB, base, rel string) {
+	t.Helper()
+	r, err := os.OpenRoot(base)
+	if err != nil {
+		t.Fatalf("%s を開けません: %v", base, err)
+	}
+	defer func() { _ = r.Close() }()
+	if err := r.RemoveAll(rel); err != nil {
+		t.Fatalf("%s の %s を消せません: %v", base, rel, err)
+	}
 }

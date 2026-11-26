@@ -3,6 +3,7 @@ package main
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -65,7 +66,7 @@ var pinnedImage = regexp.MustCompile(`^[^\s@]+@sha256:[0-9a-f]{64}$`)
 // 起動することが前提です。docker compose を起動できなければ errTool、0 以外で終われば errImage、出力がちょうど1行の、
 // digest で固定した参照でなければ errImage です。
 func lookupImage(r runner, step string) (string, error) {
-	res, err := toolrun.Run(r.tool("", withoutPrefix(r.environ, "COMPOSE_"), step))
+	res, err := toolrun.Run(r.tool(context.Background(), "", withoutPrefix(r.environ, "COMPOSE_"), step))
 	switch {
 	case err != nil:
 		return "", xerrors.Wrapf(err, "%s", step)
@@ -93,7 +94,6 @@ func writeCompose(dir, image string, t imageTool) error {
 		Image:       image,
 		NetworkMode: "none",
 		CapDrop:     []string{"ALL"},
-		// docker cp はホストの uid と mode を保つので、root で走る道具が入力を読むにはこれが要る。
 		SecurityOpt: []string{"no-new-privileges:true"},
 		PidsLimit:   composePidsLimit,
 		WorkingDir:  escape(t.workingDir),
@@ -132,7 +132,7 @@ func runImage(dir, image string, t imageTool, r runner, log io.Writer) (rc int, 
 	}
 	env := withoutPrefix(r.environ, "COMPOSE_")
 	runStep := func(step string) (int, error) {
-		cmd := r.tool(dir, env, step)
+		cmd := r.tool(context.Background(), dir, env, step)
 		cmd.Stdout, cmd.Stderr = log, log
 		if step == stepCopyIn {
 			cmd.Stdin = bytes.NewReader(input)
@@ -243,8 +243,8 @@ func prepareWork(base, work string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.RemoveAll(dir); err != nil {
-		return "", xerrors.Wrapf(errInput, "%s の削除: %v", dir, err)
+	if _, err := workdir.Recreate(base, work); err != nil {
+		return "", xerrors.Wrapf(errInput, "%s の作り直し: %v", dir, err)
 	}
 	if err := os.MkdirAll(filepath.Join(dir, "work", "src"), 0o750); err != nil {
 		return "", xerrors.Wrapf(errInput, "%s の作成: %v", dir, err)
@@ -280,7 +280,7 @@ func runCanary(name, base, work, fixture, image string, t imageTool, r runner, l
 
 		return err
 	}
-	if err := os.RemoveAll(dir); err != nil {
+	if err := workdir.Remove(base, work); err != nil {
 		return xerrors.Wrapf(errInput, "%s の削除: %v", dir, err)
 	}
 

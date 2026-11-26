@@ -2,11 +2,8 @@ package main
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
-	"log"
 	"regexp"
-	"strings"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
@@ -51,37 +48,6 @@ type bucketEncryption struct {
 			} `json:"ApplyServerSideEncryptionByDefault"`
 		} `json:"Rules"`
 	} `json:"ServerSideEncryptionConfiguration"`
-}
-
-func runStateKey(args []string) (string, error) {
-	fs := flag.NewFlagSet("state-key", flag.ContinueOnError)
-	project := fs.String("project", "", "")
-	env := fs.String("env", "", "")
-	region := fs.String("region", "", "")
-	identity := fs.String("identity", "", "")
-	aliases := fs.String("aliases", "", "")
-	encryption := fs.String("encryption", "", "")
-	missing := fs.String("missing", missingFail, "")
-
-	if err := fs.Parse(args); err != nil {
-		return "", xerrors.Wrap(errUsage, err.Error())
-	}
-
-	if fs.NArg() > 0 {
-		return "", xerrors.Wrap(errUsage, strings.Join(fs.Args(), " "))
-	}
-
-	account, err := accountOf(*identity)
-	if err != nil {
-		return "", err
-	}
-
-	value, err := stateKey(*project, *env, *region, account, []byte(*aliases), []byte(*encryption), *missing)
-	if err == nil && value == "" {
-		log.Print("⚠️ state の鍵が無いので、init に鍵を渡さず SSE-S3 で書きます（-missing sse-s3）")
-	}
-
-	return value, err
 }
 
 // stateKey は、init に渡す `-backend-config=kms_key_id=<鍵の ARN>` を返します。鍵の ARN は
