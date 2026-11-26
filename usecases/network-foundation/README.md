@@ -137,5 +137,5 @@ sandbox の destroy の後の期待残存: Flow Logs の鍵（alias `<project>-s
 
 ## 版
 
-- AWS Provider は `>= 6.68.0, < 7.0.0`。`terraform test` と reference の lock は v6.73.0
+- AWS Provider は `>= 6.68.0, < 7.0.0`。`terraform test` は v6.73.0 で走らせた。reference の lock の版は `providers/` の正本が持つ
 - Terraform は `>= 1.7.0, < 2.0.0`

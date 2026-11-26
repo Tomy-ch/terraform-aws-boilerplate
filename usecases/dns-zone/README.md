@@ -169,4 +169,4 @@ alias は destroy で消えるので、destroy の前に key ID を控えて照�
 
 ## 版
 
-- AWS Provider は `>= 6.68.0, < 7.0.0`。resource の `region` 引数（AWS Provider v6）を literal で使う（[dns-zone/ADR-0303](docs/adr/0303-us-east-1-by-region-argument.md)）。`terraform test` と reference の lock は v6.73.0
+- AWS Provider は `>= 6.68.0, < 7.0.0`。resource の `region` 引数（AWS Provider v6）を literal で使う（[dns-zone/ADR-0303](docs/adr/0303-us-east-1-by-region-argument.md)）。`terraform test` は v6.73.0 で走らせた。reference の lock の版は `providers/` の正本が持つ
