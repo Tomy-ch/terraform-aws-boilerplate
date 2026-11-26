@@ -9,14 +9,14 @@ setup-dns-zone-%: export SETUP_PROFILE = $(call literal_value,PROFILE)
 setup-dns-zone-%: export SETUP_ENV = $(call literal_value,ENV)
 setup-dns-zone-%: export SETUP_ZONE = $(call literal_value,ZONE)
 
-# $(1)=入口
+# $(1)=入口、$(2)=入口に固有の引数
 define SETUP_DNS_RUN
-@set -eu; unset_env=$$($(call TF_LOCAL,env-unset)); region=$$($(call TF_LOCAL,region "$(TF_BASE)/env/$$SETUP_ENV")); env $$unset_env AWS_PROFILE="$$SETUP_PROFILE" AWS_EC2_METADATA_DISABLED=true $(call RUN_SCRIPT_HOST_ARGS,setup) $(1) -project $(TF_LOCAL_PROJECT) -region "$$region" -usecase "$(SETUP_DNS_USECASE)" -env "$$SETUP_ENV" -zone "$$SETUP_ZONE"
+@set -eu; unset_env=$$($(call TF_LOCAL,env-unset)); region=$$($(call TF_LOCAL,region "$(TF_BASE)/env/$$SETUP_ENV")); env $$unset_env AWS_PROFILE="$$SETUP_PROFILE" AWS_EC2_METADATA_DISABLED=true $(call RUN_SCRIPT_HOST_ARGS,setup) $(1) -project $(TF_LOCAL_PROJECT) -region "$$region" -usecase "$(SETUP_DNS_USECASE)" -env "$$SETUP_ENV" -zone "$$SETUP_ZONE"$(2)
 endef
 
-.PHONY: setup-dns-zone-delegation-values ## 3.2: 子の zone の NS と DS を、prd の delegations に書く形で出す（PROFILE=<そのアカウントの profile> ENV=<dev か stg> ZONE=<zone の名前>）
+.PHONY: setup-dns-zone-delegation-values ## 3.2: 子の zone の NS と DS を、prd の delegations に書く形で出す（PROFILE=<そのアカウントの profile> ENV=<dev か stg> ZONE=<zone の名前>、DS に12桁続く数字が在れば IDS=1）
 setup-dns-zone-delegation-values:
-	$(call SETUP_DNS_RUN,dns-delegation-values)
+	$(call SETUP_DNS_RUN,dns-delegation-values,$(if $(filter 1,$(IDS)), -ids))
 
 .PHONY: setup-dns-zone-signing-check ## 3.5・4 の確認: 署名が SIGNING で、KSK がただ1つ ACTIVE で、その KMS の鍵が要件に合う（PROFILE=<profile> ENV=<env> ZONE=<zone>）
 setup-dns-zone-signing-check:
