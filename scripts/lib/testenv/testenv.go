@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/shellcheck"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
 // RequireNonRootEnv は、root 実行による skip を失敗へ変える環境変数の名前です。
@@ -137,7 +138,7 @@ func isolateGitEnv() error {
 	}
 	for _, name := range names {
 		if err := unsetenv(name); err != nil {
-			return fmt.Errorf("%w: %s: %w", errGitUnset, name, err)
+			return xerrors.Join(errGitUnset, xerrors.Wrap(err, name))
 		}
 	}
 
@@ -149,7 +150,7 @@ func isolateGitEnv() error {
 func gitEnvVars() ([]string, error) {
 	out, err := localEnvVars()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", errGitEnvVars, err)
+		return nil, xerrors.Join(errGitEnvVars, err)
 	}
 	names := strings.Fields(string(out))
 	if len(names) == 0 {

@@ -43,7 +43,7 @@ func Test_command(t *testing.T) {
 		stepInitReadonly: {"terraform", "init", "-backend=false", "-input=false", "-lockfile=readonly"},
 		stepValidate:     {"terraform", "validate", "-json"},
 		stepTest:         {"terraform", "test"},
-		stepLintInit:     {"tflint", "--init"},
+		stepLintVersion:  {"tflint", "--version"},
 		stepLint:         {"tflint"},
 	} {
 		t.Run(step, func(t *testing.T) {
@@ -653,34 +653,71 @@ func Test_runTest(t *testing.T) {
 	})
 }
 
+// lintFixture は、AWS ruleset の版を報告する tflint --version の出力を持つ base、実行できる ruleset、その版を
+// 宣言する mise.toml を作り、runLint の引数の頭を返す。
+func lintFixture(t *testing.T, extra map[string]string) (base string, args []string) {
+	t.Helper()
+	files := map[string]string{"version.out": "TFLint version 0.66.0\n+ ruleset.aws (0.50.0)\n+ ruleset.terraform (0.15.0-bundled)\n"}
+	for k, v := range extra {
+		files[k] = v
+	}
+	base = okTree(t, files)
+	ruleset := writeRuleset(t)
+	mise := filepath.Join(t.TempDir(), "mise.toml")
+	require.NoError(t, os.WriteFile(mise, []byte("[tools]\n\""+rulesetKey+"\" = \"0.50.0\"\n"), 0o600))
+
+	return base, []string{"-base", base, "-config", "/c/.tflint.hcl", "-ruleset", ruleset, "-mise", mise}
+}
+
+// writeRuleset は、実行できる tflint-ruleset-aws を一時ディレクトリに置き、そのパスを返す。macOS の /var の
+// symlink を解いておく（TFLINT_PLUGIN_DIR と比べるため）。
+func writeRuleset(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	path := filepath.Join(dir, rulesetFile)
+	require.NoError(t, os.WriteFile(path, []byte("#!/bin/sh\n"), 0o700))
+
+	return path
+}
+
 func Test_runLint(t *testing.T) {
 	t.Parallel()
 
-	t.Run("ruleset を取得してから、設定と ruleset の置き場を渡して各ディレクトリで TFLint を起動する", func(t *testing.T) {
+	t.Run("ruleset の版を確かめてから、設定と ruleset の置き場を渡して各ディレクトリで TFLint を起動する", func(t *testing.T) {
 		t.Parallel()
-		base := okTree(t, nil)
-		plugins := filepath.Join(t.TempDir(), "p")
+		base, args := lintFixture(t, nil)
 		tool, calls := fakeTool(t)
-		require.NoError(t, runLint([]string{"-base", base, "-config", "/c/.tflint.hcl", "-plugin-dir", plugins, "modules", "usecases"}, &bytes.Buffer{}, tool))
+		require.NoError(t, runLint(append(args, "modules", "usecases"), &bytes.Buffer{}, tool))
+		plugins := filepath.Dir(args[5])
 		assert.Equal(t, []string{
-			base + " lint-init  /c/.tflint.hcl " + plugins,
+			base + " lint-version  /c/.tflint.hcl " + plugins,
 			filepath.Join(base, "modules/a") + " lint  /c/.tflint.hcl " + plugins,
 			filepath.Join(base, "usecases/b") + " lint  /c/.tflint.hcl " + plugins,
 		}, calls())
-		assert.DirExists(t, plugins)
 	})
 
-	t.Run("ruleset の取得で道具を起動できなければ、ディレクトリを走らせずに errTool で終了コードは 2", func(t *testing.T) {
+	t.Run("ruleset の版が宣言と違えば、ディレクトリを走らせずに errRuleset で終了コードは 2", func(t *testing.T) {
 		t.Parallel()
-		base := okTree(t, nil)
+		_, args := lintFixture(t, map[string]string{"version.out": "+ ruleset.aws (0.49.0)\n"})
+		tool, calls := fakeTool(t)
+		err := runLint(append(args, "modules"), &bytes.Buffer{}, tool)
+		require.ErrorIs(t, err, errRuleset)
+		assert.Equal(t, 2, exitCode(err))
+		assert.Len(t, calls(), 1, "版の確かめだけが走った")
+	})
+
+	t.Run("版の確かめで道具を起動できなければ、ディレクトリを走らせずに errTool で終了コードは 2", func(t *testing.T) {
+		t.Parallel()
+		_, args := lintFixture(t, nil)
 		tool, calls := fakeTool(t)
 		cmdOf := func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
-			if step == stepLintInit {
+			if step == stepLintVersion {
 				return tooltest.Missing(ctx, d, env, step)
 			}
 			return tool(ctx, d, env, step)
 		}
-		err := runLint([]string{"-base", base, "-config", "c", "-plugin-dir", t.TempDir(), "modules"}, &bytes.Buffer{}, cmdOf)
+		err := runLint(append(args, "modules"), &bytes.Buffer{}, cmdOf)
 		require.ErrorIs(t, err, errTool)
 		assert.Equal(t, 2, exitCode(err))
 		assert.Empty(t, calls())
@@ -688,7 +725,7 @@ func Test_runLint(t *testing.T) {
 
 	t.Run("ディレクトリごとの TFLint を起動できなければ、残りを起動せずに errTool で終了コードは 2", func(t *testing.T) {
 		t.Parallel()
-		base := okTree(t, nil)
+		_, args := lintFixture(t, nil)
 		tool, calls := fakeTool(t)
 		cmdOf := func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
 			if step == stepLint {
@@ -696,53 +733,183 @@ func Test_runLint(t *testing.T) {
 			}
 			return tool(ctx, d, env, step)
 		}
-		err := runLint([]string{"-base", base, "-config", "c", "-plugin-dir", t.TempDir(), "modules", "usecases"}, &bytes.Buffer{}, cmdOf)
+		err := runLint(append(args, "modules", "usecases"), &bytes.Buffer{}, cmdOf)
 		require.ErrorIs(t, err, errTool)
 		assert.False(t, errors.Is(err, errDirsFailed))
 		assert.Equal(t, 2, exitCode(err))
-		assert.Len(t, calls(), 1, "ruleset の取得だけが走った")
+		assert.Len(t, calls(), 1, "版の確かめだけが走った")
 	})
 
 	t.Run("tflint の 1（設定や plugin の誤り）は指摘ではなく errToolFailed で、終了コード 2", func(t *testing.T) {
 		t.Parallel()
-		base := okTree(t, map[string]string{"usecases/b/rc-lint": "1"})
+		_, args := lintFixture(t, map[string]string{"usecases/b/rc-lint": "1"})
 		tool, _ := fakeTool(t)
 		var out bytes.Buffer
-		err := runLint([]string{"-base", base, "-config", "c", "-plugin-dir", t.TempDir(), "modules", "usecases"}, &out, tool)
+		err := runLint(append(args, "modules", "usecases"), &out, tool)
 		require.ErrorIs(t, err, errToolFailed)
 		assert.Equal(t, 2, exitCode(err))
 		assert.NotContains(t, out.String(), "❌ tf-lint が落ちたディレクトリ")
 	})
 
-	t.Run("ruleset の取得（tflint --init）の 0 以外は落ちたディレクトリとして扱い、ディレクトリを走らせない", func(t *testing.T) {
-		t.Parallel()
-		base := okTree(t, map[string]string{"fail-lint-init": ""})
-		tool, calls := fakeTool(t)
-		require.ErrorIs(t, runLint([]string{"-base", base, "-config", "c", "-plugin-dir", t.TempDir(), "modules"}, &bytes.Buffer{}, tool), errDirsFailed)
-		assert.Len(t, calls(), 1)
-	})
-
 	t.Run("落ちたディレクトリを名指す", func(t *testing.T) {
 		t.Parallel()
-		base := okTree(t, map[string]string{"usecases/b/fail-lint": ""})
+		base, args := lintFixture(t, map[string]string{"usecases/b/fail-lint": ""})
 		tool, _ := fakeTool(t)
 		var out bytes.Buffer
-		require.ErrorIs(t, runLint([]string{"-base", base, "-config", "c", "-plugin-dir", t.TempDir(), "modules", "usecases"}, &out, tool), errDirsFailed)
+		require.ErrorIs(t, runLint(append(args, "modules", "usecases"), &out, tool), errDirsFailed)
 		assert.Contains(t, out.String(), "❌ tf-lint が落ちたディレクトリ: "+filepath.Join(base, "usecases/b"))
 	})
 
-	t.Run("-config か -plugin-dir が無ければ errUsage", func(t *testing.T) {
+	t.Run("ruleset を置いたディレクトリでなければ、起動せずに errRuleset", func(t *testing.T) {
 		t.Parallel()
-		tool, _ := fakeTool(t)
-		require.ErrorIs(t, runLint([]string{"-base", ".", "-config", "c", "modules"}, &bytes.Buffer{}, tool), errUsage)
-		require.ErrorIs(t, runLint([]string{"-base", ".", "-plugin-dir", "p", "modules"}, &bytes.Buffer{}, tool), errUsage)
+		_, args := lintFixture(t, nil)
+		args[5] = filepath.Join(t.TempDir(), rulesetFile)
+		tool, calls := fakeTool(t)
+		require.ErrorIs(t, runLint(append(args, "modules"), &bytes.Buffer{}, tool), errRuleset)
+		assert.Empty(t, calls())
+	})
+
+	for missing, args := range map[string][]string{
+		"-config":  {"-base", ".", "-ruleset", "r", "-mise", "m", "modules"},
+		"-ruleset": {"-base", ".", "-config", "c", "-mise", "m", "modules"},
+		"-mise":    {"-base", ".", "-config", "c", "-ruleset", "r", "modules"},
+	} {
+		t.Run(missing+" が無ければ errUsage", func(t *testing.T) {
+			t.Parallel()
+			tool, _ := fakeTool(t)
+
+			require.ErrorIs(t, runLint(args, &bytes.Buffer{}, tool), errUsage)
+		})
+	}
+
+	t.Run("mise.toml が ruleset を宣言しなければ、起動せずに errRuleset で終了コードは 2", func(t *testing.T) {
+		t.Parallel()
+		_, args := lintFixture(t, nil)
+		require.NoError(t, os.WriteFile(args[7], []byte("[tools]\ngo = \"1.27.4\"\n"), 0o600))
+		tool, calls := fakeTool(t)
+
+		err := runLint(append(args, "modules"), &bytes.Buffer{}, tool)
+
+		require.ErrorIs(t, err, errRuleset)
+		assert.Equal(t, 2, exitCode(err))
+		assert.Empty(t, calls())
 	})
 
 	t.Run("対象が0件なら起動せずに errNoTargets", func(t *testing.T) {
 		t.Parallel()
 		base := tree(t, map[string]string{"modules/.keep": ""})
 		tool, calls := fakeTool(t)
-		require.ErrorIs(t, runLint([]string{"-base", base, "-config", "c", "-plugin-dir", t.TempDir(), "modules"}, &bytes.Buffer{}, tool), errNoTargets)
+		_, args := lintFixture(t, nil)
+		args[1] = base
+		require.ErrorIs(t, runLint(append(args, "modules"), &bytes.Buffer{}, tool), errNoTargets)
 		assert.Empty(t, calls())
+	})
+}
+
+func Test_declaredRuleset(t *testing.T) {
+	t.Parallel()
+
+	write := func(t *testing.T, content string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "mise.toml")
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+		return path
+	}
+
+	t.Run("mise.toml が宣言する AWS ruleset の版を返す", func(t *testing.T) {
+		t.Parallel()
+		got, err := declaredRuleset(write(t, "[tools]\n\""+rulesetKey+"\" = \"0.50.0\"\n"))
+		require.NoError(t, err)
+		assert.Equal(t, "0.50.0", got)
+	})
+
+	t.Run("ほかの org の ruleset しか宣言していなければ errRuleset", func(t *testing.T) {
+		t.Parallel()
+		_, err := declaredRuleset(write(t, "[tools]\n\"github:other/tflint-ruleset-aws\" = \"0.50.0\"\n"))
+		require.ErrorIs(t, err, errRuleset)
+	})
+
+	t.Run("mise.toml を読めなければ errRuleset", func(t *testing.T) {
+		t.Parallel()
+		_, err := declaredRuleset(filepath.Join(t.TempDir(), "mise.toml"))
+		require.ErrorIs(t, err, errRuleset)
+	})
+}
+
+func Test_rulesetDir(t *testing.T) {
+	t.Parallel()
+
+	t.Run("ruleset を含むディレクトリを返す", func(t *testing.T) {
+		t.Parallel()
+		ruleset := writeRuleset(t)
+		got, err := rulesetDir(ruleset)
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Dir(ruleset), got)
+	})
+
+	t.Run("名前が tflint-ruleset-aws でなければ errRuleset", func(t *testing.T) {
+		t.Parallel()
+		path := filepath.Join(t.TempDir(), "tflint-ruleset-other")
+		require.NoError(t, os.WriteFile(path, []byte("#!/bin/sh\n"), 0o700))
+		_, err := rulesetDir(path)
+		require.ErrorIs(t, err, errRuleset)
+	})
+
+	t.Run("無ければ errRuleset", func(t *testing.T) {
+		t.Parallel()
+		_, err := rulesetDir(filepath.Join(t.TempDir(), rulesetFile))
+		require.ErrorIs(t, err, errRuleset)
+	})
+
+	t.Run("実行できなければ errRuleset", func(t *testing.T) {
+		t.Parallel()
+		path := filepath.Join(t.TempDir(), rulesetFile)
+		require.NoError(t, os.WriteFile(path, []byte("x"), 0o600))
+		_, err := rulesetDir(path)
+		require.ErrorIs(t, err, errRuleset)
+	})
+
+	t.Run("ディレクトリなら errRuleset", func(t *testing.T) {
+		t.Parallel()
+		path := filepath.Join(t.TempDir(), rulesetFile)
+		require.NoError(t, os.Mkdir(path, 0o700))
+		_, err := rulesetDir(path)
+		require.ErrorIs(t, err, errRuleset)
+	})
+}
+
+func Test_checkRulesetVersion(t *testing.T) {
+	t.Parallel()
+
+	env := []string{"TFLINT_DISABLE_VERSION_CHECK=1"}
+	tests := map[string]struct {
+		files map[string]string
+		say   string
+	}{
+		"報告した版が宣言と同じなら成功する":                      {map[string]string{"version.out": "+ ruleset.aws (0.50.0)\n"}, ""},
+		"報告した版が宣言と違えば、両方の版を名指して落ちる":              {map[string]string{"version.out": "+ ruleset.aws (0.50.1)\n"}, "置かれた AWS ruleset は 0.50.1、mise.toml の宣言は 0.50.0 です"},
+		"AWS ruleset を報告しなければ落ちる":                {map[string]string{"version.out": "+ ruleset.terraform (0.15.0-bundled)\n"}, "1行で報告しません"},
+		"AWS ruleset を2行報告すれば落ちる":                {map[string]string{"version.out": "+ ruleset.aws (0.50.0)\n+ ruleset.aws (0.50.0)\n"}, "1行で報告しません"},
+		"tflint --version が 0 以外なら終了コードを名指して落ちる": {map[string]string{"version.out": "+ ruleset.aws (0.50.0)\n", "rc-lint-version": "1"}, "tflint --version の終了コード 1"},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			tool, _ := fakeTool(t)
+
+			err := checkRulesetVersion(tool, tree(t, tt.files), env, "0.50.0")
+
+			if tt.say == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorIs(t, err, errRuleset)
+			assert.Contains(t, err.Error(), tt.say)
+		})
+	}
+
+	t.Run("道具を起動できなければ errTool", func(t *testing.T) {
+		t.Parallel()
+		require.ErrorIs(t, checkRulesetVersion(tooltest.Missing, tree(t, nil), env, "0.50.0"), errTool)
 	})
 }

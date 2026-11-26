@@ -13,8 +13,10 @@
 TF_BASE ?= .
 TF_ROOTS = usecases modules env
 export TF_PLUGIN_CACHE_DIR ?= $(CURDIR)/tmp/terraform-plugin-cache
-# plugin の置き場の階層は OS / arch を含まないので、経路ごとに分ける。
-TFLINT_PLUGIN_DIR_REL = tmp/tflint-plugins/$(RUNNER_MODE)
+# TFLint の AWS ruleset の置き場（取り方は .tflint.hcl）。ホストは mise の install 先、コンテナはイメージが置いた先で、
+# 経路ごとに違う。
+TFLINT_RULESET_host = $(shell mise where github:terraform-linters/tflint-ruleset-aws 2>/dev/null)/tflint-ruleset-aws
+TFLINT_RULESET_container = /usr/local/bin/tflint-ruleset-aws
 # 資格情報を持つ手元でも、持たない CI と同じ条件で走らせる（ADR-0401 決定6）。SDK が資格情報を
 # 読む環境変数は名前を列挙しきれないので、AWS_ で始まるものをすべて外してから与える。Go の道具は lib/tfexec で同じ環境を自分で組む。
 AWS_ENV_UNSET = $$(env | sed -n 's/^\(AWS_[A-Za-z0-9_]*\)=.*/-u \1/p')
@@ -59,9 +61,9 @@ tf-validate: tf-init
 tf-test: tf-init
 	@$(call TF_GATES,test,-data "$(TF_GATES_DATA)")
 
-.PHONY: tf-lint ## TFLint で Terraform を検査（初回は ruleset の取得を伴う）
+.PHONY: tf-lint ## TFLint で Terraform を検査
 tf-lint: tool-cooldown-check
-	@$(call RUN_SCRIPT,tf-gates,lint -base "$(TF_BASE)" -config .tflint.hcl -plugin-dir $(TFLINT_PLUGIN_DIR_REL) $(TF_ROOTS))
+	@$(call RUN_SCRIPT,tf-gates,lint -base "$(TF_BASE)" -config .tflint.hcl -ruleset "$(TFLINT_RULESET_$(RUNNER_MODE))" -mise mise.toml $(TF_ROOTS))
 
 # .lefthook.yaml の skip 条件。対象が0件のときだけ成功する。
 .PHONY: tf-no-targets

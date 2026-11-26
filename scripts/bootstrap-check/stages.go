@@ -12,6 +12,9 @@ const (
 	// identityMain は、state の版の保持日数の正本を持つ identity root（リポジトリの直下からのパス）。
 	identityMain = "env/admin/identity/main.tf"
 	oidcHost     = "token.actions.githubusercontent.com"
+
+	chatbotSLR     = "AWSServiceRoleForAWSChatbot"
+	chatbotSLRPath = "/aws-service-role/management.chatbot.amazonaws.com/"
 )
 
 var (
@@ -200,7 +203,10 @@ func beforeApplySteps(n names) []step {
 	}
 
 	// 在ると、段4 の apply は import せずに上書きする。
-	return append(steps, checkStep(expectError("account password policy がまだ無い", "NoSuchEntity", "iam", "get-account-password-policy")))
+	return append(steps,
+		checkStep(expectError("account password policy がまだ無い", "NoSuchEntity", "iam", "get-account-password-policy")),
+		checkStep(expectError("Chatbot の service-linked role がまだ無い", "NoSuchEntity", "iam", "get-role", "--role-name", chatbotSLR)),
+	)
 }
 
 // policyNames は、応答の配列 key の各要素の PolicyName を並べ替えたもの。読めなければ false。
@@ -467,6 +473,9 @@ func stage4Steps(n names, readFile func(string) ([]byte, error)) []step {
 			" のそれぞれの lock file の復号の7文だけ", func(v map[string]any) bool {
 			return keyPolicy(v, n)
 		}, "kms", "get-key-policy", "--key-id", n.keyAlias, "--policy-name", "default")),
+		checkStep(expectJSON("Chatbot の service-linked role の path が "+chatbotSLRPath, func(v map[string]any) bool {
+			return at(v, "Role", "Path") == chatbotSLRPath
+		}, "iam", "get-role", "--role-name", chatbotSLR)),
 	)
 }
 

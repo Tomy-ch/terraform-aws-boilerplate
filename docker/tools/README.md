@@ -102,5 +102,6 @@ make md-lint RUNNER_MODE=host   # ホストで実行。npm の道具はこの lo
 2. `Dockerfile` の当該段が、その道具を含む形になっているかを確かめる。
 3. 供給網のクールダウンが掛かる（`make tool-cooldown-gate`）。公開直後の版は窓に入る。
 
-GitHub API を未認証で叩くとこの install 群は 60 req/hour の制限に当たり 403 になる。トークンは
+この install 群は `MISE_LOCKED` で `mise.lock` の取得元と照合値からだけ入れ、版と取得元を GitHub API に
+問い合わせない（ADR-0503 決定2）。lock に無い道具と宣言と違う版は入れずに落ちる。トークンを渡すときは
 build 引数ではなく secret で渡す（ADR-0503 決定12）—— build 引数はイメージの履歴に残る。

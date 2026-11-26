@@ -10,3 +10,7 @@ module "github_oidc" {
   apply_output_bucket_arn = var.apply_output_bucket_arn
   break_glass_arns        = var.break_glass_arns
 }
+
+module "service_linked_roles" {
+  source = "./internal/service-linked-roles"
+}

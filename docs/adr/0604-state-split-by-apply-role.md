@@ -24,7 +24,7 @@ state を細かく分ける利点は、誤った apply と state の破損の範
 ### root の単位
 
 2. 1つの env の root を、identity root と workload root の2つとする。これ以外の root を env に置かない。
-3. identity root は、bootstrap の構成物と統制の構成物（ADR-0602 決定1）を持つ usecase だけを呼び、apply-identity の role で apply する。統制の構成物を持つ usecase（`organization-baseline`）を呼ぶのは、管理アカウントの identity root だけである。アカウントの前提の構成物（ADR-0602 決定1）も identity root が持ち、bootstrap の構成物を持つ usecase に置く。それを前提にする workload root の usecase と同じ apply で作ると成り立たないからである。
+3. identity root は、bootstrap の構成物と統制の構成物（ADR-0602 決定1）を持つ usecase だけを呼び、apply-identity の role で apply する。統制の構成物を持つ usecase（`organization-baseline`）を呼ぶのは、管理アカウントの identity root だけである。アカウントの前提の構成物（ADR-0602 決定1）も identity root が持ち、bootstrap の構成物を持つ usecase に置く。それを前提にする workload root の usecase と同じ apply で作ると成り立たないからである。それを前提にする workload root の usecase は、その構成物を作らず、識別子を入力で受けず、AWS が決める名前で存在を plan の中で読み、無ければ plan で失敗させる。これは ADR-0102 決定16 の、名前を AWS が決める構成物の例外に当たる。
 4. workload root は、identity root が呼ぶもの以外のすべての usecase を呼び、apply の role で apply する。identity root と workload root の間の受け渡しは、root をまたぐ受け渡し（ADR-0102 決定16）である。
 5. workload root は `env/<env>/` の直下の `*.tf` とし、identity root は `env/<env>/identity/` の直下の `*.tf` とする。provider の依存の lock（`.terraform.lock.hcl`）は root ごとに持つ（ADR-0205 決定9）。
 6. 管理アカウントの identity root は、メンバーアカウントを立ち上げる間に限り、そのメンバーアカウントの bootstrap の構成物とアカウントの前提の構成物も呼ぶ。その state は管理アカウントの Bucket に置く。立ち上げの後、メンバーアカウントの identity root が `import` block で取り込み、管理アカウントの identity root は `removed` block（`destroy = false`）で手放す。取り込みは、state を書く前に plan で突合する（ADR-0602 決定6・8）。管理アカウントの identity root の `removed` block は、メンバーアカウントの identity root の plan が変更なしを示した後に apply する。この経路は ADR-0602 決定9 の cross-account access であり、ADR-0301 決定18 に従う。
@@ -120,6 +120,8 @@ identity root を bootstrap の構成物に限ったまま、統制を workload 
 - Policy Test（`plan.state_backend_write_deny`）: state Bucket の bucket policy が、各 apply の role の ARN について、もう一方の root の key と lock file への書き込みを拒否し、lock の解除の role の ARN について、対応する root の lock file の削除のほかの書き込みを拒否すること（決定9）
 - Policy Test（apply の role と lock の解除の role の権限の与え方を持つ use-case の Policy Test）: reference の plan で、apply の role が、state Bucket と identity root の state と lock file の ARN への読み取り以外の Action と、state Bucket のすべての object への `s3:DeleteObjectVersion` と、state の鍵の Key Policy がアカウントへ委任する Action を、条件なしで拒まれること。lock の解除の role の Allow が、対応する root の lock file の一覧・読み取り・削除に限られること（決定10）
 - Policy Test: identity root と workload root の plan が、許可の宣言に無い、対象の型の resource の削除、置換、管理からの除外と、宣言した取り返しのつかない属性の変更を含まないこと。各 root の許可の宣言に、その root の plan のどれにも当たらない項目が無いこと。決定13 の書く変更を含まないこと（決定11-13）。違反する入力と違反しない入力の両方で検証する（ADR-0402）
+- Policy Test（アカウントの前提の構成物を持つ use-case の Policy Test。検査の形はその use-case の ADR が持つ）: reference の plan で、宣言した前提の構成物が identity root の bootstrap の usecase の下にだけ在り、workload root の usecase の下に無いこと（決定3）
+- Unit Test（前提の構成物を読む workload root の usecase）: 前提の構成物の data source の postcondition が、別の実体で plan を落とすこと（決定3）
 
 ## 影響
 

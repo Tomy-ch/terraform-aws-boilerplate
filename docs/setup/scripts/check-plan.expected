@@ -60,6 +60,7 @@ add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachment
 add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachment.workload
 add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachment.workload_2
 add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachment.workload_read
+add module.deployment_identity.module.service_linked_roles.aws_iam_service_linked_role.chatbot[0]
 
 add module.organization_baseline.module.bootstrap_access.aws_cloudformation_stack_instances.this
 add module.organization_baseline.module.bootstrap_access.aws_cloudformation_stack_set.this

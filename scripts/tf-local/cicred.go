@@ -10,12 +10,13 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cientry"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workdir"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -77,7 +78,7 @@ func fetchOnce(client *http.Client, url, bearer string) ([]byte, bool, error) {
 		return nil, true, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, resp.StatusCode >= http.StatusInternalServerError, fmt.Errorf("HTTP %d", resp.StatusCode)
+		return nil, resp.StatusCode >= http.StatusInternalServerError, xerrors.Newf("HTTP %d", resp.StatusCode)
 	}
 
 	return body, false, nil
@@ -178,17 +179,31 @@ func (c ciTarget) assumeInput(work, role, session string) error {
 	return xerrors.Wrap(os.WriteFile(filepath.Join(work, "input.json"), raw, 0o600), "input.json")
 }
 
-// ciWork は、token を置く作業ディレクトリを parent の下に作ります。返す関数が消します。
-func ciWork(parent string) (string, func(), error) {
-	if err := os.MkdirAll(parent, 0o700); err != nil {
+// ciWorkUnder は、-work の値 parent を root の tmp/ の下に限って検証し、その下に pattern の一時ディレクトリを
+// 作ります。返す関数がその子だけを消し、消し残せば w へ警告します（子は OIDC の token を置く）。tmp/ の外の値は
+// errUsage です。
+func ciWorkUnder(root, parent, pattern string, w io.Writer) (string, func(), error) {
+	dir, err := workdir.Resolve(root, parent)
+	if err != nil {
+		return "", nil, xerrors.Wrapf(errUsage, "-work %v", err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", nil, xerrors.Wrapf(err, "%s の作成", parent)
 	}
-	work, err := os.MkdirTemp(parent, "assume-")
+	work, cleanup, err := workdir.Temp(dir, pattern)
 	if err != nil {
 		return "", nil, xerrors.Wrap(err, "作業ディレクトリ")
 	}
+	if w == nil {
+		w = io.Discard
+	}
 
-	return work, func() { _ = os.RemoveAll(work) }, nil
+	return work, func() {
+		cleanup()
+		if _, err := os.Lstat(work); !os.IsNotExist(err) {
+			fmt.Fprintf(w, "⚠️ 作業ディレクトリ %s を消せませんでした\n", work)
+		}
+	}, nil
 }
 
 // ciCredentials は、OIDC の token で role を1回だけ assume し、資格情報を GitHub Actions のログで伏せる指示を
@@ -211,7 +226,7 @@ func ciCredentials(args []string, d deps, stdout io.Writer) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	work, cleanup, err := ciWork(*workParent)
+	work, cleanup, err := ciWorkUnder(d.root, *workParent, "assume-", d.stderr)
 	if err != nil {
 		return "", err
 	}
@@ -372,7 +387,7 @@ func ciAssumeDenied(args []string, d deps, stdout io.Writer) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	work, cleanup, err := ciWork(*workParent)
+	work, cleanup, err := ciWorkUnder(d.root, *workParent, "assume-", d.stderr)
 	if err != nil {
 		return "", err
 	}
@@ -404,19 +419,16 @@ func ciAssumeDenied(args []string, d deps, stdout io.Writer) (string, error) {
 	return fmt.Sprintf("✅ %d 個の role の assume がすべて拒否されました", len(roles)), nil
 }
 
-// runExitCode は、道具を起動して終了コードと stderr を返します。stdout は捨てます。起動できなければ失敗します。
+// runExitCode は、道具を起動して終了コードと stderr を返します。stdout は捨てます。起動できない・シグナルで
+// 終わったときは toolrun.ErrTool です。
 func runExitCode(tool toolFunc, dir string, env []string, step string) (int, []byte, error) {
 	var stderr bytes.Buffer
-	cmd := tool(dir, env, step)
+	cmd := tool(context.Background(), dir, env, step)
 	cmd.Stdout, cmd.Stderr = io.Discard, &stderr
-	err := cmd.Run()
-	var exit *exec.ExitError
-	switch {
-	case err == nil:
-		return 0, stderr.Bytes(), nil
-	case errors.As(err, &exit):
-		return exit.ExitCode(), stderr.Bytes(), nil
-	default:
-		return 0, nil, xerrors.Wrapf(errLocalAWS, "%s: %v", step, err)
+	code, err := toolrun.Exec(cmd)
+	if err != nil {
+		return 0, nil, xerrors.Wrap(err, step)
 	}
+
+	return code, stderr.Bytes(), nil
 }

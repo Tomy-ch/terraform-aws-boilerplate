@@ -3,8 +3,8 @@ name: Semgrep
 # Semgrep CE over the Terraform tree, one of the Security layer's gates (ADR-0501 decision 6).
 # Rules are fetched at run time from a pinned semgrep-rules commit and never committed here
 # (.makefiles/security/semgrep.mk). Any finding fails; accepted exceptions are `nosemgrep`
-# comments. The tool runs from its upstream image without a bind mount, which the runner's
-# egress agent refuses (scripts/iac-scan).
+# comments. The tool runs from its upstream image with the target copied in, not bind-mounted
+# (ADR-0503 決定7; scripts/iac-scan).
 
 on:
   push:
@@ -29,6 +29,7 @@ on:
       - 'scripts/go.sum'
       - '.github/actions/setup-mise/**'
       - 'mise.toml'
+      - 'mise.lock'
       - 'usecases/**'
       - 'modules/**'
       - 'env/**'
@@ -122,6 +123,7 @@ jobs:
               - 'scripts/go.sum'
               - '.github/actions/setup-mise/**'
               - 'mise.toml'
+              - 'mise.lock'
               - 'usecases/**'
               - 'modules/**'
               - 'env/**'
