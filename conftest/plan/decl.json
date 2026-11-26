@@ -638,6 +638,38 @@
         "role_policy_attachment": "module.organization_baseline.module.break_glass.aws_iam_role_policy_attachment.administrator_access",
         "stack_set": "module.organization_baseline.module.break_glass.aws_cloudformation_stack_set.this",
         "stack_instances": "module.organization_baseline.module.break_glass.aws_cloudformation_stack_instances.this"
+      },
+      "bootstrap_read": {
+        "stack_set": "module.organization_baseline.module.bootstrap_access.aws_cloudformation_stack_set.this",
+        "stack_instances": "module.organization_baseline.module.bootstrap_access.aws_cloudformation_stack_instances.this",
+        "management_only_actions": [
+          {"action": "cloudformation:DescribeStackInstance", "reason": "管理アカウントの break-glass の StackSet（organization-baseline/ADR-0202）"},
+          {"action": "cloudformation:DescribeStackSet", "reason": "管理アカウントの break-glass の StackSet（organization-baseline/ADR-0202）"},
+          {"action": "cloudformation:DescribeStackSetOperation", "reason": "管理アカウントの break-glass の StackSet（organization-baseline/ADR-0202）"},
+          {"action": "cloudformation:ListStackInstances", "reason": "管理アカウントの break-glass の StackSet（organization-baseline/ADR-0202）"},
+          {"action": "cloudformation:ListStackSetOperationResults", "reason": "管理アカウントの break-glass の StackSet（organization-baseline/ADR-0202）"},
+          {"action": "iam:GetAccountPasswordPolicy", "reason": "管理アカウントの password policy（organization-baseline/ADR-0201）"},
+          {"action": "iam:GetGroup", "reason": "管理アカウントの break-glass の group（organization-baseline/ADR-0201）"},
+          {"action": "iam:GetGroupPolicy", "reason": "管理アカウントの break-glass の group（organization-baseline/ADR-0201）"},
+          {"action": "iam:GetUser", "reason": "管理アカウントの break-glass の user（organization-baseline/ADR-0201）"},
+          {"action": "iam:ListOrganizationsFeatures", "reason": "組織の root の資格情報の中央管理（organization-baseline/ADR-0001）"},
+          {"action": "iam:ListUserTags", "reason": "管理アカウントの break-glass の user（organization-baseline/ADR-0201）"},
+          {"action": "organizations:DescribeAccount", "reason": "組織・OU・policy・メンバーアカウント（管理アカウントの API）"},
+          {"action": "organizations:DescribeCreateAccountStatus", "reason": "組織・OU・policy・メンバーアカウント（管理アカウントの API）"},
+          {"action": "organizations:DescribeOrganization", "reason": "組織・OU・policy・メンバーアカウント（管理アカウントの API）"},
+          {"action": "organizations:DescribeOrganizationalUnit", "reason": "組織・OU・policy・メンバーアカウント（管理アカウントの API）"},
+          {"action": "organizations:DescribePolicy", "reason": "組織・OU・policy・メンバーアカウント（管理アカウントの API）"},
+          {"action": "organizations:ListAWSServiceAccessForOrganization", "reason": "組織・OU・policy・メンバーアカウント（管理アカウントの API）"},
+          {"action": "organizations:ListAccounts", "reason": "組織・OU・policy・メンバーアカウント（管理アカウントの API）"},
+          {"action": "organizations:ListAccountsForParent", "reason": "組織・OU・policy・メンバーアカウント（管理アカウントの API）"},
+          {"action": "organizations:ListParents", "reason": "組織・OU・policy・メンバーアカウント（管理アカウントの API）"},
+          {"action": "organizations:ListRoots", "reason": "組織・OU・policy・メンバーアカウント（管理アカウントの API）"},
+          {"action": "organizations:ListTagsForResource", "reason": "組織・OU・policy・メンバーアカウント（管理アカウントの API）"},
+          {"action": "organizations:ListTargetsForPolicy", "reason": "組織・OU・policy・メンバーアカウント（管理アカウントの API）"},
+          {"action": "s3:GetObject", "reason": "state の object。立ち上げの plan は管理アカウントの state Bucket から読む（organization-baseline/ADR-0203 決定4）"},
+          {"action": "s3:PutObject", "reason": "plan の出力。管理アカウントの plan の出力の Bucket に書く"},
+          {"action": "ssm:GetParameter", "reason": "メンバーアカウントのメールの parameter（管理アカウント）"}
+        ]
       }
     },
     "ops_notification": {
