@@ -4,7 +4,6 @@ go 1.27.4
 
 require (
 	github.com/cockroachdb/errors v1.14.0
-	github.com/hashicorp/go-version v1.9.0
 	github.com/hashicorp/hcl/v2 v2.25.0
 	github.com/stretchr/testify v1.12.1
 	github.com/zclconf/go-cty v1.20.0

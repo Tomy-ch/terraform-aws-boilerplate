@@ -1,6 +1,6 @@
 name: Tool Cooldown
 
-# Every CLI tool version this repository pins is gated here. The files it reads as declarations are
+# Every CLI tool and Terraform provider version this repository pins is gated here. The files it reads as declarations are
 # owned by `declarationPaths` in `scripts/tool-cooldown`, and a version published inside the window
 # carries the same risk whichever tool it belongs to.
 #
@@ -74,6 +74,7 @@ jobs:
             rekor.sigstore.dev
             fulcio.sigstore.dev
             awscli.amazonaws.com
+            registry.terraform.io
       - name: Harden the runner (retry)
         if: steps.harden-runner.outcome != 'success'
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
@@ -112,6 +113,7 @@ jobs:
             rekor.sigstore.dev
             fulcio.sigstore.dev
             awscli.amazonaws.com
+            registry.terraform.io
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

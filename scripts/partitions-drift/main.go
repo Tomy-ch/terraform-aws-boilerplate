@@ -1,10 +1,10 @@
 // partitions-drift は、テストが手で写した partition と region の一覧を、CI の `terraform test` が解決する
 // hashicorp/aws の版が使う aws-sdk-go-base の endpoints と突き合わせます。
 //
-//	partitions-drift -versions-tf <versions.tf> -copy <*.tftest.hcl> [-summary-out <md>] [-state-out <path>]
+//	partitions-drift -lock <.terraform.lock.hcl> -copy <*.tftest.hcl> [-summary-out <md>] [-state-out <path>]
 //
-// 比べる版は、-versions-tf の制約を満たす最新の正式版です。lock を持たない module の `terraform test` が
-// 解決する版がそれだからです（ADR-0205 決定9）。終了コードは 0 が一致、1 がずれ、2 が確認不能です。
+// 比べる版は、provider の版の正本の lock が固定する版です。root でない module の `terraform test` も、その版で
+// 走ります（ADR-0205 決定9）。終了コードは 0 が一致、1 がずれ、2 が確認不能です。
 // make を通すと非0の終了コードは区別できないので、-state-out に同じ判定を match・drift・unconfirmed で書きます。
 package main
 
@@ -23,7 +23,6 @@ import (
 )
 
 const (
-	registryBase = "https://registry.terraform.io"
 	rawBase      = "https://raw.githubusercontent.com"
 	fetchTimeout = 30 * time.Second
 	summaryPerm  = 0o644
@@ -34,7 +33,7 @@ const (
 )
 
 var (
-	errUsage       = xerrors.New("使い方: partitions-drift -versions-tf <path> -copy <path> [-summary-out <path>] [-state-out <path>]")
+	errUsage       = xerrors.New("使い方: partitions-drift -lock <path> -copy <path> [-summary-out <path>] [-state-out <path>]")
 	errDrift       = xerrors.New("写しが上流の一覧と一致しません")
 	errSummaryFile = xerrors.New("要約を書けません")
 	errStateFile   = xerrors.New("判定を書けません")
@@ -45,7 +44,7 @@ var (
 func main() {
 	log.SetFlags(0)
 	client := &http.Client{Timeout: fetchTimeout}
-	err := run(context.Background(), os.Args[1:], upstream{client: client, registry: registryBase, raw: rawBase}, os.Stdout)
+	err := run(context.Background(), os.Args[1:], upstream{client: client, raw: rawBase}, os.Stdout)
 	if err != nil {
 		log.Printf("❌ partitions-drift: %v", err)
 	}
@@ -79,7 +78,7 @@ func stateOf(err error) string {
 func run(ctx context.Context, args []string, up upstream, out io.Writer) error {
 	fset := flag.NewFlagSet("partitions-drift", flag.ContinueOnError)
 	fset.SetOutput(out)
-	versionsTF := fset.String("versions-tf", "", "比べる provider の source と版の制約を持つ versions.tf")
+	lockPath := fset.String("lock", "", "比べる hashicorp/aws の版を持つ provider の版の正本の lock")
 	copyPath := fset.String("copy", "", "写し（variables の aws_partitions）を持つ .tftest.hcl")
 	summaryOut := fset.String("summary-out", "", "Markdown の要約を書くパス")
 	stateOut := fset.String("state-out", "", "判定（match・drift・unconfirmed）を書くパス")
@@ -95,11 +94,11 @@ func run(ctx context.Context, args []string, up upstream, out io.Writer) error {
 			return xerrors.Wrapf(sentinel, "%v", err)
 		}
 	}
-	if *versionsTF == "" || *copyPath == "" || fset.NArg() > 0 {
+	if *lockPath == "" || *copyPath == "" || fset.NArg() > 0 {
 		return errUsage
 	}
 
-	r := compareWithUpstream(ctx, up, *versionsTF, *copyPath)
+	r := compareWithUpstream(ctx, up, *lockPath, *copyPath)
 	summary := renderSummary(r)
 	if _, err := io.WriteString(out, summary); err != nil {
 		return xerrors.Wrapf(errOutput, "%v", err)
@@ -121,28 +120,15 @@ func run(ctx context.Context, args []string, up upstream, out io.Writer) error {
 }
 
 // compareWithUpstream は、途中で失敗しても、そこまでに分かった版と URL を report に残します。
-func compareWithUpstream(ctx context.Context, up upstream, versionsTF, copyPath string) report {
-	var r report
+func compareWithUpstream(ctx context.Context, up upstream, lockPath, copyPath string) report {
+	r := report{lock: lockPath}
 	cp, err := readCopy(copyPath)
 	if err != nil {
 		r.err = err
 
 		return r
 	}
-	source, constraint, err := readConstraint(versionsTF)
-	if err != nil {
-		r.err = err
-
-		return r
-	}
-	r.constraint = constraint
-	versions, err := up.providerVersions(ctx, source)
-	if err != nil {
-		r.err = err
-
-		return r
-	}
-	r.provider, err = latestMatching(versions, constraint)
+	r.provider, err = readLockedVersion(lockPath)
 	if err != nil {
 		r.err = err
 

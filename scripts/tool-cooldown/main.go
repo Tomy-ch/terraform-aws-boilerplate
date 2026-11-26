@@ -122,6 +122,8 @@ type declaration struct {
 type violation struct {
 	file string
 	msg  string
+	// key はバイパスの違反のときのエントリの key。gate はこれで、変更が持ち込んだ違反だけを数える。
+	key string
 }
 
 // bypass は cooldown を明示的に外す 1 エントリ。
@@ -252,6 +254,15 @@ func run(args []string, client *http.Client, now time.Time, launch toolFunc) err
 		if err != nil {
 			return xerrors.Wrap(err, "❌ base との差分")
 		}
+		gone, err := removed(opt.base, paths, declared, launch)
+		if err != nil {
+			return xerrors.Wrap(err, "❌ base との差分")
+		}
+		baseBypasses, err := bypassesAt(opt.base, launch)
+		if err != nil {
+			return xerrors.Wrap(err, "❌ base の "+bypassFile)
+		}
+		policyViolations = introduced(policyViolations, append(append([]tool{}, targets...), gone...), bypasses, baseBypasses)
 	}
 
 	ctx := context.Background()
@@ -340,7 +351,7 @@ func parseTools(content []byte) ([]tool, error) {
 }
 
 func declarationPaths() []string {
-	return []string{miseFile, tflintFile, semgrepFile}
+	return []string{miseFile, tflintFile, semgrepFile, providerLockFile}
 }
 
 func readDeclarations(paths []string) ([]declaration, error) {
@@ -369,6 +380,8 @@ func parseDeclarations(decls []declaration) ([]tool, error) {
 			parse = parseTflintPlugins
 		case filepath.Base(semgrepFile):
 			parse = parseSemgrepRules
+		case filepath.Base(providerLockFile):
+			parse = parseProviderLock
 		}
 		parsed, err := parse(d.content)
 		if err != nil {
@@ -392,6 +405,21 @@ func countFrom(tools []tool, path string) int {
 		}
 	}
 	return n
+}
+
+// removed は、base の宣言に在り現在の宣言に無い版を返します。その版に掛かるバイパスが宣言の無いエントリになるのは、
+// この変更のせいです。
+func removed(base string, paths []string, current []tool, launch toolFunc) ([]tool, error) {
+	decls, err := baseDeclarations(base, paths, launch)
+	if err != nil {
+		return nil, err
+	}
+	before, err := parseDeclarations(decls)
+	if err != nil {
+		return nil, xerrors.Wrap(err, "base の宣言")
+	}
+
+	return diffAdded(current, before), nil
 }
 
 func added(base string, paths []string, current []tool, launch toolFunc) ([]tool, error) {
@@ -536,6 +564,8 @@ func backendKind(backend string) string {
 		return "go"
 	case "npm":
 		return "npm"
+	case providerBackend:
+		return providerBackend
 	default:
 		return ""
 	}
@@ -610,6 +640,8 @@ func publishedAt(ctx context.Context, client *http.Client, t tool) (time.Time, e
 		return goModuleAt(ctx, client, ref, t.version)
 	case "npm":
 		return npmPackageAt(ctx, client, ref, t.version)
+	case providerBackend:
+		return registryProviderAt(ctx, client, ref, t.version)
 	default:
 		return time.Time{}, xerrors.Wrap(errUnsupportedBackend, t.backend)
 	}
@@ -955,8 +987,13 @@ func readBypasses(path string) (map[string]bypass, error) {
 	}
 	defer func() { _ = f.Close() }()
 
+	return parseBypasses(f)
+}
+
+// parseBypasses は readBypasses の解釈の部分です。
+func parseBypasses(r io.Reader) (map[string]bypass, error) {
 	out := map[string]bypass{}
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(r)
 	for lineNo := 1; sc.Scan(); lineNo++ {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -1000,27 +1037,70 @@ func validateBypasses(bypasses map[string]bypass, declared []tool, today time.Ti
 		switch {
 		case b.expires.Before(today):
 			invalid[key] = struct{}{}
-			violations = append(violations, violation{file: bypassFile, msg: fmt.Sprintf(
+			violations = append(violations, violation{file: bypassFile, key: key, msg: fmt.Sprintf(
 				"%s:%d %s の期限 %s が切れています。窓明けの版へ更新してエントリを消すか、期限を延ばす判断を #%d で記録してください",
 				bypassFile, b.line, key, b.expires.Format(time.DateOnly), b.issue,
 			)})
 		case b.expires.After(limit):
 			invalid[key] = struct{}{}
-			violations = append(violations, violation{file: bypassFile, msg: fmt.Sprintf(
+			violations = append(violations, violation{file: bypassFile, key: key, msg: fmt.Sprintf(
 				"%s:%d %s の期限 %s が上限（%s から %d ヶ月 = %s）を越えています。恒久 allowlist にしないための上限です",
 				bypassFile, b.line, key, b.expires.Format(time.DateOnly),
 				today.Format(time.DateOnly), maxBypassMonths, limit.Format(time.DateOnly),
 			)})
 		default:
 			if _, ok := inDeclarations[key]; !ok {
-				violations = append(violations, violation{file: bypassFile, msg: fmt.Sprintf(
-					"%s:%d %s は %s に存在しません。不要になったエントリは消してください",
-					bypassFile, b.line, key, miseFile,
+				violations = append(violations, violation{file: bypassFile, key: key, msg: fmt.Sprintf(
+					"%s:%d %s はどの宣言（%s）にもありません。不要になったエントリは消してください",
+					bypassFile, b.line, key, strings.Join(declarationPaths(), "・"),
 				)})
 			}
 		}
 	}
 	return violations, invalid
+}
+
+// bypassesAt は base 時点のバイパス lockfile を読みます。base に無ければ空です。
+func bypassesAt(base string, launch toolFunc) (map[string]bypass, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	env, err := gitenv.Env(os.Environ())
+	if err != nil {
+		return nil, xerrors.Wrap(err, "git の環境")
+	}
+	res, err := toolrun.Run(launch(ctx, "", env, stepGitShow, base+":"+bypassFile))
+	if err != nil {
+		return nil, xerrors.Wrapf(err, "git show %s:%s", base, bypassFile)
+	}
+	if res.Code != 0 {
+		if refErr := verifyRef(ctx, launch, env, base); refErr != nil {
+			return nil, refErr
+		}
+
+		return map[string]bypass{}, nil
+	}
+
+	return parseBypasses(strings.NewReader(res.Stdout))
+}
+
+// introduced は、バイパスの違反のうち変更が持ち込んだものだけを返します。変更が足したか消した道具の版（changed）に
+// 掛かるものと、base から足されたか変わったエントリのものです。期限切れのように時間の経過だけで生じた違反は、変更の事実ではないので
+// gate では数えず、audit が落とします（ADR-0603 決定11）。
+func introduced(violations []violation, changedTools []tool, current, base map[string]bypass) []violation {
+	added := make(map[string]bool, len(changedTools))
+	for _, t := range changedTools {
+		added[t.id()] = true
+	}
+	var out []violation
+	for _, v := range violations {
+		before, existed := base[v.key]
+		changed := !existed || !before.expires.Equal(current[v.key].expires) || before.issue != current[v.key].issue || before.reason != current[v.key].reason
+		if added[v.key] || changed {
+			out = append(out, v)
+		}
+	}
+
+	return out
 }
 
 func sortedKeys(m map[string]bypass) []string {

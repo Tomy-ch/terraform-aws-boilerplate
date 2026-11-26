@@ -93,7 +93,8 @@ func Test_renderSummary(t *testing.T) {
 
 	t.Run("一致なら一致の見出しと版を書く", func(t *testing.T) {
 		t.Parallel()
-		got := renderSummary(report{compared: true, provider: "6.73.0", sdk: "v2.0.0-beta.76"})
+		got := renderSummary(report{compared: true, lock: "providers/.terraform.lock.hcl", provider: "6.73.0", sdk: "v2.0.0-beta.76"})
+		assert.Contains(t, got, "providers/.terraform.lock.hcl")
 		assert.True(t, strings.HasPrefix(got, "## ✅"))
 		assert.Contains(t, got, "- 比べた hashicorp/aws: 6.73.0\n")
 		assert.NotContains(t, got, "| 差 |")

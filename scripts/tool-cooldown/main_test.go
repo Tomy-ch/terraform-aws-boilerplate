@@ -25,6 +25,7 @@ import (
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/misetoml"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/tflock"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -177,6 +178,7 @@ func useMiseWorkTree(t *testing.T, content string) string {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, miseFile), []byte(content), 0o600))
 	writeSemgrepDecl(t, dir)
+	writeProviderDecl(t, dir)
 	t.Chdir(dir)
 	return dir
 }
@@ -185,16 +187,17 @@ func useMiseWorkTree(t *testing.T, content string) string {
 // current へ差し替えてそこへ移動します。gate の差分は git 越しに取るため実リポジトリが要ります。
 func useMiseGateRepo(t *testing.T, base, current string) {
 	t.Helper()
-	useGateRepo(t, base, current, miseFile, semgrepFile)
+	useGateRepo(t, base, current, miseFile, semgrepFile, providerLockFile)
 }
 
 // useGateRepo は useMiseGateRepo のうち、base の commit に入れるファイルを baseFiles に限るもの。
-// 作業ツリーには mise.toml と semgrep.mk の両方を置く。
+// 作業ツリーには mise.toml と semgrep.mk と provider の正本の lock を置く。
 func useGateRepo(t *testing.T, base, current string, baseFiles ...string) {
 	t.Helper()
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, miseFile), []byte(base), 0o600))
 	writeSemgrepDecl(t, dir)
+	writeProviderDecl(t, dir)
 
 	git := []string{"-C", dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "-c", "commit.gpgsign=false"}
 	for _, args := range [][]string{{"init", "-q"}, append([]string{"add"}, baseFiles...), {"commit", "-q", "-m", "init"}} {
@@ -321,6 +324,13 @@ func Test_parseDeclarations(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
+		t.Run("provider の正本の lock を宣言として読み、file を lock のパスにする", func(t *testing.T) {
+			t.Parallel()
+			got, err := parseDeclarations([]declaration{{path: providerLockFile, content: []byte(providerFixture)}})
+			require.NoError(t, err)
+			assert.Equal(t, []tool{{key: providerKey, version: "6.73.0", file: providerLockFile}}, got)
+		})
+
 		t.Run("宣言を 1 つの一覧へまとめる", func(t *testing.T) {
 			t.Parallel()
 			got, err := parseDeclarations([]declaration{
@@ -386,9 +396,9 @@ func Test_declarationPaths(t *testing.T) {
 
 		// ここが増えたら、窓の判定も readDeclarations も parseDeclarations も追随しているかを
 		// 確かめること。
-		t.Run("mise.toml と .tflint.hcl と semgrep.mk を返す", func(t *testing.T) {
+		t.Run("mise.toml と .tflint.hcl と semgrep.mk と provider の正本の lock を返す", func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, []string{miseFile, tflintFile, semgrepFile}, declarationPaths())
+			assert.Equal(t, []string{miseFile, tflintFile, semgrepFile, providerLockFile}, declarationPaths())
 		})
 	})
 }
@@ -510,6 +520,12 @@ func Test_backendKind(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
+		t.Run("terraform-registry は terraform-registry に分類し、窓はレジストリの窓", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, providerBackend, backendKind(providerKey))
+			assert.Equal(t, registryWindowDays, windowFor(providerKey))
+		})
+
 		t.Run("aqua は GitHub リリース系に分類する", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, "github", backendKind("aqua:owner/repo"))
@@ -609,6 +625,14 @@ func Test_readBypasses(t *testing.T) {
 
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
+
+		t.Run("provider の key のエントリを読む", func(t *testing.T) {
+			t.Parallel()
+			path := writeBypass(t, `"`+providerKey+`@6.74.0" = { expires = 2026-12-01, issue = 162, reason = "x" }`+"\n")
+			got, err := readBypasses(path)
+			require.NoError(t, err)
+			assert.Contains(t, got, providerKey+"@6.74.0")
+		})
 
 		t.Run("コメントと空行を読み飛ばして 1 エントリを読む", func(t *testing.T) {
 			t.Parallel()
@@ -752,7 +776,7 @@ func Test_validateBypasses(t *testing.T) {
 				"aqua:gone/away@9.9.9": {expires: day("2026-09-06"), issue: 1, reason: "r", line: 3},
 			}, declared, today)
 			require.Len(t, violations, 1)
-			assert.Contains(t, violations[0].msg, "mise.toml に存在しません")
+			assert.Contains(t, violations[0].msg, "はどの宣言（mise.toml・.tflint.hcl・.makefiles/security/semgrep.mk・providers/.terraform.lock.hcl）にもありません")
 		})
 	})
 }
@@ -1674,6 +1698,12 @@ func Test_publishedAt(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
+		t.Run("terraform-registry は Registry の v1 を引く", func(t *testing.T) {
+			t.Parallel()
+			got := requestedPath(t, tool{key: providerKey, version: "6.73.0", backend: providerKey})
+			assert.Equal(t, "/v1/providers/hashicorp/aws/6.73.0", got)
+		})
+
 		t.Run("GitHub リリース系はリリース API を引く", func(t *testing.T) {
 			t.Parallel()
 			got := requestedPath(t, tool{key: "aqua:owner/repo", version: "1.2.3", backend: "aqua:owner/repo"})
@@ -2499,7 +2529,7 @@ func Test_run(t *testing.T) {
 			out, err := runCaptured(t, []string{"check"}, &http.Client{Transport: unreachableUpstream{}}, now, command)
 
 			require.NoError(t, err)
-			assert.Contains(t, out, "宣言 3 件を読めました")
+			assert.Contains(t, out, "宣言 4 件を読めました")
 		})
 
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
@@ -2571,7 +2601,7 @@ func Test_run(t *testing.T) {
 			body, readErr := os.ReadFile(path) //nolint:gosec // テスト内の一時ファイル
 			require.NoError(t, readErr)
 			assert.Contains(t, string(body), "findings=1")
-			assert.Contains(t, string(body), "audited=2")
+			assert.Contains(t, string(body), "audited=3")
 			assert.Contains(t, string(body), "blocking=0")
 		})
 
@@ -2656,6 +2686,49 @@ func Test_run(t *testing.T) {
 			_, err := runCaptured(t, []string{"check"}, &http.Client{Transport: unreachableUpstream{}}, now, command)
 
 			require.ErrorIs(t, err, ErrInvalidSemgrep)
+		})
+
+		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
+		t.Run("check は上流に問い合わせず、provider の正本の lock が無ければ失敗する", func(t *testing.T) {
+			dir := useMiseWorkTree(t, miseOneAquaTool)
+			require.NoError(t, os.Remove(filepath.Join(dir, providerLockFile)))
+
+			_, err := runCaptured(t, []string{"check"}, &http.Client{Transport: unreachableUpstream{}}, now, command)
+
+			require.ErrorIs(t, err, os.ErrNotExist)
+		})
+
+		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
+		t.Run("check は上流に問い合わせず、provider の正本の lock を読めなければ失敗する", func(t *testing.T) {
+			dir := useMiseWorkTree(t, miseOneAquaTool)
+			require.NoError(t, os.WriteFile(filepath.Join(dir, providerLockFile), []byte("# x\n"), 0o600))
+
+			_, err := runCaptured(t, []string{"check"}, &http.Client{Transport: unreachableUpstream{}}, now, command)
+
+			require.ErrorIs(t, err, tflock.ErrInvalidLock)
+		})
+
+		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
+		t.Run("gate は窓内に公開された provider の版への更新を失敗にする", func(t *testing.T) {
+			useMiseGateRepo(t, miseOneAquaTool, miseOneAquaTool)
+			require.NoError(t, os.WriteFile(providerLockFile, []byte(strings.Replace(providerFixture, "6.73.0", "6.74.0", 1)), 0o600))
+			client := fakeUpstream(t, respondJSON("/v1/providers/hashicorp/aws/6.74.0", `{"published_at":"`+fresh+`T00:00:00Z"}`))
+
+			out, err := runCaptured(t, []string{"gate", "--base=HEAD", "--github"}, client, now, command)
+
+			require.ErrorIs(t, err, errBlocking)
+			assert.Contains(t, out, "::error file="+providerLockFile+"::"+providerKey+"@6.74.0")
+		})
+
+		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
+		t.Run("gate は窓を満たす provider の版への更新を通す", func(t *testing.T) {
+			useMiseGateRepo(t, miseOneAquaTool, miseOneAquaTool)
+			require.NoError(t, os.WriteFile(providerLockFile, []byte(strings.Replace(providerFixture, "6.73.0", "6.74.0", 1)), 0o600))
+			client := fakeUpstream(t, respondJSON("/v1/providers/hashicorp/aws/6.74.0", `{"published_at":"2020-01-01T00:00:00Z"}`))
+
+			_, err := runCaptured(t, []string{"gate", "--base=HEAD"}, client, now, command)
+
+			require.NoError(t, err)
 		})
 
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可

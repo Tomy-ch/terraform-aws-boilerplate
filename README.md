@@ -23,7 +23,7 @@
 | `docker/` | 道具を提供するイメージ。版の出所は `mise.toml` だけ |
 | `conftest/` | Conftest の Rego と宣言。`plan/` が Policy Test（[`conftest/plan/README.md`](conftest/plan/README.md)） |
 | `modules/` | 一般 module の `s3/`・`kms/`・`log-group/`・`vended-log-group/`・`sns/`・`vpc/` だけ |
-| `usecases/` | `state-backend/` と `deployment-identity/`（bootstrap の段1-4 の分）と `finops/`・`network-foundation/`・`dns-zone/`・`audit-evidence/`・`ops-notification/`・`image-registry/`・`account-baseline/`（どの root からも呼ばれない）だけ |
+| `usecases/` | `state-backend/` と `deployment-identity/`（bootstrap の段1-4 の分）と `finops/`・`network-foundation/`・`dns-zone/`・`audit-evidence/`・`ops-notification/`・`image-registry/`・`account-baseline/`（どの root からも呼ばれない）と、設計記録（README と `docs/adr/`）だけを持つ `security-tooling/` だけ |
 | `env/` | 管理アカウントの identity root の `admin/identity/` だけ |
 | `providers/` | provider の版の正本（`providers.toml` と、そこから作る `.terraform.lock.hcl`）。root の lock はその写し（[`providers/README.md`](providers/README.md)） |
 | Terraform 側の検査 | fmt / validate / TFLint / `terraform test` / Policy Test（Conftest、入力は plan）と、Conftest によるインフラ内コードの検出・resource の作成の順序の検査・層の規則の検査・root の構成と backend 設定の不変条件の検査（入力は HCL のソースから作る JSON）は `make`・pre-commit・CI に配線済み |

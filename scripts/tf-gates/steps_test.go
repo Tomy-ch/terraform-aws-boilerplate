@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/tfexec"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/tflock"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun/tooltest"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
@@ -39,7 +40,6 @@ func Test_command(t *testing.T) {
 	for step, want := range map[string][]string{
 		stepFmt:          {"terraform", "fmt", "-recursive"},
 		stepFmtCheck:     {"terraform", "fmt", "-check", "-diff", "-recursive"},
-		stepInit:         {"terraform", "init", "-backend=false", "-input=false"},
 		stepInitReadonly: {"terraform", "init", "-backend=false", "-input=false", "-lockfile=readonly"},
 		stepValidate:     {"terraform", "validate", "-json"},
 		stepTest:         {"terraform", "test"},
@@ -358,36 +358,130 @@ func Test_parseData(t *testing.T) {
 	})
 }
 
+const awsRequired = "terraform {\n  required_providers {\n    aws = {\n      source  = \"hashicorp/aws\"\n      version = \">= 6.68.0, < 7.0.0\"\n    }\n  }\n}\n"
+
+// initArgs は、正本（providers/）と mise.toml を base に置き、runInit の引数の頭を返す。
+func initArgs(t *testing.T, base string) []string {
+	t.Helper()
+	for rel, body := range map[string]string{"providers/providers.toml": testDecl, "providers/.terraform.lock.hcl": testLock, "mise.toml": testMise} {
+		require.NoError(t, os.MkdirAll(filepath.Join(base, filepath.Dir(rel)), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(base, rel), []byte(body), 0o600))
+	}
+
+	return []string{"-base", base, "-data", "/d", "-providers", filepath.Join(base, "providers"), "-mise", filepath.Join(base, "mise.toml")}
+}
+
 func Test_runInit(t *testing.T) {
 	t.Parallel()
 
-	t.Run("root は lock を書き換えない init、ほかは通常の init を、ディレクトリごとの TF_DATA_DIR で起動する", func(t *testing.T) {
+	t.Run("すべてのディレクトリを、ディレクトリごとの TF_DATA_DIR で lock を書き換えない init で起動する", func(t *testing.T) {
 		t.Parallel()
 		base := okTree(t, map[string]string{"env/dev/identity/main.tf": "", "usecases/x/reference/main.tf": "", "env/dev/other/main.tf": ""})
 		tool, calls := fakeTool(t)
-		require.NoError(t, runInit([]string{"-base", base, "-data", "/d", "usecases", "modules", "env"}, &bytes.Buffer{}, tool))
+		require.NoError(t, runInit(append(initArgs(t, base), "usecases", "modules", "env"), &bytes.Buffer{}, tool))
 		assert.Equal(t, []string{
 			filepath.Join(base, "env/dev") + " init-readonly /d/env__dev  ",
 			filepath.Join(base, "env/dev/identity") + " init-readonly /d/env__dev__identity  ",
-			filepath.Join(base, "env/dev/other") + " init /d/env__dev__other  ",
-			filepath.Join(base, "modules/a") + " init /d/modules__a  ",
-			filepath.Join(base, "usecases/b") + " init /d/usecases__b  ",
+			filepath.Join(base, "env/dev/other") + " init-readonly /d/env__dev__other  ",
+			filepath.Join(base, "modules/a") + " init-readonly /d/modules__a  ",
+			filepath.Join(base, "usecases/b") + " init-readonly /d/usecases__b  ",
 			filepath.Join(base, "usecases/x/reference") + " init-readonly /d/usecases__x__reference  ",
 		}, calls())
 	})
 
+	t.Run("root でない、provider を要求するディレクトリにだけ正本の lock を置く", func(t *testing.T) {
+		t.Parallel()
+		base := okTree(t, map[string]string{"modules/a/versions.tf": awsRequired, "env/dev/versions.tf": awsRequired, "env/dev/.terraform.lock.hcl": "root\n", "usecases/b/.terraform.lock.hcl": "stale\n"})
+		tool, _ := fakeTool(t)
+		require.NoError(t, runInit(append(initArgs(t, base), "usecases", "modules", "env"), &bytes.Buffer{}, tool))
+		assert.Equal(t, testLock, readFile(t, filepath.Join(base, "modules", "a", tflock.LockFile)))
+		assert.NoFileExists(t, filepath.Join(base, "usecases", "b", tflock.LockFile), "provider を要求しないディレクトリの前の lock は消す")
+		assert.Equal(t, "root\n", readFile(t, filepath.Join(base, "env", "dev", tflock.LockFile)), "root の lock には触れない")
+	})
+
+	t.Run("要求する provider が正本と違えば、1つも起動せずに errProviders", func(t *testing.T) {
+		t.Parallel()
+		base := okTree(t, map[string]string{"modules/a/versions.tf": strings.Replace(awsRequired, "hashicorp/aws", "hashicorp/random", 1)})
+		tool, calls := fakeTool(t)
+		err := runInit(append(initArgs(t, base), "modules"), &bytes.Buffer{}, tool)
+		require.ErrorIs(t, err, errProviders)
+		assert.Contains(t, err.Error(), "registry.terraform.io/hashicorp/random")
+		assert.Empty(t, calls())
+		assert.NoFileExists(t, filepath.Join(base, "modules", "a", tflock.LockFile))
+	})
+
+	t.Run("1つでも要求が合わなければ、ほかのディレクトリにも lock を置かず1つも起動しない", func(t *testing.T) {
+		t.Parallel()
+		base := okTree(t, map[string]string{"modules/a/versions.tf": awsRequired, "usecases/b/versions.tf": strings.Replace(awsRequired, "hashicorp/aws", "hashicorp/random", 1), "modules/a/.terraform.lock.hcl": "old\n"})
+		tool, calls := fakeTool(t)
+		require.ErrorIs(t, runInit(append(initArgs(t, base), "usecases", "modules"), &bytes.Buffer{}, tool), errProviders)
+		assert.Empty(t, calls())
+		assert.Equal(t, "old\n", readFile(t, filepath.Join(base, "modules", "a", tflock.LockFile)))
+	})
+
+	t.Run("root は要求する provider が正本と違っても、lock を置かず errProviders にもしない", func(t *testing.T) {
+		t.Parallel()
+		base := okTree(t, map[string]string{"env/dev/versions.tf": strings.Replace(awsRequired, "hashicorp/aws", "hashicorp/random", 1), "env/dev/.terraform.lock.hcl": "root\n"})
+		tool, _ := fakeTool(t)
+		require.NoError(t, runInit(append(initArgs(t, base), "env"), &bytes.Buffer{}, tool))
+		assert.Equal(t, "root\n", readFile(t, filepath.Join(base, "env", "dev", tflock.LockFile)))
+	})
+
+	for name, c := range map[string]struct {
+		mutate func(t *testing.T, base string)
+		want   error
+	}{
+		"正本の lock が無い": {func(t *testing.T, base string) {
+			t.Helper()
+			require.NoError(t, os.Remove(filepath.Join(base, "providers", tflock.LockFile)))
+		}, os.ErrNotExist},
+		"providers.toml を読めない": {func(t *testing.T, base string) {
+			t.Helper()
+			require.NoError(t, os.WriteFile(filepath.Join(base, "providers", tflock.DeclFile), []byte("x\n"), 0o600))
+		}, tflock.ErrInvalidDecl},
+		"lockfile_platforms が無い": {func(t *testing.T, base string) {
+			t.Helper()
+			require.NoError(t, os.WriteFile(filepath.Join(base, "mise.toml"), []byte("[tools]\n"), 0o600))
+		}, tflock.ErrInvalidPlatform},
+		"正本の lock が宣言とずれている": {func(t *testing.T, base string) {
+			t.Helper()
+			require.NoError(t, os.WriteFile(filepath.Join(base, "providers", tflock.LockFile), []byte(strings.Replace(testLock, "\"6.73.0\"\n  constraints", "\"6.70.0\"\n  constraints", 1)), 0o600))
+		}, errLock},
+	} {
+		t.Run(name+"なら、1つも起動しない", func(t *testing.T) {
+			t.Parallel()
+			base := okTree(t, nil)
+			args := initArgs(t, base)
+			c.mutate(t, base)
+			tool, calls := fakeTool(t)
+			require.ErrorIs(t, runInit(append(args, "modules"), &bytes.Buffer{}, tool), c.want)
+			assert.Empty(t, calls())
+		})
+	}
+
+	t.Run("-providers が無ければ errUsage", func(t *testing.T) {
+		t.Parallel()
+		require.ErrorIs(t, runInit([]string{"-base", okTree(t, nil), "-data", "/d", "-mise", "m", "modules"}, &bytes.Buffer{}, command), errUsage)
+	})
+
+	t.Run("-mise が無ければ errUsage", func(t *testing.T) {
+		t.Parallel()
+		require.ErrorIs(t, runInit([]string{"-base", okTree(t, nil), "-data", "/d", "-providers", "p", "modules"}, &bytes.Buffer{}, command), errUsage)
+	})
+
 	t.Run("落ちたディレクトリを名指す", func(t *testing.T) {
 		t.Parallel()
-		base := okTree(t, map[string]string{"modules/a/fail-init": ""})
+		base := okTree(t, map[string]string{"modules/a/fail-init-readonly": ""})
 		tool, _ := fakeTool(t)
 		var out bytes.Buffer
-		require.ErrorIs(t, runInit([]string{"-base", base, "-data", "/d", "modules", "usecases"}, &out, tool), errDirsFailed)
+		require.ErrorIs(t, runInit(append(initArgs(t, base), "modules", "usecases"), &out, tool), errDirsFailed)
 		assert.Contains(t, out.String(), "❌ tf-init が落ちたディレクトリ: "+filepath.Join(base, "modules/a")+"\n")
 	})
 
 	t.Run("道具を起動できなければ errTool で終了コードは 2", func(t *testing.T) {
 		t.Parallel()
-		err := runInit([]string{"-base", okTree(t, nil), "-data", "/d", "modules"}, &bytes.Buffer{}, tooltest.Missing)
+		base := okTree(t, nil)
+		err := runInit(append(initArgs(t, base), "modules"), &bytes.Buffer{}, tooltest.Missing)
 		require.ErrorIs(t, err, errTool)
 		assert.Equal(t, 2, exitCode(err))
 	})
@@ -399,7 +493,27 @@ func Test_initTargets(t *testing.T) {
 	t.Run("対象が無ければ何も起動しない", func(t *testing.T) {
 		t.Parallel()
 		tool, calls := fakeTool(t)
-		require.NoError(t, initTargets("/d", nil, &bytes.Buffer{}, tool))
+		require.NoError(t, initTargets("/d", nil, &bytes.Buffer{}, tool, nil))
+		assert.Empty(t, calls())
+	})
+
+	t.Run("正本が無いときは root だけを起動でき、root でないディレクトリがあれば起動しない", func(t *testing.T) {
+		t.Parallel()
+		base := okTree(t, nil)
+		tool, calls := fakeTool(t)
+		require.NoError(t, initTargets("/d", []target{{rel: "env/dev", path: filepath.Join(base, "env", "dev")}}, &bytes.Buffer{}, tool, nil))
+		assert.Len(t, calls(), 1)
+		err := initTargets("/d", []target{{rel: "modules/a", path: filepath.Join(base, "modules", "a")}}, &bytes.Buffer{}, tool, nil)
+		require.ErrorIs(t, err, errUsage)
+		assert.Len(t, calls(), 1, "root でないディレクトリだけのときは起動しない")
+	})
+
+	t.Run("正本が無いときに root と root でないディレクトリが混ざれば、root も起動しない", func(t *testing.T) {
+		t.Parallel()
+		base := okTree(t, nil)
+		tool, calls := fakeTool(t)
+		targets := []target{{rel: "env/dev", path: filepath.Join(base, "env", "dev")}, {rel: "modules/a", path: filepath.Join(base, "modules", "a")}}
+		require.ErrorIs(t, initTargets("/d", targets, &bytes.Buffer{}, tool, nil), errUsage)
 		assert.Empty(t, calls())
 	})
 }

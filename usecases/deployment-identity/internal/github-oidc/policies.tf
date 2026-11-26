@@ -692,6 +692,8 @@ locals {
         { Sid = "ReadState", Effect = "Allow", Action = "s3:GetObject", Resource = [local.identity_state_key, local.workload_state_key] },
         { Sid = "WritePlanOutput", Effect = "Allow", Action = "s3:PutObject", Resource = local.plan_output_keys },
         { Sid = "ReadStateKey", Effect = "Allow", Action = local.state_key_read_actions, Resource = var.state_key_arn },
+        # 決定8。resource type を持たない global の Action なので、DenyBaselineOutsideRegions の列挙に入れない。
+        { Sid = "SimulatePolicyDocuments", Effect = "Allow", Action = "iam:SimulateCustomPolicy", Resource = "*" },
       ],
       local.identity_read_statements,
       local.governance_read_statements,
