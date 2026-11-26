@@ -53,6 +53,7 @@ include .makefiles/terraform/partitions-drift.mk
 include .makefiles/terraform/operation/local.mk
 include .makefiles/terraform/operation/ci.mk
 # 手順書の人の手順
+include .makefiles/setup/bootstrap.mk
 include .makefiles/setup/organization-baseline.mk
 # Docker関連
 include .makefiles/docker/lint.mk

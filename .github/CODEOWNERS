@@ -12,6 +12,8 @@
 .github/go-cooldown-bypass.toml       @Tomy-ch
 .github/tool-cooldown-bypass.toml     @Tomy-ch
 docker/images-pin.toml                @Tomy-ch
+# CI とイメージのビルドが道具を入れる取得元と照合値。lock-check が見るのは取得元までで、照合値の正しさは review に残る。
+mise.lock                             @Tomy-ch
 
 # Go の cooldown gate は `go.mod` の差分を読み、直接の依存だけを覆う。間接の module は review に残る。
 scripts/go.mod                        @Tomy-ch
@@ -39,11 +41,15 @@ scripts/repo-settings/                @Tomy-ch
 scripts/tf-local/                     @Tomy-ch
 scripts/oidc-job-lint/                @Tomy-ch
 
-# 手順書の人の手順の入口。管理アカウントの資格情報で、どの aws の書き込みをどの確かめの後に起動するかを決める（ADR-0702 決定27）。
+# 手順書の人の手順の入口。管理アカウントか bootstrap の一時 IAM user の資格情報で、どの aws・gh の書き込みをどの確かめの
+# 後に起動するかを決める（ADR-0702 決定26・27）。
 .makefiles/setup/                     @Tomy-ch
 scripts/setup/                        @Tomy-ch
 # 管理アカウントの資格情報で aws を起動する道具が、profile を迂回する資格情報を見つけて止める一覧。
 scripts/lib/awsenv/                   @Tomy-ch
+# bootstrap の確認と手順の実行が tag を付ける AWS services monitor を決める。誤ると、apply の role の Deny が守る
+# 先が別の monitor になる（deployment-identity/ADR-0201 決定13）。
+scripts/lib/anomaly/                  @Tomy-ch
 
 # apply の失敗を戻す revert のブランチの経路。リポジトリへ書き込める token がどの job に届き、何を push するかを決める。
 .makefiles/github/operation/apply-revert.mk @Tomy-ch

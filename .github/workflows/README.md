@@ -146,6 +146,12 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
   hotfix の線からは `admin` へ入れられない
 - **止めるときは、`admin` 宛の Pull Request を merge しない。** 後続の apply は `admin` への merge でだけ起きる
   （ADR-0601 決定19）。デフォルトブランチは動かさない
+- **昇格は開くときに承認し、緑ならすぐ merge する。** どのデプロイブランチでも同じである。CI が緑で、plan の行と
+  変わる resource の一覧が本文の見込みと一致すれば、すぐ merge する。merge の前に止めるのは ADR-0601 決定10 の
+  場合だけである。リリース線への merge は止めない。昇格の Pull Request の CI の間に merge すると、head が進んで
+  その CI が走り直すだけで、確かめていない木は入らない（`deploy-source-check`、ADR-0603 決定31）。リリース線への
+  merge は次の昇格まで実環境に当たらず、apply の失敗は後続の apply で直る（ADR-0601 決定19）ので、apply の
+  終わりも待たない
 - **hotfix の間は `admin` へ昇格できない。** `scripts/release` がデフォルトブランチを `hotfix/*` へ移すと、
   デフォルトブランチが `from` の線でないので `deploy-source-check` が落ちる。hotfix を閉じたら、管理者が
   デフォルトブランチをリリース線へ戻し（`gh repo edit --default-branch release/vX.Y.Z`）、hotfix の修正を
@@ -156,8 +162,12 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
   保証しないもの）を掛け、通った plan だけを apply する（ADR-0601 決定6、ADR-0604 決定11、
   `.makefiles/terraform/operation/ci.mk` の `CI_APPLY`）。plan は lock を取る。変更の無い plan も apply する
 - **古い commit を apply しない。** 再実行は元の run の commit と payload を使うので、job の `if:` は古い
-  run を止めない。資格情報を取る前の step（`refuse-stale`）が、起動したブランチの先頭の commit を API から
-  取り直し、run の commit と違えば失敗する。どのブランチから起動できるかは environment が限る
+  run を止めない。資格情報を取る前の step（`refuse-stale`）が、起動したブランチの先頭の commit を
+  `git ls-remote` で取り直し、run の commit と違えば失敗する。先頭を1つに決められなくても失敗する。lint
+  （`make oidc-job-lint`）が見るのは、その step が `head=$(git ... ls-remote ...)` で取って
+  `test "$SHA" = "$head" || ... exit 1` で比べる行を持ち、REST API を呼ぶ道具（`gh`・`curl`・`wget`・
+  `api.github.com`）を字面に持たないことまでである —— REST の上限は PR の CI と分け合う。どのブランチから
+  起動できるかは environment が限る
 - **concurrency は workflow 全体に1つ置き、実行中の apply を止めない。** 待っている run は後から来た
   run に置き換わるので、線の途中の commit は apply されず、最新の commit だけが apply される
 - **公開されるログに terraform の出力を出さない。** ログには plan の終了コード・件数・Policy の違反の文と
@@ -710,6 +720,10 @@ mise のバイナリをリトライ付きでファイルへ落とし、版と di
 不一致で job を落とす。
 
 道具の版は [`mise.toml`](../../mise.toml) に残る。呼び出し側が渡すのは、必要な道具の指定だけである。
+action は道具を `MISE_LOCKED` で [`mise.lock`](../../mise.lock) の取得元と照合値からだけ入れ、版と取得元を
+GitHub API に問い合わせない —— 問い合わせると、並ぶ Pull Request の CI が `GITHUB_TOKEN` の API の上限を
+分け合い、上限に当たった job が落ちる（ADR-0503 決定2）。lock に無い道具と宣言と違う版は入れずに落ちる。
+版を変えたら `make mise-lock` で lock を書き直す。lock と宣言のずれは `make versions-check` が落とす。
 `make actions-mise-pin-lint` が、action の版・digest・キャッシュキーの三点の不一致を拒む。mise 自身を
 更新するときは、release の `SHASUMS256.txt` から checksum を取り、三点を同時に更新する。
 

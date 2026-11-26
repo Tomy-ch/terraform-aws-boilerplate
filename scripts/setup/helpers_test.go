@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"maps"
 	"os"
 	"os/exec"
 	"path"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -19,10 +21,20 @@ const (
 	paramName   = "/tabp/organization-baseline/member-account-emails"
 
 	usecaseMainTF = `locals {
+	break_glass_path      = "/break-glass/"
 	break_glass_role_name = "${var.project}-break-glass"
 }
 `
-	ouMainTF = `locals {
+	ouMainTF = `resource "aws_organizations_organization" "this" {
+	feature_set          = "ALL"
+	enabled_policy_types = ["SERVICE_CONTROL_POLICY", "RESOURCE_CONTROL_POLICY"]
+}
+
+resource "aws_iam_organizations_features" "this" {
+	enabled_features = ["RootCredentialsManagement", "RootSessions"]
+}
+
+locals {
 	root_id = "r"
 }
 
@@ -56,13 +68,130 @@ resource "aws_organizations_account" "this" {
 	}
 }
 `
+	breakGlassTF = `locals {
+	user_names = toset(["break-glass-1", "break-glass-2"])
+}
+
+resource "aws_iam_user" "this" {
+	for_each = local.user_names
+	name     = each.key
+}
+
+resource "aws_iam_account_password_policy" "this" {
+	minimum_password_length        = 14
+	password_reuse_prevention      = 24
+	require_lowercase_characters   = true
+	require_uppercase_characters   = true
+	require_numbers                = true
+	require_symbols                = true
+	allow_users_to_change_password = true
+	max_password_age               = 90
+	hard_expiry                    = false
+}
+`
+	delegatedTF = `resource "aws_organizations_delegated_administrator" "this" {
+	for_each = toset(["config.amazonaws.com"])
+
+	account_id        = aws_organizations_account.this["security"].id
+	service_principal = each.key
+}
+`
+	outputsTF = `output "delegated_admin" {
+	value = {
+		account_id         = aws_organizations_account.this["security"].id
+		service_principals = sort(concat(["cloudtrail.amazonaws.com"], keys(aws_organizations_delegated_administrator.this)))
+	}
+}
+`
 )
 
+// fixtureFiles は、organization-baseline の宣言の fixture。束ごとの3つを引数で替え、残りは既定の fixture を置く。
 func fixtureFiles(usecaseMain, ouMain, accounts string) map[string]string {
 	return map[string]string{
-		path.Join(testUsecase, usecaseFile):  usecaseMain,
-		path.Join(testUsecase, ouFile):       ouMain,
-		path.Join(testUsecase, accountsFile): accounts,
+		path.Join(testUsecase, usecaseFile):    usecaseMain,
+		path.Join(testUsecase, ouFile):         ouMain,
+		path.Join(testUsecase, accountsFile):   accounts,
+		path.Join(testUsecase, breakGlassFile): breakGlassTF,
+		path.Join(testUsecase, delegatedFile):  delegatedTF,
+		path.Join(testUsecase, outputsFile):    outputsTF,
+		environmentsFile:                       environmentsJSON,
+	}
+}
+
+const environmentsJSON = `[{"name":"admin-plan"},{"name":"admin-apply"},{"name":"admin-unlock"}]`
+
+// fakeGH は、gh の偽物。応答は引数を空白で繋いだもので引き、標準入力を stdins に覚える。after は secret set の
+// 引数の列ごとの、成功した後の応答。引けない呼び出しはテストを落とす。
+type fakeGH struct {
+	t         *testing.T
+	mu        sync.Mutex
+	responses map[string]awsResult
+	after     map[string]map[string]awsResult
+	calls     []string
+	stdins    []string
+}
+
+func (g *fakeGH) fn() ghFunc {
+	return func(stdin []byte, args ...string) awsResult {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+
+		key := strings.Join(args, " ")
+		g.calls = append(g.calls, key)
+		g.stdins = append(g.stdins, string(stdin))
+
+		r, ok := g.responses[key]
+		if !ok {
+			g.t.Errorf("想定していない gh の呼び出し: %s", key)
+
+			return awsResult{err: exitError(g.t), stderr: "unexpected"}
+		}
+
+		if m, ok := g.after[key]; ok && r.err == nil {
+			maps.Copy(g.responses, m)
+		}
+
+		return r
+	}
+}
+
+func withFile(files map[string]string, name, src string) map[string]string {
+	out := maps.Clone(files)
+	out[path.Join(testUsecase, name)] = src
+
+	return out
+}
+
+func testOptionsUC(files map[string]string) options {
+	o := testOptions()
+	o.usecase = testUsecase
+	o.readFile = readFiles(files)
+	o.now = func() time.Time { return testNow }
+	o.sleep = func(time.Duration) {}
+
+	return o
+}
+
+const testPassword = "Pw-correct-horse-1"
+
+var testNow = time.Date(2026, 11, 26, 0, 0, 0, 0, time.UTC)
+
+// hiddenLines は、伏せた入力として lines を順に返す。尽きたら errNoInput。
+func hiddenLines(lines ...string) func() ([]byte, error) {
+	var mu sync.Mutex
+
+	return func() ([]byte, error) {
+		mu.Lock()
+		defer mu.Unlock()
+
+		if len(lines) == 0 {
+			return nil, errNoInput
+		}
+
+		l := lines[0]
+		lines = lines[1:]
+
+		return []byte(l), nil
 	}
 }
 
@@ -97,11 +226,13 @@ type fakeAWS struct {
 	responses map[string]awsResult
 	after     map[string]map[string]awsResult
 	overlays  []map[string]awsResult
-	calls     [][]string
-	secrets   []string
+	// seq は、引数の列ごとに、呼ばれた順に返す応答。尽きたら responses・after から引く。書き込みの後の
+	// 読み直しが、結果整合で何回目に見えるかを表す。
+	seq     map[string][]awsResult
+	calls   [][]string
+	secrets []string
 }
 
-// onWrite は、書き込み w が成功した後の応答 m を置く。
 func (f *fakeAWS) onWrite(w string, m map[string]awsResult) {
 	if f.after == nil {
 		f.after = map[string]map[string]awsResult{}
@@ -117,7 +248,20 @@ func newFakeAWS(t *testing.T, responses map[string]awsResult) *fakeAWS {
 		responses = map[string]awsResult{}
 	}
 
-	return &fakeAWS{t: t, responses: responses}
+	f := &fakeAWS{t: t, responses: responses}
+
+	t.Cleanup(func() {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+
+		for k, q := range f.seq {
+			if len(q) > 0 {
+				t.Errorf("順の応答が %d 件残りました: %s", len(q), k)
+			}
+		}
+	})
+
+	return f
 }
 
 func (f *fakeAWS) fn() awsFunc {
@@ -141,6 +285,12 @@ func (f *fakeAWS) fn() awsFunc {
 
 			f.secrets = append(f.secrets, string(b))
 			bare = bare[:n-2]
+		}
+
+		if q := f.seq[strings.Join(bare, " ")]; len(q) > 0 {
+			f.seq[strings.Join(bare, " ")] = q[1:]
+
+			return q[0]
 		}
 
 		r, ok := f.lookup(bare)

@@ -6,7 +6,9 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 	"github.com/stretchr/testify/assert"
@@ -31,8 +33,11 @@ func testDeps(f *fakeAWS, input string, read *[]string) deps {
 
 			return files(name)
 		},
-		stdin: strings.NewReader(input),
-		isTTY: true,
+		stdin:  strings.NewReader(input),
+		isTTY:  true,
+		hidden: hiddenLines(testPassword, testPassword, testPassword, testPassword),
+		now:    func() time.Time { return testNow },
+		sleep:  func(time.Duration) {},
 	}
 }
 
@@ -43,16 +48,26 @@ func Test_entries(t *testing.T) {
 		t.Parallel()
 
 		want := map[string][]string{
-			"member-emails":          {"ssm put-parameter"},
-			"member-emails-check":    nil,
-			"member-email-update":    {"organizations enable-aws-service-access", "account start-primary-email-update", "account accept-primary-email-update", "ssm put-parameter"},
-			"account-quota-check":    nil,
-			"member-accounts-check":  nil,
-			"stacksets-access":       {"cloudformation activate-organizations-access"},
-			"stacksets-access-check": nil,
-			"stack-instances-check":  nil,
-			"service-access":         {"organizations enable-aws-service-access"},
-			"service-access-check":   nil,
+			"member-emails":              {"ssm put-parameter"},
+			"member-emails-check":        nil,
+			"member-email-update":        {"organizations enable-aws-service-access", "account start-primary-email-update", "account accept-primary-email-update", "ssm put-parameter"},
+			"account-quota-check":        nil,
+			"member-accounts-check":      nil,
+			"stacksets-access":           {"cloudformation activate-organizations-access"},
+			"stacksets-access-check":     nil,
+			"stack-instances-check":      nil,
+			"service-access":             {"organizations enable-aws-service-access"},
+			"service-access-check":       nil,
+			"delegated-admin-check":      nil,
+			"organization-check":         nil,
+			"identity-center-check":      nil,
+			"identity-center-user-check": nil,
+			"break-glass-login":          {"iam create-login-profile"},
+			"break-glass-check":          nil,
+			"break-glass-usage-check":    nil,
+			"bootstrap-contacts":         {"account put-contact-information", "account put-alternate-contact"},
+			"bootstrap-anomaly-tag":      {"ce tag-resource"},
+			"bootstrap-env-secrets":      {"gh secret set"},
 		}
 		require.Equal(t, slices.Sorted(maps.Keys(want)), slices.Sorted(maps.Keys(entries)))
 
@@ -74,10 +89,10 @@ func Test_entries(t *testing.T) {
 			}
 		}
 
-		assert.Equal(t, 6, checks)
+		assert.Equal(t, 12, checks)
 	})
 
-	// 各入口を run から起動し、入口に固有の操作が起動されることで、entries の配線（run・usecase・needsEnv）を固定する。
+	// 各入口を run から起動し、入口に固有の操作が起動されることで、entries の配線を固定する。
 	runs := map[string]struct {
 		args  []string
 		world func(t *testing.T) *fakeAWS
@@ -126,6 +141,33 @@ func Test_entries(t *testing.T) {
 		"service-access-check": {nil, func(t *testing.T) *fakeAWS {
 			return serviceWorld(t, principals(securityServicePrincipals...), "")
 		}, "", "organizations list-aws-service-access-for-organization"},
+		"delegated-admin-check": {[]string{"-usecase", testUsecase}, func(t *testing.T) *fakeAWS {
+			return delegatedWorld(t, `{"Id":"222222222222","Name":"tabp-security","State":"ACTIVE"}`,
+				map[string]string{"cloudtrail.amazonaws.com": `{"Id":"222222222222"}`, "config.amazonaws.com": `{"Id":"222222222222"}`})
+		}, "", "organizations list-delegated-administrators --service-principal config.amazonaws.com"},
+		"organization-check": {[]string{"-usecase", testUsecase}, func(t *testing.T) *fakeAWS {
+			return orgWorld(t, nil)
+		}, "", topOUsCall},
+		"identity-center-check": {nil, func(t *testing.T) *fakeAWS {
+			return orgWorld(t, map[string]awsResult{listSSO: ok(ssoJSON)})
+		}, "", listSSO},
+		"identity-center-user-check": {[]string{"-usecase", testUsecase, "-user", "alice"}, func(t *testing.T) *fakeAWS {
+			return idcUserWorld(t, ok(`{"UserId":"u-1"}`), `{"UserName":"alice"}`)
+		}, "", getUserID},
+		"break-glass-login": {[]string{"-usecase", testUsecase}, func(t *testing.T) *fakeAWS {
+			return loginWorld(t, map[string]bool{bg1: true})
+		}, "tabp\n", createLogin},
+		"break-glass-check": {[]string{"-usecase", testUsecase}, func(t *testing.T) *fakeAWS {
+			return bgWorld(t, bothLogin(), bothMFA())
+		}, "", passwordPol},
+		"break-glass-usage-check": {[]string{"-usecase", testUsecase}, func(t *testing.T) *fakeAWS {
+			return usageWorld(t, daysAgo(1), daysAgo(1), daysAgo(1))
+		}, "", "iam get-role --role-name tabp-break-glass"},
+		"bootstrap-contacts": {nil, contactsWorld, contactInput + alternateInput + "tabp\n", putContact},
+		"bootstrap-anomaly-tag": {nil, func(t *testing.T) *fakeAWS {
+			return anomalyWorld(t, map[string]bool{monitorARN: true})
+		}, "tabp\n", tagResource(subARN)},
+		"bootstrap-env-secrets": {[]string{"-environments", "admin-plan", "-repo", testRepo}, callerWorld, "tabp\n", "sts get-caller-identity"},
 	}
 
 	t.Run("run の表が entries のすべての入口を覆う", func(t *testing.T) {
@@ -139,7 +181,17 @@ func Test_entries(t *testing.T) {
 
 			f := tc.world(t)
 			args := append([]string{name, "-project", testProject, "-region", testRegion}, tc.args...)
-			require.NoError(t, run(args, &bytes.Buffer{}, testDeps(f, tc.input, nil)))
+			d := testDeps(f, tc.input, nil)
+			g := ghWorld(t)
+			d.gh = g.fn()
+			require.NoError(t, run(args, &bytes.Buffer{}, d))
+
+			if name == "bootstrap-env-secrets" {
+				assert.Equal(t, []string{listPlan, setPlan, listPlan}, g.calls)
+				assert.Equal(t, "111111111111", g.stdins[1])
+			} else {
+				assert.Empty(t, g.calls)
+			}
 			assert.Contains(t, append(f.joined(), f.writes()...), tc.want)
 
 			if len(entries[name].writes) > 0 {
@@ -263,6 +315,10 @@ func Test_exitCode(t *testing.T) {
 		"メールの重複は 2":         {errEmailDuplicate, 2},
 		"確認コードの形の誤りは 2":     {errOTPShape, 2},
 		"読めない応答は 2":         {errAWSResponse, 2},
+		"パスワードの不一致は 2":      {errPasswordMismatch, 2},
+		"伏せて読めなければ 2":       {errNoHidden, 2},
+		"中断は 2":             {errInterrupted, 2},
+		"宣言を解釈できなければ 2":     {errDeclShape, 2},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -348,11 +404,18 @@ func Test_parseArgs(t *testing.T) {
 		"region が無い":  {[]string{"stacksets-access", "-project", "p"}, "-project と -region は必須です"},
 		"余分な引数がある":    {[]string{"stacksets-access", "-project", "p", "-region", "r", "x"}, "余分な引数があります"},
 		"知らない旗":       {[]string{"stacksets-access", "-project", "p", "-region", "r", "-x"}, "flag provided but not defined"},
-		"Terraform を読む入口に -usecase が無い":     {[]string{"member-emails", "-project", "p", "-region", "r"}, "-usecase は"},
-		"Terraform を読まない入口に -usecase":       {[]string{"stacksets-access", "-project", "p", "-region", "r", "-usecase", "a"}, "-usecase は"},
-		"member-email-update に -env が無い":    {[]string{"member-email-update", "-project", "p", "-region", "r", "-usecase", "a"}, "-env は"},
-		"ほかの入口に -env":                       {[]string{"member-emails", "-project", "p", "-region", "r", "-usecase", "a", "-env", "x"}, "-env は"},
-		"member-accounts-check でない入口に -ids": {[]string{"member-emails-check", "-project", "p", "-region", "r", "-usecase", "a", "-ids"}, "-ids は"},
+		"Terraform を読む入口に -usecase が無い":             {[]string{"member-emails", "-project", "p", "-region", "r"}, "-usecase は"},
+		"Terraform を読まない入口に -usecase":               {[]string{"stacksets-access", "-project", "p", "-region", "r", "-usecase", "a"}, "-usecase は"},
+		"member-email-update に -env が無い":            {[]string{"member-email-update", "-project", "p", "-region", "r", "-usecase", "a"}, "-env は"},
+		"ほかの入口に -env":                               {[]string{"member-emails", "-project", "p", "-region", "r", "-usecase", "a", "-env", "x"}, "-env は"},
+		"identity-center-user-check に -user が無い":    {[]string{"identity-center-user-check", "-project", "p", "-region", "r", "-usecase", "a"}, "-user は"},
+		"ほかの入口に -user":                              {[]string{"break-glass-check", "-project", "p", "-region", "r", "-usecase", "a", "-user", "x"}, "-user は"},
+		"bootstrap-env-secrets に -environments が無い": {[]string{"bootstrap-env-secrets", "-project", "p", "-region", "r"}, "-environments と -repo は"},
+		"ほかの入口に -environments":                      {[]string{"bootstrap-contacts", "-project", "p", "-region", "r", "-environments", "x"}, "-environments と -repo は"},
+		"bootstrap-env-secrets に -repo が無い":         {[]string{"bootstrap-env-secrets", "-project", "p", "-region", "r", "-environments", "x"}, "-environments と -repo は"},
+		"ほかの入口に -repo だけ":                           {[]string{"bootstrap-contacts", "-project", "p", "-region", "r", "-repo", "a/b"}, "-environments と -repo は"},
+		"ほかの入口に -replace":                           {[]string{"bootstrap-contacts", "-project", "p", "-region", "r", "-replace"}, "-replace は"},
+		"member-accounts-check でない入口に -ids":         {[]string{"member-emails-check", "-project", "p", "-region", "r", "-usecase", "a", "-ids"}, "-ids は"},
 	}
 	for name, tc := range bad {
 		t.Run(name+"なら errUsage", func(t *testing.T) {
@@ -363,6 +426,17 @@ func Test_parseArgs(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.msg)
 		})
 	}
+
+	t.Run("bootstrap-env-secrets は -environments・-repo・-replace を受ける", func(t *testing.T) {
+		t.Parallel()
+
+		o, e, err := parseArgs([]string{"bootstrap-env-secrets", "-project", "p", "-region", "r", "-environments", "a,b", "-repo", "x/y", "-replace"})
+		require.NoError(t, err)
+		assert.Equal(t, "a,b", o.environments)
+		assert.Equal(t, "x/y", o.repo)
+		assert.True(t, o.replace)
+		assert.True(t, e.needsEnvironments)
+	})
 }
 
 func Test_run(t *testing.T) {
@@ -455,5 +529,120 @@ func Test_run(t *testing.T) {
 
 		require.NoError(t, run([]string{"service-access-check", "-project", testProject, "-region", testRegion}, &bytes.Buffer{}, testDeps(f, "", &read)))
 		assert.Empty(t, read)
+	})
+
+	t.Run("伏せた入力の begin と read を terminal へ渡す", func(t *testing.T) {
+		t.Parallel()
+
+		var begins, reads atomic.Int32
+
+		d := testDeps(loginWorld(t, map[string]bool{bg1: true}), "tabp\n", nil)
+		lines := hiddenLines(testPassword, testPassword)
+		d.hidden = func() ([]byte, error) { reads.Add(1); return lines() }
+		d.begin = func() (func(), error) { begins.Add(1); return func() {}, nil }
+
+		require.NoError(t, run([]string{"break-glass-login", "-project", testProject, "-region", testRegion, "-usecase", testUsecase}, &bytes.Buffer{}, d))
+		assert.Equal(t, int32(2), begins.Load())
+		assert.Equal(t, int32(2), reads.Load())
+	})
+}
+
+func Test_passwordReader(t *testing.T) {
+	t.Parallel()
+
+	t.Run("端末でなければ、状態を控えられず errTerminalState", func(t *testing.T) {
+		t.Parallel()
+
+		r, w, err := os.Pipe()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = r.Close(); _ = w.Close() })
+
+		begin, _ := passwordReader(r)
+		restore, err := begin()
+		require.ErrorIs(t, err, errTerminalState)
+		assert.Nil(t, restore)
+	})
+}
+
+func Test_newHiddenReader(t *testing.T) {
+	t.Parallel()
+
+	type world struct {
+		reads, restores int
+	}
+
+	build := func(w *world, getErr error) (func() (func(), error), func() ([]byte, error)) {
+		return newHiddenReader(
+			func() (func() error, error) {
+				if getErr != nil {
+					return nil, getErr
+				}
+
+				return func() error { w.restores++; return nil }, nil
+			},
+			func() ([]byte, error) { w.reads++; return []byte("s3cret"), nil },
+		)
+	}
+
+	t.Run("begin の後の read は読む", func(t *testing.T) {
+		t.Parallel()
+
+		var w world
+
+		begin, read := build(&w, nil)
+		_, err := begin()
+		require.NoError(t, err)
+
+		got, err := read()
+		require.NoError(t, err)
+		assert.Equal(t, "s3cret", string(got))
+		assert.Equal(t, 1, w.reads)
+	})
+
+	t.Run("戻した後の read は読まずに errInterrupted で、状態を1回戻す", func(t *testing.T) {
+		t.Parallel()
+
+		var w world
+
+		begin, read := build(&w, nil)
+		restore, err := begin()
+		require.NoError(t, err)
+
+		restore()
+
+		_, err = read()
+		require.ErrorIs(t, err, errInterrupted)
+		assert.Equal(t, 0, w.reads)
+		assert.Equal(t, 1, w.restores)
+	})
+
+	t.Run("もう一度 begin すれば、また読む", func(t *testing.T) {
+		t.Parallel()
+
+		var w world
+
+		begin, read := build(&w, nil)
+		restore, err := begin()
+		require.NoError(t, err)
+		restore()
+
+		_, err = begin()
+		require.NoError(t, err)
+
+		_, err = read()
+		require.NoError(t, err)
+		assert.Equal(t, 1, w.reads)
+	})
+
+	t.Run("状態を読めなければ errTerminalState で、戻す関数を返さない", func(t *testing.T) {
+		t.Parallel()
+
+		var w world
+
+		begin, _ := build(&w, os.ErrInvalid)
+		restore, err := begin()
+		require.ErrorIs(t, err, errTerminalState)
+		require.ErrorIs(t, err, os.ErrInvalid)
+		assert.Nil(t, restore)
 	})
 }

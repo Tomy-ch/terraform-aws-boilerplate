@@ -133,9 +133,11 @@ aws の起動は bootstrap-check が持つ。
 
 手順書の、人が実行する確認と手順の実行の入口。手順書ごとに `.mk` を1つ置き、入口の名前は
 `setup-<手順書>-<手順>` と、読み取りだけの `-check` とする。`local.mk` の `bootstrap-check-account` と同じく
-`tf-local env-unset` の変数を外し、`PROFILE` と identity root の region で `scripts/setup` を起動する。
-人が渡す値（`PROFILE`・`MEMBER_ENV`）はレシピの本文に埋めず、`literal_value` で字面のまま環境変数にして渡す。
-`IDS` は `1` のときだけ効く。書き込みの前の確かめ・差分・確認の入力と aws の起動は `scripts/setup` が持つ
+`tf-local env-unset` の変数を外し、`PROFILE`（`bootstrap.mk` は bootstrap の profile）と identity root の region で
+`scripts/setup` を起動する。
+人が渡す値（organization-baseline の `PROFILE`・`MEMBER_ENV`・`IDC_USER`、bootstrap の `ENVIRONMENTS`・`REPO`）はレシピの本文に埋めず、
+`literal_value` で字面のまま環境変数にして渡す。
+`IDS` と `REPLACE` は `1` のときだけ効く。書き込みの前の確かめ・差分・確認の入力と aws・gh の起動は `scripts/setup` が持つ
 （0702 決定26・27）。端末からの入力を読むので、ホストで起動する。
 
 ### 直下

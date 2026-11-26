@@ -4,30 +4,37 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
 var (
-	// errNotTerminal は、標準入力が端末でないこと。手順の実行は端末からの入力でしか書き込まない（ADR-0702 決定27）。
+	// errNotTerminal: 手順の実行は端末からの入力でしか書き込まない（ADR-0702 決定27）。
 	errNotTerminal  = xerrors.New("標準入力が端末ではありません。書き込みは端末から起動したときだけ行います")
 	errNoInput      = xerrors.New("入力が尽きました")
 	errNotConfirmed = xerrors.New("確認の入力が project の名前と一致しないので、書き込みません")
 )
 
-// terminal は、人への問いと答えの読み取り。
 type terminal struct {
-	in    *bufio.Reader
-	out   io.Writer
-	isTTY bool
+	in     *bufio.Reader
+	out    io.Writer
+	isTTY  bool
+	hidden func() ([]byte, error)
+	// begin は、読む前に端末の状態を控え、それへ戻す関数を返す。読み取りを別に走らせる前に呼ぶので、中断が
+	// 読み取りの始まりより先に届いても、戻す先が決まっている。begin か、それが返す関数が nil なら戻すものが無い。
+	begin  func() (restore func(), err error)
+	notify notifier
 }
 
 func newTerminal(in io.Reader, out io.Writer, isTTY bool) *terminal {
 	return &terminal{in: bufio.NewReader(in), out: out, isTTY: isTTY}
 }
 
-// requireTTY は、標準入力が端末でなければ errNotTerminal。書き込みのための入力を読む前に呼ぶ。
+// requireTTY は、書き込みのための入力を読む前に呼ぶ。端末でなければ errNotTerminal。
 func (t *terminal) requireTTY() error {
 	if !t.isTTY {
 		return errNotTerminal
@@ -66,4 +73,98 @@ func (t *terminal) confirm(project string) error {
 	}
 
 	return nil
+}
+
+var (
+	// errInterrupted は、入力か書き込みの途中で中断のシグナルを受けたこと。
+	errInterrupted = xerrors.New("中断しました")
+
+	interruptSignals = []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP}
+)
+
+// notifier は、中断のシグナルを c で受け始め、受けるのをやめる関数を返す。nil なら notifyInterrupt。
+type notifier func(c chan<- os.Signal) (stop func())
+
+func notifyInterrupt(c chan<- os.Signal) func() {
+	signal.Notify(c, interruptSignals...)
+
+	return func() { signal.Stop(c) }
+}
+
+func (n notifier) start(c chan<- os.Signal) func() {
+	if n == nil {
+		return notifyInterrupt(c)
+	}
+
+	return n(c)
+}
+
+var errNoHidden = xerrors.New("伏せた入力を読めません")
+
+// secret は、prompt を出して、打ち込みを表示せずに1行を読む。端末でなければ読まない。
+func (t *terminal) secret(prompt string) (string, error) {
+	if err := t.requireTTY(); err != nil {
+		return "", err
+	}
+
+	if t.hidden == nil {
+		return "", errNoHidden
+	}
+
+	if _, err := io.WriteString(t.out, prompt); err != nil {
+		return "", err
+	}
+
+	restore := func() {}
+
+	if t.begin != nil {
+		r, err := t.begin()
+		if err != nil {
+			return "", xerrors.Join(errNoHidden, err)
+		}
+
+		if r != nil {
+			restore = r
+		}
+	}
+
+	type result struct {
+		b   []byte
+		err error
+	}
+
+	sigs := make(chan os.Signal, 1)
+	defer t.notify.start(sigs)()
+
+	done := make(chan result, 1)
+
+	go func() {
+		b, err := t.hidden()
+		done <- result{b, err}
+	}()
+
+	var r result
+
+	select {
+	case r = <-done:
+	case s := <-sigs:
+		// 伏せた入力は端末の表示を止めている。中断で戻さずに終えると、表示が止まったまま残る。
+		restore()
+
+		r = result{err: xerrors.Wrap(errInterrupted, s.String())}
+	}
+
+	if _, werr := io.WriteString(t.out, "\n"); werr != nil {
+		return "", werr
+	}
+
+	if r.err != nil {
+		if xerrors.Is(r.err, errInterrupted) {
+			return "", r.err
+		}
+
+		return "", xerrors.Join(errNoHidden, r.err)
+	}
+
+	return string(r.b), nil
 }

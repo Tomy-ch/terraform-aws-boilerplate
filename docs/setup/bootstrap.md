@@ -58,7 +58,7 @@
 
 ### アカウントの準備
 
-1-0 から 1-5 を root で続けて行い、2-0a 以降を一時 IAM user で行う。設定が正しいかは、最後の 2-3 でまとめて確かめる。
+1-0 から 1-5 を root で続けて行い、2-0a 以降を一時 IAM user で行う。設定が正しいかは、最後の 2-3 でまとめて確かめる。1-0 から 1-5 はコンソールで行う。root はアクセスキーを持たない（1-4 で消す）ので、CLI から root の資格情報を使えない。
 
 #### 1-0. Paid Plan に移行する（root）
 
@@ -138,14 +138,14 @@ aws logout --profile tabp-bootstrap
 
 #### 2-1. 連絡先を登録する
 
-右上のアカウント名 →「Account」で、次を登録する。
+`make setup-bootstrap-contacts` で、次を入力して置く。今の連絡先と違うものだけを書き、project の名前の入力を受けてから書き、読み直して確かめる。入力した値は引数に載せず、所有者だけが読める一時ファイルで aws へ渡す。
 
-- 「Contact information」: 氏名・住所・電話番号（root の MFA を失ったときの本人確認に使われるので、電話番号は正確に）
-- 「Alternate contacts」: Billing / Operations / Security の3種
+- 主の連絡先: 氏名・住所・電話番号（root の MFA を失ったときの本人確認に使われるので、電話番号は正確に。`+` と国番号から、空白を含めない）
+- 代替連絡先: Billing / Operations / Security の3種。2つ目からは、氏名を空にすると1つ前と同じになる
 
 #### 2-2. Cost Explorer を有効にする
 
-Billing and Cost Management コンソール →「Cost Explorer」→「Launch Cost Explorer」を押す。
+Billing and Cost Management コンソール →「Cost Explorer」→「Launch Cost Explorer」を押す。Cost Explorer は API で有効にできない（AWS の文書）ので、コンソールで行う。
 
 #### 2-3. アカウントの準備を確かめる
 
@@ -166,27 +166,9 @@ Billing and Cost Management コンソール →「Cost Explorer」→「Launch C
 
 2-2 で AWS が作った AWS services monitor とその email の subscription に tag `tabp:bootstrap` を付ける。CI の apply の role の inline policy は、この tag を持つ monitor と subscription の変更・削除を拒む Deny を置く（[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定13）。2-3 の `make bootstrap-check-account` で 2-2 の行が ok になってから行う。
 
-`tabp` は project の値である。自分の project の値に置き換える。
+1. `make setup-bootstrap-anomaly-tag` で tag を付ける。monitor と subscription がそれぞれちょうど1つでなければ、書かずに止まる。tag の key は project の値から組む
 
-1. monitor と subscription の ARN を控える
-
-   ```bash
-   MONITOR=$(aws ce get-anomaly-monitors --query 'AnomalyMonitors[?MonitorDimension==`SERVICE`].MonitorArn' --output text)
-   SUBSCRIPTION=$(aws ce get-anomaly-subscriptions --monitor-arn "$MONITOR" --query 'AnomalySubscriptions[].SubscriptionArn' --output text)
-   echo "$MONITOR" "$SUBSCRIPTION"
-   ```
-
-   ARN がそれぞれ1つずつ表示されることを確かめる。0個か2個以上なら止める
-
-2. tag を付ける
-
-   ```bash
-   for arn in "$MONITOR" "$SUBSCRIPTION"; do
-     aws ce tag-resource --resource-arn "$arn" --resource-tags Key=tabp:bootstrap,Value=true
-   done
-   ```
-
-3. 確かめる
+2. 確かめる
 
    ```bash
    make bootstrap-check-account
@@ -322,10 +304,10 @@ Billing and Cost Management コンソール →「Cost Explorer」→「Launch C
 
   作成の push は `terraform-apply.yaml` を起動する。その run は、`apply-admin-identity` の `Refuse stale commits` の step で secret の不在により落ちる（apply 系の secret は段5 で置き、CI の role は段4 の apply まで無い）。この赤は想定どおりである。**この run を再実行しない**。再実行は作成の時点の commit を apply しようとする。`admin` の最初の apply は、段5 でリリース線から `admin` への最初の Pull Request を merge した run が行う
 
-- `admin-plan` に secret を置く（値は管理アカウントの ID）
+- `admin-plan` に secret `AWS_ACCOUNT_ID`（値は管理アカウントの ID）を置く。一時 IAM user の資格情報（`make aws-login`）で、管理アカウントの ID を読んで gh の標準入力へ渡す。値は画面にも引数にも出ない。`REPO` は secret を置くこのリポジトリ（`<owner>/<リポジトリ>`）で、確認の前に宛先として出る。既に在る secret は書かず、置き直すときだけ `REPLACE=1` を付ける
 
   ```bash
-  gh secret set AWS_ACCOUNT_ID --env admin-plan
+  make setup-bootstrap-env-secrets ENVIRONMENTS=admin-plan REPO=<owner>/<リポジトリ>
   ```
 
 1. Pull Request の head を checkout する。`git status` が空であることを確かめ、`git rev-parse HEAD` を控える
@@ -435,9 +417,7 @@ Billing and Cost Management コンソール →「Cost Explorer」→「Launch C
    2. secret を置く（値は管理アカウントの ID）。`admin-apply` と `admin-unlock` は workload root の apply と lock の解除の job が読む
 
       ```bash
-      gh secret set AWS_ACCOUNT_ID --env admin-apply-identity
-      gh secret set AWS_ACCOUNT_ID --env admin-apply
-      gh secret set AWS_ACCOUNT_ID --env admin-unlock
+      make setup-bootstrap-env-secrets ENVIRONMENTS=admin-apply-identity,admin-apply,admin-unlock REPO=<owner>/<リポジトリ>
       ```
 
    3. 管理アカウントで Slack の workspace を認可し、team ID と channel ID を `env/admin/main.tf` に書いた変更をリリース線へ merge しておく。最初の run が workload root を apply するからである。手順は [`ops-notification.md`](ops-notification.md)
@@ -491,7 +471,7 @@ Billing and Cost Management コンソール →「Cost Explorer」→「Launch C
 
    ```bash
    make apply-environments
-   gh secret set AWS_ACCOUNT_ID --env admin-unlock-identity
+   make setup-bootstrap-env-secrets ENVIRONMENTS=admin-unlock-identity REPO=<owner>/<リポジトリ>
    ```
 
    `make repo-settings-drift` で、宣言と実態が一致することを確かめてもよい。

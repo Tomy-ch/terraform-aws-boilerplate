@@ -7,17 +7,19 @@
 | 実施者 | 担当 |
 | --- | --- |
 | リポジトリの管理者 | 昇格の Pull Request |
-| `organization_admin` の permission set を持つ人 | Identity Center の有効化の後の作業、break-glass の資格情報の設定、apply の後の確認 |
+| 管理アカウントの管理者の資格情報（`organization_admin` の permission set か、それに代わるもの）を持つ人 | Identity Center の有効化の後の作業、break-glass の資格情報の設定、apply の後の確認、定期の試験の忘れの確認 |
 | break-glass の資格情報を持つ人 | 定期の試験 |
 
 [`bootstrap.md`](bootstrap.md) の段5 が終わった後に、3.2 から行う。
+
+確認と手順の実行は `make setup-organization-baseline-<入口> PROFILE=<管理アカウントの profile>` で行う（入口は `make help`）。確認は読み取りだけを行い、項目ごとに `✅`・`❌` を出し、`❌` があれば 0 以外で終わる。書き込む入口は、今の状態と差分を示し、project の名前の入力を受けてから書き込み、確かめ直す。
 
 ## 2. 設定完了後の状態
 
 - 管理アカウントが組織の管理アカウントで、Security・Workloads（Prod・NonProd）・Sandbox・PolicyStaging の OU が在る
 - Root には組織からの離脱とアカウントの閉鎖の拒否だけが付き、ほかの policy は PolicyStaging に付いている
 - root の資格情報の中央管理が有効で、この後に作るメンバーアカウントは root の資格情報を持たない
-- 管理アカウントに break-glass の IAM user が2つ在り、それぞれにパスワードとハードウェア MFA が設定されている
+- 管理アカウントに break-glass の IAM user が2つ在り、それぞれにパスワードと FIDO の MFA（セキュリティキーかパスキー）が設定されている
 - 管理アカウントの password policy が、14文字以上・24世代の再利用の禁止・4種の文字を求める
 - Security OU にメンバーアカウント security と log-archive が在り、それぞれに break-glass の role が StackSet で置かれている
 
@@ -31,16 +33,7 @@
 
 ### 3.2 段5 の後: 組織と policy を確かめる
 
-```sh
-aws organizations describe-organization --query 'Organization.[Id,FeatureSet]'
-aws organizations list-roots --query 'Roots[0].PolicyTypes'
-aws organizations list-organizational-units-for-parent --parent-id <Root の ID>
-aws iam list-organizations-features
-```
-
-- `FeatureSet` が `ALL`、Root の policy の種類に `SERVICE_CONTROL_POLICY`・`RESOURCE_CONTROL_POLICY`・`DECLARATIVE_POLICY_EC2` が `ENABLED` で在る
-- Root の直下に Security・Workloads・Sandbox・PolicyStaging が在る
-- `EnabledFeatures` に `RootCredentialsManagement` と `RootSessions` が在る
+`make setup-organization-baseline-organization-check PROFILE=<管理アカウントの profile>` で、組織の機能（`FeatureSet`）、Root で有効な policy の種類、Root の直下の OU、IAM の組織の機能（root の資格情報の中央管理）が、`usecases/organization-baseline` の宣言と一致することを確かめる。
 
 次の CI の plan が変更を示さないことを確かめる。
 
@@ -48,8 +41,11 @@ aws iam list-organizations-features
 
 ### 3.3 Identity Center を有効にする
 
+手順1-3 はコンソールで行う。組織のインスタンスは API で作れない（CreateInstance は管理アカウントでは拒まれる）。identity source と MFA の設定も、AWS の文書はコンソールの操作としてだけ説明する。
+
 1. 管理アカウントのコンソールで、リージョンを `ap-northeast-1` にして IAM Identity Center を有効にする。組織のインスタンスとし、鍵は AWS owned key のままにする
    - 「インスタンス設定」は「単一リージョン」を選ぶ。「マルチリージョン」と「カスタム」は選ばない（[organization-baseline/ADR-0001](../../usecases/organization-baseline/docs/adr/0001-governance-in-management-identity-root.md) 決定4。multi-Region は customer managed key を要する）
+   - `make setup-organization-baseline-identity-center-check PROFILE=<管理アカウントの profile>` で、組織の管理アカウントのインスタンスが `ACTIVE` でただ1つ在ることを確かめる
 2. identity source を選ぶ。外部 IdP を SAML 2.0 でつなぎ、SCIM でユーザーとグループを送ることを勧める（AWS Well-Architected FND02-BP03、SRA）。IdP を持たなければ Identity Center の directory を使う
    - 「設定」→「アイデンティティソース」タブ →「アクション」→「アイデンティティソースを変更」で選び、確認の画面で `ACCEPT` と入力する。有効にした直後の identity source は「Identity Center ディレクトリ」である
    - 現在の値が「Identity Center ディレクトリ」以外（外部 ID プロバイダーや Active Directory を以前につないだ組織）で directory へ戻すときは、同じ操作で「Identity Center ディレクトリ」を選ぶ。IAM Identity Center User Guide の「Change your identity source」と「Considerations for changing your identity source」は、次のように述べる
@@ -64,20 +60,24 @@ aws iam list-organizations-features
    - MFA を求めるタイミング: 「サインインごと（常時オン）」
    - 使える MFA のタイプ: 「セキュリティキーと組み込みの認証子」。セキュリティキーも passkey も持たない間は「認証アプリ」も許してよい
    - MFA デバイスを持たないユーザー: 「サインイン時に MFA デバイスの登録を求める」
-4. 管理アカウントへ入る人の user を作り、ID を控える
+4. 管理アカウントへ入る人の user をコンソールで作り、ID を控える。API（`identitystore create-user`）で作った user には招待のメールが届かず、パスワードの設定に別の手順が要るので、コンソールの「ユーザーを追加」で作る
    - user は組織全体で1人につき1回だけ作る。どのアカウントへ入れるかは permission set の割当が決めるので、user の名前に環境の接尾辞（`-admin`・`-dev` など）を付けない
    - 「ユーザーを追加」では、ユーザー名・メールアドレス・名・姓・表示名だけを入れる。任意の「お問い合わせ方法」「ジョブ関連情報」「アドレス」「環境設定」「追加の属性」（日本語のコンソールでの表記）は空のままにする。追加の属性は属性で権限を分ける ABAC のためのもので、この構成は使わない。CIS AWS Foundations Benchmark 1.1・1.2 の連絡先は AWS アカウントの代替連絡先で、[`bootstrap.md`](bootstrap.md#2-1-連絡先を登録する) の 2-1 で登録する
    - 招待のメールから AWS access portal でパスワードと MFA を登録し、サインインできることを確かめる。割り当てたアカウントが無い間、ポータルには何も表示されない
-   - user ID は access portal では見られない。管理アカウントのコンソールへ戻り、IAM Identity Center の「ユーザー」から作った user を開き、そのユーザー ID（`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` の形）を控える
+   - `make setup-organization-baseline-identity-center-user-check PROFILE=<管理アカウントの profile> IDC_USER=<user 名>` で user ID（`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` の形）を控える。同じ出力が、すべての user の名前が環境の接尾辞（`-admin` とメンバーアカウントの env）で終わらないことを確かめる
 
 ### 3.4 break-glass の資格情報を設定する
 
-Identity Center から `organization_admin` で管理アカウントへ入れるようになった後に行う。メンバーアカウントを作る変更より前に終える。
+管理アカウントの管理者の資格情報で行う。メンバーアカウントを作る変更より前に終える。break-glass の user（`usecases/organization-baseline` の宣言の user）が apply で作られていなければ、書き込む入口は書き込まずに止まり、確認の入口は `❌` を出す。
 
-1. `break-glass-1` と `break-glass-2` のそれぞれに、コンソールのパスワードを設定する（アクセスキーは作らない。group の policy が拒む）
-2. それぞれにハードウェア MFA を登録する
-3. パスワードと MFA の装置を、別々の安全な場所に保管する
-4. 3.6 の試験を1回行う
+1. `make setup-organization-baseline-break-glass-login PROFILE=<管理アカウントの profile>` で、パスワードの無い user に、コンソールのパスワードを置く。パスワードは表示されない打ち込みで2回入れ、引数と shell の履歴に残らない。password policy に合わなければ AWS が拒む（アクセスキーは作らない。group の policy が拒む）
+2. それぞれに、フィッシングに強い MFA（FIDO）を登録する。TOTP（認証アプリの仮想 MFA と、ハードウェアの TOTP の装置）は使わない
+   - コンソールの IAM →「Users」→ break-glass の user →「Security credentials」→「Assign MFA device」で、種類に「Passkey or security key」を選んで登録する。AWS の API では FIDO の装置を登録できないので、コンソールで行う
+   - FIDO のセキュリティキー（物理の鍵）を強く勧める。パスワードと別の場所に保管できる
+   - 次点として、その端末にだけ置くパスキーを使ってよい。クラウドで同期するパスキーは、同期先のアカウントが break-glass の資格情報への経路になるので使わない
+3. `make setup-organization-baseline-break-glass-check PROFILE=<管理アカウントの profile>` で、`/break-glass/` の下の user が宣言の user と一致し、それぞれにパスワードと FIDO の MFA だけが在って TOTP とアクセスキーが無く、password policy が宣言の値であることを確かめ、出力を Pull Request に書く
+4. パスワードと MFA の装置を、別々の安全な場所に保管する
+5. 3.6 の試験を1回行う
 
 ### 3.5 StackSets の信頼アクセスを有効にする
 
@@ -108,12 +108,12 @@ StackSet か stack instance の作成で昇格の apply が失敗したときは
 
 ### 3.6 break-glass を試す（毎月）
 
-45日より短い間隔で行う。CIS AWS Foundations Benchmark は、45日使われていない資格情報を無効にするよう求める。
+45日より短い間隔で行う。CIS AWS Foundations Benchmark は、45日使われていない資格情報を無効にするよう求める。試験を忘れていないかは、`make setup-organization-baseline-break-glass-usage-check PROFILE=<管理アカウントの profile>` で確かめる。break-glass の user の最後のサインインか、管理アカウントの break-glass の role の最後の引き受けが45日以上前か、記録が無ければ `❌` を出す（Security Hub の IAM.22 と同じ境界）。メンバーアカウントの role は見ない。
 
 1. break-glass の user でコンソールにサインインし、MFA を使う
 2. 管理アカウントの break-glass の role（`/break-glass/<project>-break-glass`）へ切り替えられることを確かめる。メンバーアカウントが在れば、そのうち1つの同じ名前の role へも切り替える
 3. サインインと role の引き受けの通知が届くことを確かめる
-4. 試した日と結果を記録する
+4. 試した日と結果を、`make setup-organization-baseline-break-glass-usage-check PROFILE=<管理アカウントの profile>` の出力と一緒に記録する
 
 ### 3.7 policy を広げる前に PolicyStaging で試す
 

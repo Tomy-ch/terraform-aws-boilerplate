@@ -1,9 +1,11 @@
 // Package main は、手順書の手順のうち人が実行するものの、確認と手順の実行を持つツール（ADR-0702 決定1・26・27）。
-// 起動する道具は aws だけで、資格情報を変える環境変数の外し方と AWS_PROFILE は make が整える。
-// 手順の実行は、資格情報が組織の管理アカウントのものであることと前提と現状を読み取りで確かめ、差分を示し、
-// project の名前の打ち込みを受けてから書き込み、読み直して確かめる。
+// 起動する道具は aws と、environment の secret を置く入口に限り gh で、資格情報を変える環境変数の外し方と
+// AWS_PROFILE は make が整える。
+// 手順の実行は、資格情報が組織の管理アカウント（bootstrap の手順では一時 IAM user）のものであることと前提と現状を
+// 読み取りで確かめ、差分を示し、project の名前の打ち込みを受けてから書き込み、読み直して確かめる。
 //
-//	setup <入口> -project <project> -region <region> [-usecase <dir>] [-env <env>] [-ids]
+//	setup <入口> -project <project> -region <region> [-usecase <dir>] [-env <env>] [-user <user>] [-ids]
+//	      [-environments <env>[,<env>...] -repo <owner>/<repo> [-replace]]
 //
 // 入口（organization-baseline の手順書。-usecase は usecases/organization-baseline）:
 //
@@ -17,8 +19,22 @@
 //	stack-instances-check  3.5 の昇格の後: break-glass の StackSet が在り、project の StackSet がメンバーアカウントのそれぞれに CURRENT の stack instance を持つ（-usecase）
 //	service-access         3.9: セキュリティのサービスの信頼アクセスを有効にする
 //	service-access-check   3.9 の確認
+//	delegated-admin-check  3.9 の昇格の後: サービスの主体のそれぞれで、委任管理者が security のアカウントだけ（-usecase）
+//	organization-check     3.2: 組織の機能、Root の policy の種類、Root の直下の OU、IAM の組織の機能（-usecase）
+//	identity-center-check  3.3 手順1 の確認: 組織の管理アカウントのインスタンスが ACTIVE でただ1つ在る
+//	identity-center-user-check 3.3 手順4 の確認: user が在り、その ID を出す。user の名前に環境の接尾辞が無い（-usecase・-user）
+//	break-glass-login      3.4 手順1: パスワードの無い break-glass の user に、伏せて打ち込んだパスワードを置く（-usecase）
+//	break-glass-check      3.4 の確認: パスワードと FIDO の MFA だけが在り、アクセスキーが無く、password policy が宣言どおり（-usecase）
+//	break-glass-usage-check 3.6 の忘れ: break-glass の user のサインインと role の引き受けが45日以内（-usecase）
 //
-// env の一覧、OU の階層、メールの形、break-glass の StackSet の名前は、-usecase の Terraform から毎回読む。
+// 入口（bootstrap の手順書。資格情報は bootstrap の一時 IAM user）:
+//
+//	bootstrap-contacts     2-1: 主の連絡先と、BILLING・OPERATIONS・SECURITY の代替連絡先を置く
+//	bootstrap-anomaly-tag  2-4: AWS services monitor とその subscription に tag <project>:bootstrap を付ける
+//	bootstrap-env-secrets  段4・段5: environment に secret AWS_ACCOUNT_ID を gh で置く（-environments・-repo。在れば -replace のときだけ置き直す）
+//
+// env の一覧、OU の階層、メールの形、break-glass の user と role と password policy、委任管理者のサービスの主体は、
+// -usecase の Terraform から毎回読む。
 //
 // 終了コードは、0 が完了か確認の一致、1 が確認の NG か、組織の状態が前提に合わず書かなかったこと（OU や
 // Root が決まらない、同じ名前のアカウント、使われているメール、在るアカウントのメールの変更）、2 がそれ以外
@@ -30,6 +46,10 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"sync"
+	"time"
+
+	"golang.org/x/term"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
@@ -37,7 +57,7 @@ import (
 var (
 	accountPattern = regexp.MustCompile(`[0-9]{12}`)
 
-	errUsage = xerrors.New("使い方: setup <入口> -project <project> -region <region> [-usecase <dir>] [-env <env>] [-ids]（入口は scripts/setup/main.go の冒頭）")
+	errUsage = xerrors.New("使い方: setup <入口> -project <project> -region <region> [-usecase <dir>] [-env <env>] [-user <user>] [-ids]（入口は scripts/setup/main.go の冒頭）")
 )
 
 type deps struct {
@@ -46,6 +66,11 @@ type deps struct {
 	readFile func(string) ([]byte, error)
 	stdin    io.Reader
 	isTTY    bool
+	hidden   func() ([]byte, error)
+	begin    func() (func(), error)
+	gh       ghFunc
+	now      func() time.Time
+	sleep    func(time.Duration)
 }
 
 type options struct {
@@ -54,16 +79,31 @@ type options struct {
 	region  string
 	usecase string
 	env     string
+	user    string
 	showIDs bool
+
+	environments string
+	repo         string
+	replace      bool
+
+	readFile func(string) ([]byte, error)
+	getenv   func(string) string
+	gh       ghFunc
+	now      func() time.Time
+	sleep    func(time.Duration)
 }
 
 // entry は、1つの入口。writes はその入口が起動してよい書き込みの操作（"<service> <operation>"）で、確認は空。
 // usecase は、その入口が organization-baseline の Terraform を読むか。
 type entry struct {
-	writes   []string
-	usecase  bool
-	needsEnv bool
-	run      func(o options, c *client, t *terminal, org organization) error
+	writes            []string
+	usecase           bool
+	needsEnv          bool
+	needsUser         bool
+	needsEnvironments bool
+	// bootstrap は、組織より前の bootstrap の手順で、資格情報が一時 IAM user であることを書き込みの前提にするか。
+	bootstrap bool
+	run       func(o options, c *client, t *terminal, org organization) error
 }
 
 var entries = map[string]entry{
@@ -122,12 +162,138 @@ var entries = map[string]entry{
 			return checkServiceAccess(c, t.out)
 		},
 	},
+	"delegated-admin-check": {
+		usecase: true,
+		run: func(o options, c *client, t *terminal, _ organization) error {
+			return checkDelegatedAdmin(o, c, t.out)
+		},
+	},
+	"organization-check": {
+		usecase: true,
+		run: func(o options, c *client, t *terminal, _ organization) error {
+			return checkOrganization(o, c, t.out)
+		},
+	},
+	"identity-center-check": {
+		run: func(o options, c *client, t *terminal, _ organization) error {
+			return checkIdentityCenter(o, c, t.out)
+		},
+	},
+	"identity-center-user-check": {
+		usecase: true, needsUser: true,
+		run: func(o options, c *client, t *terminal, org organization) error {
+			return checkIdentityCenterUser(o, c, t.out, org)
+		},
+	},
+	"break-glass-login": {
+		writes: []string{"iam create-login-profile"}, usecase: true,
+		run: func(o options, c *client, t *terminal, _ organization) error {
+			return setBreakGlassLogin(o, c, t)
+		},
+	},
+
+	"break-glass-check": {
+		usecase: true,
+		run: func(o options, c *client, t *terminal, _ organization) error {
+			return checkBreakGlass(o, c, t.out)
+		},
+	},
+	"bootstrap-contacts": {
+		writes: []string{"account put-contact-information", "account put-alternate-contact"}, bootstrap: true,
+		run: func(o options, c *client, t *terminal, _ organization) error {
+			return setContacts(o, c, t)
+		},
+	},
+	"bootstrap-anomaly-tag": {
+		writes: []string{"ce tag-resource"}, bootstrap: true,
+		run: func(o options, c *client, t *terminal, _ organization) error {
+			return tagAnomaly(o, c, t)
+		},
+	},
+	"bootstrap-env-secrets": {
+		writes: []string{"gh secret set"}, bootstrap: true, needsEnvironments: true,
+		run: func(o options, c *client, t *terminal, _ organization) error {
+			return setEnvSecrets(o, c, t, o.gh)
+		},
+	},
+	"break-glass-usage-check": {
+		usecase: true,
+		run: func(o options, c *client, t *terminal, _ organization) error {
+			return checkBreakGlassUsage(o, c, t.out)
+		},
+	},
 }
 
 func main() {
+	begin, hidden := passwordReader(os.Stdin)
+
 	os.Exit(execute(os.Args[1:], os.Stdout, deps{
 		aws: hostAWS("aws"), getenv: os.Getenv, readFile: os.ReadFile, stdin: os.Stdin, isTTY: isTerminal(os.Stdin),
+		hidden: hidden, begin: begin, now: time.Now, sleep: time.Sleep, gh: hostGH("gh"),
 	}))
+}
+
+var errTerminalState = xerrors.New("端末の状態を読めません")
+
+func passwordReader(f *os.File) (func() (func(), error), func() ([]byte, error)) {
+	fd := int(f.Fd())
+
+	return newHiddenReader(
+		func() (func() error, error) {
+			state, err := term.GetState(fd)
+			if err != nil {
+				return nil, err
+			}
+
+			return func() error { return term.Restore(fd, state) }, nil
+		},
+		func() ([]byte, error) { return term.ReadPassword(fd) },
+	)
+}
+
+// newHiddenReader は、端末の状態を控えて戻す関数を返す begin と、打ち込みを表示せずに1行を読む read を組む。
+// 戻した後の read は読まない（中断の後に表示を止め直さない）。read が戻されていないことを確かめてから
+// readPassword が表示を止めるまでの間に中断が済むと、表示は止まったまま残る。readPassword の中を挟めないので、
+// その窓は閉じられない。
+func newHiddenReader(getState func() (func() error, error), readPassword func() ([]byte, error)) (func() (func(), error), func() ([]byte, error)) {
+	var (
+		mu      sync.Mutex
+		stopped bool
+	)
+
+	begin := func() (func(), error) {
+		restoreState, err := getState()
+		if err != nil {
+			return nil, xerrors.Join(errTerminalState, err)
+		}
+
+		mu.Lock()
+		stopped = false
+		mu.Unlock()
+
+		return func() {
+			mu.Lock()
+			stopped = true
+			mu.Unlock()
+
+			// 中断の後始末で、戻せなくても続きの終了は止めない。
+			_ = restoreState()
+		}, nil
+	}
+
+	read := func() ([]byte, error) {
+		mu.Lock()
+		s := stopped
+		mu.Unlock()
+
+		if s {
+			return nil, errInterrupted
+		}
+
+		return readPassword()
+	}
+
+	return begin, read
 }
 
 // isTerminal は、f が端末か。文字デバイスでも /dev/null は端末として扱わない（< /dev/null で起動した書き込みを
@@ -206,6 +372,10 @@ func parseArgs(args []string) (options, entry, error) {
 	fs.StringVar(&o.region, "region", "", "")
 	fs.StringVar(&o.usecase, "usecase", "", "")
 	fs.StringVar(&o.env, "env", "", "")
+	fs.StringVar(&o.user, "user", "", "")
+	fs.StringVar(&o.environments, "environments", "", "")
+	fs.StringVar(&o.repo, "repo", "", "")
+	fs.BoolVar(&o.replace, "replace", false, "")
 	fs.BoolVar(&o.showIDs, "ids", false, "")
 
 	if err := fs.Parse(args[1:]); err != nil {
@@ -221,6 +391,12 @@ func parseArgs(args []string) (options, entry, error) {
 		return options{}, entry{}, xerrors.Wrap(errUsage, "-usecase は organization-baseline の Terraform を読む入口にだけ渡します")
 	case e.needsEnv != (o.env != ""):
 		return options{}, entry{}, xerrors.Wrap(errUsage, "-env は member-email-update にだけ渡します")
+	case e.needsUser != (o.user != ""):
+		return options{}, entry{}, xerrors.Wrap(errUsage, "-user は identity-center-user-check にだけ渡します")
+	case e.needsEnvironments != (o.environments != ""), e.needsEnvironments != (o.repo != ""):
+		return options{}, entry{}, xerrors.Wrap(errUsage, "-environments と -repo は bootstrap-env-secrets にだけ、両方を渡します")
+	case o.replace && !e.needsEnvironments:
+		return options{}, entry{}, xerrors.Wrap(errUsage, "-replace は bootstrap-env-secrets にだけ渡します")
 	case o.showIDs && o.entry != "member-accounts-check":
 		return options{}, entry{}, xerrors.Wrap(errUsage, "-ids は member-accounts-check にだけ渡します")
 	}
@@ -239,6 +415,8 @@ func run(args []string, out io.Writer, d deps) error {
 		return err
 	}
 
+	o.readFile, o.getenv, o.gh, o.now, o.sleep = d.readFile, d.getenv, d.gh, d.now, d.sleep
+
 	var org organization
 
 	if e.usecase {
@@ -249,9 +427,15 @@ func run(args []string, out io.Writer, d deps) error {
 
 	c := &client{aws: d.aws, region: o.region, writes: e.writes}
 	t := newTerminal(d.stdin, out, d.isTTY)
+	t.hidden, t.begin = d.hidden, d.begin
 
 	if len(e.writes) > 0 {
-		if err := requireManagementAccount(c, profile, out); err != nil {
+		check := requireManagementAccount
+		if e.bootstrap {
+			check = requireBootstrapUser
+		}
+
+		if err := check(c, profile, out); err != nil {
 			return err
 		}
 	}

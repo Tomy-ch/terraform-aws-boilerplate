@@ -78,9 +78,7 @@ jobs:
         with:
           # 空の token で、大きな diff を拒む compare API ではなく `git diff` を使わせる。
           token: ''
-          # scripts/: tf-lint が tool-cooldown-check を、順序の検査と層の検査と Policy Test が infra-code-gate と tf-local を、
-          # 順序の検査と層の検査と root の検査が hcl-input と hcl-tally を、層の検査と Policy Test が provider-schema を、Terraform の各段が tf-gates を走らせ、
-          # どれもこのソースからビルドする。
+          # scripts/: この workflow の job が走らせる道具は scripts/ のソースからビルドするので、ここを変えると走り直す。
           filters: |
             relevant:
               - '.github/workflows/terraform-gates.yaml'
@@ -92,6 +90,7 @@ jobs:
               - '.tflint.hcl'
               - '.tf-validate-ignore.yaml'
               - 'mise.toml'
+              - 'mise.lock'
               - '.makefiles/**'
               - 'Makefile'
               - 'scripts/tool-cooldown/**'
@@ -316,20 +315,15 @@ jobs:
         with:
           persist-credentials: false
 
-      # go: tf-lint が先に tool-cooldown-check を、TFLint の起動に tf-gates を、順序の検査と層の検査が infra-code-gate と tf-local を、順序の検査と
-      # 層の検査と root の検査が hcl-input と hcl-tally を、層の検査と Policy Test が provider-schema を走らせ、6つとも scripts/ からビルドする。conftest: 順序の検査と
-      # 層の検査と root の検査が使う。terraform: 層の検査が lock した AWS Provider の schema を取る（ADR-0102 決定18 の分類の網羅）。
+      # go: この job の検査が走らせる scripts/ の道具をここからビルドする。どの検査がどれを走らせるかは .makefiles/terraform/ が持つ。
+      # conftest: 順序の検査と層の検査と root の検査が使う。terraform: 層の検査が lock した AWS Provider の schema を取る（ADR-0102 決定18 の分類の網羅）。
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
-          tools: aqua:terraform-linters/tflint aqua:hashicorp/terraform aqua:open-policy-agent/conftest go
+          tools: aqua:terraform-linters/tflint github:terraform-linters/tflint-ruleset-aws aqua:hashicorp/terraform aqua:open-policy-agent/conftest go
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      # GITHUB_TOKEN: `tflint --init` は ruleset を GitHub Releases API から取り、API は認証の無い呼び出しを
-      # rate limit する。
       - name: Run TFLint
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: make tf-lint RUNNER_MODE=host
 
       # Static Analysis の Conftest の側で、TFLint と同じ層なのでこの job に置く（ADR-0501 決定4）。

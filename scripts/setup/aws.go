@@ -13,14 +13,12 @@ import (
 )
 
 var (
-	// errNoProfile は、AWS_PROFILE が空なこと。資格情報を変える環境変数を外し、profile を渡すのは make である。
-	errNoProfile = xerrors.New("AWS_PROFILE が空です。make の setup- の入口から起動してください")
-	// errStaticCredentials は、profile より優先される資格情報か、profile の読み先を変える指定が環境に在ること。
+	// errNoProfile: 資格情報を変える環境変数を外し、profile を渡すのは make である。
+	errNoProfile         = xerrors.New("AWS_PROFILE が空です。make の setup- の入口から起動してください")
 	errStaticCredentials = xerrors.New("環境に profile を迂回する資格情報の指定が在ります。make の setup- の入口から起動してください（make が外します）")
-	// errAWSStart は、aws を起動できないこと（PATH に無いなど）。
-	errAWSStart    = xerrors.New("aws を起動できません")
-	errAWSFailed   = xerrors.New("aws の呼び出しが失敗しました")
-	errAWSResponse = xerrors.New("aws の応答を読めません")
+	errAWSStart          = xerrors.New("aws を起動できません")
+	errAWSFailed         = xerrors.New("aws の呼び出しが失敗しました")
+	errAWSResponse       = xerrors.New("aws の応答を読めません")
 	// errNotAllowed は、入口の一覧に無い書き込みの操作か、読み取りでも書き込みでもない操作を起動しようとしたこと。
 	errNotAllowed = xerrors.New("この入口が起動してよい aws の操作ではありません")
 
@@ -74,6 +72,7 @@ type client struct {
 	aws    awsFunc
 	region string
 	writes []string
+	notify notifier
 }
 
 // op は、"<service> <operation>" の形の操作名。
@@ -114,7 +113,6 @@ func (c *client) call(region string, args ...string) (awsResult, error) {
 	}
 }
 
-// read は、読み取りの操作を起動し、応答の JSON を v へ読む。
 func (c *client) read(v any, args ...string) error {
 	return c.readIn("", v, args...)
 }
@@ -157,18 +155,23 @@ func (c *client) readOptional(notFound string, v any, args ...string) (bool, err
 
 // write は、書き込みの操作を起動する。応答は読まない（確かめは後の読み取りが持つ）。
 func (c *client) write(args ...string) error {
+	return c.writeIn("", args...)
+}
+
+// writeIn は write と同じだが、region が空でなければ client の region の代わりに使う。
+func (c *client) writeIn(region string, args ...string) error {
 	if isRead(args) {
 		return xerrors.Wrap(errNotAllowed, "aws "+op(args))
 	}
 
-	_, err := c.call("", args...)
+	_, err := c.call(region, args...)
 
 	return err
 }
 
 // writeSecret は write と同じだが、secret を引数に載せず、所有者だけが読める一時ファイルの JSON として
 // --cli-input-json で渡す（ADR-0702 決定27）。一時ファイルは起動の後に消す。
-func (c *client) writeSecret(secret map[string]string, args ...string) error {
+func (c *client) writeSecret(secret map[string]any, args ...string) error {
 	if isRead(args) {
 		return xerrors.Wrap(errNotAllowed, "aws "+op(args))
 	}
@@ -183,6 +186,9 @@ func (c *client) writeSecret(secret map[string]string, args ...string) error {
 		return err
 	}
 
+	// 中断のシグナルで既定どおりに終わると、defer が走らず秘密がファイルに残る。消すまでシグナルを預かる。
+	sigs := make(chan os.Signal, 1)
+	defer c.notify.start(sigs)()
 	defer func() { _ = os.Remove(f.Name()) }()
 
 	if err := f.Chmod(0o600); err != nil {
@@ -201,9 +207,24 @@ func (c *client) writeSecret(secret map[string]string, args ...string) error {
 		return err
 	}
 
+	select {
+	case sig := <-sigs:
+		return xerrors.Wrap(errInterrupted, sig.String()+"。書き込む前に止めました")
+	default:
+	}
+
 	_, err = c.call("", append(append([]string{}, args...), "--cli-input-json", "file://"+f.Name())...)
 
-	return err
+	select {
+	case sig := <-sigs:
+		if err != nil {
+			return xerrors.Join(xerrors.Wrap(errInterrupted, sig.String()+"。書き込まれたかは分かりません。確認の入口で確かめてください"), err)
+		}
+
+		return xerrors.Wrap(errInterrupted, sig.String()+"。書き込みは終わっています。確認の入口で確かめてください")
+	default:
+		return err
+	}
 }
 
 // firstLine は、空白だけでない最初の行。無ければ「不明」。

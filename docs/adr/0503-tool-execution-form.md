@@ -45,7 +45,7 @@ manifest が版を固定できる範囲には限りがある。
    どの経路も、manifest の宣言を写した同じ lockfile から入れる（決定17）。
 2. 版を並べ直した設定を、イメージ側にも CI の定義側にも置かない。第二の出所を作らない。決定10 の道具も、版の出所は1つである。
 
-   イメージのビルドが要る写し（ランタイムの照合値、パッケージマネージャの版と配布物の照合値）は manifest の宣言から生成し、宣言との一致を検査する。手で並べ直さない。
+   イメージのビルドが要る写し（ランタイムの照合値、パッケージマネージャの版と配布物の照合値）と、mise の lockfile（mise.lock。manifest の各道具について、解決した版と、platform ごとの取得元と照合値を持つ）は、manifest の宣言から生成し、宣言との一致を検査する。手で並べ直さない。CI とイメージのビルドは、道具を mise.lock からだけ解決する設定で入れる（lock に宣言と同じ版の entry が無ければ、version manager が入れずに失敗する）。
 3. **ベースイメージが提供するランタイムの版が manifest の宣言と一致することを、イメージのビルド時に検査する。** 一致しない場合はビルドを失敗させる。3経路の版が黙って割れるのを、ビルドの時点で止める。
 
 ### 実行環境
@@ -142,7 +142,7 @@ manifest が版を固定できる範囲には限りがある。
 ## 保証範囲
 
 - 保証すること: 道具ごとに版の出所が単一であること（manifest、または決定10 の `image:` の tag）。同一の検査の定義が1箇所にあること。install を要する道具が、利用者の環境に依らず同じ依存で実行されること。ランタイムの版が3経路で一致していること（ビルド時に検査する）。npm 側の道具の推移的な依存が、コンテナでもホストの経路でも、同じ lockfile の版と integrity で入ること（決定17・18）
-- 保証しないこと: 3つの実行環境が同一であること。Docker が利用できない環境での全検査の実行。手元でホストの経路を選んだときに、npm 側の道具を動かすランタイムの版が manifest の宣言と一致すること
+- 保証しないこと: 3つの実行環境が同一であること。Docker が利用できない環境での全検査の実行。手元でホストの経路を選んだときに、npm 側の道具を動かすランタイムの版が manifest の宣言と一致すること。手元の導入（make host-tools-install）が、mise.lock の取得元と照合値で道具を入れること。版は manifest が固定する。配布元が照合値を公開しない道具（AWS CLI）の mise.lock の照合値が、配布元の公開した値であること。その照合値は、lock を作るときに version manager が配布物から計算した値であり、その時点の配布物を信じる。
 
 ## 検証方法
 
@@ -155,6 +155,7 @@ manifest が版を固定できる範囲には限りがある。
 - Static Analysis: npm 側の lockfile が manifest の宣言を満たすこと（決定17・18、`make node-tools-lock-check`）
 - Static Analysis: lockfile の解決に掛ける供給網の窓と、窓から外す直接の依存が、manifest 側の窓と道具に一致すること（決定18、`make versions-check`）
 - Static Analysis: イメージが取るパッケージマネージャの版が manifest の宣言と一致し、配布物の照合値が揃っていること（決定2、`make pin-pnpm-check`）
+- Static Analysis: mise.lock が manifest の道具を宣言と同じ版で持ち、lockfile_platforms の各 platform の取得元が道具の配布元を指すこと、と、CI とイメージのビルドが mise.lock からだけ道具を入れる設定を持つこと（決定2、`make versions-check`）
 - Static Analysis: version manager の install から外す宣言が、manifest の npm 側の道具の集合と一致すること（決定1、`make versions-check`）
 - **実行**: version manager が manifest の npm 側の道具を install の対象にしないこと（決定1、`make mise-npm-disabled-check` を CI が走らせる）
 - **実行**: ホストの経路が、宣言の写しが lockfile からずれたとき、および lockfile の integrity が合わないときに道具の起動の前に失敗し、PATH の同名の道具へ退かないこと（決定17、`make node-tools-lock-check` の Go の入口が本走査の前に走らせる canary）

@@ -101,7 +101,6 @@ func respondJSON(path, body string) http.HandlerFunc {
 	}
 }
 
-// respondStatus は、常に code を返すハンドラを組みます。
 func respondStatus(code int) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(code) }
 }
@@ -412,7 +411,6 @@ func Test_readDeclarations(t *testing.T) {
 			assert.Equal(t, miseOneAquaTool, string(got[0].content))
 		})
 
-		// 理由は readDeclarations の .tflint.hcl を飛ばす分岐のコメントが持つ。
 		t.Run(".tflint.hcl が無ければ飛ばす", func(t *testing.T) {
 			t.Parallel()
 			got, err := readDeclarations([]string{filepath.Join(t.TempDir(), tflintFile)})
@@ -594,7 +592,6 @@ func Test_escapeModulePath(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		// 化け方は escapeModulePath の doc コメントが持つ。
 		t.Run("大文字を ! + 小文字へ変換する", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, "github.com/!burnt!sushi/toml", escapeModulePath("github.com/BurntSushi/toml"))
@@ -1461,7 +1458,6 @@ func Test_inspect(t *testing.T) {
 			assert.Empty(t, unresolved)
 		})
 
-		// 並べ直す理由は "unresolved は識別子順に並べる" と同じ。
 		t.Run("findings は経過日数の短い順に並べる", func(t *testing.T) {
 			t.Parallel()
 			client := fakeUpstream(t, func(w http.ResponseWriter, r *http.Request) {
@@ -1497,7 +1493,6 @@ func Test_getJSON(t *testing.T) {
 			assert.Equal(t, "ok", body["name"])
 		})
 
-		// 理由は fetchBody のコメントと同じ。
 		t.Run("GitHub API にはトークンを Authorization ヘッダで載せる", func(t *testing.T) {
 			t.Setenv("GITHUB_TOKEN", "test-token")
 			auth := make(chan string, 1)
@@ -1663,7 +1658,6 @@ func Test_npmPackageAt(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		// 理由は publishedAt のコメントと同じ。
 		t.Run("time に載っていないバージョンはエラーにする", func(t *testing.T) {
 			t.Parallel()
 			client := fakeUpstream(t, respondJSON("/@redocly/cli", `{"time":{"2.31.3":"2026-07-01T00:00:00Z"}}`))
@@ -1847,7 +1841,6 @@ func Test_renderAquaURL(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		// 理由は renderAquaURL の doc コメントが持つ。
 		t.Run("replacements を適用してから展開する", func(t *testing.T) {
 			t.Parallel()
 
@@ -1860,7 +1853,6 @@ func Test_renderAquaURL(t *testing.T) {
 			assert.Equal(t, "https://cdn.example.com/tool-linux-x86_64-1.2.3.zip", got)
 		})
 
-		// 理由は renderAquaURL の trimV についてのコメントが持つ。
 		t.Run("aqua の trimV を展開できる", func(t *testing.T) {
 			t.Parallel()
 
@@ -1889,8 +1881,7 @@ func Test_renderAquaURL(t *testing.T) {
 			require.ErrorIs(t, err, errUnsupportedPackage)
 		})
 
-		// 対応範囲は renderAquaURL の trimV についてのコメントが持つ。素通しではなく失敗へ
-		// 倒れることを、ここで固定する。
+		// 素通しではなく失敗へ倒れることを固定する。
 		t.Run("未対応のテンプレート関数を使う定義はエラーにする", func(t *testing.T) {
 			t.Parallel()
 
@@ -1905,7 +1896,6 @@ func Test_renderAquaURL(t *testing.T) {
 			require.Error(t, err)
 		})
 
-		// 理由は renderAquaURL の doc コメントが持つ。
 		t.Run("版を指さない URL は errUnversionedArtifact を返す", func(t *testing.T) {
 			t.Parallel()
 
@@ -1931,7 +1921,6 @@ func Test_renderAquaURL(t *testing.T) {
 			require.ErrorIs(t, err, errUnversionedArtifact)
 		})
 
-		// 理由は hostIsLiteral の doc コメントが持つ。
 		t.Run("ホストが補間で作られる URL はエラーにする", func(t *testing.T) {
 			t.Parallel()
 
@@ -1988,8 +1977,7 @@ func Test_aquaRegistryBase(t *testing.T) {
 func Test_hostIsLiteral(t *testing.T) {
 	t.Parallel()
 
-	// 理由は hostIsLiteral の doc コメントが持つ。renderAquaURL 経由では踏めない枝があるため、
-	// ここで直接固定する。
+	// renderAquaURL 経由では踏めない枝があるため、ここで直接固定する。
 	for name, tc := range map[string]struct {
 		tmpl string
 		want bool
@@ -2044,7 +2032,6 @@ func Test_lastModified(t *testing.T) {
 			require.ErrorIs(t, err, errUpstreamStatus)
 		})
 
-		// 理由は publishedAt のコメントと同じ。
 		t.Run("Last-Modified が無ければ errNoLastModified を返す", func(t *testing.T) {
 			t.Parallel()
 			client := fakeUpstream(t, respondLastModified("/a.zip", ""))
@@ -2094,7 +2081,6 @@ func Test_aquaArtifactURL(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		// 理由は aquaArtifactURL の Overrides フィールドのコメントが持つ。
 		t.Run("probe の goos に一致する override を base より優先する", func(t *testing.T) {
 			t.Parallel()
 			body := aquaHTTPRegistry + "    overrides:\n" +
@@ -2177,7 +2163,6 @@ func Test_aquaArtifactURL(t *testing.T) {
 			require.Error(t, err)
 		})
 
-		// 決められない理由は aquaArtifactURL の当該分岐が持つ。
 		t.Run("packages が 1 件でなければ errUnsupportedPackage を返す", func(t *testing.T) {
 			t.Parallel()
 
@@ -2204,7 +2189,6 @@ func Test_aquaArtifactURL(t *testing.T) {
 			require.ErrorIs(t, err, errUnsupportedPackage)
 		})
 
-		// 理由は aquaArtifactURL の override ループのコメントが持つ。
 		t.Run("該当 goos の override の url が空なら base へ退かない", func(t *testing.T) {
 			t.Parallel()
 			body := aquaHTTPRegistry + "    overrides:\n" +
@@ -2290,7 +2274,6 @@ func Test_hasBypass(t *testing.T) {
 			assert.False(t, hasBypass(map[string]bypass{}, map[string]struct{}{}, target))
 		})
 
-		// 理由は Test_classify の同種ケースと同じ。
 		t.Run("無効化されたキーは登録があっても無効と判定する", func(t *testing.T) {
 			t.Parallel()
 			assert.False(t, hasBypass(bypasses, map[string]struct{}{"aqua:owner/repo@1.2.3": {}}, target))
@@ -2603,8 +2586,7 @@ func Test_run(t *testing.T) {
 
 	//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 	t.Run("異常系", func(t *testing.T) {
-		// 宣言0件を成功で終わらせない理由は run のガード注記が持つ。`[tools]` 節が無い場合と
-		// 空の場合の両方で、そのガードが働くことを固定する。
+		// `[tools]` 節が無い場合と空の場合の両方で、宣言0件を成功にしないことを固定する。
 		for name, content := range map[string]string{
 			"[tools] 節が無い": "[settings]\nfoo = \"1\"\n",
 			"[tools] 節が空":  "[tools]\n",
@@ -2643,7 +2625,7 @@ func Test_run(t *testing.T) {
 			assert.Contains(t, out, "::error file=.tflint.hcl::github:terraform-linters/tflint-ruleset-aws@0.49.0")
 		})
 
-		// check は tflint --init の前に走る。上流へ問い合わせずに、許さない取得元で落ちる必要がある。
+		// check は TFLint の起動の前に走る。上流へ問い合わせずに、許さない取得元で落ちる必要がある。
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 		t.Run("check は上流に問い合わせず、許さない取得元の plugin で失敗する", func(t *testing.T) {
 			dir := useMiseWorkTree(t, miseOneAquaTool)
@@ -2777,7 +2759,6 @@ func Test_run(t *testing.T) {
 			assert.Contains(t, err.Error(), "base との差分")
 		})
 
-		// 理由は Test_resolveBackends と同じ。
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 		t.Run("backend を解決できないキーがあれば失敗にする", func(t *testing.T) {
 			useMiseWorkTree(t, "[tools]\nno-such-tool-for-cooldown-test = \"1.0.0\"\n")
@@ -2826,7 +2807,6 @@ func Test_fetchBody(t *testing.T) {
 			assert.JSONEq(t, `{"name":"ok"}`, string(out))
 		})
 
-		// 理由は Test_getJSON と同じ。
 		t.Run("GitHub API にだけトークンを載せる", func(t *testing.T) {
 			t.Setenv("GITHUB_TOKEN", "test-token")
 			auth := make(chan string, 2)
