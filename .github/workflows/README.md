@@ -146,6 +146,12 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
   hotfix の線からは `admin` へ入れられない
 - **止めるときは、`admin` 宛の Pull Request を merge しない。** 後続の apply は `admin` への merge でだけ起きる
   （ADR-0601 決定19）。デフォルトブランチは動かさない
+- **昇格は開くときに承認し、緑ならすぐ merge する。** どのデプロイブランチでも同じである。CI が緑で、plan の行と
+  変わる resource の一覧が本文の見込みと一致すれば、すぐ merge する。merge の前に止めるのは ADR-0601 決定10 の
+  場合だけである。リリース線への merge は止めない。昇格の Pull Request の CI の間に merge すると、head が進んで
+  その CI が走り直すだけで、確かめていない木は入らない（`deploy-source-check`、ADR-0603 決定31）。リリース線への
+  merge は次の昇格まで実環境に当たらず、apply の失敗は後続の apply で直る（ADR-0601 決定19）ので、apply の
+  終わりも待たない
 - **hotfix の間は `admin` へ昇格できない。** `scripts/release` がデフォルトブランチを `hotfix/*` へ移すと、
   デフォルトブランチが `from` の線でないので `deploy-source-check` が落ちる。hotfix を閉じたら、管理者が
   デフォルトブランチをリリース線へ戻し（`gh repo edit --default-branch release/vX.Y.Z`）、hotfix の修正を
