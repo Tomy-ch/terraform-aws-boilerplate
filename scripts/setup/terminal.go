@@ -25,7 +25,7 @@ type terminal struct {
 	isTTY  bool
 	hidden func() ([]byte, error)
 	// begin は、読む前に端末の状態を控え、それへ戻す関数を返す。読み取りを別に走らせる前に呼ぶので、中断が
-	// 読み取りの始まりより先に届いても、戻す先が決まっている。nil なら戻すものが無い。
+	// 読み取りの始まりより先に届いても、戻す先が決まっている。begin か、それが返す関数が nil なら戻すものが無い。
 	begin  func() (restore func(), err error)
 	notify notifier
 }
@@ -123,7 +123,9 @@ func (t *terminal) secret(prompt string) (string, error) {
 			return "", xerrors.Join(errNoHidden, err)
 		}
 
-		restore = r
+		if r != nil {
+			restore = r
+		}
 	}
 
 	type result struct {

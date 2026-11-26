@@ -215,7 +215,7 @@ func (c *client) writeSecret(secret map[string]any, args ...string) error {
 	select {
 	case sig := <-sigs:
 		if err != nil {
-			return xerrors.Join(xerrors.Wrap(errInterrupted, sig.String()), err)
+			return xerrors.Join(xerrors.Wrap(errInterrupted, sig.String()+"。書き込まれたかは分かりません。確認の入口で確かめてください"), err)
 		}
 
 		return xerrors.Wrap(errInterrupted, sig.String()+"。書き込みは終わっています。確認の入口で確かめてください")

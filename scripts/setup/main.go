@@ -203,20 +203,40 @@ func main() {
 	}))
 }
 
-// passwordReader は、f の端末の状態を控えて戻す関数を返す begin と、打ち込みを表示せずに1行を読む read。
-// 戻した後の read は読まない（中断の後に表示を止め直さない）。
+// errTerminalState は、端末の状態を読めないこと。
+var errTerminalState = xerrors.New("端末の状態を読めません")
+
+// passwordReader は、f の端末について newHiddenReader を組む。
 func passwordReader(f *os.File) (func() (func(), error), func() ([]byte, error)) {
 	fd := int(f.Fd())
 
+	return newHiddenReader(
+		func() (func() error, error) {
+			state, err := term.GetState(fd)
+			if err != nil {
+				return nil, err
+			}
+
+			return func() error { return term.Restore(fd, state) }, nil
+		},
+		func() ([]byte, error) { return term.ReadPassword(fd) },
+	)
+}
+
+// newHiddenReader は、端末の状態を控えて戻す関数を返す begin と、打ち込みを表示せずに1行を読む read を組む。
+// 戻した後の read は読まない（中断の後に表示を止め直さない）。read が戻されていないことを確かめてから
+// readPassword が表示を止めるまでの間に中断が済むと、表示は止まったまま残る。readPassword の中を挟めないので、
+// その窓は閉じられない。
+func newHiddenReader(getState func() (func() error, error), readPassword func() ([]byte, error)) (func() (func(), error), func() ([]byte, error)) {
 	var (
 		mu      sync.Mutex
 		stopped bool
 	)
 
 	begin := func() (func(), error) {
-		state, err := term.GetState(fd)
+		restoreState, err := getState()
 		if err != nil {
-			return nil, xerrors.Join(errNotTerminal, err)
+			return nil, xerrors.Join(errTerminalState, err)
 		}
 
 		mu.Lock()
@@ -229,7 +249,7 @@ func passwordReader(f *os.File) (func() (func(), error), func() ([]byte, error))
 			mu.Unlock()
 
 			// 中断の後始末で、戻せなくても続きの終了は止めない。
-			_ = term.Restore(fd, state)
+			_ = restoreState()
 		}, nil
 	}
 
@@ -242,7 +262,7 @@ func passwordReader(f *os.File) (func() (func(), error), func() ([]byte, error))
 			return nil, errInterrupted
 		}
 
-		return term.ReadPassword(fd)
+		return readPassword()
 	}
 
 	return begin, read
