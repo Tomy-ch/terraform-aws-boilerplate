@@ -21,7 +21,7 @@ func (d drift) empty() bool {
 }
 
 type report struct {
-	constraint   string
+	lock         string
 	provider     string
 	sdk          string
 	goModURL     string
@@ -93,7 +93,7 @@ func renderSummary(r report) string {
 		fmt.Fprintf(&b, "## ❌ partitions-drift: 上流と比べられませんでした\n\n```text\n%v\n```\n\n", err)
 	}
 
-	writeField(&b, "版の制約", r.constraint)
+	writeField(&b, "正本の lock", r.lock)
 	writeField(&b, "比べた hashicorp/aws", r.provider)
 	writeField(&b, "その aws-sdk-go-base", r.sdk)
 	writeField(&b, "go.mod", r.goModURL)

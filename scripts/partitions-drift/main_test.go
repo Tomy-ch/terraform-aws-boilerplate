@@ -19,13 +19,10 @@ import (
 )
 
 const (
-	versionsTF = "terraform {\n" +
-		"  required_providers {\n" +
-		"    aws = {\n" +
-		"      source  = \"hashicorp/aws\"\n" +
-		"      version = \">= 6.68.0, < 7.0.0\"\n" +
-		"    }\n" +
-		"  }\n" +
+	lockHCL = "provider \"registry.terraform.io/hashicorp/aws\" {\n" +
+		"  version     = \"6.73.0\"\n" +
+		"  constraints = \"6.73.0\"\n" +
+		"  hashes = [\"zh:01\"]\n" +
 		"}\n"
 	copyHCL = "variables {\n" +
 		"  aws_partitions = {\n" +
@@ -96,12 +93,11 @@ func countingUpstream(t *testing.T, routes map[string]string) (upstream, *atomic
 	}))
 	t.Cleanup(srv.Close)
 
-	return upstream{client: srv.Client(), registry: srv.URL, raw: srv.URL}, calls
+	return upstream{client: srv.Client(), raw: srv.URL}, calls
 }
 
 func defaultRoutes() map[string]string {
 	return map[string]string{
-		"/v1/providers/hashicorp/aws/versions":                                 `{"versions":[{"version":"6.70.0"},{"version":"6.73.0"},{"version":"7.0.0-beta1"},{"version":"7.1.0"}]}`,
 		"/hashicorp/terraform-provider-aws/v6.73.0/go.mod":                     providerGoMod,
 		"/hashicorp/aws-sdk-go-base/v2.0.0-beta.76/endpoints/endpoints_gen.go": endpointsSrc,
 	}
@@ -170,7 +166,7 @@ func Test_run(t *testing.T) {
 		state := filepath.Join(t.TempDir(), "state")
 		var out bytes.Buffer
 		require.NoError(t, run(context.Background(), []string{
-			"-versions-tf", writeFile(t, "versions.tf", versionsTF),
+			"-lock", writeFile(t, ".terraform.lock.hcl", lockHCL),
 			"-copy", writeFile(t, "c.tftest.hcl", copyHCL),
 			"-summary-out", summary,
 			"-state-out", state,
@@ -190,7 +186,7 @@ func Test_run(t *testing.T) {
 		state := filepath.Join(t.TempDir(), "state")
 		cp := strings.Replace(copyHCL, `["cn-north-1"]`, `["cn-north-1", "cn-south-9"]`, 1)
 		err := run(context.Background(), []string{
-			"-versions-tf", writeFile(t, "versions.tf", versionsTF),
+			"-lock", writeFile(t, ".terraform.lock.hcl", lockHCL),
 			"-copy", writeFile(t, "c.tftest.hcl", cp),
 			"-summary-out", summary,
 			"-state-out", state,
@@ -209,7 +205,7 @@ func Test_run(t *testing.T) {
 		summary := filepath.Join(t.TempDir(), "s.md")
 		state := filepath.Join(t.TempDir(), "state")
 		err := run(context.Background(), []string{
-			"-versions-tf", writeFile(t, "versions.tf", versionsTF),
+			"-lock", writeFile(t, ".terraform.lock.hcl", lockHCL),
 			"-copy", writeFile(t, "c.tftest.hcl", copyHCL),
 			"-summary-out", summary,
 			"-state-out", state,
@@ -226,7 +222,7 @@ func Test_run(t *testing.T) {
 	t.Run("必須の引数が無ければ判定を書かずに使い方の誤りにする", func(t *testing.T) {
 		t.Parallel()
 		state := filepath.Join(t.TempDir(), "state")
-		for _, args := range [][]string{{"-copy", "x"}, {"-versions-tf", "y"}} {
+		for _, args := range [][]string{{"-copy", "x"}, {"-lock", "y"}} {
 			err := run(context.Background(), append(args, "-state-out", state), upstream{}, &bytes.Buffer{})
 			require.ErrorIs(t, err, errUsage)
 		}
@@ -248,11 +244,11 @@ func Test_run(t *testing.T) {
 	t.Run("前の実行の要約と判定を消せなければ、それぞれの失敗にする", func(t *testing.T) {
 		t.Parallel()
 		err := run(context.Background(), []string{
-			"-copy", "x", "-versions-tf", "y", "-state-out", nonEmptyDir(t),
+			"-copy", "x", "-lock", "y", "-state-out", nonEmptyDir(t),
 		}, upstream{}, &bytes.Buffer{})
 		require.ErrorIs(t, err, errStateFile)
 		err = run(context.Background(), []string{
-			"-copy", "x", "-versions-tf", "y", "-summary-out", nonEmptyDir(t),
+			"-copy", "x", "-lock", "y", "-summary-out", nonEmptyDir(t),
 		}, upstream{}, &bytes.Buffer{})
 		require.ErrorIs(t, err, errSummaryFile)
 	})
@@ -262,7 +258,7 @@ func Test_run(t *testing.T) {
 		dir := t.TempDir()
 		up := fakeUpstream(t, defaultRoutes())
 		require.NoError(t, run(context.Background(), []string{
-			"-versions-tf", writeFile(t, "versions.tf", versionsTF),
+			"-lock", writeFile(t, ".terraform.lock.hcl", lockHCL),
 			"-copy", writeFile(t, "c.tftest.hcl", copyHCL),
 			"-summary-out", filepath.Join(dir, "s.md"),
 		}, up, &bytes.Buffer{}))
@@ -277,7 +273,7 @@ func Test_run(t *testing.T) {
 		summary := filepath.Join(t.TempDir(), "s.md")
 		state := filepath.Join(t.TempDir(), "state")
 		err := run(context.Background(), []string{
-			"-versions-tf", writeFile(t, "versions.tf", versionsTF),
+			"-lock", writeFile(t, ".terraform.lock.hcl", lockHCL),
 			"-copy", writeFile(t, "c.tftest.hcl", copyHCL),
 			"-summary-out", summary,
 			"-state-out", state,
@@ -289,7 +285,7 @@ func Test_run(t *testing.T) {
 
 	t.Run("位置引数があれば使い方の誤りにする", func(t *testing.T) {
 		t.Parallel()
-		err := run(context.Background(), []string{"-copy", "x", "-versions-tf", "y", "z"}, upstream{}, &bytes.Buffer{})
+		err := run(context.Background(), []string{"-copy", "x", "-lock", "y", "z"}, upstream{}, &bytes.Buffer{})
 		require.ErrorIs(t, err, errUsage)
 	})
 
@@ -304,7 +300,7 @@ func Test_run(t *testing.T) {
 		up := fakeUpstream(t, defaultRoutes())
 		state := filepath.Join(t.TempDir(), "state")
 		err := run(context.Background(), []string{
-			"-versions-tf", writeFile(t, "versions.tf", versionsTF),
+			"-lock", writeFile(t, ".terraform.lock.hcl", lockHCL),
 			"-copy", writeFile(t, "c.tftest.hcl", copyHCL),
 			"-summary-out", filepath.Join(t.TempDir(), "missing", "s.md"),
 			"-state-out", state,
@@ -317,7 +313,7 @@ func Test_run(t *testing.T) {
 		t.Parallel()
 		up := fakeUpstream(t, defaultRoutes())
 		err := run(context.Background(), []string{
-			"-versions-tf", writeFile(t, "versions.tf", versionsTF),
+			"-lock", writeFile(t, ".terraform.lock.hcl", lockHCL),
 			"-copy", writeFile(t, "c.tftest.hcl", copyHCL),
 			"-state-out", filepath.Join(t.TempDir(), "missing", "state"),
 		}, up, &bytes.Buffer{})
@@ -329,52 +325,43 @@ func Test_compareWithUpstream(t *testing.T) {
 	t.Parallel()
 
 	const (
-		versionsPath  = "/v1/providers/hashicorp/aws/versions"
 		goModPath     = "/hashicorp/terraform-provider-aws/v6.73.0/go.mod"
 		endpointsPath = "/hashicorp/aws-sdk-go-base/v2.0.0-beta.76/endpoints/endpoints_gen.go"
 	)
 	// want* は、失敗した段までに分かった値が report に残ることを見る。
 	cases := []struct {
-		name           string
-		mutate         func(map[string]string)
-		copy           string
-		version        string
-		want           error
-		wantCalls      int64
-		wantConstraint string
-		wantProvider   string
-		wantSDK        string
-		wantGoModURL   bool
-		wantURL        bool
+		name         string
+		mutate       func(map[string]string)
+		copy         string
+		lock         string
+		want         error
+		wantCalls    int64
+		wantProvider string
+		wantSDK      string
+		wantGoModURL bool
+		wantURL      bool
 	}{
 		{name: "写しを読めなければ上流に問い合わせずに失敗する", copy: "variables {}\n", want: errCopyCount},
-		{name: "versions.tf に aws の宣言が無ければ上流に問い合わせずに失敗する", version: "terraform {}\n", want: errConstraint},
-		{
-			name: "版の一覧を取れなければ制約だけを残して失敗する", mutate: func(r map[string]string) { delete(r, versionsPath) },
-			want: errHTTP, wantCalls: 1, wantConstraint: ">= 6.68.0, < 7.0.0",
-		},
-		{
-			name: "制約を満たす版が無ければ失敗する", mutate: func(r map[string]string) { r[versionsPath] = `{"versions":[{"version":"5.0.0"}]}` },
-			want: errNoMatch, wantCalls: 1, wantConstraint: ">= 6.68.0, < 7.0.0",
-		},
+		{name: "正本の lock を解釈できなければ上流に問い合わせずに失敗する", lock: "provider \"x\" {\n", want: errLocked},
+		{name: "正本の lock に hashicorp/aws が無ければ上流に問い合わせずに失敗する", lock: strings.Replace(lockHCL, "hashicorp/aws", "hashicorp/random", 1), want: errLocked},
 		{
 			name: "go.mod を取れなければ provider の版と URL を残して失敗する", mutate: func(r map[string]string) { delete(r, goModPath) },
-			want: errHTTP, wantCalls: 2, wantConstraint: ">= 6.68.0, < 7.0.0", wantProvider: "6.73.0", wantGoModURL: true,
+			want: errHTTP, wantCalls: 1, wantProvider: "6.73.0", wantGoModURL: true,
 		},
 		{
 			name: "go.mod が aws-sdk-go-base を差し替えていれば失敗する", mutate: func(r map[string]string) {
 				r[goModPath] = providerGoMod + "replace github.com/hashicorp/aws-sdk-go-base/v2 => ../sdk\n"
 			},
-			want: errGoMod, wantCalls: 2, wantConstraint: ">= 6.68.0, < 7.0.0", wantProvider: "6.73.0", wantGoModURL: true,
+			want: errGoMod, wantCalls: 1, wantProvider: "6.73.0", wantGoModURL: true,
 		},
 		{
 			name: "endpoints を取れなければ SDK の版と URL を残して失敗する", mutate: func(r map[string]string) { delete(r, endpointsPath) },
-			want: errHTTP, wantCalls: 3, wantConstraint: ">= 6.68.0, < 7.0.0", wantProvider: "6.73.0", wantSDK: "v2.0.0-beta.76",
+			want: errHTTP, wantCalls: 2, wantProvider: "6.73.0", wantSDK: "v2.0.0-beta.76",
 			wantGoModURL: true, wantURL: true,
 		},
 		{
 			name: "endpoints を解釈できなければ失敗する", mutate: func(r map[string]string) { r[endpointsPath] = "package endpoints\n" },
-			want: errEndpointsShape, wantCalls: 3, wantConstraint: ">= 6.68.0, < 7.0.0", wantProvider: "6.73.0", wantSDK: "v2.0.0-beta.76",
+			want: errEndpointsShape, wantCalls: 2, wantProvider: "6.73.0", wantSDK: "v2.0.0-beta.76",
 			wantGoModURL: true, wantURL: true,
 		},
 	}
@@ -385,20 +372,19 @@ func Test_compareWithUpstream(t *testing.T) {
 			if tc.mutate != nil {
 				tc.mutate(routes)
 			}
-			cp, vt := copyHCL, versionsTF
+			cp, lock := copyHCL, lockHCL
 			if tc.copy != "" {
 				cp = tc.copy
 			}
-			if tc.version != "" {
-				vt = tc.version
+			if tc.lock != "" {
+				lock = tc.lock
 			}
 			up, calls := countingUpstream(t, routes)
 			r := compareWithUpstream(context.Background(), up,
-				writeFile(t, "versions.tf", vt), writeFile(t, "c.tftest.hcl", cp))
+				writeFile(t, ".terraform.lock.hcl", lock), writeFile(t, "c.tftest.hcl", cp))
 			require.ErrorIs(t, r.err, tc.want)
 			assert.False(t, r.compared)
 			assert.Equal(t, tc.wantCalls, calls.Load())
-			assert.Equal(t, tc.wantConstraint, r.constraint)
 			assert.Equal(t, tc.wantProvider, r.provider)
 			assert.Equal(t, tc.wantSDK, r.sdk)
 			assert.Equal(t, tc.wantGoModURL, r.goModURL != "")
@@ -409,10 +395,9 @@ func Test_compareWithUpstream(t *testing.T) {
 	t.Run("比べ終えたら版と URL と差を残す", func(t *testing.T) {
 		t.Parallel()
 		r := compareWithUpstream(context.Background(), fakeUpstream(t, defaultRoutes()),
-			writeFile(t, "versions.tf", versionsTF), writeFile(t, "c.tftest.hcl", copyHCL))
+			writeFile(t, ".terraform.lock.hcl", lockHCL), writeFile(t, "c.tftest.hcl", copyHCL))
 		require.NoError(t, r.err)
 		assert.True(t, r.compared)
-		assert.Equal(t, ">= 6.68.0, < 7.0.0", r.constraint)
 		assert.Equal(t, "6.73.0", r.provider)
 		assert.Equal(t, "v2.0.0-beta.76", r.sdk)
 		assert.True(t, r.drift.empty())

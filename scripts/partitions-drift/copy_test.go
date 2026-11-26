@@ -17,7 +17,7 @@ func Test_parseHCL(t *testing.T) {
 
 	t.Run("構文の誤りが無ければ body を返す", func(t *testing.T) {
 		t.Parallel()
-		body, err := parseHCL(writeFile(t, "a.hcl", versionsTF))
+		body, err := parseHCL(writeFile(t, "a.hcl", lockHCL))
 		require.NoError(t, err)
 		assert.Len(t, body.Blocks, 1)
 	})
@@ -35,74 +35,33 @@ func Test_parseHCL(t *testing.T) {
 	})
 }
 
-func Test_readConstraint(t *testing.T) {
+func Test_readLockedVersion(t *testing.T) {
 	t.Parallel()
 
-	t.Run("aws の source と version を返す", func(t *testing.T) {
+	t.Run("正本の lock の hashicorp/aws の版を返す", func(t *testing.T) {
 		t.Parallel()
-		source, constraint, err := readConstraint(writeFile(t, "versions.tf", versionsTF))
+		got, err := readLockedVersion(writeFile(t, ".terraform.lock.hcl", lockHCL))
 		require.NoError(t, err)
-		assert.Equal(t, "hashicorp/aws", source)
-		assert.Equal(t, ">= 6.68.0, < 7.0.0", constraint)
+		assert.Equal(t, "6.73.0", got)
 	})
 
-	cases := []struct{ name, src string }{
-		{name: "aws の宣言が無ければ失敗する", src: "terraform {\n  required_providers {}\n}\n"},
-		{name: "aws の宣言が2つあれば失敗する", src: versionsTF + versionsTF},
-		{name: "terraform の外の required_providers の aws は数えない", src: "terraform {\n}\n\nfoo {\n  required_providers {\n    aws = { source = \"hashicorp/aws\", version = \"1.0.0\" }\n  }\n}\n"},
-		{name: "aws がリテラルのオブジェクトでなければ失敗する", src: "terraform {\n  required_providers {\n    aws = local.x\n  }\n}\n"},
-		{name: "aws が文字列なら失敗する", src: "terraform {\n  required_providers {\n    aws = \"6.0\"\n  }\n}\n"},
-		{name: "version が無ければ失敗する", src: strings.Replace(versionsTF, `version = ">= 6.68.0, < 7.0.0"`, "", 1)},
-		{name: "source が無ければ失敗する", src: strings.Replace(versionsTF, `source  = "hashicorp/aws"`, "", 1)},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			_, _, err := readConstraint(writeFile(t, "versions.tf", tc.src))
-			require.ErrorIs(t, err, errConstraint)
-		})
-	}
-
-	t.Run("terraform の中の required_providers 以外の block の aws は数えない", func(t *testing.T) {
+	t.Run("ファイルが無ければ読めない失敗にする", func(t *testing.T) {
 		t.Parallel()
-		src := strings.Replace(versionsTF, "terraform {\n", "terraform {\n  backend \"s3\" {\n    aws = { source = \"x/y\", version = \"1.0.0\" }\n  }\n", 1)
-		source, constraint, err := readConstraint(writeFile(t, "versions.tf", src))
-		require.NoError(t, err)
-		assert.Equal(t, "hashicorp/aws", source)
-		assert.Equal(t, ">= 6.68.0, < 7.0.0", constraint)
+		_, err := readLockedVersion(filepath.Join(t.TempDir(), ".terraform.lock.hcl"))
+		require.ErrorIs(t, err, errRead)
 	})
 
-	t.Run("読めなければ読めない失敗のまま返す", func(t *testing.T) {
+	t.Run("解釈できない lock は errLocked", func(t *testing.T) {
 		t.Parallel()
-		_, _, err := readConstraint(writeFile(t, "versions.tf", "terraform {"))
-		require.ErrorIs(t, err, errSyntax)
-	})
-}
-
-func Test_stringAttr(t *testing.T) {
-	t.Parallel()
-
-	obj := cty.ObjectVal(map[string]cty.Value{
-		"s":     cty.StringVal("v"),
-		"empty": cty.StringVal(""),
-		"n":     cty.NumberIntVal(1),
-		"null":  cty.NullVal(cty.String),
+		_, err := readLockedVersion(writeFile(t, ".terraform.lock.hcl", "# x\n"))
+		require.ErrorIs(t, err, errLocked)
 	})
 
-	t.Run("空でない文字列を返す", func(t *testing.T) {
+	t.Run("hashicorp/aws が無い lock は errLocked", func(t *testing.T) {
 		t.Parallel()
-		got, err := stringAttr(obj, "s")
-		require.NoError(t, err)
-		assert.Equal(t, "v", got)
+		_, err := readLockedVersion(writeFile(t, ".terraform.lock.hcl", strings.Replace(lockHCL, "hashicorp/aws", "hashicorp/random", 1)))
+		require.ErrorIs(t, err, errLocked)
 	})
-
-	for _, name := range []string{"missing", "empty", "n", "null"} {
-		t.Run(name+" は失敗にする", func(t *testing.T) {
-			t.Parallel()
-			_, err := stringAttr(obj, name)
-			require.ErrorIs(t, err, errConstraint)
-		})
-	}
 }
 
 func Test_readCopy(t *testing.T) {
