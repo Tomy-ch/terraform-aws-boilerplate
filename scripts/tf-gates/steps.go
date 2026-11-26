@@ -26,7 +26,6 @@ type toolFunc = toolrun.Func
 const (
 	stepFmt          = "fmt"
 	stepFmtCheck     = "fmt-check"
-	stepInit         = "init"
 	stepInitReadonly = "init-readonly"
 	stepValidate     = "validate"
 	stepTest         = "test"
@@ -43,10 +42,8 @@ func command(ctx context.Context, dir string, env []string, step string, extra .
 		cmd = exec.CommandContext(ctx, "terraform", "fmt", "-recursive")
 	case stepFmtCheck:
 		cmd = exec.CommandContext(ctx, "terraform", "fmt", "-check", "-diff", "-recursive")
-	case stepInit:
-		cmd = exec.CommandContext(ctx, "terraform", "init", "-backend=false", "-input=false")
 	case stepInitReadonly:
-		// root の init は lock を書き換えない。lock の更新は人が root で行う。
+		// lock の更新は make tf-providers-lock だけが行う。
 		cmd = exec.CommandContext(ctx, "terraform", "init", "-backend=false", "-input=false", "-lockfile=readonly")
 	case stepValidate:
 		cmd = exec.CommandContext(ctx, "terraform", "validate", "-json")
@@ -173,21 +170,42 @@ func parseData(name string, args []string, w io.Writer, extra func(*flag.FlagSet
 }
 
 func runInit(args []string, w io.Writer, tool toolFunc) error {
-	data, targets, err := parseData("init", args, w, nil)
+	var providersDir, misePath string
+	data, targets, err := parseData("init", args, w, func(f *flag.FlagSet) {
+		f.StringVar(&providersDir, "providers", "", "provider の版の正本のディレクトリ")
+		f.StringVar(&misePath, "mise", "", "lockfile_platforms を読む mise.toml")
+	})
 	if err != nil {
 		return err
 	}
-	return initTargets(data, targets, w, tool)
+	if providersDir == "" || misePath == "" {
+		return xerrors.Wrap(errUsage, "tf-gates init は -providers と -mise が要ります")
+	}
+	c, err := loadCanonical(providersDir, misePath)
+	if err != nil {
+		return err
+	}
+
+	return initTargets(data, targets, w, tool, &c)
 }
 
-func initTargets(data string, targets []target, w io.Writer, tool toolFunc) error {
-	return runEach("tf-init", targets, w, nil, func(t target) *exec.Cmd {
-		step := stepInit
+// initTargets は、すべてのディレクトリを -lockfile=readonly で init します。root でないディレクトリには、先に
+// 正本の lock を置きます（[placeLock]）。c が nil のときに root でないディレクトリがあれば、1つも起動しません。
+func initTargets(data string, targets []target, w io.Writer, tool toolFunc, c *canonical) error {
+	for _, t := range targets {
 		if isRoot(t.rel) {
-			step = stepInitReadonly
+			continue
 		}
+		if c == nil {
+			return xerrors.Wrapf(errUsage, "root でない %s に置く provider の版の正本がありません", t.rel)
+		}
+		if err := placeLock(t.path, *c); err != nil {
+			return err
+		}
+	}
 
-		return tool(context.Background(), t.path, tfexec.Env(os.Environ(), "TF_DATA_DIR="+tfexec.DataDir(data, t.rel)), step)
+	return runEach("tf-init", targets, w, nil, func(t target) *exec.Cmd {
+		return tool(context.Background(), t.path, tfexec.Env(os.Environ(), "TF_DATA_DIR="+tfexec.DataDir(data, t.rel)), stepInitReadonly)
 	})
 }
 
