@@ -49,6 +49,7 @@
 
 - Slack の workspace を、そのアカウントの Chatbot のコンソールで認可し、team ID と channel ID を env の値に書く。認可は OAuth で、コマンドにできない。7つのアカウントそれぞれで要る。workspace の持ち主と、通知を見る channel は利用者が決める。手順は [`docs/setup/ops-notification.md`](../../docs/setup/ops-notification.md)
 - 認可の前に apply すると、Chatbot の構成の作成が失敗する見込みである（確かめていない）
+- 同じアカウントの identity root を先に apply する。Chatbot の service-linked role（`AWSServiceRoleForAWSChatbot`）は identity root の `deployment-identity` が作り、このユースケースは作らずに名前で読む。無ければ plan で落ちる（[ops-notification/ADR-0201](docs/adr/0201-chat-destination-read-only.md) 決定9）
 
 ## supported / unsupported
 
@@ -64,6 +65,7 @@ unsupported:
 - 心拍の不在の自動検知。見直し条件: アカウントの外の仕組み（obp）が稼働したとき
 - アプリ系のアラートの経路（Grafana Alerting）の死活。obp が持つ（[scope.md 第9.3節](../../docs/v1.0-plan/scope.md)）
 - チャットからの書き込みの操作（[ops-notification/ADR-0201](docs/adr/0201-chat-destination-read-only.md)）
+- Chatbot の service-linked role を、このユースケースが作ること。identity root が先に作る（[ops-notification/ADR-0201](docs/adr/0201-chat-destination-read-only.md) 決定9、[deployment-identity/ADR-0002](../deployment-identity/docs/adr/0002-account-prerequisite-service-linked-roles.md)）
 - provider の region と us-east-1 の外の alarm を Chatbot が読むこと（`PLAN-NOTIFY-07`、`internal/chat-slack/tests/`）
 - aws の外の partition。us-east-1 は aws の partition の region で、Chatbot の構成も us-west-2 に置く（[ops-notification/ADR-0001](docs/adr/0001-topic-per-account-in-workload-root.md) 決定1）。`internal/us-east-1-topic` の precondition が plan で止める
 - us-east-1 の Topic への CloudWatch のほかの送り手（[ops-notification/ADR-0101](docs/adr/0101-fixed-publishers.md)）
@@ -81,16 +83,17 @@ unsupported:
 - Topic・鍵・心拍・Chatbot の構成はこのユースケースが所有する
 - Slack の workspace の認可は Terraform の管理の外で、利用者が持つ
 - permissions boundary の policy は `deployment-identity` が持つ
+- Chatbot の service-linked role は `deployment-identity` が持つ。このユースケースは識別子を受けず、data source（`aws_iam_role`）で名前で読む
 
 ## 依存するユースケースと判断 Issue
 
-- ユースケース: `deployment-identity` の permissions boundary の ARN を受ける。workload root の apply の role がこのユースケースの resource と role を作る権限は、`deployment-identity` が持つ（[deployment-identity/ADR-0201](../deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定13-17）
+- ユースケース: `deployment-identity` の permissions boundary の ARN を受ける。workload root の apply の role がこのユースケースの resource と role を作る権限は、`deployment-identity` が持つ（[deployment-identity/ADR-0201](../deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定13-17）。Chatbot の service-linked role は `deployment-identity` が identity root で先に作り、このユースケースはその存在を前提にする（[deployment-identity/ADR-0002](../deployment-identity/docs/adr/0002-account-prerequisite-service-linked-roles.md)）
 - 判断 Issue: #97（アカウントごとの Topic と心拍）、#109（alarm を持たない）、#110（`modules/sns`・`modules/kms` の SNS の文）、#256（宛先を Chatbot にする）、#254（作る role の範囲。permissions boundary）
 - env の配線: 管理アカウントは workload root（`env/admin/`）が呼ぶ。security・log-archive は #21、dev・stg・prd は #330 が配線する
 
 ## 検証方法
 
-- Unit Test（mock の plan と apply）: `tests/validation.tftest.hcl` が入力の検査を、`tests/contract.tftest.hcl` が `topic_arn`・`us_east_1_topic_arn` の配線を、`tests/composition.tftest.hcl` が名前の組み立てと固定の送り手と鍵の利用者を、`tests/us-east-1-provider.tftest.hcl` が provider の region が us-east-1 のときに名前が衝突しないことを、`internal/us-east-1-topic/tests/` が us-east-1 の Topic と鍵の region・値・文書と aws の partition の外で止まることを、`internal/heartbeat/tests/` が2つの schedule の固定値・本文・role の信頼と権限を、`internal/chat-slack/tests/` が Chatbot の構成・読み取りの policy・channel role を、`reference/tests/plan.tftest.hcl` が reference の値を見る。管理アカウントの workload root が渡す permissions boundary の ARN は `env/admin/tests/` が見る。Topic と鍵の文書は `modules/sns/tests/`・`modules/kms/tests/` が見る
+- Unit Test（mock の plan と apply）: `tests/validation.tftest.hcl` が入力の検査を、`tests/contract.tftest.hcl` が `topic_arn`・`us_east_1_topic_arn` の配線を、`tests/composition.tftest.hcl` が名前の組み立てと固定の送り手と鍵の利用者を、`tests/us-east-1-provider.tftest.hcl` が provider の region が us-east-1 のときに名前が衝突しないことを、`internal/us-east-1-topic/tests/` が us-east-1 の Topic と鍵の region・値・文書と aws の partition の外で止まることを、`internal/heartbeat/tests/` が2つの schedule の固定値・本文・role の信頼と権限を、`internal/chat-slack/tests/` が Chatbot の構成・読み取りの policy・channel role と、service-linked role の path の postcondition と、アカウントと partition と `aws-service-role/` の path の precondition が別の実体で plan を落とすことを、`reference/tests/plan.tftest.hcl` が reference の値を見る。管理アカウントの workload root が渡す permissions boundary の ARN は `env/admin/tests/` が見る。Topic と鍵の文書は `modules/sns/tests/`・`modules/kms/tests/` が見る
 - Policy Test（`make tf-policy`）: `reference/tests/policy-input.tftest.hcl` の plan に対して、Topic Policy の形（`plan.sns_topic_policy`。TLS の Deny、Allow がサービス principal の `sns:Publish` だけで条件が自アカウントの `aws:SourceAccount` だけ、Topic ごとに Topic Policy が1つ）、合成の不変条件（`plan.ops_notification`。Topic Policy と Key Policy の送り手の一致、EventBridge の文が Topic を名指すこと、IAM で publish する role と Key Policy の SNS 経由の role の一致、2つの role の信頼、心拍の権限と target、guardrail と channel role の policy の一致、`read` の Action 集合、channel role の managed policy の排他と attachment の対（`plan.iam_role_attachment_pairing`）、作る role が permissions boundary を持つこと、us-east-1 の構成物の region）、Key Policy の形（`plan.kms_key_policy`。SNS の文を plan から導いた入力で見る）、Resource `"*"` の Action（`plan.iam_action_wildcard`）を確かめる。Topic と鍵の削除と置換、`aws_sns_topic` と `aws_kms_key` の inline の `policy` は、reference の plan で `plan.input`（`PLAN-INPUT-09`）が、CI の plan と apply で `plan.stateful_protection` が見る
 - Static Analysis: `make layer-check`・`make infra-code-gate`・`make resource-order-check`
 - 実環境テストの形: [ADR-0401](../../docs/adr/0401-testing-policy.md) 決定14 の「常駐する実体を持つが、同じ構成の複製を作れる」に当たる。`tests/integration/sandbox.tftest.hcl` が、実行の識別子の接頭辞 `it` を持つ `project`（`tests/integration/guard` が検証し、外れたら複製を作る前に止まる）で sandbox に複製を作り、確かめてから破棄する。実行は人が行い、CI と `make tf-test` は走らせない。複製が在る間に、人が次を確かめる: 心拍の role・CloudWatch の alarm（`set-alarm-state`）・EventBridge の rule・Budgets・Cost Anomaly Detection からの publish が Topic Policy と Key Policy で拒まれずに Slack まで届くこと、us-east-1 の alarm（`set-alarm-state`）と us-east-1 の心拍が us-east-1 の Topic を経て Slack まで届くこと、us-east-1 の構成物が `region` 引数で us-east-1 に作られること、TLS でない publish が拒まれること、心拍の本文の予定時刻が置換されること、Chatbot の描画が `read` の8つの Action で欠けないこと、Security Hub の SNS.4 の判定。期待残存（[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定16）は、削除の猶予に入った鍵（鍵の ID・`PendingDeletion`・削除の日付）と、Slack の workspace の認可（team ID。Terraform の管理の外）である
@@ -129,6 +132,16 @@ AWS Well-Architected Framework（2024-06-27 版）の OPS10-BP02「Have a proces
 3. Topic に Chatbot の購読（endpoint `https://global.sns-api.chatbot.amazonaws.com`）があるか。`NumberOfMessagesPublished` が増えていて、`NumberOfNotificationsDelivered` と `NumberOfNotificationsFailed` が増えていなければ、購読が無い。付け直しは [`docs/setup/ops-notification.md`](../../docs/setup/ops-notification.md) の 3.4
 4. Chatbot の構成と、Slack の workspace の認可
 5. 鍵の状態と Key Policy の `RolesViaSns0`
+
+### plan で落ちたときに見るもの
+
+Chatbot の service-linked role の読み取りで plan が落ちたとき（[ops-notification/ADR-0201](docs/adr/0201-chat-destination-read-only.md) 決定9）。data source の読み取りの失敗は文言を変えられないので、ここに手順を置く。
+
+1. `reading IAM Role (AWSServiceRoleForAWSChatbot)` が `NoSuchEntity` で落ちた: そのアカウントの identity root がまだ apply されていない。同じアカウントの identity root を apply し（CI の apply-identity の job。新しいアカウントでは bootstrap の段4）、workload root の plan をやり直す。destroy の plan（sandbox の Integration Test の破棄を含む）も同じ文言で止まる
+2. path の postcondition が落ちた: `AWSServiceRoleForAWSChatbot` という名前の、service-linked role でない role が在る。その role を消し、identity root を apply する
+3. Chatbot の構成の precondition（service-linked role のアカウントと partition）が落ちた: data source が返した ARN が、provider のアカウントと partition の role ではない。provider の設定（assume する role と region）を確かめる
+
+role を CLI やコンソールで作らない。identity root の apply が名前の重複で落ちる。作ってしまったら、identity root の `import` block で取り込む（[deployment-identity/ADR-0002](../deployment-identity/docs/adr/0002-account-prerequisite-service-linked-roles.md) 決定4）。
 
 ## 公式実装の参照（[ADR-0206](../../docs/adr/0206-official-implementations-as-reference.md) 決定7・8）
 
@@ -188,6 +201,8 @@ AWS Well-Architected Framework（2024-06-27 版）の OPS10-BP02「Have a proces
 ## 保証しないもの
 
 - Chatbot が通知を描くのに要る操作が、`read` の8つの Action で足りること。管理アカウントの実環境で、2つの region の心拍が Slack に届いたことで一度確かめた（2026-11-25）。これを続けて確かめる検査は無い
+- Chatbot の service-linked role が在るときに、Chatbot が構成の作成で2つの Topic の購読を作ること。path は data source の postcondition が plan で見る
+- role が無いときに plan が落ちること。provider の data source の読み取りの失敗（`NoSuchEntity`）に依り、mock の Unit Test では確かめない
 - Chatbot の channel role の信頼（`chatbot.amazonaws.com` を `aws:SourceAccount` で限る）は、Chatbot の文書に例が無い（confused deputy の頁も無い）。principal は Chatbot の慣行に、条件は IAM の一般の指針に従う。この信頼で Chatbot が role を引き受けられることは、管理アカウントの実環境で心拍が Slack に届いたことで一度確かめた（2026-11-25）。これを続けて確かめる検査は無い
 - IAM で Topic へ publish できる role と Key Policy の SNS 経由の role の一致（`PLAN-NOTIFY-03`）は、inline policy（`aws_iam_role_policy`）だけを数える。attach した managed policy の `sns:Publish` は数えない
 - 心拍の role を同じ名前で作り直したとき、2つの Topic の鍵の Key Policy が書き直されず、KMS が古い role を名指し続けること。`plan.kms_key_policy` の `PLAN-KMS-10` は、宣言した state の鍵の Key Policy だけを見る

@@ -14,6 +14,8 @@ import (
 	"strings"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cientry"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workdir"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -36,17 +38,16 @@ const (
 var (
 	errLocalState = xerrors.New("❌ init の値の state を読めません")
 	errLocalAWS   = xerrors.New("❌ aws の呼び出しが失敗しました")
-	errLocalTF    = xerrors.New("❌ terraform が失敗しました")
+	errLocalInit  = xerrors.New("❌ terraform init が失敗しました")
+	errLocalPlan  = xerrors.New("❌ terraform plan が失敗しました")
 	errLocalLog   = xerrors.New("❌ plan の log を書けません")
 )
 
-// toolFunc は、作業ディレクトリ dir で段 step の道具を起動するコマンドを作ります。テストは差し替えます。
-type toolFunc func(dir string, env []string, step string) *exec.Cmd
+type toolFunc = toolrun.Func
 
 // command は toolFunc の実物です。aws の可変の値は、作業ディレクトリに置いた input.json（--cli-input-json）と
 // AWS_REGION で、terraform の可変の値は TF_CLI_ARGS_<サブコマンド> で渡します。
-func command(dir string, env []string, step string) *exec.Cmd {
-	ctx := context.Background()
+func command(ctx context.Context, dir string, env []string, step string, _ ...string) *exec.Cmd {
 	var cmd *exec.Cmd
 	switch step {
 	case stepCallerIdentity:
@@ -131,10 +132,14 @@ func localRoot(base, env, root string) (string, error) {
 // runTool は、道具を起動して stdout を返します。stderr は人の端末へ出します。
 func runTool(tool toolFunc, dir string, env []string, step string, stderr io.Writer) ([]byte, error) {
 	var out bytes.Buffer
-	cmd := tool(dir, env, step)
+	cmd := tool(context.Background(), dir, env, step)
 	cmd.Stdout, cmd.Stderr = &out, stderr
-	if err := cmd.Run(); err != nil {
-		return nil, xerrors.Wrapf(errLocalAWS, "%s: %v", step, err)
+	code, err := toolrun.Exec(cmd)
+	if err != nil {
+		return nil, xerrors.Wrap(err, step)
+	}
+	if code != 0 {
+		return nil, xerrors.Wrapf(errLocalAWS, "%s: exit status %d", step, code)
 	}
 
 	return out.Bytes(), nil
@@ -165,11 +170,11 @@ func localPrepare(args []string, d deps, stderr io.Writer) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	work, err := os.MkdirTemp("", "tf-local-prepare-")
+	work, cleanup, err := workdir.Temp("", "tf-local-prepare-")
 	if err != nil {
 		return "", xerrors.Wrap(err, "作業ディレクトリ")
 	}
-	defer func() { _ = os.RemoveAll(work) }()
+	defer cleanup()
 	awsEnv := localEnv(d.environ, *profile, "AWS_REGION="+region)
 
 	identityOut, err := runTool(d.tool, work, awsEnv, stepCallerIdentity, stderr)
@@ -245,10 +250,14 @@ func localInit(args []string, d deps, stdout, stderr io.Writer) (string, error) 
 	if err := json.Unmarshal(raw, &s); err != nil || s.Dir == "" || len(s.InitArgs) == 0 {
 		return "", xerrors.Wrap(errLocalState, *statePath)
 	}
-	cmd := d.tool(s.Dir, localEnv(d.environ, *profile, "TF_CLI_ARGS_init="+strings.Join(s.InitArgs, " ")), stepLocalInit)
+	cmd := d.tool(context.Background(), s.Dir, localEnv(d.environ, *profile, "TF_CLI_ARGS_init="+strings.Join(s.InitArgs, " ")), stepLocalInit)
 	cmd.Stdout, cmd.Stderr = stdout, stderr
-	if err := cmd.Run(); err != nil {
-		return "", xerrors.Wrapf(errLocalTF, "init: %v", err)
+	code, err := toolrun.Exec(cmd)
+	if err != nil {
+		return "", xerrors.Wrap(err, "init")
+	}
+	if code != 0 {
+		return "", xerrors.Wrapf(errLocalInit, "exit status %d", code)
 	}
 
 	return "✅ " + s.Dir + " を init しました", nil
@@ -294,10 +303,14 @@ func localPlan(args []string, d deps, stdout, stderr io.Writer) (string, error) 
 	if _, err := fmt.Fprintf(w, "%s\n", strings.TrimSpace(string(header))); err != nil {
 		return "", xerrors.Wrap(errLocalLog, err.Error())
 	}
-	cmd := d.tool(dir, localEnv(d.environ, *profile), stepLocalPlan)
+	cmd := d.tool(context.Background(), dir, localEnv(d.environ, *profile), stepLocalPlan)
 	cmd.Stdout, cmd.Stderr = w, w
-	if err := cmd.Run(); err != nil {
-		return "", xerrors.Wrapf(errLocalTF, "plan: %v", err)
+	code, err := toolrun.Exec(cmd)
+	if err != nil {
+		return "", xerrors.Wrap(err, "plan")
+	}
+	if code != 0 {
+		return "", xerrors.Wrapf(errLocalPlan, "exit status %d", code)
 	}
 
 	return "✅ plan の出力を " + *logPath + " に残しました", nil

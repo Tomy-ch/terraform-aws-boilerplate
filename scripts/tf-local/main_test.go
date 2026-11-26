@@ -13,6 +13,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/policyresult"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workdir"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -63,7 +67,7 @@ func stubGitWith(revParse, status, failOn string) func(args ...string) (string, 
 			return status, nil
 		}
 
-		return "", fmt.Errorf("unexpected git %v", args)
+		return "", xerrors.Newf("unexpected git %v", args)
 	}
 }
 
@@ -739,5 +743,60 @@ func Test_processAlive(t *testing.T) {
 		cmd := exec.CommandContext(t.Context(), "true")
 		require.NoError(t, cmd.Run())
 		assert.False(t, processAlive(cmd.Process.Pid))
+	})
+}
+
+func Test_exitCode(t *testing.T) {
+	t.Parallel()
+
+	// verdicts とは独立に書いた、判定（1）になる失敗の一覧。verdicts から抜けても、余計なものが入っても落ちる。
+	want := map[string]error{
+		"root の資格情報":      errRootCredentials,
+		"state の鍵が無い":     errStateKeyMissing,
+		"state の鍵の食い違い":   errStateKeyMismatch,
+		"plan の失敗":        errPlanFailed,
+		"plan のエラー":       errPlanErrored,
+		"手元の plan の失敗":    errLocalPlan,
+		"Policy の違反（CI）":  errCIPolicy,
+		"Policy の違反":      policyresult.ErrViolation,
+		"apply の失敗":       errApplyFailed,
+		"apply の打ち切り":     errApplyTimeout,
+		"assume が通ってしまった": errAssumeSucceeded,
+		"新しい lock":        errLockFresh,
+		"他人の lock":        errLockForeign,
+		"lock が在る":        errLockExists,
+		"CI の段の失敗":        errCIFailed,
+		"CI の段の未完":        errCIUnfinish,
+	}
+	assert.Len(t, verdicts, len(want), "verdicts の件数が独立の一覧と合わない")
+	for name, err := range want {
+		t.Run("判定の失敗（"+name+"）は 1", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, 1, exitCode(xerrors.Wrap(err, "x")))
+		})
+	}
+	for name, err := range map[string]error{
+		"道具を起動できないのは 2":         toolrun.ErrTool,
+		"init の失敗は 2":           errLocalInit,
+		"aws の失敗は 2":            errLocalAWS,
+		"state を読めないのは 2":       errLocalState,
+		"使い方の誤りは 2":             errUsage,
+		"作業ディレクトリの誤りは 2":        workdir.ErrInvalid,
+		"plan の JSON の誤りは 2":    errPlanJSON,
+		"plan が0件なのは 2":         errPlanEmpty,
+		"CI の init の失敗は 2":      errCIInit,
+		"region の不一致は 2":        errRegionMismatch,
+		"Policy の規則の評価が0件なのは 2": policyresult.ErrEmpty,
+		"Policy の評価の件数の食い違いは 2": policyresult.ErrCount,
+		"判定に届かない CI の段は 2":      errCINotEstablished,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, 2, exitCode(err))
+		})
+	}
+	t.Run("成功は 0", func(t *testing.T) {
+		t.Parallel()
+		assert.Zero(t, exitCode(nil))
 	})
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"os"
@@ -12,6 +13,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/policyresult"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun/tooltest"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -74,8 +79,8 @@ rc=0; if [ -e "$k/$step.rc" ]; then rc=$(cat "$k/$step.rc"); fi
 exit "$rc"
 `
 	require.NoError(t, os.WriteFile(script, []byte(body), 0o600))
-	tool := func(d string, env []string, step string) *exec.Cmd {
-		c := exec.CommandContext(context.Background(), "/bin/sh", script, step)
+	tool := func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
+		c := exec.CommandContext(ctx, "/bin/sh", script, step)
 		c.Dir, c.Env = d, env
 		return c
 	}
@@ -127,7 +132,7 @@ func newFlow(t *testing.T, knobs map[string]string, extra ...string) *flow {
 		environ = append(environ, kv)
 	}
 	var stderr bytes.Buffer
-	f.d = deps{readFile: os.ReadFile, environ: environ, git: stubGit("", ""), now: time.Now, tool: tool, stderr: &stderr}
+	f.d = deps{readFile: os.ReadFile, environ: environ, git: stubGit("", ""), now: time.Now, tool: tool, stderr: &stderr, root: t.TempDir()}
 	return f
 }
 
@@ -158,7 +163,7 @@ func (f *flow) all(mode, root string) error {
 		return err
 	}
 	_ = f.step("ci-plan", "-state", f.state)
-	_ = f.step("ci-policy", "-state", f.state, "-work", f.t.TempDir(), "-policy", f.policy, "-decl", fileWith(f.t, "{}"), "-layer", fileWith(f.t, "{}"), "-namespace", "plan.p")
+	_ = f.step("ci-policy", "-state", f.state, "-work", "tmp/ci-policy", "-policy", f.policy, "-decl", fileWith(f.t, "{}"), "-layer", fileWith(f.t, "{}"), "-namespace", "plan.p")
 	if mode == ciModeApply {
 		_ = f.step("ci-apply", "-state", f.state, "-timeout", "5s")
 	}
@@ -246,35 +251,65 @@ func Test_ciFinishStep(t *testing.T) {
 		failure string
 		apply   bool
 		upload  bool
+		code    int
 	}{
-		"plan が落ちれば Policy も apply もせず、全文を置いて plan で落ちる": {
-			knobs: map[string]string{stepCIPlanLock + ".rc": "1"}, failure: "plan", upload: true},
-		"plan が lock を取れなければ lock で落ちる": {
-			knobs: map[string]string{stepCIPlanLock + ".rc": "1", stepCIPlanLock + ".out": "Error: " + lockError + "\n"}, failure: "lock", upload: true},
-		"plan の JSON の変更と終了コードが食い違えば plan で落ちる": {
-			knobs: map[string]string{stepCIPlanLock + ".rc": "0"}, failure: "plan", upload: true},
-		"Policy を通らなければ apply せず、全文を置いて policy で落ちる": {
-			knobs: map[string]string{stepCIConftest + ".out": `[{"namespace":"plan.p","successes":0,"failures":[{"msg":"bad"}]}]`}, failure: "policy", upload: true},
-		"apply が落ちれば全文を置いて apply で落ちる": {
-			knobs: map[string]string{stepCIApply + ".rc": "1"}, failure: "apply", apply: true, upload: true},
-		"apply が lock を取れなければ lock で落ちる": {
-			knobs: map[string]string{stepCIApply + ".rc": "1", stepCIApply + ".out": lockError + "\n"}, failure: "lock", apply: true, upload: true},
-		"apply が終わった後に全文を置けなければ upload で落ちる": {
-			knobs: map[string]string{stepCIPutObject + ".rc": "1"}, failure: "upload", apply: true, upload: true},
-		"版 ID の無い応答は置けなかったとして落ちる": {
-			knobs: map[string]string{stepCIPutObject + ".out": `{}`}, failure: "upload", apply: true, upload: true},
+		"plan が落ちれば Policy も apply もせず、全文を置いて plan で落ち、判定として終了コード 1": {
+			knobs: map[string]string{stepCIPlanLock + ".rc": "1"}, failure: "plan", upload: true, code: 1},
+		"plan が lock を取れなければ lock で落ち、判定として終了コード 1": {
+			knobs: map[string]string{stepCIPlanLock + ".rc": "1", stepCIPlanLock + ".out": "Error: " + lockError + "\n"}, failure: "lock", upload: true, code: 1},
+		"plan の JSON の変更と終了コードが食い違えば plan で落ち、判定に届かず終了コード 2": {
+			knobs: map[string]string{stepCIPlanLock + ".rc": "0"}, failure: "plan", upload: true, code: 2},
+		"Policy を通らなければ apply せず、全文を置いて policy で落ち、判定として終了コード 1": {
+			knobs: map[string]string{stepCIConftest + ".out": `[{"namespace":"plan.p","successes":0,"failures":[{"msg":"bad"}]}]`}, failure: "policy", upload: true, code: 1},
+		"Policy の規則が1つも評価されなければ policy で落ち、判定に届かず終了コード 2": {
+			knobs: map[string]string{stepCIConftest + ".out": `[]`}, failure: "policy", upload: true, code: 2},
+		"apply が落ちれば全文を置いて apply で落ち、判定として終了コード 1": {
+			knobs: map[string]string{stepCIApply + ".rc": "1"}, failure: "apply", apply: true, upload: true, code: 1},
+		"apply が lock を取れなければ lock で落ち、判定として終了コード 1": {
+			knobs: map[string]string{stepCIApply + ".rc": "1", stepCIApply + ".out": lockError + "\n"}, failure: "lock", apply: true, upload: true, code: 1},
+		"apply が終わった後に全文を置けなければ upload で落ち、判定に届かず終了コード 2": {
+			knobs: map[string]string{stepCIPutObject + ".rc": "1"}, failure: "upload", apply: true, upload: true, code: 2},
+		"版 ID の無い応答は置けなかったとして落ち、終了コード 2": {
+			knobs: map[string]string{stepCIPutObject + ".out": `{}`}, failure: "upload", apply: true, upload: true, code: 2},
+		"plan が判定で落ちた後に全文を置けなくても、plan の判定は上書きされず終了コード 1": {
+			knobs: map[string]string{stepCIPlanLock + ".rc": "1", stepCIPutObject + ".rc": "1"}, failure: "plan", upload: true, code: 1},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			f := newFlow(t, c.knobs)
 			err := f.all(ciModeApply, "identity")
 			require.Error(t, err)
+			assert.Equal(t, c.code, exitCode(err), err.Error())
+			if c.code == 2 {
+				require.ErrorIs(t, err, errCINotEstablished)
+			}
 			assert.Equal(t, "failure="+c.failure+"\n", readKnob(t, filepath.Dir(f.output), "output"))
 			assert.Equal(t, c.apply, strings.Contains(f.calls(), stepCIApply), f.calls())
 			assert.Equal(t, c.upload, readKnob(t, f.k, "upload.log") != "")
 			assert.NotContains(t, readKnob(t, filepath.Dir(f.summary), "summary"), "apply が終わりました")
 			f.public()
 			f.leftovers()
+		})
+	}
+
+	for name, step := range map[string]string{
+		"plan を起動できなければ、plan で落ち、判定に届かず終了コード 2":   stepCIPlanLock,
+		"apply を起動できなければ、apply で落ち、判定に届かず終了コード 2": stepCIApply,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newFlow(t, nil)
+			inner := f.d.tool
+			f.d.tool = func(ctx context.Context, dir string, env []string, s string, ops ...string) *exec.Cmd {
+				if s == step {
+					return tooltest.Missing(ctx, dir, env, s, ops...)
+				}
+				return inner(ctx, dir, env, s, ops...)
+			}
+			err := f.all(ciModeApply, "identity")
+			require.ErrorIs(t, err, errCINotEstablished)
+			assert.NotErrorIs(t, err, errCIFailed)
+			assert.Equal(t, 2, exitCode(err))
 		})
 	}
 
@@ -294,15 +329,109 @@ func Test_ciFinishStep(t *testing.T) {
 		assert.Contains(t, readKnob(t, filepath.Dir(f.output), "output"), "failure=applied\n")
 	})
 
-	t.Run("段が state に終わりを書かずに落ちていれば、その段で落ちる", func(t *testing.T) {
+	t.Run("段が state に終わりを書かずに落ちていれば、判定に届いていないので errCINotEstablished で終了コード 2（失敗の種類は従来どおり書く）", func(t *testing.T) {
 		t.Parallel()
 		f := newFlow(t, nil)
 		require.NoError(t, f.step("ci-prepare", "-mode", ciModeApply, "-project", "tabp", "-env", "admin", "-root", "identity",
 			"-profile", "p", "-base", f.base, "-header", f.header, "-state", f.state))
 		require.NoError(t, f.step("ci-init", "-state", f.state))
-		require.ErrorIs(t, f.step("ci-finish", "-state", f.state), errCIUnfinish)
+		err := f.step("ci-finish", "-state", f.state)
+		require.ErrorIs(t, err, errCINotEstablished)
+		assert.NotErrorIs(t, err, errCIUnfinish, "判定の sentinel を包むと終了コードが 1 になる")
+		assert.Equal(t, 2, exitCode(err))
 		assert.Equal(t, "failure=plan\n", readKnob(t, filepath.Dir(f.output), "output"))
 		f.leftovers()
+	})
+
+	preparedState := func(t *testing.T, established bool, drop bool) *flow {
+		t.Helper()
+		f := newFlow(t, nil)
+		require.NoError(t, f.step("ci-prepare", "-mode", ciModePlan, "-project", "tabp", "-env", "admin", "-root", "identity",
+			"-profile", "p", "-base", f.base, "-header", f.header, "-state", f.state))
+		require.NoError(t, f.step("ci-init", "-state", f.state))
+		st, err := loadCIState(f.state)
+		require.NoError(t, err)
+		st.Stage, st.Established = stagePlan, established
+		require.NoError(t, st.save(f.state))
+		if drop {
+			raw, err := os.ReadFile(f.state) //nolint:gosec // t.TempDir() 由来
+			require.NoError(t, err)
+			var m map[string]any
+			require.NoError(t, json.Unmarshal(raw, &m))
+			delete(m, "established")
+			raw, err = json.Marshal(m)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(f.state, raw, 0o600))
+		}
+		return f
+	}
+
+	t.Run("判定として落ちた段（established）は従来どおり errCIUnfinish で終了コード 1", func(t *testing.T) {
+		t.Parallel()
+		f := preparedState(t, true, false)
+		err := f.step("ci-finish", "-state", f.state)
+		require.ErrorIs(t, err, errCIUnfinish)
+		assert.Equal(t, 1, exitCode(err))
+	})
+
+	t.Run("upload まで終わった失敗でも、判定に届いていなければ errCIFailed を包まず errCINotEstablished で終了コード 2", func(t *testing.T) {
+		t.Parallel()
+		f := preparedState(t, false, false)
+		st, err := loadCIState(f.state)
+		require.NoError(t, err)
+		st.Done = append(st.Done, stagePlan, stagePolicy, stageUpload)
+		require.NoError(t, st.save(f.state))
+		err = f.step("ci-finish", "-state", f.state)
+		require.ErrorIs(t, err, errCINotEstablished)
+		assert.NotErrorIs(t, err, errCIFailed)
+		assert.Equal(t, 2, exitCode(err))
+	})
+
+	t.Run("upload まで終わった判定の失敗は errCIFailed で終了コード 1", func(t *testing.T) {
+		t.Parallel()
+		f := preparedState(t, true, false)
+		st, err := loadCIState(f.state)
+		require.NoError(t, err)
+		st.Done = append(st.Done, stagePlan, stagePolicy, stageUpload)
+		require.NoError(t, st.save(f.state))
+		err = f.step("ci-finish", "-state", f.state)
+		require.ErrorIs(t, err, errCIFailed)
+		assert.Equal(t, 1, exitCode(err))
+	})
+
+	for name, c := range map[string]struct {
+		established bool
+		want        error
+		code        int
+	}{
+		"判定に届かない失敗は、失敗の種類を書けなくても終了コード 2 のまま":       {false, errCINotEstablished, 2},
+		"判定の失敗は、失敗の種類を書けなくても errCIFailed で終了コード 1": {true, errCIFailed, 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newFlow(t, nil)
+			require.NoError(t, f.step("ci-prepare", "-mode", ciModeApply, "-project", "tabp", "-env", "admin", "-root", "identity",
+				"-profile", "p", "-base", f.base, "-header", f.header, "-state", f.state))
+			require.NoError(t, f.step("ci-init", "-state", f.state))
+			st, err := loadCIState(f.state)
+			require.NoError(t, err)
+			st.Stage, st.Established = stagePlan, c.established
+			st.Done = append(st.Done, stagePlan, stagePolicy, stageApply, stageUpload)
+			require.NoError(t, st.save(f.state))
+			require.NoError(t, os.MkdirAll(f.output, 0o700), "GITHUB_OUTPUT をディレクトリにして書き込みを落とす")
+			err = f.step("ci-finish", "-state", f.state)
+			require.ErrorIs(t, err, c.want)
+			require.ErrorIs(t, err, errCIOutput)
+			assert.Equal(t, c.code, exitCode(err))
+		})
+	}
+
+	t.Run("established を持たない古い state の失敗は、成り立たない側（2）に倒す", func(t *testing.T) {
+		t.Parallel()
+		f := preparedState(t, true, true)
+		err := f.step("ci-finish", "-state", f.state)
+		require.ErrorIs(t, err, errCINotEstablished)
+		assert.Equal(t, 2, exitCode(err))
 	})
 
 	t.Run("state が無ければ失敗する", func(t *testing.T) {
@@ -427,6 +556,27 @@ func Test_ciRunInit(t *testing.T) {
 		require.ErrorIs(t, ciRunInit(ciState{Mode: ciModePlan, Dir: t.TempDir(), Out: fileWith(t, "")}, deps{tool: tool}), errCIState)
 		assert.Empty(t, readKnob(t, k, "calls.log"))
 	})
+
+	prepared := func(t *testing.T) ciState {
+		t.Helper()
+		return ciState{Mode: ciModePlan, Dir: t.TempDir(), Out: fileWith(t, ""), Done: []string{stagePrepare}, InitArgs: []string{"-backend-config=bucket=b"}}
+	}
+
+	t.Run("init が 0 以外なら errCIInit で、終了コード 2", func(t *testing.T) {
+		t.Parallel()
+		tool, _ := fakeFlow(t, map[string]string{stepCIInit + ".rc": "1"})
+		err := ciRunInit(prepared(t), deps{tool: tool})
+		require.ErrorIs(t, err, errCIInit)
+		assert.Equal(t, 2, exitCode(err))
+	})
+
+	t.Run("init を起動できなければ ErrTool で、終了コード 2", func(t *testing.T) {
+		t.Parallel()
+		err := ciRunInit(prepared(t), deps{tool: tooltest.Missing})
+		require.ErrorIs(t, err, toolrun.ErrTool)
+		assert.NotErrorIs(t, err, errCIInit)
+		assert.Equal(t, 2, exitCode(err))
+	})
 }
 
 func Test_ciPlanStep(t *testing.T) {
@@ -487,20 +637,50 @@ func Test_ciRunPolicy(t *testing.T) {
 		ns    string
 		out   string
 		want  error
+		code  int
 	}{
-		"名前空間の rego が無ければ失敗する":       {files: map[string]string{"p.rego": onePolicy}, ns: "plan.q", out: "[]", want: errPolicyRules},
-		"rego に規則が無ければ失敗する":          {files: map[string]string{"p.rego": "package plan.p\n"}, ns: "plan.p", out: "[]", want: errPolicyRules},
-		"conftest の結果を読めなければ失敗する":    {files: map[string]string{"p.rego": onePolicy}, ns: "plan.p", out: "x", want: errPolicyJSON},
-		"評価の件数が規則の数と違えば Policy で落ちる": {files: map[string]string{"p.rego": onePolicy}, ns: "plan.p", out: `[{"namespace":"plan.p","successes":0}]`, want: errCIPolicy},
+		"名前空間の rego が無ければ失敗する":                         {files: map[string]string{"p.rego": onePolicy}, ns: "plan.q", out: "[]", want: errPolicyRules},
+		"rego に規則が無ければ失敗する":                            {files: map[string]string{"p.rego": "package plan.p\n"}, ns: "plan.p", out: "[]", want: errPolicyRules},
+		"conftest の結果を読めなければ失敗する":                      {files: map[string]string{"p.rego": onePolicy}, ns: "plan.p", out: "x", want: errPolicyJSON},
+		"評価の件数が規則の数と違えば評価できなかったとして ErrCount で、終了コード 2": {files: map[string]string{"p.rego": onePolicy}, ns: "plan.p", out: `[{"namespace":"plan.p","successes":2}]`, want: policyresult.ErrCount, code: 2},
+		"評価の件数が規則の数より少なければ ErrCount で、終了コード 2":         {files: map[string]string{"p.rego": onePolicy + "\ndeny contains msg if {\n\tfalse\n\tmsg := \"y\"\n}\n"}, ns: "plan.p", out: `[{"namespace":"plan.p","successes":1}]`, want: policyresult.ErrCount, code: 2},
+		"名前空間の規則が1つも評価されなければ ErrEmpty で、終了コード 2":       {files: map[string]string{"p.rego": onePolicy}, ns: "plan.p", out: `[]`, want: policyresult.ErrEmpty, code: 2},
+		"違反だけなら errCIPolicy で、終了コード 1":                 {files: map[string]string{"p.rego": onePolicy}, ns: "plan.p", out: `[{"namespace":"plan.p","successes":0,"failures":[{"msg":"bad"}]}]`, want: errCIPolicy, code: 1},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			tool, _ := fakeFlow(t, map[string]string{stepCIConftest + ".out": c.out})
 			s := ciState{Out: filepath.Join(t.TempDir(), "o.txt"), JSON: fileWith(t, "{}")}
-			err := ciRunPolicy(s, deps{tool: tool, stderr: &bytes.Buffer{}}, &bytes.Buffer{}, t.TempDir(), policyDirWith(t, c.files), fileWith(t, "{}"), fileWith(t, "{}"), []string{c.ns})
+			err := ciRunPolicy(s, deps{tool: tool, stderr: &bytes.Buffer{}, root: t.TempDir()}, &bytes.Buffer{}, "tmp/ci-policy", policyDirWith(t, c.files), fileWith(t, "{}"), fileWith(t, "{}"), []string{c.ns})
 			require.ErrorIs(t, err, c.want)
+			if c.code != 0 {
+				assert.Equal(t, c.code, exitCode(err))
+			}
 		})
 	}
+
+	t.Run("違反の名前空間と評価できなかった名前空間が混ざれば、評価できなかった側を優先して終了コード 2", func(t *testing.T) {
+		t.Parallel()
+		tool, _ := fakeFlow(t, map[string]string{stepCIConftest + ".out": `[{"namespace":"plan.p","successes":0,"failures":[{"msg":"bad"}]}]`})
+		s := ciState{Out: filepath.Join(t.TempDir(), "o.txt"), JSON: fileWith(t, "{}")}
+		files := map[string]string{"p.rego": onePolicy, "q.rego": strings.Replace(onePolicy, "plan.p", "plan.q", 1)}
+		for _, order := range [][]string{{"plan.p", "plan.q"}, {"plan.q", "plan.p"}} {
+			err := ciRunPolicy(s, deps{tool: tool, stderr: &bytes.Buffer{}, root: t.TempDir()}, &bytes.Buffer{}, "tmp/ci-policy", policyDirWith(t, files), fileWith(t, "{}"), fileWith(t, "{}"), order)
+			require.ErrorIs(t, err, policyresult.ErrEmpty, order)
+			assert.NotErrorIs(t, err, errCIPolicy, order)
+			assert.Equal(t, 2, exitCode(err), order)
+			assert.Contains(t, err.Error(), "plan.p", order)
+			assert.Contains(t, err.Error(), "plan.q", order)
+		}
+	})
+
+	t.Run("conftest を起動できなければ ErrTool で、終了コード 2", func(t *testing.T) {
+		t.Parallel()
+		s := ciState{Out: filepath.Join(t.TempDir(), "o.txt"), JSON: fileWith(t, "{}")}
+		err := ciRunPolicy(s, deps{tool: tooltest.Missing, stderr: &bytes.Buffer{}, root: t.TempDir()}, &bytes.Buffer{}, "tmp/ci-policy", policyDirWith(t, map[string]string{"p.rego": onePolicy}), fileWith(t, "{}"), fileWith(t, "{}"), []string{"plan.p"})
+		require.ErrorIs(t, err, toolrun.ErrTool)
+		assert.Equal(t, 2, exitCode(err))
+	})
 }
 
 func Test_stringList_String(t *testing.T) {
@@ -536,7 +716,7 @@ func Test_ciApplyStep(t *testing.T) {
 			"-profile", "p", "-base", f.base, "-header", f.header, "-state", f.state))
 		require.NoError(t, f.step("ci-init", "-state", f.state))
 		require.NoError(t, f.step("ci-plan", "-state", f.state))
-		require.NoError(t, f.step("ci-policy", "-state", f.state, "-work", t.TempDir(), "-policy", f.policy, "-decl", fileWith(t, "{}"), "-layer", fileWith(t, "{}"), "-namespace", "plan.p"))
+		require.NoError(t, f.step("ci-policy", "-state", f.state, "-work", "tmp/ci-policy", "-policy", f.policy, "-decl", fileWith(t, "{}"), "-layer", fileWith(t, "{}"), "-namespace", "plan.p"))
 		require.ErrorIs(t, f.step("ci-apply", "-state", f.state, "-timeout", "200ms"), errApplyTimeout)
 		require.NoError(t, f.step("ci-upload", "-state", f.state))
 		require.Error(t, f.step("ci-finish", "-state", f.state))
@@ -569,11 +749,41 @@ func Test_ciRunApply(t *testing.T) {
 
 	t.Run("起動できなければ失敗する", func(t *testing.T) {
 		t.Parallel()
-		tool := func(string, []string, string) *exec.Cmd {
-			return exec.CommandContext(context.Background(), filepath.Join(t.TempDir(), "none"))
+		tool := func(ctx context.Context, _ string, _ []string, _ string, _ ...string) *exec.Cmd {
+			return exec.CommandContext(ctx, filepath.Join(t.TempDir(), "none"))
 		}
 		_, err := ciRunApply(ciState{Dir: t.TempDir(), Out: fileWith(t, "")}, deps{tool: tool}, time.Second)
-		require.ErrorIs(t, err, errLocalTF)
+		require.ErrorIs(t, err, toolrun.ErrTool)
+		assert.Equal(t, 2, exitCode(err))
+	})
+
+	shTool := func(script string) toolFunc {
+		return func(ctx context.Context, dir string, env []string, _ string, _ ...string) *exec.Cmd {
+			c := exec.CommandContext(ctx, "/bin/sh", "-c", script)
+			c.Dir, c.Env = dir, env
+			return c
+		}
+	}
+
+	t.Run("打ち切りの割り込みを無視して 0 で終わった apply は timeout にせず 0 を返す", func(t *testing.T) {
+		t.Parallel()
+		code, err := ciRunApply(ciState{Dir: t.TempDir(), Out: fileWith(t, "")}, deps{tool: shTool(`trap '' INT; sleep 0.3; exit 0`)}, 50*time.Millisecond)
+		require.NoError(t, err)
+		assert.Zero(t, code)
+	})
+
+	t.Run("割り込みで落ちた apply は applyTimedOut を返す", func(t *testing.T) {
+		t.Parallel()
+		code, err := ciRunApply(ciState{Dir: t.TempDir(), Out: fileWith(t, "")}, deps{tool: shTool(`trap 'exit 1' INT; while :; do sleep 0.05; done`)}, 50*time.Millisecond)
+		require.NoError(t, err)
+		assert.Equal(t, applyTimedOut, code)
+	})
+
+	t.Run("期限の内に 0 以外で終わった apply は timeout にせず、その終了コードを返す", func(t *testing.T) {
+		t.Parallel()
+		code, err := ciRunApply(ciState{Dir: t.TempDir(), Out: fileWith(t, "")}, deps{tool: shTool(`exit 1`)}, time.Minute)
+		require.NoError(t, err)
+		assert.Equal(t, 1, code)
 	})
 }
 
@@ -626,19 +836,21 @@ func Test_failureKind(t *testing.T) {
 	}
 }
 
-func Test_exitCode(t *testing.T) {
+func Test_waitCode(t *testing.T) {
 	t.Parallel()
 
-	t.Run("終了コードを返し、起動できなければ失敗する", func(t *testing.T) {
+	t.Run("終了コードを返し、シグナルや待てない失敗は ErrTool", func(t *testing.T) {
 		t.Parallel()
-		code, err := exitCode(nil)
+		code, err := waitCode(nil)
 		require.NoError(t, err)
 		assert.Zero(t, code)
-		code, err = exitCode(exec.CommandContext(context.Background(), "/bin/sh", "-c", "exit 3").Run())
+		code, err = waitCode(exec.CommandContext(context.Background(), "/bin/sh", "-c", "exit 3").Run())
 		require.NoError(t, err)
 		assert.Equal(t, 3, code)
-		_, err = exitCode(errBoom)
-		require.ErrorIs(t, err, errBoom)
+		_, err = waitCode(exec.CommandContext(context.Background(), "/bin/sh", "-c", "kill -9 $$").Run())
+		require.ErrorIs(t, err, toolrun.ErrTool)
+		_, err = waitCode(errBoom)
+		require.ErrorIs(t, err, toolrun.ErrTool)
 	})
 }
 
@@ -859,5 +1071,18 @@ func Test_copyTree(t *testing.T) {
 		require.NoError(t, copyTree(src, dst))
 		assert.FileExists(t, filepath.Join(dst, "lib", "b.rego"))
 		require.Error(t, copyTree(filepath.Join(t.TempDir(), "none"), dst))
+	})
+}
+
+func Test_isVerdict(t *testing.T) {
+	t.Parallel()
+
+	t.Run("判定の失敗は真、成り立たない失敗と nil は偽", func(t *testing.T) {
+		t.Parallel()
+		assert.True(t, isVerdict(xerrors.Wrap(errPlanFailed, "x")))
+		assert.True(t, isVerdict(policyresult.ErrViolation))
+		assert.False(t, isVerdict(toolrun.ErrTool))
+		assert.False(t, isVerdict(errCIInit))
+		assert.False(t, isVerdict(nil))
 	})
 }
