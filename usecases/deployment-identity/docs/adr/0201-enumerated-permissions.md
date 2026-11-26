@@ -41,7 +41,7 @@ workload root の usecase（`ops-notification`）は、SNS の Topic、KMS の�
 
 ### Action の導出
 
-| resource（Provider 6.70.0） | 呼ぶ API | Action | 与える role |
+| resource（Provider 6.73.0） | 呼ぶ API | Action | 与える role |
 | --- | --- | --- | --- |
 | S3 backend（state） | ListObjects、GetObject、PutObject | `s3:ListBucket`、`s3:GetObject`、`s3:PutObject` | 3つ（書き込みは apply 系の自分の key だけ） |
 | S3 backend（lock file） | GetObject、PutObject、DeleteObject | `s3:GetObject`、`s3:PutObject`、`s3:DeleteObject` | apply 系の自分の `.tflock` だけ |
