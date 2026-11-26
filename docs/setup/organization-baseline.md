@@ -7,7 +7,7 @@
 | 実施者 | 担当 |
 | --- | --- |
 | リポジトリの管理者 | 昇格の Pull Request |
-| 管理アカウントの管理者の資格情報（`organization_admin` の permission set か、それに代わるもの）を持つ人 | Identity Center の有効化の後の作業、break-glass の資格情報の設定、apply の後の確認 |
+| 管理アカウントの管理者の資格情報（`organization_admin` の permission set か、それに代わるもの）を持つ人 | Identity Center の有効化の後の作業、break-glass の資格情報の設定、apply の後の確認、定期の試験の忘れの確認 |
 | break-glass の資格情報を持つ人 | 定期の試験 |
 
 [`bootstrap.md`](bootstrap.md) の段5 が終わった後に、3.2 から行う。
@@ -68,7 +68,7 @@
 
 ### 3.4 break-glass の資格情報を設定する
 
-管理アカウントの管理者の資格情報で行う。メンバーアカウントを作る変更より前に終える。break-glass の user（`usecases/organization-baseline` の宣言の user）が apply で作られていなければ、どの入口も書き込まずに止まる。
+管理アカウントの管理者の資格情報で行う。メンバーアカウントを作る変更より前に終える。break-glass の user（`usecases/organization-baseline` の宣言の user）が apply で作られていなければ、書き込む入口は書き込まずに止まり、確認の入口は `❌` を出す。
 
 1. `make setup-organization-baseline-break-glass-login PROFILE=<管理アカウントの profile>` で、パスワードの無い user に、コンソールのパスワードを置く。パスワードは表示されない打ち込みで2回入れ、引数と shell の履歴に残らない。password policy に合わなければ AWS が拒む（アクセスキーは作らない。group の policy が拒む）
 2. それぞれにハードウェア MFA を登録する
