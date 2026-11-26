@@ -1,6 +1,6 @@
 # providers
 
-provider の版の正本である（ADR-0205 決定9）。
+provider の版の正本である。
 
 | ファイル | 役割 |
 | --- | --- |
@@ -22,9 +22,11 @@ lock を書く platform は `mise.toml` の `lockfile_platforms` から導く。
 ## 保証すること
 
 - root の lock が正本と同じ内容であること（`make tf-lock-check`。`make tf-init` が先に走らせる）
-- git が追跡する lock が、root と正本に限られること（同上）
+- 走査の root（`usecases`・`modules`・`env`）の下で git が追跡する lock が root のものに限られ、どの root の lock も追跡されていること（同上）
 - 正本の lock が `providers.toml` と同じ provider の集合と版を持ち、platform ごとの `h1:` と `zh:` を持つこと（同上）
 
 ## 保証しないこと
+
+- `h1:` が、どの platform の照合値かを照らすこと。数が `lockfile_platforms` と同じことと、値の形だけを見る
 
 - root で人が `terraform init -upgrade` や `terraform providers lock` を走らせた結果を、正本へ戻すこと。ずれは `make tf-lock-check` が落とすので、`make tf-lock-apply` で写し直すか、`make tf-providers-lock` で作り直す

@@ -52,8 +52,8 @@ tf-init: tf-lock-check
 	@mkdir -p "$$TF_PLUGIN_CACHE_DIR"
 	@$(call TF_GATES,init,-data "$(TF_GATES_DATA)")
 
-# provider の版の正本（ADR-0205 決定9）。root の lock はその写しで、写しとずれの判定は tf-gates が持つ。
-TF_LOCK_FLAGS = -providers providers -mise mise.toml
+# provider の版の正本（providers/）。root の lock はその写しで、写しとずれの判定は tf-gates が持つ。
+TF_LOCK_FLAGS = -providers "$(TF_BASE)/providers" -mise "$(TF_BASE)/mise.toml"
 
 .PHONY: tf-lock-check ## root の lock が provider の版の正本（providers/）と同じかを検査
 tf-lock-check:

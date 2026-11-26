@@ -1,4 +1,4 @@
-# provider の版の正本（ADR-0205 決定9）。版は完全一致で書き、変えたら make tf-providers-lock で
+# provider の版の正本。版は完全一致で書き、変えたら make tf-providers-lock で
 # providers/.terraform.lock.hcl と root の lock を作り直す。
 
 [aws]
