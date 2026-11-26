@@ -87,6 +87,8 @@ pre-commit:
     versions-check:
       glob:
         - "mise.toml"
+        - "mise.lock"
+        - ".github/actions/setup-mise/action.yaml"
         - "docker/**/Dockerfile"
         - "scripts/go.mod"
         - "scripts/versions/*.go"
@@ -174,6 +176,7 @@ pre-commit:
         - "env/**"
         - ".tflint.hcl"
         - "mise.toml"
+        - "mise.lock"
         - "Makefile"
         - ".makefiles/**"
         - "scripts/tool-cooldown/**"
@@ -184,7 +187,7 @@ pre-commit:
       skip:
         - run: make -s tf-no-targets
       run: make tf-lint
-    # validate と test と policy は init を共有するので1つの make で呼ぶ（並行させると init が競合する）。
+    # validate と test と policy を1つの make で呼ぶ理由は .makefiles/terraform/gates.mk の冒頭が持つ。
     tf-validate-test:
       glob:
         - "usecases/**"
