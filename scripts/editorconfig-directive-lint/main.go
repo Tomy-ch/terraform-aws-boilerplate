@@ -236,7 +236,7 @@ func check(path string, raw []byte) ([]lintreport.Finding, int) {
 }
 
 // candidates は、接頭辞の後ろがこれで始まるときだけ印の候補とする綴りです。editorconfig-checker が読む印は
-// どれも disable か enable で始まるので、綴りの誤り（disble など）もここに入ります。接頭辞の後ろがほかの語の
+// どれも disable か enable で始まるので、綴りを誤った印もここに入ります。接頭辞の後ろがほかの語の
 // もの（道具の配布物の名前 `<接頭辞>linux-amd64.tar.gz` など）は印にならないので数えません。
 var candidates = []string{"dis", "en"}
 

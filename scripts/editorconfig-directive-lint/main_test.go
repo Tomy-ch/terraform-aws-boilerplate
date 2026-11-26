@@ -245,7 +245,7 @@ func Test_check(t *testing.T) {
 			say:   "印の出現 2 件のうち 1 件しか分類できていない",
 		},
 		"綴りを誤った印": {
-			body:  "// " + prefix + "disble\n",
+			body:  "// " + prefix + "dis-able\n",
 			lines: []int{1},
 			count: 1,
 			say:   "印として解釈できない",
