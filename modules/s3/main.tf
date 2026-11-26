@@ -82,3 +82,4 @@ resource "aws_s3_bucket_lifecycle_configuration" "this" {
 }
 # 576-measure 1
 # 576-measure 2
+# 576-measure 3

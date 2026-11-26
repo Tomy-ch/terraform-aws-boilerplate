@@ -82,3 +82,4 @@ runs:
         mise install $TOOLS
 # 576-measure 1
 # 576-measure 2
+# 576-measure 3
