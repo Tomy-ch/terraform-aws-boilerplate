@@ -175,6 +175,10 @@
             "integration_id": 15368
           },
           {
+            "context": "tool-cooldown",
+            "integration_id": 15368
+          },
+          {
             "context": "trivy-config",
             "integration_id": 15368
           },

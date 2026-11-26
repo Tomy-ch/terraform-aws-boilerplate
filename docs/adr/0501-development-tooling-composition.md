@@ -145,7 +145,7 @@ Security は事情が違う。誤設定の規則は道具ごとに独立に書�
 
 ### 依存の更新
 
-16. GitHub Actions・Docker image（Dockerfile と compose）・Go module の更新を Dependabot で継続的に提案する。Terraform 本体と、manifest（決定19）が pin するそのほかの道具は Dependabot の対象に無いので、`make tool-cooldown-outdated` が上流の新版を報告し、人が取り込む。
+16. GitHub Actions・Docker image（Dockerfile と compose）・Go module の更新を Dependabot で継続的に提案する。Terraform 本体と、manifest（決定19）が pin するそのほかの道具は Dependabot の対象に無いので、`make tool-cooldown-outdated` が上流の新版を報告し、人が取り込む。provider の版（ADR-0205 決定9 の正本）も Dependabot に載せず、`make tool-cooldown-outdated` が報告する。正本から root の lock を作り直す段を、Dependabot は走らせないためである。
 17. 更新の提案に cooldown を置く。その日数を、その ecosystem の更新を取り込むときに掛かる窓（digest / SHA を解決し直す窓と、Go module の取り込みの gate の窓）より短くしない。短いと、取り込めない提案が先に開く。
 18. 更新 PR を自動 merge しない。ADR-0601 決定2 の検証を通すことを条件とする。
 

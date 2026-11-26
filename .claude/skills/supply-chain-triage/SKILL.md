@@ -37,7 +37,7 @@ only — they are command recipes, not prose for human readers.
   `/actions-pin` had to step back or hold, `/images-pin` hit rule 2 / rule 3.
   That audit is detection-only by design — it says an override happened, not whether it was safe.
   This skill supplies the missing half.
-- `make tool-cooldown-gate` が `mise.toml` の宣言を、`make go-cooldown-gate` が `scripts/go.mod` の直接要求を塞いだとき。That gate *does* fail
+- `make tool-cooldown-gate` が `mise.toml` の宣言か `providers/` の正本の lock の provider の版を、`make go-cooldown-gate` が `scripts/go.mod` の直接要求を塞いだとき。That gate *does* fail
   the build, so the question is not whether an override slipped through but whether waiting is
   protective — which is what this skill answers, and what the bypass entry's `reason` needs.
 - Before any deliberate window override (`days=0`, `--min-release-age=0`, a pnpm

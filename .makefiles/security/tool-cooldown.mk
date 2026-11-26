@@ -11,7 +11,7 @@
 
 TOOL_COOLDOWN_ENV = GITHUB_TOKEN="$${GITHUB_TOKEN:-$$(gh auth token 2>/dev/null)}"
 
-.PHONY: tool-cooldown-gate ## 宣言の差分で追加/更新したツールが cooldown を満たすか検査（違反で fail）
+.PHONY: tool-cooldown-gate ## 宣言の差分で追加/更新したツールと provider が cooldown を満たすか検査（違反で fail。バイパスの違反は、この差分が足したか変えたものだけ）
 tool-cooldown-gate:
 	@test -n "$(BASE)" || { echo "❌ BASE が要ります: make tool-cooldown-gate BASE=origin/<make -s base-branch の出力>"; exit 1; }
 	@$(TOOL_COOLDOWN_ENV) $(call RUN_SCRIPT_HOST,tool-cooldown,gate --base=$(BASE) $(COOLDOWN_REPORT))

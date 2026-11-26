@@ -177,7 +177,11 @@ func runLockSync(name string, write bool, args []string, w io.Writer, lsFiles ls
 	if len(roots) == 0 {
 		return xerrors.Wrapf(errNoTargets, "lock を持つ root が0件です（走査: %s）", strings.Join(s.roots, " "))
 	}
-	if err := checkTracked(s, roots, lsFiles, !write); err != nil {
+	canonicalRel, err := filepath.Rel(s.base, filepath.Join(providersDir, tflock.LockFile))
+	if err != nil {
+		return xerrors.Wrapf(errUsage, "-providers %s を -base %s からの相対で表せません: %v", providersDir, s.base, err)
+	}
+	if err := checkTracked(s, roots, lsFiles, !write, filepath.ToSlash(canonicalRel)); err != nil {
 		return err
 	}
 	changes, drifted, err := diffRoots(roots, c.content)
@@ -221,9 +225,10 @@ func diffRoots(roots []target, content []byte) (map[string]string, []string, err
 }
 
 // checkTracked は、走査の root の下で git が追跡する lock のディレクトリが、すべて root であることを確かめます。
-// requireRoots なら、どの root の lock も追跡されていることも確かめます（lock-apply は写した後に人が追跡するので
-// 求めません）。追跡しているファイルが0件なら、base の取り違えとして落とします。
-func checkTracked(s scan, roots []target, lsFiles lsFilesFunc, requireRoots bool) error {
+// requireRoots なら、正本の lock（base からの相対パス canonicalRel）とどの root の lock も追跡されていることも
+// 確かめます（lock-apply は写した後に人が追跡するので求めません）。追跡しているファイルが0件なら、base の取り違え
+// として落とします。
+func checkTracked(s scan, roots []target, lsFiles lsFilesFunc, requireRoots bool, canonicalRel string) error {
 	files, err := lsFiles(s.base)
 	if err != nil {
 		return err
@@ -236,8 +241,10 @@ func checkTracked(s scan, roots []target, lsFiles lsFilesFunc, requireRoots bool
 		isRootDir[r.rel] = true
 	}
 	tracked := map[string]bool{}
+	canonicalTracked := false
 	var stray []string
 	for _, f := range files {
+		canonicalTracked = canonicalTracked || f == canonicalRel
 		if path.Base(f) != tflock.LockFile {
 			continue
 		}
@@ -256,6 +263,9 @@ func checkTracked(s scan, roots []target, lsFiles lsFilesFunc, requireRoots bool
 	}
 	if !requireRoots {
 		return nil
+	}
+	if !canonicalTracked {
+		return xerrors.Wrapf(errLock, "正本の lock（%s）が追跡されていません", canonicalRel)
 	}
 	var untracked []string
 	for _, r := range roots {
