@@ -36,6 +36,7 @@ func testDeps(f *fakeAWS, input string, read *[]string) deps {
 		isTTY:  true,
 		hidden: hiddenLines(testPassword, testPassword, testPassword, testPassword),
 		now:    func() time.Time { return testNow },
+		sleep:  func(time.Duration) {},
 	}
 }
 
@@ -493,5 +494,22 @@ func Test_run(t *testing.T) {
 
 		require.NoError(t, run([]string{"service-access-check", "-project", testProject, "-region", testRegion}, &bytes.Buffer{}, testDeps(f, "", &read)))
 		assert.Empty(t, read)
+	})
+}
+
+func Test_passwordReader(t *testing.T) {
+	t.Parallel()
+
+	t.Run("端末でなければ読まずに失敗し、戻す状態が無いので restore は何もしない", func(t *testing.T) {
+		t.Parallel()
+
+		r, w, err := os.Pipe()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = r.Close(); _ = w.Close() })
+
+		read, restore := passwordReader(r)
+		_, err = read()
+		require.Error(t, err)
+		assert.NotPanics(t, restore)
 	})
 }

@@ -193,13 +193,8 @@ func setBreakGlassLogin(o options, c *client, t *terminal) error {
 			return err
 		}
 
-		found, err := hasLoginProfile(c, u)
-		if err != nil {
-			return err
-		}
-
-		if !found {
-			return xerrors.Wrap(errAWSResponse, "置いた後に "+u+" の login profile を読めません")
+		if err := reread(o, func() (bool, error) { return hasLoginProfile(c, u) }); err != nil {
+			return xerrors.Wrap(err, "置いた後に "+u+" の login profile を読めません。break-glass-check で確かめてください")
 		}
 
 		fmt.Fprintf(t.out, "✅ %s にパスワードを置きました\n", u)
@@ -248,7 +243,7 @@ func setBreakGlassMFA(o options, c *client, t *terminal) error {
 	}
 
 	for _, u := range missing {
-		if err := registerTOTP(c, t, u); err != nil {
+		if err := registerTOTP(o, c, t, u); err != nil {
 			return err
 		}
 	}
@@ -256,7 +251,7 @@ func setBreakGlassMFA(o options, c *client, t *terminal) error {
 	return nil
 }
 
-func registerTOTP(c *client, t *terminal, user string) error {
+func registerTOTP(o options, c *client, t *terminal, user string) error {
 	serial, err := t.ask(user + " の装置のシリアル（裏面の英数字）: ")
 	if err != nil {
 		return err
@@ -285,20 +280,42 @@ func registerTOTP(c *client, t *terminal, user string) error {
 		return err
 	}
 
-	serials, err := mfaSerials(c, user)
-	if err != nil {
-		return err
+	if err := reread(o, func() (bool, error) {
+		serials, err := mfaSerials(c, user)
+
+		return slices.Contains(serials, serial), err
+	}); err != nil {
+		return xerrors.Wrap(err, "登録した後に "+user+" の MFA を読めません。break-glass-check で確かめてください")
 	}
 
-	for _, s := range serials {
-		if s == serial {
-			fmt.Fprintf(t.out, "✅ %s に MFA を登録しました\n", user)
+	fmt.Fprintf(t.out, "✅ %s に MFA を登録しました\n", user)
 
+	return nil
+}
+
+const (
+	rereadTries = 5
+	rereadWait  = 2 * time.Second
+)
+
+// reread は、書いた後の読み直し。IAM は結果整合なので、見えるまで数回やり直す。見えなければ errAWSResponse。
+func reread(o options, seen func() (bool, error)) error {
+	for i := range rereadTries {
+		ok, err := seen()
+		if err != nil {
+			return err
+		}
+
+		if ok {
 			return nil
+		}
+
+		if i < rereadTries-1 {
+			o.sleep(rereadWait)
 		}
 	}
 
-	return xerrors.Wrap(errAWSResponse, "登録した後に "+user+" の MFA を読めません")
+	return errAWSResponse
 }
 
 // checkBreakGlass は、3.4 の確かめ: path の下の IAM user が宣言の user と一致し、それぞれにパスワードと
@@ -404,6 +421,10 @@ func checkPasswordPolicy(c *client, r *report, want map[string]string) error {
 
 	for _, field := range slices.Sorted(maps.Keys(want)) {
 		got := strings.TrimSpace(string(resp.PasswordPolicy[field]))
+		if got == "" && want[field] == "false" {
+			// 偽の真偽の field は応答から省かれうる。
+			got = "false"
+		}
 		r.check(got == want[field], fmt.Sprintf("password policy の %s が %s（今: %s）", field, want[field], map[bool]string{true: got, false: "無い"}[got != ""]))
 	}
 

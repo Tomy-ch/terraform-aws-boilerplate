@@ -237,8 +237,8 @@ func checkIdentityCenterUser(o options, c *client, w io.Writer, org organization
 		return err
 	}
 
-	if len(instances) != 1 || instances[0].IdentityStoreID == "" {
-		return xerrors.Wrapf(errPrecondition, "%s に Identity Center のインスタンスがただ1つ在りません（%d 件）", o.region, len(instances))
+	if len(instances) != 1 || instances[0].IdentityStoreID == "" || instances[0].Status != "ACTIVE" {
+		return xerrors.Wrapf(errPrecondition, "%s に ACTIVE の Identity Center のインスタンスがただ1つ在りません（%d 件）", o.region, len(instances))
 	}
 
 	store := instances[0].IdentityStoreID
@@ -277,6 +277,10 @@ func checkIdentityCenterUser(o options, c *client, w io.Writer, org organization
 	}
 
 	for _, u := range users.Users {
+		if u.UserName == "" {
+			return xerrors.Wrap(errAWSResponse, "identitystore list-users: UserName の欠けた user があります")
+		}
+
 		hit := slices.IndexFunc(suffixes, func(s string) bool { return strings.HasSuffix(u.UserName, "-"+s) })
 		r.check(hit < 0, fmt.Sprintf("user %s の名前が環境の接尾辞（%s）で終わらない", u.UserName, joinOrNone(prefixed(suffixes))))
 	}

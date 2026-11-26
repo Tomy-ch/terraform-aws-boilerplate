@@ -4,7 +4,10 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
@@ -17,10 +20,12 @@ var (
 )
 
 type terminal struct {
-	in     *bufio.Reader
-	out    io.Writer
-	isTTY  bool
-	hidden func() ([]byte, error)
+	in      *bufio.Reader
+	out     io.Writer
+	isTTY   bool
+	hidden  func() ([]byte, error)
+	restore func()
+	notify  notifier
 }
 
 func newTerminal(in io.Reader, out io.Writer, isTTY bool) *terminal {
@@ -68,6 +73,30 @@ func (t *terminal) confirm(project string) error {
 	return nil
 }
 
+var (
+	// errInterrupted は、入力か書き込みの途中で中断のシグナルを受けたこと。
+	errInterrupted = xerrors.New("中断しました")
+
+	interruptSignals = []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP}
+)
+
+// notifier は、中断のシグナルを c で受け始め、受けるのをやめる関数を返す。nil なら notifyInterrupt。
+type notifier func(c chan<- os.Signal) (stop func())
+
+func notifyInterrupt(c chan<- os.Signal) func() {
+	signal.Notify(c, interruptSignals...)
+
+	return func() { signal.Stop(c) }
+}
+
+func (n notifier) start(c chan<- os.Signal) func() {
+	if n == nil {
+		return notifyInterrupt(c)
+	}
+
+	return n(c)
+}
+
 var errNoHidden = xerrors.New("伏せた入力を読めません")
 
 // secret は、prompt を出して、打ち込みを表示せずに1行を読む。端末でなければ読まない。
@@ -84,14 +113,45 @@ func (t *terminal) secret(prompt string) (string, error) {
 		return "", err
 	}
 
-	b, err := t.hidden()
+	type result struct {
+		b   []byte
+		err error
+	}
+
+	sigs := make(chan os.Signal, 1)
+	defer t.notify.start(sigs)()
+
+	done := make(chan result, 1)
+
+	go func() {
+		b, err := t.hidden()
+		done <- result{b, err}
+	}()
+
+	var r result
+
+	select {
+	case r = <-done:
+	case s := <-sigs:
+		// 伏せた入力は端末の表示を止めている。中断で戻さずに終えると、表示が止まったまま残る。
+		if t.restore != nil {
+			t.restore()
+		}
+
+		r = result{err: xerrors.Wrap(errInterrupted, s.String())}
+	}
+
 	if _, werr := io.WriteString(t.out, "\n"); werr != nil {
 		return "", werr
 	}
 
-	if err != nil {
-		return "", xerrors.Join(errNoHidden, err)
+	if r.err != nil {
+		if xerrors.Is(r.err, errInterrupted) {
+			return "", r.err
+		}
+
+		return "", xerrors.Join(errNoHidden, r.err)
 	}
 
-	return string(b), nil
+	return string(r.b), nil
 }

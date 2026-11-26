@@ -72,10 +72,21 @@ resource "aws_organizations_account" "this" {
 	user_names = toset(["break-glass-1", "break-glass-2"])
 }
 
+resource "aws_iam_user" "this" {
+	for_each = local.user_names
+	name     = each.key
+}
+
 resource "aws_iam_account_password_policy" "this" {
-	minimum_password_length = 14
-	require_symbols         = true
-	hard_expiry             = false
+	minimum_password_length        = 14
+	password_reuse_prevention      = 24
+	require_lowercase_characters   = true
+	require_uppercase_characters   = true
+	require_numbers                = true
+	require_symbols                = true
+	allow_users_to_change_password = true
+	max_password_age               = 90
+	hard_expiry                    = false
 }
 `
 	delegatedTF = `resource "aws_organizations_delegated_administrator" "this" {
@@ -118,6 +129,7 @@ func testOptionsUC(files map[string]string) options {
 	o.usecase = testUsecase
 	o.readFile = readFiles(files)
 	o.now = func() time.Time { return testNow }
+	o.sleep = func(time.Duration) {}
 
 	return o
 }

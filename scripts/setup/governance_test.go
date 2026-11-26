@@ -360,6 +360,21 @@ func Test_checkIdentityCenterUser(t *testing.T) {
 		require.ErrorIs(t, checkIdentityCenterUser(opts(), testClient(f), &bytes.Buffer{}, testOrg(t)), errPrecondition)
 	})
 
+	t.Run("UserName の欠けた user は ✅ に数えず errAWSResponse", func(t *testing.T) {
+		t.Parallel()
+
+		f := idcUserWorld(t, ok(`{"UserId":"u-1"}`), `{"UserName":"alice"},{}`)
+		require.ErrorIs(t, checkIdentityCenterUser(opts(), testClient(f), &bytes.Buffer{}, testOrg(t)), errAWSResponse)
+	})
+
+	t.Run("インスタンスが ACTIVE でなければ、user を読まずに errPrecondition", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeAWS(t, map[string]awsResult{listSSO: ok(`{"Instances":[{"IdentityStoreId":"d-1","Status":"CREATE_IN_PROGRESS"}]}`)})
+		require.ErrorIs(t, checkIdentityCenterUser(opts(), testClient(f), &bytes.Buffer{}, testOrg(t)), errPrecondition)
+		assert.Equal(t, []string{listSSO}, f.ops())
+	})
+
 	t.Run("get-user-id のほかの失敗は errAWSFailed", func(t *testing.T) {
 		t.Parallel()
 

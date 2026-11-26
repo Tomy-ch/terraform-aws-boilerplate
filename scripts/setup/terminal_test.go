@@ -2,7 +2,10 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -135,6 +138,28 @@ func Test_terminal_secret(t *testing.T) {
 		require.ErrorIs(t, err, errNoHidden)
 	})
 
+	t.Run("読む途中で中断のシグナルを受ければ、端末を戻して errInterrupted", func(t *testing.T) {
+		t.Parallel()
+
+		term, _ := tty("")
+		block := make(chan struct{})
+		term.notify = func(c chan<- os.Signal) func() { c <- syscall.SIGHUP; return func() {} }
+		term.hidden = func() ([]byte, error) {
+			<-block
+
+			return nil, nil
+		}
+
+		var restored atomic.Bool
+
+		term.restore = func() { restored.Store(true) }
+
+		_, err := term.secret("P: ")
+		close(block)
+		require.ErrorIs(t, err, errInterrupted)
+		assert.True(t, restored.Load())
+	})
+
 	t.Run("読めなければ errNoHidden", func(t *testing.T) {
 		t.Parallel()
 
@@ -143,5 +168,45 @@ func Test_terminal_secret(t *testing.T) {
 
 		_, err := term.secret("P: ")
 		require.ErrorIs(t, err, errNoHidden)
+	})
+}
+
+func Test_notifyInterrupt(t *testing.T) {
+	t.Parallel()
+
+	t.Run("受けるのをやめる関数を返す", func(t *testing.T) {
+		t.Parallel()
+
+		stop := notifyInterrupt(make(chan os.Signal, 1))
+		require.NotNil(t, stop)
+		assert.NotPanics(t, stop)
+	})
+}
+
+func Test_notifier_start(t *testing.T) {
+	t.Parallel()
+
+	t.Run("渡した関数へ channel を渡し、その stop を返す", func(t *testing.T) {
+		t.Parallel()
+
+		c := make(chan os.Signal, 1)
+
+		var got chan<- os.Signal
+
+		stopped := false
+		n := notifier(func(ch chan<- os.Signal) func() { got = ch; return func() { stopped = true } })
+		n.start(c)()
+		assert.Equal(t, chan<- os.Signal(c), got)
+		assert.True(t, stopped)
+	})
+
+	t.Run("nil なら既定の notifyInterrupt で受ける", func(t *testing.T) {
+		t.Parallel()
+
+		var n notifier
+
+		stop := n.start(make(chan os.Signal, 1))
+		require.NotNil(t, stop)
+		stop()
 	})
 }

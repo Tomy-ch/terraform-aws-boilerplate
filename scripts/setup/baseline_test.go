@@ -227,10 +227,14 @@ func Test_readBreakGlassShape(t *testing.T) {
 		s, err := readBreakGlassShape(readFiles(fixtureFiles(usecaseMainTF, ouMainTF, accountsTF)), testUsecase, testProject)
 		require.NoError(t, err)
 		assert.Equal(t, breakGlassShape{
-			users:  []string{"break-glass-1", "break-glass-2"},
-			path:   "/break-glass/",
-			role:   "tabp-break-glass",
-			policy: map[string]string{"MinimumPasswordLength": "14", "RequireSymbols": "true", "HardExpiry": "false"},
+			users: []string{"break-glass-1", "break-glass-2"},
+			path:  "/break-glass/",
+			role:  "tabp-break-glass",
+			policy: map[string]string{
+				"MinimumPasswordLength": "14", "PasswordReusePrevention": "24", "RequireLowercaseCharacters": "true",
+				"RequireUppercaseCharacters": "true", "RequireNumbers": "true", "RequireSymbols": "true",
+				"AllowUsersToChangePassword": "true", "MaxPasswordAge": "90", "HardExpiry": "false",
+			},
 		}, s)
 	})
 
@@ -261,9 +265,10 @@ func Test_readBreakGlassShape(t *testing.T) {
 	}
 
 	for name, src := range map[string]string{
-		"user_names が無ければ errDeclShape":         strings.Replace(breakGlassTF, "user_names", "x", 1),
-		"user_names が toset でなければ errDeclShape": strings.Replace(breakGlassTF, `toset(["break-glass-1", "break-glass-2"])`, `["break-glass-1"]`, 1),
-		"password policy が無ければ errDeclShape":    strings.Replace(breakGlassTF, "aws_iam_account_password_policy", "x", 1),
+		"user_names が無ければ errDeclShape":                     strings.Replace(breakGlassTF, "user_names", "x", 1),
+		"user_names が toset でなければ errDeclShape":             strings.Replace(breakGlassTF, `toset(["break-glass-1", "break-glass-2"])`, `["break-glass-1"]`, 1),
+		"password policy が無ければ errDeclShape":                strings.Replace(breakGlassTF, "aws_iam_account_password_policy", "x", 1),
+		"user の resource が user_names を使わなければ errDeclShape": strings.Replace(breakGlassTF, "for_each = local.user_names", `for_each = toset(["break-glass-1"])`, 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -284,6 +289,10 @@ func Test_readBreakGlassShape(t *testing.T) {
 	})
 }
 
+const allPolicyArgs = "minimum_password_length = 14\npassword_reuse_prevention = 24\nrequire_lowercase_characters = true\n" +
+	"require_uppercase_characters = true\nrequire_numbers = true\nrequire_symbols = true\n" +
+	"allow_users_to_change_password = true\nmax_password_age = 90\nhard_expiry = false\n"
+
 func Test_readPasswordPolicy(t *testing.T) {
 	t.Parallel()
 
@@ -294,17 +303,27 @@ func Test_readPasswordPolicy(t *testing.T) {
 	t.Run("数と真偽を JSON の字面にする", func(t *testing.T) {
 		t.Parallel()
 
-		p, err := readPasswordPolicy(parseHCL(t, policy("max_password_age = 90\nrequire_numbers = true\n")))
+		p, err := readPasswordPolicy(parseHCL(t, policy(allPolicyArgs)))
 		require.NoError(t, err)
-		assert.Equal(t, map[string]string{"MaxPasswordAge": "90", "RequireNumbers": "true"}, p)
+		assert.Equal(t, "90", p["MaxPasswordAge"])
+		assert.Equal(t, "true", p["RequireNumbers"])
+		assert.Equal(t, "false", p["HardExpiry"])
+		assert.Len(t, p, len(passwordPolicyFields))
+	})
+
+	t.Run("対応の argument が1つでも宣言に無ければ errDeclShape（消した argument を確かめずに通さない）", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := readPasswordPolicy(parseHCL(t, policy(strings.Replace(allPolicyArgs, "minimum_password_length = 14\n", "", 1))))
+		require.ErrorIs(t, err, errDeclShape)
 	})
 
 	for name, body := range map[string]string{
 		"argument が無ければ errDeclShape":   "",
-		"対応の無い argument は errDeclShape": "x = 1\n",
-		"整数でない数は errDeclShape":          "max_password_age = 1.5\n",
-		"文字列は errDeclShape":             `max_password_age = "90"` + "\n",
-		"リテラルでなければ errDeclShape":        "max_password_age = var.x\n",
+		"対応の無い argument は errDeclShape": allPolicyArgs + "x = 1\n",
+		"整数でない数は errDeclShape":          strings.Replace(allPolicyArgs, "= 90", "= 1.5", 1),
+		"文字列は errDeclShape":             strings.Replace(allPolicyArgs, "= 90", `= "90"`, 1),
+		"リテラルでなければ errDeclShape":        strings.Replace(allPolicyArgs, "= 90", "= var.x", 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -420,6 +439,30 @@ func Test_evalDelegatedPrincipals(t *testing.T) {
 
 			_, err := evalDelegatedPrincipals(parseHCL(t, src), "this", []string{"a"})
 			require.ErrorIs(t, err, errDeclShape)
+		})
+	}
+}
+
+func Test_requireForEachLocal(t *testing.T) {
+	t.Parallel()
+
+	t.Run("for_each が local.<name> なら nil", func(t *testing.T) {
+		t.Parallel()
+
+		require.NoError(t, requireForEachLocal(parseHCL(t, "resource \"x\" \"this\" {\n  for_each = local.names\n}\n"), "x", "names"))
+	})
+
+	for name, src := range map[string]string{
+		"別の local は errDeclShape":     "resource \"x\" \"this\" {\n  for_each = local.other\n}\n",
+		"var は errDeclShape":          "resource \"x\" \"this\" {\n  for_each = var.names\n}\n",
+		"リテラルは errDeclShape":          "resource \"x\" \"this\" {\n  for_each = toset([\"a\"])\n}\n",
+		"for_each が無ければ errDeclShape": "resource \"x\" \"this\" {}\n",
+		"resource が無ければ errDeclShape": "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			require.ErrorIs(t, requireForEachLocal(parseHCL(t, src), "x", "names"), errDeclShape)
 		})
 	}
 }

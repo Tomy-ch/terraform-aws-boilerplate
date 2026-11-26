@@ -73,6 +73,7 @@ type client struct {
 	aws    awsFunc
 	region string
 	writes []string
+	notify notifier
 }
 
 // op は、"<service> <operation>" の形の操作名。
@@ -182,6 +183,9 @@ func (c *client) writeSecret(secret map[string]any, args ...string) error {
 		return err
 	}
 
+	// 中断のシグナルで既定どおりに終わると、defer が走らず秘密がファイルに残る。消すまでシグナルを預かる。
+	sigs := make(chan os.Signal, 1)
+	defer c.notify.start(sigs)()
 	defer func() { _ = os.Remove(f.Name()) }()
 
 	if err := f.Chmod(0o600); err != nil {
@@ -202,7 +206,12 @@ func (c *client) writeSecret(secret map[string]any, args ...string) error {
 
 	_, err = c.call("", append(append([]string{}, args...), "--cli-input-json", "file://"+f.Name())...)
 
-	return err
+	select {
+	case sig := <-sigs:
+		return xerrors.Wrap(errInterrupted, sig.String())
+	default:
+		return err
+	}
 }
 
 // firstLine は、空白だけでない最初の行。無ければ「不明」。

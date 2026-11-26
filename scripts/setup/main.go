@@ -59,7 +59,10 @@ type deps struct {
 	stdin    io.Reader
 	isTTY    bool
 	hidden   func() ([]byte, error)
-	now      func() time.Time
+	// restore は、伏せた入力の途中で中断したときに、端末を元の状態へ戻す。
+	restore func()
+	now     func() time.Time
+	sleep   func(time.Duration)
 }
 
 type options struct {
@@ -73,6 +76,7 @@ type options struct {
 
 	readFile func(string) ([]byte, error)
 	now      func() time.Time
+	sleep    func(time.Duration)
 }
 
 // entry は、1つの入口。writes はその入口が起動してよい書き込みの操作（"<service> <operation>"）で、確認は空。
@@ -191,11 +195,38 @@ var entries = map[string]entry{
 }
 
 func main() {
+	hidden, restore := passwordReader(os.Stdin)
+
 	os.Exit(execute(os.Args[1:], os.Stdout, deps{
 		aws: hostAWS("aws"), getenv: os.Getenv, readFile: os.ReadFile, stdin: os.Stdin, isTTY: isTerminal(os.Stdin),
-		hidden: func() ([]byte, error) { return term.ReadPassword(int(os.Stdin.Fd())) }, //nolint:gosec // 標準入力の記述子は int に収まる。
-		now:    time.Now,
+		hidden: hidden, restore: restore, now: time.Now, sleep: time.Sleep,
 	}))
+}
+
+// passwordReader は、f から打ち込みを表示せずに1行を読む関数と、読む前の端末の状態へ戻す関数。
+func passwordReader(f *os.File) (func() ([]byte, error), func()) {
+	fd := int(f.Fd()) //nolint:gosec // 標準入力の記述子は int に収まる。
+
+	var state *term.State
+
+	read := func() ([]byte, error) {
+		s, err := term.GetState(fd)
+		if err != nil {
+			return nil, err
+		}
+
+		state = s
+
+		return term.ReadPassword(fd)
+	}
+
+	restore := func() {
+		if state != nil {
+			_ = term.Restore(fd, state)
+		}
+	}
+
+	return read, restore
 }
 
 // isTerminal は、f が端末か。文字デバイスでも /dev/null は端末として扱わない（< /dev/null で起動した書き込みを
@@ -310,7 +341,7 @@ func run(args []string, out io.Writer, d deps) error {
 		return err
 	}
 
-	o.readFile, o.now = d.readFile, d.now
+	o.readFile, o.now, o.sleep = d.readFile, d.now, d.sleep
 
 	var org organization
 
@@ -322,7 +353,7 @@ func run(args []string, out io.Writer, d deps) error {
 
 	c := &client{aws: d.aws, region: o.region, writes: e.writes}
 	t := newTerminal(d.stdin, out, d.isTTY)
-	t.hidden = d.hidden
+	t.hidden, t.restore = d.hidden, d.restore
 
 	if len(e.writes) > 0 {
 		if err := requireManagementAccount(c, profile, out); err != nil {

@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/awsenv"
@@ -332,6 +333,28 @@ func Test_firstLine(t *testing.T) {
 
 func Test_client_writeSecret(t *testing.T) {
 	t.Parallel()
+
+	t.Run("起動の途中で中断のシグナルを受ければ、一時ファイルを消して errInterrupted", func(t *testing.T) {
+		t.Parallel()
+
+		var (
+			name string
+			sig  chan<- os.Signal
+		)
+
+		c := &client{region: testRegion, writes: []string{"iam create-login-profile"}}
+		c.notify = func(ch chan<- os.Signal) func() { sig = ch; return func() {} }
+		c.aws = func(args ...string) awsResult {
+			name = strings.TrimPrefix(args[3], "file://")
+			sig <- syscall.SIGINT
+
+			return ok("")
+		}
+
+		require.ErrorIs(t, c.writeSecret(map[string]any{"Password": "p"}, "iam", "create-login-profile"), errInterrupted)
+		_, err := os.Stat(name)
+		require.ErrorIs(t, err, os.ErrNotExist)
+	})
 
 	const accept = "account accept-primary-email-update --account-id 222222222222 --primary-email n@x.y"
 

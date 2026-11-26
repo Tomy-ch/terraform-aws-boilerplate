@@ -30,7 +30,8 @@ var (
 	errDeclShape = xerrors.New("organization-baseline の Terraform の宣言を解釈できません")
 
 	// passwordPolicyFields は、aws_iam_account_password_policy の argument と、get-account-password-policy の応答の field の対応。
-	// 値は Terraform から読む。対応に無い argument は確かめられないので、宣言の読み取りをエラーにする。
+	// 値は Terraform から読む。対応に無い argument と、対応に在って宣言に無い argument は確かめられないので、
+	// 宣言の読み取りをエラーにする。
 	passwordPolicyFields = map[string]string{
 		"minimum_password_length":        "MinimumPasswordLength",
 		"password_reuse_prevention":      "PasswordReusePrevention",
@@ -252,6 +253,10 @@ func readBreakGlassShape(readFile func(string) ([]byte, error), dir, project str
 		return breakGlassShape{}, xerrors.Join(errDeclShape, err)
 	}
 
+	if err := requireForEachLocal(body, "aws_iam_user", userNamesKey); err != nil {
+		return breakGlassShape{}, err
+	}
+
 	slices.Sort(users)
 
 	policy, err := readPasswordPolicy(body)
@@ -260,6 +265,31 @@ func readBreakGlassShape(readFile func(string) ([]byte, error), dir, project str
 	}
 
 	return breakGlassShape{users: users, path: p, role: role, policy: policy}, nil
+}
+
+// requireForEachLocal は、type のただ1つの resource の for_each が local.<name> であることを求める。
+// 読んだ local が resource の作る集合であることを、宣言の側で確かめる。
+func requireForEachLocal(body *hclsyntax.Body, typ, name string) error {
+	b, err := singleResource(body, typ)
+	if err != nil {
+		return err
+	}
+
+	attr, ok := b.Body.Attributes["for_each"]
+	if !ok {
+		return xerrors.Wrap(errDeclShape, typ+" に for_each がありません")
+	}
+
+	st, ok := attr.Expr.(*hclsyntax.ScopeTraversalExpr)
+	if !ok || len(st.Traversal) != 2 || st.Traversal.RootName() != "local" {
+		return xerrors.Wrap(errDeclShape, typ+" の for_each が local."+name+" ではありません")
+	}
+
+	if a, ok := st.Traversal[1].(hcl.TraverseAttr); !ok || a.Name != name {
+		return xerrors.Wrap(errDeclShape, typ+" の for_each が local."+name+" ではありません")
+	}
+
+	return nil
 }
 
 // readPasswordPolicy は、aws_iam_account_password_policy の argument を、応答の field と JSON の字面の写像にする。
@@ -297,6 +327,12 @@ func readPasswordPolicy(body *hclsyntax.Body) (map[string]string, error) {
 			policy[field] = v.AsBigFloat().Text('f', 0)
 		default:
 			return nil, xerrors.Wrap(errDeclShape, name+" が数でも真偽でもありません")
+		}
+	}
+
+	for name, field := range passwordPolicyFields {
+		if _, ok := policy[field]; !ok {
+			return nil, xerrors.Wrap(errDeclShape, "password policy に "+name+" がありません。書かれていない argument は確かめられません")
 		}
 	}
 

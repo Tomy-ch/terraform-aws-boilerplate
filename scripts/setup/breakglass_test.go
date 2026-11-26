@@ -22,7 +22,9 @@ const (
 	enableMFA    = "iam enable-mfa-device"
 	listBGUsers  = "iam list-users --path-prefix /break-glass/"
 	passwordPol  = "iam get-account-password-policy"
-	bgPolicyJSON = `{"PasswordPolicy":{"MinimumPasswordLength":14,"RequireSymbols":true,"HardExpiry":false,"ExpirePasswords":true}}`
+	bgPolicyJSON = `{"PasswordPolicy":{"MinimumPasswordLength":14,"PasswordReusePrevention":24,"RequireLowercaseCharacters":true,` +
+		`"RequireUppercaseCharacters":true,"RequireNumbers":true,"RequireSymbols":true,"AllowUsersToChangePassword":true,` +
+		`"MaxPasswordAge":90,"HardExpiry":false,"ExpirePasswords":true}}`
 )
 
 func getUser(u string) string     { return "iam get-user --user-name " + u }
@@ -419,7 +421,7 @@ func Test_registerTOTP(t *testing.T) {
 
 		f := mfaWorld(t, nil)
 		term, _ := tty(hwSerial + "\n123456\n654321\n")
-		require.NoError(t, registerTOTP(testClient(f, enableMFA), term, bg1))
+		require.NoError(t, registerTOTP(bgOptions(), testClient(f, enableMFA), term, bg1))
 	})
 
 	for name, input := range map[string]string{
@@ -435,7 +437,7 @@ func Test_registerTOTP(t *testing.T) {
 
 			f := mfaWorld(t, nil)
 			term, _ := tty(input)
-			require.ErrorIs(t, registerTOTP(testClient(f, enableMFA), term, bg1), errMFAInput)
+			require.ErrorIs(t, registerTOTP(bgOptions(), testClient(f, enableMFA), term, bg1), errMFAInput)
 			assert.Empty(t, f.writes())
 		})
 	}
@@ -446,14 +448,14 @@ func Test_registerTOTP(t *testing.T) {
 		f := bgWorld(t, nil, nil)
 		f.responses[enableMFA] = ok("")
 		term, _ := tty(hwSerial + "\n123456\n654321\n")
-		require.ErrorIs(t, registerTOTP(testClient(f, enableMFA), term, bg1), errAWSResponse)
+		require.ErrorIs(t, registerTOTP(bgOptions(), testClient(f, enableMFA), term, bg1), errAWSResponse)
 	})
 
 	t.Run("入力が尽きれば errNoInput", func(t *testing.T) {
 		t.Parallel()
 
 		term, _ := tty(hwSerial + "\n")
-		require.ErrorIs(t, registerTOTP(testClient(mfaWorld(t, nil), enableMFA), term, bg1), errNoInput)
+		require.ErrorIs(t, registerTOTP(bgOptions(), testClient(mfaWorld(t, nil), enableMFA), term, bg1), errNoInput)
 	})
 }
 
@@ -466,7 +468,7 @@ func Test_checkBreakGlass(t *testing.T) {
 		var out bytes.Buffer
 		require.NoError(t, checkBreakGlass(bgOptions(), testClient(bgWorld(t, bothLogin(), bothMFA())), &out))
 		assert.NotContains(t, out.String(), "❌")
-		assert.Equal(t, 1+2*3+3, bytes.Count(out.Bytes(), []byte("✅")))
+		assert.Equal(t, 1+2*3+len(passwordPolicyFields), bytes.Count(out.Bytes(), []byte("✅")))
 	})
 
 	for name, tc := range map[string]struct {
@@ -485,9 +487,12 @@ func Test_checkBreakGlass(t *testing.T) {
 		"password policy の値が違えば NG": {passwordPol, func(*testing.T) awsResult {
 			return ok(`{"PasswordPolicy":{"MinimumPasswordLength":8,"RequireSymbols":true,"HardExpiry":false}}`)
 		}, "❌ password policy の MinimumPasswordLength が 14（今: 8）"},
-		"password policy の field が無ければ NG": {passwordPol, func(*testing.T) awsResult {
-			return ok(`{"PasswordPolicy":{"MinimumPasswordLength":14,"RequireSymbols":true}}`)
-		}, "❌ password policy の HardExpiry が false（今: 無い）"},
+		"password policy の数の field が無ければ NG": {passwordPol, func(*testing.T) awsResult {
+			return ok(strings.Replace(bgPolicyJSON, `"MaxPasswordAge":90,`, "", 1))
+		}, "❌ password policy の MaxPasswordAge が 90（今: 無い）"},
+		"password policy の真の field が無ければ NG": {passwordPol, func(*testing.T) awsResult {
+			return ok(strings.Replace(bgPolicyJSON, `"RequireSymbols":true,`, "", 1))
+		}, "❌ password policy の RequireSymbols が true（今: 無い）"},
 		"password policy が無ければ NG": {passwordPol, func(t *testing.T) awsResult {
 			return fail(t, "An error occurred (NoSuchEntity) when calling the GetAccountPasswordPolicy operation")
 		}, "❌ アカウントの password policy が在る"},
@@ -549,6 +554,16 @@ func Test_checkPasswordPolicy(t *testing.T) {
 		require.NoError(t, checkPasswordPolicy(testClient(f), r, map[string]string{"MinimumPasswordLength": "14", "RequireSymbols": "true"}))
 		assert.Equal(t, 2, r.count)
 		assert.Equal(t, 0, r.ngs)
+	})
+
+	t.Run("応答に無い真偽の field は false とみなし、true は無い扱いにする", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeAWS(t, map[string]awsResult{passwordPol: ok(`{"PasswordPolicy":{"MinimumPasswordLength":14}}`)})
+		r := newReport(&bytes.Buffer{}, "T")
+		require.NoError(t, checkPasswordPolicy(testClient(f), r, map[string]string{"HardExpiry": "false", "RequireSymbols": "true"}))
+		assert.Equal(t, 2, r.count)
+		assert.Equal(t, 1, r.ngs)
 	})
 
 	t.Run("ほかの失敗は errAWSFailed", func(t *testing.T) {
@@ -647,5 +662,40 @@ func Test_lastUsed(t *testing.T) {
 		d := testNow.Add(-3 * 24 * time.Hour)
 		assert.Equal(t, "2026-11-23（3 日前）", lastUsed(testNow, &d))
 		assert.Equal(t, "記録が無い", lastUsed(testNow, nil))
+	})
+}
+
+func Test_reread(t *testing.T) {
+	t.Parallel()
+
+	t.Run("見えるまでやり直し、やり直しの間だけ待つ", func(t *testing.T) {
+		t.Parallel()
+
+		var waits, reads int
+
+		o := bgOptions()
+		o.sleep = func(time.Duration) { waits++ }
+
+		require.NoError(t, reread(o, func() (bool, error) { reads++; return reads == 3, nil }))
+		assert.Equal(t, 3, reads)
+		assert.Equal(t, 2, waits)
+	})
+
+	t.Run("回数を尽くしても見えなければ errAWSResponse", func(t *testing.T) {
+		t.Parallel()
+
+		var reads int
+
+		require.ErrorIs(t, reread(bgOptions(), func() (bool, error) { reads++; return false, nil }), errAWSResponse)
+		assert.Equal(t, rereadTries, reads)
+	})
+
+	t.Run("読み取りの失敗はやり直さずに返す", func(t *testing.T) {
+		t.Parallel()
+
+		var reads int
+
+		require.ErrorIs(t, reread(bgOptions(), func() (bool, error) { reads++; return false, errAWSFailed }), errAWSFailed)
+		assert.Equal(t, 1, reads)
 	})
 }
