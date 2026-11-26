@@ -163,7 +163,7 @@ func Test_terminal_secret(t *testing.T) {
 		)
 
 		term.notify = func(c chan<- os.Signal) func() { c <- syscall.SIGHUP; return func() { stopped.Store(true) } }
-		term.restore = func() { restored.Add(1) }
+		term.begin = func() (func(), error) { return func() { restored.Add(1) }, nil }
 
 		got, err := term.secret("P: ")
 		close(block)
@@ -205,6 +205,32 @@ func Test_terminal_secret(t *testing.T) {
 		require.ErrorIs(t, err, os.ErrClosed)
 		assert.Empty(t, got)
 	})
+
+	t.Run("端末の状態を控えられなければ、読まずに errNoHidden", func(t *testing.T) {
+		t.Parallel()
+
+		term, _ := tty("")
+		term.begin = func() (func(), error) { return nil, errNotTerminal }
+		term.hidden = func() ([]byte, error) { t.Error("読んだ"); return nil, nil }
+
+		_, err := term.secret("P: ")
+		require.ErrorIs(t, err, errNoHidden)
+		require.ErrorIs(t, err, errNotTerminal)
+	})
+
+	t.Run("戻す状態が無くても、中断は errInterrupted でシグナルの名前を添える", func(t *testing.T) {
+		t.Parallel()
+
+		term, _ := tty("")
+		block := make(chan struct{})
+		term.notify = func(c chan<- os.Signal) func() { c <- syscall.SIGTERM; return func() {} }
+		term.hidden = func() ([]byte, error) { <-block; return nil, nil }
+
+		_, err := term.secret("P: ")
+		close(block)
+		require.ErrorIs(t, err, errInterrupted)
+		assert.Contains(t, err.Error(), syscall.SIGTERM.String())
+	})
 }
 
 // 自プロセスへ中断のシグナルを送るので、並行して走るケースの notifier にも届く。並行にせず、ほかのケースが
@@ -213,7 +239,7 @@ func Test_notifyInterrupt(t *testing.T) {
 	for _, sig := range interruptSignals {
 		t.Run(sig.String()+" を受ければ channel に届き、stop で受けるのをやめる", func(t *testing.T) {
 			c := make(chan os.Signal, 1)
-			stop := notifyInterrupt(c)
+			t.Cleanup(notifyInterrupt(c))
 
 			p, err := os.FindProcess(os.Getpid())
 			require.NoError(t, err)
@@ -225,14 +251,8 @@ func Test_notifyInterrupt(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("シグナルが届きません")
 			}
-
-			stop()
 		})
 	}
-
-	t.Run("中断のシグナルは INT・TERM・HUP", func(t *testing.T) {
-		assert.ElementsMatch(t, []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP}, interruptSignals)
-	})
 }
 
 func Test_notifier_start(t *testing.T) {

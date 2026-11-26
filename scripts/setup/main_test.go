@@ -505,16 +505,19 @@ func Test_run(t *testing.T) {
 func Test_passwordReader(t *testing.T) {
 	t.Parallel()
 
-	t.Run("端末でなければ読まずに失敗し、戻す状態が無いので restore は何もしない", func(t *testing.T) {
+	t.Run("端末でなければ、状態を控えられず errNotTerminal", func(t *testing.T) {
 		t.Parallel()
 
 		r, w, err := os.Pipe()
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = r.Close(); _ = w.Close() })
 
-		read, restore := passwordReader(r)
+		begin, read := passwordReader(r)
+		restore, err := begin()
+		require.ErrorIs(t, err, errNotTerminal)
+		assert.Nil(t, restore)
+
 		_, err = read()
 		require.Error(t, err)
-		assert.NotPanics(t, restore)
 	})
 }

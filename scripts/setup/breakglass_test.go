@@ -409,6 +409,44 @@ func Test_setBreakGlassLogin(t *testing.T) {
 		require.ErrorIs(t, setBreakGlassLogin(o, testClient(f, createLogin), term), errHCL)
 		assert.Empty(t, f.ops())
 	})
+
+	t.Run("置いた直後に見えなくても、読み直しをやり直して3回目に見えれば ✅", func(t *testing.T) {
+		t.Parallel()
+
+		f := loginWorld(t, map[string]bool{bg1: true})
+		f.seq = map[string][]awsResult{getLogin(bg2): {fail(t, noSuchUser), fail(t, noSuchUser), fail(t, noSuchUser)}}
+		term, out := tty("tabp\n")
+		term.hidden = hiddenLines(testPassword, testPassword)
+
+		var waits int
+
+		o := bgOptions()
+		o.sleep = func(time.Duration) { waits++ }
+
+		require.NoError(t, setBreakGlassLogin(o, testClient(f, createLogin), term))
+		assert.Equal(t, 2, waits)
+		assert.Contains(t, out.String(), "✅ "+bg2+" にパスワードを置きました")
+	})
+
+	t.Run("読み直しを尽くしても見えなければ errAWSResponse で、break-glass-check を案内し ✅ を出さない", func(t *testing.T) {
+		t.Parallel()
+
+		f := bgWorld(t, map[string]bool{bg1: true}, nil)
+		f.responses[createLogin] = ok(`{}`)
+		term, out := tty("tabp\n")
+		term.hidden = hiddenLines(testPassword, testPassword)
+
+		var waits int
+
+		o := bgOptions()
+		o.sleep = func(time.Duration) { waits++ }
+
+		err := setBreakGlassLogin(o, testClient(f, createLogin), term)
+		require.ErrorIs(t, err, errAWSResponse)
+		assert.Contains(t, err.Error(), "break-glass-check")
+		assert.Equal(t, rereadTries-1, waits)
+		assert.NotContains(t, out.String(), "にパスワードを置きました")
+	})
 }
 
 func mfaWorld(t *testing.T, before map[string][]string) *fakeAWS {
@@ -580,6 +618,23 @@ func Test_registerTOTP(t *testing.T) {
 			assert.Empty(t, f.writes())
 		})
 	}
+
+	t.Run("登録の直後に見えなくても、読み直しをやり直して見えれば nil", func(t *testing.T) {
+		t.Parallel()
+
+		f := mfaWorld(t, nil)
+		f.seq = map[string][]awsResult{listMFA(bg1): {mfaJSON(), mfaJSON()}}
+		term, out := tty(hwSerial + "\n123456\n654321\n")
+
+		var waits int
+
+		o := bgOptions()
+		o.sleep = func(time.Duration) { waits++ }
+
+		require.NoError(t, registerTOTP(o, testClient(f, enableMFA), term, bg1))
+		assert.Equal(t, 2, waits)
+		assert.Contains(t, out.String(), "✅ "+bg1+" に MFA を登録しました")
+	})
 }
 
 func Test_checkBreakGlass(t *testing.T) {
@@ -738,6 +793,17 @@ func Test_checkPasswordPolicy(t *testing.T) {
 		f := newFakeAWS(t, map[string]awsResult{passwordPol: fail(t, "AccessDenied")})
 		require.ErrorIs(t, checkPasswordPolicy(testClient(f), newReport(&bytes.Buffer{}, "T"), map[string]string{"A": "1"}), errAWSFailed)
 	})
+
+	t.Run("省かれうる field の外の偽は、応答に無ければ NG", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeAWS(t, map[string]awsResult{passwordPol: ok(`{"PasswordPolicy":{}}`)})
+
+		var out bytes.Buffer
+
+		require.NoError(t, checkPasswordPolicy(testClient(f), newReport(&out, "T"), map[string]string{"AllowUsersToChangePassword": "false"}))
+		assert.Contains(t, out.String(), "❌ password policy の AllowUsersToChangePassword が false（今: 無い）")
+	})
 }
 
 func usageWorld(t *testing.T, user1, user2, role string) *fakeAWS {
@@ -841,6 +907,19 @@ func Test_checkBreakGlassUsage(t *testing.T) {
 		require.ErrorIs(t, checkBreakGlassUsage(o, testClient(f), &bytes.Buffer{}), errHCL)
 		assert.Empty(t, f.ops())
 	})
+
+	for name, tc := range map[string]struct{ key, stdout string }{
+		"get-user が別の user を返せば errAWSResponse": {getUser(bg1), `{"User":{"UserName":"` + bg2 + `","PasswordLastUsed":"` + daysAgo(1) + `"}}`},
+		"get-role が別の role を返せば errAWSResponse": {"iam get-role --role-name tabp-break-glass", `{"Role":{"RoleName":"other","RoleLastUsed":{"LastUsedDate":"` + daysAgo(1) + `"}}}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			f := usageWorld(t, daysAgo(1), daysAgo(1), daysAgo(1))
+			f.responses[tc.key] = ok(tc.stdout)
+			require.ErrorIs(t, checkBreakGlassUsage(bgOptions(), testClient(f), &bytes.Buffer{}), errAWSResponse)
+		})
+	}
 }
 
 func Test_recent(t *testing.T) {

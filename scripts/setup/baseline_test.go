@@ -316,11 +316,33 @@ func Test_readPasswordPolicy(t *testing.T) {
 		assert.Len(t, p, len(passwordPolicyFields))
 	})
 
-	t.Run("対応の argument が1つでも宣言に無ければ errDeclShape（消した argument を確かめずに通さない）", func(t *testing.T) {
+	for name := range passwordPolicyFields {
+		t.Run(name+" が宣言に無ければ errDeclShape（消した argument を確かめずに通さない）", func(t *testing.T) {
+			t.Parallel()
+
+			var kept []string
+
+			for _, l := range strings.Split(strings.TrimSpace(allPolicyArgs), "\n") {
+				if !strings.HasPrefix(l, name+" ") {
+					kept = append(kept, l)
+				}
+			}
+
+			require.Len(t, kept, len(passwordPolicyFields)-1)
+
+			_, err := readPasswordPolicy(parseHCL(t, policy(strings.Join(kept, "\n")+"\n")))
+			require.ErrorIs(t, err, errDeclShape)
+			assert.Contains(t, err.Error(), name)
+		})
+	}
+
+	t.Run("欠けた argument はすべて名前の順に挙げる", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := readPasswordPolicy(parseHCL(t, policy(strings.Replace(allPolicyArgs, "minimum_password_length = 14\n", "", 1))))
+		src := strings.Replace(strings.Replace(allPolicyArgs, "require_symbols = true\n", "", 1), "hard_expiry = false\n", "", 1)
+		_, err := readPasswordPolicy(parseHCL(t, policy(src)))
 		require.ErrorIs(t, err, errDeclShape)
+		assert.Contains(t, err.Error(), "hard_expiry・require_symbols")
 	})
 
 	for name, body := range map[string]string{

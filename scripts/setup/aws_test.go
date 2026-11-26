@@ -403,4 +403,46 @@ func Test_client_writeSecret(t *testing.T) {
 		require.ErrorIs(t, testClient(f).writeSecret(nil, "ssm", "get-parameter"), errNotAllowed)
 		assert.Empty(t, f.calls)
 	})
+
+	t.Run("起動の前に中断のシグナルを受けていれば、aws を起動せずに errInterrupted", func(t *testing.T) {
+		t.Parallel()
+
+		c := &client{region: testRegion, writes: []string{"iam create-login-profile"}}
+		c.notify = func(ch chan<- os.Signal) func() { ch <- syscall.SIGINT; return func() {} }
+		c.aws = func(...string) awsResult { t.Error("aws を起動した"); return ok("") }
+
+		err := c.writeSecret(map[string]any{"Password": "p"}, "iam", "create-login-profile")
+		require.ErrorIs(t, err, errInterrupted)
+		assert.Contains(t, err.Error(), "書き込む前に止めました")
+	})
+
+	interrupted := func(t *testing.T, res awsResult) error {
+		t.Helper()
+
+		var sig chan<- os.Signal
+
+		c := &client{region: testRegion, writes: []string{"iam create-login-profile"}}
+		c.notify = func(ch chan<- os.Signal) func() { sig = ch; return func() {} }
+		c.aws = func(...string) awsResult { sig <- syscall.SIGINT; return res }
+
+		return c.writeSecret(map[string]any{"Password": "p"}, "iam", "create-login-profile")
+	}
+
+	t.Run("起動の途中の中断で aws が成功していれば、書き込みが終わっていることを伝える", func(t *testing.T) {
+		t.Parallel()
+
+		err := interrupted(t, ok(""))
+		require.ErrorIs(t, err, errInterrupted)
+		assert.NotErrorIs(t, err, errAWSFailed)
+		assert.Contains(t, err.Error(), "書き込みは終わっています")
+	})
+
+	t.Run("起動の途中の中断で aws が失敗していれば、その失敗も残す", func(t *testing.T) {
+		t.Parallel()
+
+		err := interrupted(t, fail(t, "An error occurred (PasswordPolicyViolation)"))
+		require.ErrorIs(t, err, errInterrupted)
+		require.ErrorIs(t, err, errAWSFailed)
+		assert.Contains(t, err.Error(), "PasswordPolicyViolation")
+	})
 }

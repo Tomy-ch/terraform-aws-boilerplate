@@ -457,4 +457,11 @@ func Test_checkIdentityCenterUser(t *testing.T) {
 		require.ErrorIs(t, checkIdentityCenterUser(opts(), testClient(f), &bytes.Buffer{}, testOrg(t)), errPrecondition)
 		assert.Equal(t, []string{listSSO}, f.ops())
 	})
+
+	t.Run("インスタンスの Status が無ければ errPrecondition", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeAWS(t, map[string]awsResult{listSSO: ok(`{"Instances":[{"IdentityStoreId":"d-1"}]}`)})
+		require.ErrorIs(t, checkIdentityCenterUser(opts(), testClient(f), &bytes.Buffer{}, testOrg(t)), errPrecondition)
+	})
 }

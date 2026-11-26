@@ -188,8 +188,11 @@ type fakeAWS struct {
 	responses map[string]awsResult
 	after     map[string]map[string]awsResult
 	overlays  []map[string]awsResult
-	calls     [][]string
-	secrets   []string
+	// seq は、引数の列ごとに、呼ばれた順に返す応答。尽きたら responses・after から引く。書き込みの後の
+	// 読み直しが、結果整合で何回目に見えるかを表す。
+	seq     map[string][]awsResult
+	calls   [][]string
+	secrets []string
 }
 
 // onWrite は、書き込み w が成功した後の応答 m を置く。
@@ -232,6 +235,12 @@ func (f *fakeAWS) fn() awsFunc {
 
 			f.secrets = append(f.secrets, string(b))
 			bare = bare[:n-2]
+		}
+
+		if q := f.seq[strings.Join(bare, " ")]; len(q) > 0 {
+			f.seq[strings.Join(bare, " ")] = q[1:]
+
+			return q[0]
 		}
 
 		r, ok := f.lookup(bare)
