@@ -8,7 +8,7 @@ data "aws_region" "current" {}
 
 locals {
   partition = data.aws_partition.current.partition
-  # 2つ目は予備（ADR-0301 決定19）。
+  # 2つは対等で、互いの予備（ADR-0301 決定19、organization-baseline/ADR-0201 決定1）。
   user_names = toset(["break-glass-1", "break-glass-2"])
   group_name = "break-glass"
 
