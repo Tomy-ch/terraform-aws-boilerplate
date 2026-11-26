@@ -15,7 +15,7 @@ AWS の whitepaper「Organizing Your AWS Environment Using Multiple Accounts」�
 
 ## Decision
 
-1. 管理アカウントに、IAM user `break-glass-1`・`break-glass-2` を path `/break-glass/` で置く。パスワードと MFA（FIDO。repository-wide/ADR-0301 決定19）は Terraform で作らず、人が設定して保管する。
+1. 管理アカウントに、IAM user `break-glass-1`・`break-glass-2` を path `/break-glass/` で置く。パスワードと MFA（FIDO。repository-wide/ADR-0301 決定19）は Terraform で作らず、人が設定して保管する。2つは同じ group に入り同じ権限を持つ対等な user で、片方が使えなくなったとき（MFA を失くしたときを含む）の予備を互いに持つ。片方の MFA を失くしたときは、もう片方でサインインし、管理アカウントの break-glass の role を引き受けて、その MFA を外す（repository-wide/ADR-0301 決定19）。
 2. 権限は IAM group `break-glass` の inline policy で与え、user に policy を直接付けない。与えるのは、各アカウントの break-glass の role の引き受け（MFA を要求）、自分のパスワードと MFA の管理、password policy の読み取りだけとする。自分の MFA を外すこと（`iam:DeactivateMFADevice`）は、MFA で認証したセッションに限る。アクセスキーなど長期の資格情報を作ることを Deny で拒む。
 3. role の引き受けの Resource は、アカウントをワイルドカードにした break-glass の role の ARN とする。メンバーアカウントの ID はアカウントを作るまで決まらない（repository-wide/ADR-0301 決定11）。password policy の読み取り（`iam:GetAccountPasswordPolicy`）は resource-level の権限を持たないので、Resource `"*"` で与える（同 決定9）。
 4. 管理アカウントの break-glass の role `<project>-break-glass` を path `/break-glass/` で置き、信頼条件を break-glass の user の ARN と `aws:MultiFactorAuthPresent` に限る。`AdministratorAccess` だけを付け、セッションは1時間とする。
