@@ -7,15 +7,15 @@
 
 ## Context
 
-repository-wide/ADR-0301 (least-privilege-policy) 決定19 は、IAM Identity Center が使えないときの緊急の到達経路を、この usecase が管理アカウントに提供すると決めている。形は、管理アカウントの IAM user 2つ（コンソールだけ、アクセスキーを持たず、ハードウェア MFA）、すべてのアカウントの break-glass の role（信頼条件は break-glass の user と MFA、権限は `AdministratorAccess`）である。
+repository-wide/ADR-0301 (least-privilege-policy) 決定19 は、IAM Identity Center が使えないときの緊急の到達経路を、この usecase が管理アカウントに提供すると決めている。形は、管理アカウントの IAM user 2つ（コンソールだけ、アクセスキーを持たず、フィッシングに強い FIDO の MFA）、すべてのアカウントの break-glass の role（信頼条件は break-glass の user と MFA、権限は `AdministratorAccess`）である。
 
-AWS の whitepaper「Organizing Your AWS Environment Using Multiple Accounts」は、管理アカウントの IAM user を break-glass に使う形を勧める。Well-Architected（2026-11-16 の版）の FND05-BP02 は、平時に使われない専用の非常用アカウントを勧める。SRA のチェックリストは IAM user を使わないことを MUST とし、break-glass を例外とする。Security Hub の IAM.2 は IAM user へ policy を直接付けないこと、IAM.7・IAM.15・IAM.16 はアカウントの password policy を求める。IAM User Guide の、MFA を管理する user の policy の例は、自分の MFA を外すことを MFA で認証したセッションに限る。
+AWS の whitepaper「Organizing Your AWS Environment Using Multiple Accounts」は、管理アカウントの IAM user を break-glass に使う形を勧める。Well-Architected（2026-11-16 の版）の FND05-BP02 は、平時に使われない専用の非常用アカウントを勧める。SRA のチェックリストは IAM user を使わないことを MUST とし、break-glass を例外とする。Security Hub の IAM.2 は IAM user へ policy を直接付けないこと、IAM.7・IAM.15・IAM.16 はアカウントの password policy を求める。IAM User Guide の、MFA を管理する user の policy の例は、自分の MFA を外すことを MFA で認証したセッションに限る。IAM User Guide は、パスキーとセキュリティキーのようなフィッシングに強い MFA をできる限り使い（"We recommend that you use phishing-resistant MFA such as passkeys and security keys whenever possible"）、物理の装置ならハードウェアの TOTP の代わりにセキュリティキーを使う（"we recommend that you use security keys as an alternative to hardware TOTP devices"）ことを勧める。Security Hub の IAM.6 がハードウェア MFA を求めるのは root だけで、IAM user の IAM.5・IAM.19 は MFA の種類を問わない。
 
 本 ADR は管理アカウントの側（user・group・role・password policy）を決める。メンバーアカウントの break-glass の role の置き方は、organization-baseline/ADR-0202 が決める。
 
 ## Decision
 
-1. 管理アカウントに、IAM user `break-glass-1`・`break-glass-2` を path `/break-glass/` で置く。パスワードとハードウェア MFA は Terraform で作らず、人が設定して保管する。
+1. 管理アカウントに、IAM user `break-glass-1`・`break-glass-2` を path `/break-glass/` で置く。パスワードと MFA（FIDO。repository-wide/ADR-0301 決定19）は Terraform で作らず、人が設定して保管する。2つは同じ group に入り同じ権限を持つ対等な user で、片方が使えなくなったとき（MFA を失くしたときを含む）の予備を互いに持つ。片方の MFA を失くしたときは、もう片方でサインインし、管理アカウントの break-glass の role を引き受けて、その MFA を外す（repository-wide/ADR-0301 決定19）。
 2. 権限は IAM group `break-glass` の inline policy で与え、user に policy を直接付けない。与えるのは、各アカウントの break-glass の role の引き受け（MFA を要求）、自分のパスワードと MFA の管理、password policy の読み取りだけとする。自分の MFA を外すこと（`iam:DeactivateMFADevice`）は、MFA で認証したセッションに限る。アクセスキーなど長期の資格情報を作ることを Deny で拒む。
 3. role の引き受けの Resource は、アカウントをワイルドカードにした break-glass の role の ARN とする。メンバーアカウントの ID はアカウントを作るまで決まらない（repository-wide/ADR-0301 決定11）。password policy の読み取り（`iam:GetAccountPasswordPolicy`）は resource-level の権限を持たないので、Resource `"*"` で与える（同 決定9）。
 4. 管理アカウントの break-glass の role `<project>-break-glass` を path `/break-glass/` で置き、信頼条件を break-glass の user の ARN と `aws:MultiFactorAuthPresent` に限る。`AdministratorAccess` だけを付け、セッションは1時間とする。
@@ -56,13 +56,13 @@ Trivy・Checkov・KICS の既定のルールが、90日を超える有効期限�
 ## 保証範囲
 
 - 保証すること: break-glass の user がちょうど2つで、長期の資格情報を Terraform で作らないこと、group の Allow が決定2 に限られること（MFA を外すのは MFA のセッションだけ）、role の信頼条件が break-glass の user と MFA に限られること、`AdministratorAccess` を付ける role が break-glass の role だけであること（`plan.organization_baseline_break_glass`）
-- 保証しないこと: user にハードウェア MFA が登録されていること（人の手順。Security Hub の IAM.5・IAM.19 が見る）
+- 保証しないこと: user に FIDO の MFA が登録されていること（人の手順。FIDO の装置だけであることは `make setup-organization-baseline-break-glass-check` が、MFA があることは Security Hub の IAM.5・IAM.19 が見る。IAM.5・IAM.19 は種類を問わない）。FIDO のうちどの種類か（API で見分けられない）
 
 ## 検証方法
 
 - Unit Test: `internal/break-glass/tests/break-glass.tftest.hcl` が user、group と membership、group の policy、role の信頼条件と、managed policy の attachment と排他、password policy を固定する
 - Policy Test: `conftest/plan/organization_baseline_break_glass.rego`（`PLAN-BG-*`）
-- 実環境: 人が45日より短い間隔（毎月）で、break-glass の user でサインインし、MFA を使って管理アカウントの break-glass の role を引き受け、通知が届くことを確かめる。手順は README が持つ
+- 実環境: 人が45日より短い間隔（毎月）で、break-glass の user でサインインし、MFA を使って管理アカウントの break-glass の role を引き受け、通知が届くことを確かめる。手順は README が持つ。`make setup-organization-baseline-break-glass-check` が、break-glass の user の MFA が FIDO の装置だけであることを確かめる
 
 ## 影響
 

@@ -173,6 +173,7 @@ func Test_check(t *testing.T) {
 		body  string
 		lines []int
 		count int
+		say   string
 	}{
 		"印が無い": {body: "a\nb\n"},
 		"閉じた範囲が2つ": {
@@ -183,11 +184,13 @@ func Test_check(t *testing.T) {
 			body:  "a\n" + disable + "\nb\n",
 			lines: []int{2},
 			count: 1,
+			say:   "範囲を開いたまま閉じていない",
 		},
 		"範囲の中でまた開く": {
 			body:  disable + "\n" + disable + "\n" + enable + "\n",
 			lines: []int{2},
 			count: 3,
+			say:   "また範囲を開いている",
 		},
 		"入れ子のまま閉じなければ最初に開いた行で報告する": {
 			body:  disable + "\n" + disable + "\n",
@@ -198,31 +201,37 @@ func Test_check(t *testing.T) {
 			body:  enable + "\n",
 			lines: []int{1},
 			count: 1,
+			say:   "開いていない範囲を閉じている",
 		},
 		"理由が無い": {
 			body:  "// " + prefix + "disable\n" + enable + "\n",
 			lines: []int{1},
 			count: 2,
+			say:   "理由>。撤回: <条件>` が無い",
 		},
 		"理由はあるが撤回条件が無い": {
 			body:  "// " + prefix + "disable -- 理由だけ\n" + enable + "\n",
 			lines: []int{1},
 			count: 2,
+			say:   "理由>。撤回: <条件>` が無い",
 		},
 		"ファイル単位の印": {
 			body:  "// " + prefix + "disable-file\n",
 			lines: []int{1},
 			count: 1,
+			say:   "ファイル・行の単位で外す印は使わない",
 		},
 		"行単位の印": {
 			body:  "x // " + prefix + "disable-line\n",
 			lines: []int{1},
 			count: 1,
+			say:   "ファイル・行の単位で外す印は使わない",
 		},
 		"次の行の印": {
 			body:  "// " + prefix + "disable-next-line\nx\n",
 			lines: []int{1},
 			count: 1,
+			say:   "ファイル・行の単位で外す印は使わない",
 		},
 		"散文の中の引用も印として数える": {
 			body:  "## 抑止は `// " + prefix + "disable` / `-enable` で囲む\nx\n",
@@ -233,9 +242,24 @@ func Test_check(t *testing.T) {
 			body:  disable + " " + enable + "\n",
 			lines: []int{1, 1},
 			count: 1,
+			say:   "印の出現 2 件のうち 1 件しか分類できていない",
 		},
-		"知らない語の印": {
+		"綴りを誤った印": {
+			body:  "// " + prefix + "dis-able\n",
+			lines: []int{1},
+			count: 1,
+			say:   "印として解釈できない",
+		},
+		"dis と en で始まらない語は印として数えない": {
 			body:  "// " + prefix + "pause\n",
+			count: 0,
+		},
+		"道具の配布物の名前は印として数えない": {
+			body:  `url = "https://example.com/v1/` + prefix + `linux-amd64.tar.gz"` + "\n",
+			count: 0,
+		},
+		"配布物の名前の後ろに同じ行で置いた印を見落とさない": {
+			body:  "x " + prefix + "linux-amd64 // " + prefix + "disable-line\n",
 			lines: []int{1},
 			count: 1,
 		},
@@ -251,6 +275,13 @@ func Test_check(t *testing.T) {
 			}
 			assert.Equal(t, tt.lines, lines)
 			assert.Equal(t, tt.count, count)
+			if tt.say != "" {
+				var messages []string
+				for _, f := range findings {
+					messages = append(messages, f.Message)
+				}
+				assert.Contains(t, strings.Join(messages, "\n"), tt.say)
+			}
 		})
 	}
 }
@@ -432,4 +463,48 @@ func Test_gitEnvFrom(t *testing.T) {
 		_, err := gitEnvFrom([]string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "XDG_CONFIG_HOME=" + home})
 		require.ErrorIs(t, err, gitenv.ErrNames)
 	})
+}
+
+func Test_candidateIndex(t *testing.T) {
+	t.Parallel()
+
+	for name, tt := range map[string]struct {
+		line string
+		want int
+	}{
+		"dis で始まる語の位置を返す":  {"ab " + prefix + "disable", 3},
+		"en で始まる語の位置を返す":   {prefix + "enable", 0},
+		"ほかの語だけなら -1":      {prefix + "linux-amd64", -1},
+		"接頭辞が行末なら -1":      {"x " + prefix, -1},
+		"後ろが d だけなら -1":    {prefix + "d", -1},
+		"後ろが di なら -1":     {prefix + "di-x", -1},
+		"後ろが e だけなら -1":    {prefix + "e", -1},
+		"en で始まる別の語も候補にする": {prefix + "engine", 0},
+		"ほかの語の後ろの候補の位置を返す": {prefix + "linux " + prefix + "enable", len(prefix + "linux ")},
+		"接頭辞が無ければ -1":      {"editorconfig", -1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, candidateIndex(tt.line))
+		})
+	}
+}
+
+func Test_candidateRe(t *testing.T) {
+	t.Parallel()
+
+	for name, tt := range map[string]struct {
+		body string
+		want int
+	}{
+		"候補だけを数える":   {prefix + "disable " + prefix + "linux " + prefix + "enable", 2},
+		"候補が無ければ0":   {prefix + "linux-amd64", 0},
+		"行をまたいでも数える": {prefix + "disable\n" + prefix + "enable\n", 2},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Len(t, candidateRe.FindAllStringIndex(tt.body, -1), tt.want)
+		})
+	}
 }

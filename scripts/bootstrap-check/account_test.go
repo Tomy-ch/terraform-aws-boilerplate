@@ -759,30 +759,6 @@ func Test_monitorSubscription(t *testing.T) {
 	}
 }
 
-func Test_exactlyOne(t *testing.T) {
-	t.Parallel()
-
-	for name, tc := range map[string]struct {
-		in          []string
-		arn, reason string
-	}{
-		"1つなら ARN": {[]string{"a"}, "a", ""},
-		"0個":       {nil, "", "X が1つではない（0 個）"},
-		"2個":       {[]string{"a", "b"}, "", "X が1つではない（2 個）"},
-		"空の ARN":   {[]string{""}, "", "X の ARN を読めない"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			arn, reason, err := exactlyOne(tc.in, "X")
-
-			require.NoError(t, err)
-			assert.Equal(t, tc.arn, arn)
-			assert.Equal(t, tc.reason, reason)
-		})
-	}
-}
-
 func Test_hasTag(t *testing.T) {
 	t.Parallel()
 

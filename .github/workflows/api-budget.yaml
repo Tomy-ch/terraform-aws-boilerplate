@@ -1,0 +1,89 @@
+name: API Budget
+
+# GITHUB_TOKEN の REST API の枠（core）の limit・used・remaining・reset を出す診断の口。
+# GET /rate_limit は枠を数えないので、上限に当たっている最中でも呼べる。必須の検査にしない。
+# ls-remote を true にすると、refuse-stale と同じ種類の git ls-remote を1回呼び、その前後の used を出す。
+on:
+  workflow_dispatch:
+    inputs:
+      ls-remote:
+        description: refuse-stale と同じ git ls-remote を1回呼び、その前後で used が増えないかを出す
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  api-budget:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden the runner
+        id: harden-runner
+        continue-on-error: true
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+      - name: Harden the runner (retry)
+        if: steps.harden-runner.outcome != 'success'
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+
+      - name: Report the core rate limit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LS_REMOTE: ${{ inputs.ls-remote }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref_name }}
+        run: |
+          used() { gh api rate_limit --jq .resources.core.used; }
+          gh api rate_limit --jq '.resources.core | "limit=\(.limit) used=\(.used) remaining=\(.remaining) reset=\(.reset | todate)"' \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$LS_REMOTE" = true ]; then
+            before=$(used)
+            auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+            test -n "$auth" || { echo "❌ token から認証の header を組めません"; exit 1; }
+            echo "::add-mask::$auth"
+            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" ls-remote "https://github.com/$REPO.git" "refs/heads/$REF" >/dev/null
+            after=$(used)
+            echo "ls-remote: used $before -> $after（差 $((after - before))）" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi

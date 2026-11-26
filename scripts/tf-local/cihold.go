@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -13,6 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workdir"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -131,11 +134,11 @@ func ciUnlockStep(args []string, d deps, stdout io.Writer) (string, error) {
 	if *project == "" || *profile == "" || *base == "" || fs.NArg() > 0 {
 		return "", errUsage
 	}
-	work, err := os.MkdirTemp("", "tf-local-unlock-")
+	work, cleanup, err := workdir.Temp("", "tf-local-unlock-")
 	if err != nil {
 		return "", xerrors.Wrap(err, "作業ディレクトリ")
 	}
-	defer func() { _ = os.RemoveAll(work) }()
+	defer cleanup()
 	l, err := ciLockTarget(d, work, *project, *env, *root, *profile, *base)
 	if err != nil {
 		return "", err
@@ -248,11 +251,11 @@ func ciHoldAbsent(d deps, s ciState) error {
 	if err != nil {
 		return err
 	}
-	work, err := os.MkdirTemp("", "tf-local-hold-")
+	work, cleanup, err := workdir.Temp("", "tf-local-hold-")
 	if err != nil {
 		return xerrors.Wrap(err, "作業ディレクトリ")
 	}
-	defer func() { _ = os.RemoveAll(work) }()
+	defer cleanup()
 	etag, err := l.etag(d, work)
 	if err != nil {
 		return err
@@ -295,10 +298,10 @@ func ciHoldPlan(d deps, s ciState, hold string, interval, limit time.Duration) e
 		return xerrors.Wrap(err, "plan の全文")
 	}
 	defer func() { _ = f.Close() }()
-	cmd := d.tool(s.Dir, localEnv(d.environ, s.Profile), stepCIPlanHold)
+	cmd := d.tool(context.Background(), s.Dir, localEnv(d.environ, s.Profile), stepCIPlanHold)
 	cmd.Stdout, cmd.Stderr = f, f
 	if err := cmd.Start(); err != nil {
-		return xerrors.Wrapf(errLocalTF, "plan: %v", err)
+		return xerrors.Wrapf(toolrun.ErrTool, "plan: %v", err)
 	}
 	var exited atomic.Bool
 	waited := make(chan struct{})
@@ -355,11 +358,11 @@ func ciHoldVerify(d deps, s ciState) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	work, err := os.MkdirTemp("", "tf-local-hold-")
+	work, cleanup, err := workdir.Temp("", "tf-local-hold-")
 	if err != nil {
 		return "", xerrors.Wrap(err, "作業ディレクトリ")
 	}
-	defer func() { _ = os.RemoveAll(work) }()
+	defer cleanup()
 	etag, err := l.etag(d, work)
 	if err != nil {
 		return "", err

@@ -1,9 +1,12 @@
 package misetoml
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func Test_sectionName(t *testing.T) {
@@ -123,7 +126,7 @@ func Test_parseLine(t *testing.T) {
 	})
 }
 
-func Test_parseDisableList(t *testing.T) {
+func Test_parseSettingList(t *testing.T) {
 	t.Parallel()
 
 	t.Run("正常系", func(t *testing.T) {
@@ -145,7 +148,7 @@ func Test_parseDisableList(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
 
-				got, ok := parseDisableList(tt.line)
+				got, ok := parseSettingList(settingListRe("disable_tools"), tt.line)
 
 				assert.True(t, ok)
 				assert.Equal(t, tt.want, got)
@@ -171,11 +174,161 @@ func Test_parseDisableList(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
 
-				got, ok := parseDisableList(line)
+				got, ok := parseSettingList(settingListRe("disable_tools"), line)
 
 				assert.False(t, ok)
 				assert.Nil(t, got)
 			})
 		}
+	})
+}
+
+func Test_settingList(t *testing.T) {
+	t.Parallel()
+
+	t.Run("[settings] の key の配列を返し、ほかの key と節を読まない", func(t *testing.T) {
+		t.Parallel()
+
+		got, found, err := settingList([]byte("[tools]\nkey = [\"t\"]\n[settings]\nother = [\"x\"]\nkey = [\"a\", \"b\"]\n"), "key", ErrInvalidLine)
+
+		require.NoError(t, err)
+		assert.True(t, found)
+		assert.Equal(t, []string{"a", "b"}, got)
+	})
+
+	t.Run("重複した宣言は、渡したエラーで返す", func(t *testing.T) {
+		t.Parallel()
+
+		_, _, err := settingList([]byte("[settings]\nkey = [\"a\"]\nkey = [\"b\"]\n"), "key", ErrInvalidLine)
+
+		require.ErrorIs(t, err, ErrInvalidLine)
+	})
+
+	t.Run("節の外の dotted key は、渡したエラーで返す", func(t *testing.T) {
+		t.Parallel()
+
+		_, _, err := settingList([]byte("settings.key = [\"a\"]\n"), "key", ErrInvalidLine)
+
+		require.ErrorIs(t, err, ErrInvalidLine)
+	})
+
+	t.Run("key の名前に正規表現の記号があっても、その字面にだけ当てる", func(t *testing.T) {
+		t.Parallel()
+
+		got, found, err := settingList([]byte("[settings]\naxb = [\"x\"]\n"), "a.b", ErrInvalidLine)
+
+		require.NoError(t, err)
+		assert.False(t, found)
+		assert.Nil(t, got)
+	})
+}
+
+func Test_settingListFile(t *testing.T) {
+	t.Parallel()
+
+	t.Run("ファイルを読んで渡した読み手の結果を返す", func(t *testing.T) {
+		t.Parallel()
+		path := filepath.Join(t.TempDir(), "mise.toml")
+		require.NoError(t, os.WriteFile(path, []byte("[settings]\nlockfile_platforms = [\"linux-x64\"]\n"), 0o600))
+
+		got, found, err := settingListFile(path, LockfilePlatforms)
+
+		require.NoError(t, err)
+		assert.True(t, found)
+		assert.Equal(t, []string{"linux-x64"}, got)
+	})
+
+	t.Run("読み手のエラーに path を添える", func(t *testing.T) {
+		t.Parallel()
+		path := filepath.Join(t.TempDir(), "mise.toml")
+		require.NoError(t, os.WriteFile(path, []byte("[settings]\nlockfile_platforms = [x]\n"), 0o600))
+
+		_, _, err := settingListFile(path, LockfilePlatforms)
+
+		require.ErrorIs(t, err, ErrInvalidLockfilePlatforms)
+		assert.Contains(t, err.Error(), path)
+	})
+}
+
+func Test_settingListRe(t *testing.T) {
+	t.Parallel()
+
+	re := settingListRe("lockfile_platforms")
+	for line, want := range map[string]bool{
+		`lockfile_platforms = ["linux-x64"]`: true,
+		`"lockfile_platforms" = []`:          true,
+		`'lockfile_platforms' = []`:          false,
+		`disable_tools = ["npm:a"]`:          false,
+		`lockfile_platforms = "linux-x64"`:   false,
+	} {
+		t.Run(line, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, want, re.MatchString(line))
+		})
+	}
+}
+
+func Test_lockField(t *testing.T) {
+	t.Parallel()
+
+	t.Run("entry の version と backend を書き、specifiers を読み飛ばす", func(t *testing.T) {
+		t.Parallel()
+		e := &LockEntry{Platforms: map[string]LockPlatform{}}
+		fields := map[string]bool{}
+
+		require.NoError(t, lockField(e, "", `version = "1"`, fields))
+		require.NoError(t, lockField(e, "", `backend = "aqua:o/a"`, fields))
+		require.NoError(t, lockField(e, "", `specifiers = ["1"]`, fields))
+
+		assert.Equal(t, "1", e.Version)
+		assert.Equal(t, "aqua:o/a", e.Backend)
+	})
+
+	t.Run("platform の url と checksum を書き、url_api と provenance を読み飛ばす", func(t *testing.T) {
+		t.Parallel()
+		e := &LockEntry{Platforms: map[string]LockPlatform{"linux-x64": {}}}
+		fields := map[string]bool{}
+
+		for _, line := range []string{`url = "https://x/1"`, `checksum = "sha256:a"`, `url_api = "https://api/1"`, `provenance = "github-attestations"`} {
+			require.NoError(t, lockField(e, "linux-x64", line, fields))
+		}
+
+		assert.Equal(t, LockPlatform{URL: "https://x/1", Checksum: "sha256:a"}, e.Platforms["linux-x64"])
+	})
+
+	for name, tt := range map[string]struct{ platform, line string }{
+		"entry の中の url":          {"", `url = "https://x/1"`},
+		"platform の中の version":   {"linux-x64", `version = "1"`},
+		"entry の中の inline table": {"", `options = { a = 1 }`},
+	} {
+		t.Run(name+"は ErrInvalidLock", func(t *testing.T) {
+			t.Parallel()
+			e := &LockEntry{Platforms: map[string]LockPlatform{"linux-x64": {}}}
+			fields := map[string]bool{}
+
+			require.ErrorIs(t, lockField(e, tt.platform, tt.line, fields), ErrInvalidLock)
+		})
+	}
+}
+
+func Test_markSeen(t *testing.T) {
+	t.Parallel()
+
+	t.Run("初めての key は控え、同じ所の2度目は ErrInvalidLock", func(t *testing.T) {
+		t.Parallel()
+		seen := map[string]bool{}
+
+		require.NoError(t, markSeen(seen, "", "version"))
+		require.ErrorIs(t, markSeen(seen, "", "version"), ErrInvalidLock)
+	})
+
+	t.Run("entry と platform、platform どうしは別に数える", func(t *testing.T) {
+		t.Parallel()
+		seen := map[string]bool{}
+
+		require.NoError(t, markSeen(seen, "", "url"))
+		require.NoError(t, markSeen(seen, "linux-x64", "url"))
+		require.NoError(t, markSeen(seen, "linux-arm64", "url"))
 	})
 }

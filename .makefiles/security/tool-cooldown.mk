@@ -28,6 +28,6 @@ tool-cooldown-outdated:
 	@$(TOOL_COOLDOWN_ENV) $(call RUN_SCRIPT_HOST,tool-cooldown,outdated $(if $(OUT),--summary-out=$(OUT),))
 
 .PHONY: tool-cooldown-check ## 宣言を読めるかだけを検査（上流に問い合わせない）
-## tf-lint が tflint --init の前に呼ぶ。読めない記述と許さない取得元は、取得より前にここで止まる。
+## tf-lint が TFLint を起動する前に呼ぶ。読めない記述と許さない取得元は、そこで止まる。
 tool-cooldown-check:
 	@$(call RUN_SCRIPT,tool-cooldown,check)
