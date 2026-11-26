@@ -213,5 +213,5 @@ role を CLI やコンソールで作らない。identity root の apply が名�
 
 ## 版
 
-- AWS Provider は `>= 6.68.0, < 7.0.0`。引数は v6.70.0 の Provider の文書で確かめた。`reference/.terraform.lock.hcl` は `terraform init` が選んだ v6.73.0 で、テストを実行したのもこの版である
+- AWS Provider は `>= 6.68.0, < 7.0.0`。引数は v6.70.0 の Provider の文書で確かめた。テストは v6.73.0 で実行した。`reference/.terraform.lock.hcl` の版は `providers/` の正本が持つ
 - Terraform は `>= 1.7.0, < 2.0.0`。下限はテストが使う `mock_provider` の要求である

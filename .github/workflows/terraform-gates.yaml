@@ -87,6 +87,7 @@ jobs:
               - 'modules/**'
               - 'env/**'
               - '**/.terraform.lock.hcl'
+              - 'providers/**'
               - '.tflint.hcl'
               - '.tf-validate-ignore.yaml'
               - 'mise.toml'
