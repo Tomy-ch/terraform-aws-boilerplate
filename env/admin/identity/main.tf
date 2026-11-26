@@ -29,12 +29,16 @@ module "deployment_identity" {
   plan_output_bucket_arn  = module.state_backend.plan_output_bucket_arn
   apply_output_bucket_arn = module.state_backend.apply_output_bucket_arn
   break_glass_arns        = module.organization_baseline.break_glass_arns
+
+  bootstrap_read_role          = module.organization_baseline.bootstrap_read_role
+  bootstrap_member_account_ids = module.organization_baseline.bootstrapping_account_ids
 }
 
 module "organization_baseline" {
   source = "../../../usecases/organization-baseline"
 
-  project = "tabp"
+  project                      = "tabp"
+  bootstrap_read_principal_arn = module.deployment_identity.plan_role_arn
   # 立ち上げを終えたアカウントを外す PR で、OrganizationAccountAccessRole が使えなくなる（docs/setup/organization-baseline.md）。
   bootstrapping = ["security", "log-archive"]
 }

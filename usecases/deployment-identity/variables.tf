@@ -101,3 +101,30 @@ variable "break_glass_arns" {
     error_message = "break_glass_arns は、path が /break-glass/ の IAM user・group・role の ARN（名前は IAM の上限の長さまで）の、1つ以上4つ以下の一覧にしてください。"
   }
 }
+
+variable "bootstrap_read_role" {
+  description = "メンバーアカウントの立ち上げの plan に使う読み取りの role の名前と path（`organization-baseline` の `bootstrap_read_role`）。管理アカウント（`admin`）でだけ渡す。apply-identity の role の、その role を配る StackSet の作成と更新、plan の role のその StackSet の読み取りと、その role の引き受けの Resource になる。"
+  type = object({
+    name = string
+    path = string
+  })
+  default = null
+
+  # 名前は StackSet の名前にもなるので、IAM と StackSet の両方が許す名前に限る。
+  validation {
+    condition     = var.bootstrap_read_role == null || (can(regex("^[A-Za-z][-A-Za-z0-9]{0,63}$", var.bootstrap_read_role.name)) && can(regex("^/[A-Za-z0-9+=,.@_-]{1,64}/$", var.bootstrap_read_role.path)))
+    error_message = "bootstrap_read_role の name は英字で始まり英数字とハイフンだけの64文字以内に、path は / で挟んだ64文字以内の1段の path にしてください。"
+  }
+}
+
+variable "bootstrap_member_account_ids" {
+  description = "立ち上げの中のメンバーアカウントの、env から ID への対応（`organization-baseline` の `bootstrapping_account_ids`）。管理アカウント（`admin`）でだけ渡す。apply-identity の role はそのアカウントの `OrganizationAccountAccessRole` を、plan の role はそのアカウントの `bootstrap_read_role` を引き受けられる。"
+  type        = map(string)
+  default     = {}
+  nullable    = false
+
+  validation {
+    condition     = alltrue([for k, v in var.bootstrap_member_account_ids : contains(["dev", "stg", "prd", "sandbox", "security", "log-archive"], k) && can(regex("^[0-9]{12}$", v))])
+    error_message = "bootstrap_member_account_ids は、メンバーの env（dev / stg / prd / sandbox / security / log-archive）から12桁のアカウント ID への対応にしてください。"
+  }
+}
