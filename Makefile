@@ -55,6 +55,8 @@ include .makefiles/terraform/operation/ci.mk
 # 手順書の人の手順
 include .makefiles/setup/bootstrap.mk
 include .makefiles/setup/organization-baseline.mk
+include .makefiles/setup/ops-notification.mk
+include .makefiles/setup/dns-zone.mk
 # Docker関連
 include .makefiles/docker/lint.mk
 include .makefiles/docker/pin.mk
