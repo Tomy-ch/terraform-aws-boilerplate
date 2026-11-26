@@ -41,6 +41,7 @@ var (
 		"policy tabp-admin-ci-apply-workload-read がまだ無い",
 		"policy tabp-admin-ci-boundary-ops-notification がまだ無い",
 		"account password policy がまだ無い",
+		"Chatbot の service-linked role がまだ無い",
 	}
 	encryptionDescs = []string{
 		testBucket + " の既定の暗号化が state の鍵の SSE-KMS（Bucket Key なし、SSE-C を拒否）",
@@ -81,13 +82,14 @@ func stage4Descs(executor string) []string {
 		"role tabp-break-glass の信頼条件が MFA を求める",
 		"state の鍵の自動 rotation が 365 日",
 		keyPolicyDesc,
+		"Chatbot の service-linked role の path が /aws-service-role/management.chatbot.amazonaws.com/",
 	)
 }
 
 const (
 	stage1Count      = 4
-	beforeApplyCount = 22
-	stage4Count      = 24
+	beforeApplyCount = 23
+	stage4Count      = 25
 	stage5Count      = 5
 
 	describeKeyBody   = `{"KeyMetadata":{"Arn":"` + testKeyARN + `","KeyState":"Enabled","KeySpec":"SYMMETRIC_DEFAULT","KeyUsage":"ENCRYPT_DECRYPT","MultiRegion":false,"Origin":"AWS_KMS"}}`
@@ -122,6 +124,7 @@ func beforeApplyResponses() map[string]awsResult {
 		jsonKey("iam", "get-group", "--group-name", "break-glass"):                              awsError("NoSuchEntity"),
 		jsonKey("iam", "get-role", "--role-name", "tabp-break-glass"):                           awsError("NoSuchEntity"),
 		jsonKey("iam", "get-account-password-policy"):                                           awsError("NoSuchEntity"),
+		jsonKey("iam", "get-role", "--role-name", "AWSServiceRoleForAWSChatbot"):                awsError("NoSuchEntity"),
 		jsonKey("cloudformation", "describe-stack-set", "--stack-set-name", "tabp-break-glass"): awsError("StackSetNotFoundException"),
 	}
 
@@ -214,6 +217,7 @@ func stage4Responses(t *testing.T, bucketPolicy string) map[string]awsResult {
 		`{"Effect":"Allow","Condition":{"Bool":{"aws:MultiFactorAuthPresent":"true"}}},{"Effect":"Allow","Condition":{"Bool":{"aws:MultiFactorAuthPresent":"true"}}}]}}}`)
 	r[jsonKey("kms", "get-key-rotation-status", "--key-id", testAlias)] = okResult(`{"KeyRotationEnabled":true,"RotationPeriodInDays":365}`)
 	r[jsonKey("kms", "get-key-policy", "--key-id", testAlias, "--policy-name", "default")] = policyResult(t, keyPolicyDoc())
+	r[jsonKey("iam", "get-role", "--role-name", "AWSServiceRoleForAWSChatbot")] = okResult(`{"Role":{"Path":"/aws-service-role/management.chatbot.amazonaws.com/"}}`)
 
 	return r
 }
@@ -524,7 +528,7 @@ func Test_beforeApplySteps(t *testing.T) {
 
 		require.NoError(t, err)
 		assert.Len(t, steps, beforeApplyCount)
-		assert.Equal(t, append(okLines(beforeApplyDescs), "# 結果: 22 件のうち NG 0 件"), lines)
+		assert.Equal(t, append(okLines(beforeApplyDescs), "# 結果: 23 件のうち NG 0 件"), lines)
 	})
 
 	for name, tc := range map[string]struct {
@@ -554,6 +558,8 @@ func Test_beforeApplySteps(t *testing.T) {
 		"policy が在る": {jsonKey("iam", "get-policy", "--policy-arn", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload"), okResult(`{}`),
 			"NG  policy tabp-admin-ci-apply-workload がまだ無い（エラーが返らなかった）"},
 		"password policy が在る": {jsonKey("iam", "get-account-password-policy"), okResult(`{}`), "NG  account password policy がまだ無い（エラーが返らなかった）"},
+		"Chatbot の service-linked role が在る": {jsonKey("iam", "get-role", "--role-name", "AWSServiceRoleForAWSChatbot"), okResult(`{"Role":{}}`),
+			"NG  Chatbot の service-linked role がまだ無い（エラーが返らなかった）"},
 	} {
 		t.Run(name+"なら NG", func(t *testing.T) {
 			t.Parallel()
@@ -562,7 +568,7 @@ func Test_beforeApplySteps(t *testing.T) {
 
 			require.ErrorIs(t, err, errMismatch)
 			assert.Contains(t, lines, tc.line)
-			assert.Equal(t, "# 結果: 22 件のうち NG 1 件", lines[len(lines)-1])
+			assert.Equal(t, "# 結果: 23 件のうち NG 1 件", lines[len(lines)-1])
 		})
 	}
 
@@ -823,7 +829,7 @@ func Test_stage4Steps(t *testing.T) {
 
 		require.NoError(t, err)
 		assert.Len(t, steps, stage4Count)
-		assert.Equal(t, append(okLines(stage4Descs(noExecutorDesc)), "# 結果: 24 件のうち NG 0 件"), lines)
+		assert.Equal(t, append(okLines(stage4Descs(noExecutorDesc)), "# 結果: 25 件のうち NG 0 件"), lines)
 	})
 
 	t.Run("実行者ありで、すべて ok", func(t *testing.T) {
@@ -835,7 +841,7 @@ func Test_stage4Steps(t *testing.T) {
 
 		require.NoError(t, err)
 		assert.Len(t, steps, stage4Count)
-		assert.Equal(t, append(okLines(stage4Descs(executorDesc)), "# 結果: 24 件のうち NG 0 件"), lines)
+		assert.Equal(t, append(okLines(stage4Descs(executorDesc)), "# 結果: 25 件のうち NG 0 件"), lines)
 	})
 
 	t.Run("実行者なしで、Bucket Policy に IAM user が在れば NG", func(t *testing.T) {
@@ -880,7 +886,7 @@ func Test_stage4Steps(t *testing.T) {
 		require.ErrorIs(t, err, errMismatch)
 		assert.Contains(t, lines, "NG  state Bucket の Bucket Policy の文がすべて Deny で、TLS でない要求を拒む文が在る（呼び出しが失敗: An error occurred (NoSuchBucketPolicy) when calling the X operation: detail）")
 		assert.Contains(t, lines, "NG  "+noExecutorDesc+"（呼び出しが失敗: An error occurred (NoSuchBucketPolicy) when calling the X operation: detail）")
-		assert.Equal(t, "# 結果: 24 件のうち NG 2 件", lines[len(lines)-1])
+		assert.Equal(t, "# 結果: 25 件のうち NG 2 件", lines[len(lines)-1])
 	})
 
 	for name, tc := range map[string]struct {
@@ -925,6 +931,10 @@ func Test_stage4Steps(t *testing.T) {
 		"AccessKeyMetadata が null": {jsonKey("iam", "list-access-keys", "--user-name", "break-glass-1"), `{"AccessKeyMetadata":null}`, "IAM user break-glass-1 がアクセスキーを持たない"},
 		"rotation の項目が無い":          {jsonKey("kms", "get-key-rotation-status", "--key-id", testAlias), `{}`, "state の鍵の自動 rotation が 365 日"},
 		"rotation の日数が null":       {jsonKey("kms", "get-key-rotation-status", "--key-id", testAlias), `{"KeyRotationEnabled":true,"RotationPeriodInDays":null}`, "state の鍵の自動 rotation が 365 日"},
+		"Chatbot の service-linked role の path が違う": {jsonKey("iam", "get-role", "--role-name", "AWSServiceRoleForAWSChatbot"),
+			`{"Role":{"Path":"/"}}`, "Chatbot の service-linked role の path が /aws-service-role/management.chatbot.amazonaws.com/"},
+		"Chatbot の service-linked role の path が無い": {jsonKey("iam", "get-role", "--role-name", "AWSServiceRoleForAWSChatbot"),
+			`{"Role":{}}`, "Chatbot の service-linked role の path が /aws-service-role/management.chatbot.amazonaws.com/"},
 	} {
 		t.Run(name+"なら NG", func(t *testing.T) {
 			t.Parallel()
@@ -934,7 +944,7 @@ func Test_stage4Steps(t *testing.T) {
 
 			require.ErrorIs(t, err, errMismatch)
 			assert.Contains(t, lines, "NG  "+tc.desc)
-			assert.Equal(t, "# 結果: 24 件のうち NG 1 件", lines[len(lines)-1])
+			assert.Equal(t, "# 結果: 25 件のうち NG 1 件", lines[len(lines)-1])
 		})
 	}
 

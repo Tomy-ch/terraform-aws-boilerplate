@@ -85,15 +85,12 @@ Identity Center から `organization_admin` で管理アカウントへ入れる
 
 メンバーアカウントへ break-glass の role を配る変更（CloudFormation の StackSet を作る変更）の merge より前に行う。`deployment-identity` に StackSets の権限を足す変更が昇格した後でよい。StackSet は、組織への信頼アクセスが無いと作れない。
 
-1. 管理アカウントのコンソールで、`ap-northeast-1` の CloudFormation を開き、「StackSets」を選ぶ
-2. 「AWS Organizations との信頼されたアクセスを有効にする」を選ぶ（API の `ActivateOrganizationsAccess`）
-3. IAM の role の一覧に `AWSServiceRoleForCloudFormationStackSetsOrgAdmin` が在ることを確かめ、結果を Pull Request に書く
-
-AWS CLI を使える管理アカウントの資格情報が在るなら、`aws cloudformation activate-organizations-access` と `aws cloudformation describe-organizations-access`（`Status` が `ENABLED`）でもよい。
+1. `make setup-organization-baseline-stacksets-access PROFILE=<管理アカウントの profile>` を実行する。今の状態と差分を示し、project の名前の入力を受けてから有効にし、確かめ直す。既に有効なら何もしない
+2. `make setup-organization-baseline-stacksets-access-check PROFILE=<管理アカウントの profile>` の出力を Pull Request に書く（信頼アクセスが `ENABLED` で、`AWSServiceRoleForCloudFormationStackSetsOrgAdmin` が在る）
 
 メンバーアカウントを作る変更が昇格した後に、次を確かめる。
 
-1. CloudFormation の「StackSets」で `<project>-break-glass` を開き、「スタックインスタンス」のすべてのメンバーアカウントの状態が `CURRENT` であることを確かめる
+1. `make setup-organization-baseline-stack-instances-check PROFILE=<管理アカウントの profile>` で、project の StackSet のすべての stack instance が `CURRENT` であることを確かめる
 2. 3.6 の試験で、メンバーアカウントの break-glass の role へも切り替えられることを確かめ、結果を Pull Request に書く
 
 StackSet か stack instance の作成で昇格の apply が失敗したときは、失敗した resource が state に残ったかで直し方が分かれる。`prevent_destroy` を持つ resource が tainted で残ると、次の plan は作り直しを求めて止まる。CI の role は削除の権限を持たないので、tainted は人が外す。apply は人が行わず、CI の経路でやり直す。
@@ -106,7 +103,7 @@ StackSet か stack instance の作成で昇格の apply が失敗したときは
    1. `organization_admin` の資格情報で `env/admin/identity` を `terraform init` し、失敗した resource の tainted を外す（`terraform untaint 'module.organization_baseline.module.break_glass.aws_cloudformation_stack_instances.this'`。StackSet が失敗したなら `aws_cloudformation_stack_set.this` も）
    2. 原因を Pull Request で直して昇格する。コードの変更が要らなければ、この手順は無い
    3. 失敗したアカウントへ配り直す。tainted を外した state は作成が済んだ形で残るので、昇格の apply は配り直さない。`organization_admin` の資格情報で CloudFormation の「StackSets」の `<project>-break-glass` を開き、「アクション」の「StackSet の詳細を編集」を、テンプレートとパラメータを変えずに最後まで進めて送る。失敗の後の instance の状態は `OUTDATED` で、この操作がその作成をやり直す（[Retrying failed stack creation or update operations](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stacksets-troubleshooting.html)）。テンプレートを変えないので、Terraform の宣言とずれない
-   4. すべてのメンバーアカウントの stack instance が `CURRENT` であることを確かめる。残っていれば、原因を見て手順3.3 を繰り返す。対象は `aws cloudformation list-stack-instances --stack-set-name <project>-break-glass --call-as SELF --query "Summaries[?Status!='CURRENT'].[Account,Status,StackInstanceStatus.DetailedStatus,StatusReason]"` で見る。role の用意に失敗したアカウントの instance は、失敗ではなく飛ばされた（skipped）として残る
+   4. すべてのメンバーアカウントの stack instance が `CURRENT` であることを、`make setup-organization-baseline-stack-instances-check PROFILE=<管理アカウントの profile>` で確かめる。残っていれば、原因を見て手順3.3 を繰り返す。role の用意に失敗したアカウントの instance は、失敗ではなく飛ばされた（skipped）として残る
 4. どちらも、昇格の前に CI の plan が作り直しを示さないことを確かめる
 
 ### 3.6 break-glass を試す（毎月）
@@ -134,25 +131,20 @@ declarative policy は、付ける前に account status report で影響を見�
 メンバーアカウントを作る変更（[organization-baseline の README](../../usecases/organization-baseline/README.md) の対応表に行を足す変更）は取り消せない。手順1-3 は、その変更の merge より前に行う。
 
 1. 各アカウントのメールを用意し、受信できること（グループの受信箱へ届くこと）を確かめる。メールは他の AWS アカウントで使われていないものにする
-2. Service Quotas で、AWS Organizations のアカウント数の上限が、管理アカウントを含めたアカウントの数以上であることを確かめる
-3. 管理アカウントの資格情報で、メールの parameter を置く。key は対応表の env のすべてで、過不足があると plan が落ちる
-
-   ```sh
-   aws ssm put-parameter --region ap-northeast-1 --type String --overwrite --name /<project>/organization-baseline/member-account-emails --value '{"security":"<メール>","log-archive":"<メール>"}'
-   ```
-
+2. `make setup-organization-baseline-account-quota-check PROFILE=<管理アカウントの profile>` で、AWS Organizations のアカウント数の上限が、在るアカウントと作るアカウントの計以上であることを確かめる
+3. `make setup-organization-baseline-member-emails PROFILE=<管理アカウントの profile>` で、メールの parameter を置く。env の一覧は対応表から取り、env ごとにメールを入力させ、形・env の間の重複・組織のほかのアカウントとの重複を確かめてから、project の名前の入力を受けて置く。その後に `make setup-organization-baseline-member-emails-check PROFILE=<管理アカウントの profile>` の出力を Pull Request に書く
 4. 変更を昇格した後、次を確かめて Pull Request に書く
-   1. `aws organizations list-accounts-for-parent --parent-id <Security の OU の ID>` に、作ったアカウントが `ACTIVE` で在る
+   1. `make setup-organization-baseline-member-accounts-check PROFILE=<管理アカウントの profile>` で、作ったアカウントが対応表の OU の直下に `ACTIVE` で在る
    2. 3.5 の「メンバーアカウントを作る変更が昇格した後」の2つ（stack instance が `CURRENT`、break-glass の role への切り替え）
    3. 次の CI の plan が変更を示さない
 
 作成の途中で apply が落ち、アカウントは在るが state に無いとき（plan がそのアカウントを作ろうとし、apply がメールの重複で落ちる）は、作り直さずに取り込む。
 
-1. `aws organizations list-accounts` で、そのアカウントの ID を確かめる
+1. `make setup-organization-baseline-member-accounts-check PROFILE=<管理アカウントの profile> IDS=1` で、そのアカウントの ID を確かめる（この出力はアカウントの ID を伏せないので、Pull Request に貼らない）
 2. `env/admin/identity` に `import` block（`to = module.organization_baseline.module.organization.aws_organizations_account.this["<env>"]`、`id = "<アカウントの ID>"`）を足す Pull Request を作り、CI の plan が import 1 と変更なしを示すことを確かめて昇格する
 3. 取り込んだ後、`import` block を消す Pull Request を作る
 
-メールを変えるときは、AWS の側で先に変える。その後に parameter を同じ値に合わせる。parameter だけを変えると、plan が作り直しを求め、`prevent_destroy` で止まる。
+メールを変えるときは、`make setup-organization-baseline-member-email-update PROFILE=<管理アカウントの profile> MEMBER_ENV=<env>` を実行する。AWS の側で先に変え（新しいメールに届く確認コードを入力する）、その後に parameter を同じ値に合わせる。parameter だけを変えると、plan が作り直しを求め、`prevent_destroy` で止まる。`make setup-organization-baseline-member-emails` は、在るアカウントのメールを変える入力を拒む。
 
 立ち上げを終えたアカウントは、`env/admin/identity/main.tf` の `bootstrapping` から外す Pull Request で閉じる。外したアカウントには `deny-bootstrap-role` が付き、`OrganizationAccountAccessRole` が使えなくなる。
 

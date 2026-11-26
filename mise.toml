@@ -34,22 +34,20 @@ node = "26.13.1"
 # 実行エンジン（ADR-0502 決定1）。OpenTofu を採らない理由は同 ADR 決定3。
 # module が宣言する required_version は、使用する機能から導かれる下限であって
 # この pin と同じ値ではない（同 決定2）。
-"aqua:hashicorp/terraform" = "1.17.1"
+"aqua:hashicorp/terraform" = "1.17.2"
 
 # Static Analysis の権威（ADR-0501 決定4）。`terraform validate` の代替ではなく補完（同 決定5）。
 # AWS ルールセットは tflint 自身のプラグイン機構が取るため、版の固定は .tflint.hcl が持つ。
-"aqua:terraform-linters/tflint" = "0.65.0"
+"aqua:terraform-linters/tflint" = "0.66.0"
 
-# Security の道具の1つ（ADR-0501 決定4・決定6）。Terraform の IaC 走査もここが担う。secret scanning は
-# 作業ツリーに対する Secret Scan の検出器の1つとして併用する（ADR-0302 決定2）。
-"aqua:aquasecurity/trivy" = "0.76.1"
+# Security の道具の1つ（ADR-0501 決定4・決定6）。Terraform の IaC 走査と、Secret Scan の検出器（ADR-0302 決定2）を兼ねる。
+"aqua:aquasecurity/trivy" = "0.76.2"
 
-# Secret Scan の検出器（ADR-0302 決定2）。走査対象は commit と履歴であり、作業ツリーのファイルではない。
+# Secret Scan の検出器（ADR-0302 決定2）。
 "aqua:gitleaks/gitleaks" = "8.30.1"
 
-# Secret Scan の検出器（ADR-0302 決定2）。gitleaks と同じ範囲を、発行元ごとの検出器の集合で走査する。
-# AGPL-3.0 の利用の前提は ADR-0302「影響」が持つ。
-"aqua:trufflesecurity/trufflehog" = "3.99.7"
+# Secret Scan の検出器（ADR-0302 決定2）。AGPL-3.0 の利用の前提は ADR-0302「影響」が持つ。
+"aqua:trufflesecurity/trufflehog" = "3.99.8"
 
 # bootstrap の段1 が state backend の実体を作る道具（ADR-0602 決定4）。**ホストで実行する理由は
 # ADR-0504 が持つ。**
@@ -88,15 +86,15 @@ hadolint = "2.15.1"
 golangci-lint = "2.15.0"
 
 # 運用機構（scripts/）の Go の依存の既知脆弱性を報告する。
-"go:golang.org/x/vuln/cmd/govulncheck" = "1.9.0"
+"go:golang.org/x/vuln/cmd/govulncheck" = "1.10.0"
 
 # ローカルの git hook。速いフィードバックのために置き、CI の代替としない（ADR-0501 決定26）。
 lefthook = "2.2.2"
 
 # --- npm エコシステム（ADR-0503 決定14） ---
 
-# npm エコシステムのパッケージ管理（ADR-0503 決定14）。版を変えたら make pin-pnpm-resolve で Dockerfile の写しと照合値を書き直す。
-"aqua:pnpm/pnpm" = "12.17.0"
+# 版を変えたら make pin-pnpm-resolve で Dockerfile の写しと照合値を書き直す。
+"aqua:pnpm/pnpm" = "12.19.0"
 
 # `npm:` の道具は版の宣言だけをここに置く（入れさせない理由は [settings] の disable_tools）。
 # 版を変えたら make versions-apply と make node-tools-lock で package.json と lockfile へ写す。
@@ -110,6 +108,5 @@ lefthook = "2.2.2"
 [settings]
 # `npm:` の道具は版の宣言だけを [tools] に置き、mise には入れさせない（ADR-0503 決定1）。
 # mise の npm backend はリポジトリの lockfile を読まずに推移的な依存を解決し直すので、入れるのは
-# docker/tools/node の lockfile である（決定17）。集合が `npm:` のキーと一致することは
-# make versions-check が、mise が実際に外すことは make mise-npm-disabled-check が見る。
+# docker/tools/node の lockfile である（決定17）。
 disable_tools = ["npm:@commitlint/cli", "npm:markdownlint-cli2"]

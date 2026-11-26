@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun/tooltest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -41,8 +43,8 @@ if [ -e '` + dir + `'/"$step.fail" ]; then echo "$step が落ちた" >&2; exit 1
 exit 0
 `
 	require.NoError(t, os.WriteFile(script, []byte(body), 0o600))
-	tool := func(d string, env []string, step string) *exec.Cmd {
-		c := exec.CommandContext(context.Background(), "/bin/sh", script, step)
+	tool := func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
+		c := exec.CommandContext(ctx, "/bin/sh", script, step)
 		c.Dir, c.Env = d, env
 		return c
 	}
@@ -90,7 +92,7 @@ func Test_command(t *testing.T) {
 	} {
 		t.Run(step, func(t *testing.T) {
 			t.Parallel()
-			c := command("/x", []string{"A=1"}, step)
+			c := command(context.Background(), "/x", []string{"A=1"}, step)
 			assert.Equal(t, want, c.Args)
 			assert.Equal(t, "/x", c.Dir)
 			assert.Equal(t, []string{"A=1"}, c.Env)
@@ -141,6 +143,15 @@ func Test_runTool(t *testing.T) {
 		assert.Equal(t, "out", string(got))
 		_, err = runTool(tool, t.TempDir(), nil, "b", &bytes.Buffer{})
 		require.ErrorIs(t, err, errLocalAWS)
+		assert.Equal(t, 2, exitCode(err))
+	})
+
+	t.Run("起動できなければ errLocalAWS ではなく ErrTool で、終了コード 2", func(t *testing.T) {
+		t.Parallel()
+		_, err := runTool(tooltest.Missing, t.TempDir(), nil, "a", &bytes.Buffer{})
+		require.ErrorIs(t, err, toolrun.ErrTool)
+		assert.NotErrorIs(t, err, errLocalAWS)
+		assert.Equal(t, 2, exitCode(err))
 	})
 }
 
@@ -265,13 +276,23 @@ func Test_localInit(t *testing.T) {
 		assert.Equal(t, stepLocalInit+" "+dir+" profile=tabp-bootstrap region= init=-backend-config=bucket=b -backend-config=kms_key_id=k cfg=/dev/null extra=", got[0], "呼び出し元の TF_CLI_ARGS_init と AWS の資格情報を渡さない")
 	})
 
-	t.Run("init が落ちれば errLocalTF", func(t *testing.T) {
+	t.Run("init が 0 以外なら errLocalInit で、終了コード 2（値を決められない側）", func(t *testing.T) {
 		t.Parallel()
 		tool, _ := fakeLocalTool(t, nil, stepLocalInit)
 		d, _ := localDeps(tool)
 		p := writeState(t, localState{Dir: t.TempDir(), InitArgs: []string{"-backend-config=bucket=b"}})
 		_, err := localInit([]string{"-profile", "p", "-state", p}, d, &bytes.Buffer{}, d.stderr)
-		require.ErrorIs(t, err, errLocalTF)
+		require.ErrorIs(t, err, errLocalInit)
+		assert.Equal(t, 2, exitCode(err))
+	})
+
+	t.Run("init を起動できなければ ErrTool で、終了コード 2", func(t *testing.T) {
+		t.Parallel()
+		d, _ := localDeps(tooltest.Missing)
+		p := writeState(t, localState{Dir: t.TempDir(), InitArgs: []string{"-backend-config=bucket=b"}})
+		_, err := localInit([]string{"-profile", "p", "-state", p}, d, &bytes.Buffer{}, d.stderr)
+		require.ErrorIs(t, err, toolrun.ErrTool)
+		assert.Equal(t, 2, exitCode(err))
 	})
 
 	for name, body := range map[string]string{
@@ -315,6 +336,19 @@ func Test_localPlan(t *testing.T) {
 		return []string{"-profile", "tabp-bootstrap", "-env", "admin", "-root", "identity", "-base", base, "-header", header, "-log", log}
 	}
 
+	t.Run("plan を起動できなければ ErrTool で、終了コード 2", func(t *testing.T) {
+		t.Parallel()
+		base := localBase(t)
+		work := t.TempDir()
+		header := filepath.Join(work, "h")
+		require.NoError(t, os.WriteFile(header, []byte("commit: "+commitSHA+"\n"), 0o600))
+		d, _ := localDeps(tooltest.Missing)
+		_, err := localPlan(planArgs(base, header, filepath.Join(work, "p.log")), d, &bytes.Buffer{}, d.stderr)
+		require.ErrorIs(t, err, toolrun.ErrTool)
+		assert.NotErrorIs(t, err, errLocalPlan)
+		assert.Equal(t, 2, exitCode(err))
+	})
+
 	t.Run("lock を取らない plan を起動し、header と出力を log と端末へ書き、log を所有者だけの権限で作り直す", func(t *testing.T) {
 		t.Parallel()
 		base := localBase(t)
@@ -341,7 +375,7 @@ func Test_localPlan(t *testing.T) {
 		assert.True(t, strings.HasPrefix(calls()[0], stepLocalPlan+" "+filepath.Join(base, "env", "admin", "identity")+" profile=tabp-bootstrap"))
 	})
 
-	t.Run("plan が落ちれば errLocalTF で、出力は log に残る", func(t *testing.T) {
+	t.Run("plan が 0 以外なら errLocalPlan で終了コード 1 になり、出力は log に残る", func(t *testing.T) {
 		t.Parallel()
 		base := localBase(t)
 		work := t.TempDir()
@@ -351,7 +385,8 @@ func Test_localPlan(t *testing.T) {
 		tool, _ := fakeLocalTool(t, map[string]string{stepLocalPlan: "Error: x\n"}, stepLocalPlan)
 		d, _ := localDeps(tool)
 		_, err := localPlan(planArgs(base, header, log), d, &bytes.Buffer{}, d.stderr)
-		require.ErrorIs(t, err, errLocalTF)
+		require.ErrorIs(t, err, errLocalPlan)
+		assert.Equal(t, 1, exitCode(err))
 		raw, err := os.ReadFile(log)
 		require.NoError(t, err)
 		assert.Contains(t, string(raw), "Error: x")

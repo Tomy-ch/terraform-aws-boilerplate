@@ -71,11 +71,11 @@ endef
 
 .PHONY: ci-aws-credentials ## [CI] OIDC で CI_ENV の CI_ROLE の role を assume し、profile に資格情報を置く
 ci-aws-credentials:
-	@$(if $(CI_ENV),,$(error CI_ENV が空です))$(call TF_LOCAL,ci-credentials -project $(TF_LOCAL_PROJECT) -env $(CI_ENV) -role $(CI_ROLE) -base $(TF_BASE) -work $(CI_PLAN_DIR))
+	@$(if $(CI_ENV),,$(error CI_ENV が空です))$(call TF_LOCAL,ci-credentials -project $(TF_LOCAL_PROJECT) -env $(CI_ENV) -role $(CI_ROLE) -base $(TF_BASE) -work tmp/ci-assume)
 
 .PHONY: ci-assume-denied ## [CI] CI_ENV の plan の job の OIDC token で、pull_request で起動しない種別の role の assume がすべて拒否されることを確かめる
 ci-assume-denied:
-	@$(if $(CI_ENV),,$(error CI_ENV が空です))$(call TF_LOCAL,ci-assume-denied -project $(TF_LOCAL_PROJECT) -env $(CI_ENV) -base $(TF_BASE) -work $(CI_PLAN_DIR))
+	@$(if $(CI_ENV),,$(error CI_ENV が空です))$(call TF_LOCAL,ci-assume-denied -project $(TF_LOCAL_PROJECT) -env $(CI_ENV) -base $(TF_BASE) -work tmp/ci-assume)
 
 .PHONY: ci-plan-admin-identity ## [CI] 管理アカウントの identity root を plan し、全文を plan の出力の Bucket に置く
 ci-plan-admin-identity: CI_POLICY_NAMESPACES := plan.stateful_protection plan.kms_key_policy plan.resource_policy_exclusive plan.s3_bucket_namespace plan.state_backend_write_deny

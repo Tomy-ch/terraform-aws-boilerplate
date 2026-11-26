@@ -1,8 +1,11 @@
 # deployment-identity の apply の role が、bootstrap の構成物を変更できないこと（ADR-0602 決定13、ADR-0604 決定10、
-# deployment-identity/ADR-0201 決定5）。Allow は評価しない。明示の Deny はほかのどの policy の Allow にも勝つので、
-# 構成物の ARN ごとに、読み取り以外のすべてを拒む条件なしの Deny が在ることを見る。
+# deployment-identity/ADR-0201 決定5）。service-linked role のほかでは Allow を評価しない。明示の Deny はほかのどの
+# policy の Allow にも勝つので、構成物の ARN ごとに、読み取り以外のすべてを拒む条件なしの Deny が在ることを見る。
 # 構成物（state-backend）と apply の role（deployment-identity）は別の root の plan に在るので、結合した入力で突き合わせる。
 # 対象の ARN は検査する policy からではなく、構成物の resource の値と宣言から組む。
+# service-linked role は apply の role の作成の権限が残るので Deny で守らず、role へ向く IAM の書き込みの Allow を前提の
+# サービスの条件つきの作成に限り、前提のサービスの role が bootstrap.prerequisite_module の下にだけ在ることを見る
+# （deployment-identity/ADR-0002 決定6）。
 package plan.deployment_identity_apply_role
 
 import data.plan.lib
@@ -41,6 +44,10 @@ types := object.get(bootstrap, "types", {})
 
 children := object.get(bootstrap, "children", {})
 
+prerequisite_module := object.get(bootstrap, "prerequisite_module", null)
+
+prerequisite_services := object.get(bootstrap, "prerequisite_services", null)
+
 nonempty_string(x) if {
 	is_string(x)
 	x != ""
@@ -57,6 +64,12 @@ well_formed_type(t) if {
 well_formed_type(t) if {
 	is_object(t)
 	t.class == "key"
+	object.keys(t) == {"class"}
+}
+
+well_formed_type(t) if {
+	is_object(t)
+	t.class == "service_linked"
 	object.keys(t) == {"class"}
 }
 
@@ -115,6 +128,18 @@ well_formed_bootstrap if {
 	is_object(children)
 	every _, c in children {
 		well_formed_child(c)
+	}
+	nonempty_string(prerequisite_module)
+	some m in modules
+	startswith(prerequisite_module, m)
+	well_formed_prerequisite_services
+}
+
+well_formed_prerequisite_services if {
+	is_array(prerequisite_services)
+	count(prerequisite_services) > 0
+	every x in prerequisite_services {
+		nonempty_string(x)
 	}
 }
 
@@ -467,7 +492,7 @@ deny contains msg if {
 
 deny contains msg if {
 	not well_formed_bootstrap
-	msg := "[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.bootstrap が、modules（空でない文字列の配列）/ types（class が target（children は真偽値）・key・covered_by（parent・ref・parent_ref が必須）。ほかのキーを持たない）/ children（suffixes・roots・version_deletion・writes だけを持ち、子の ARN を1つ以上生む。writes は suffixes と共に置き、読み取りの名前でない1つの Action の名前（wildcard を含まない）の空でない配列）の形を満たしていません"
+	msg := "[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.bootstrap が、modules（空でない文字列の配列）/ types（class が target（children は真偽値）・key・service_linked・covered_by（parent・ref・parent_ref が必須）。ほかのキーを持たない）/ children（suffixes・roots・version_deletion・writes だけを持ち、子の ARN を1つ以上生む。writes は suffixes と共に置き、読み取りの名前でない1つの Action の名前（wildcard を含まない）の空でない配列）/ prerequisite_module（modules のどれかで始まる空でない文字列）/ prerequisite_services（空でない文字列の空でない配列）の形を満たしていません"
 }
 
 deny contains msg if {
@@ -487,7 +512,7 @@ deny contains msg if {
 
 deny contains msg if {
 	some r in resources
-	class_of(r.type) == "target"
+	class_of(r.type) in {"target", "service_linked"}
 	not arn_shaped(object.get(r.change.after, "arn", null))
 	msg := sprintf("[PLAN-APPLY-00] bootstrap の構成物 %s の ARN が plan で決まっていないか、ARN の形ではありません。tests/policy-input.tftest.hcl の override_resource で与えてください", [r.address])
 }
@@ -599,6 +624,108 @@ deny contains msg if {
 	some p in pairs
 	object.get(p.policy.document.change.after, "key_id", null) != object.get(p.key.change.after, "id", null)
 	msg := sprintf("[PLAN-APPLY-02] %s: %s の key_id が、同じ module の鍵 %s を指していません", [p.policy.document.path, p.policy.document.address, p.key.address])
+}
+
+# --- PLAN-APPLY-02: service-linked role への Allow ---
+
+wl_decl := object.get(di, "workload", {})
+
+prerequisite_set := {x | well_formed_bootstrap; some x in prerequisite_services}
+
+# 同じ ARN に異なるサービスが在っても評価が衝突しないよう、ARN とサービスの組の集合にする。
+service_linked_roles contains [arn, service] if {
+	some r in resources
+	class_of(r.type) == "service_linked"
+	arn := r.change.after.arn
+	arn_shaped(arn)
+	service := object.get(r.change.after, "aws_service_name", null)
+}
+
+# apply の role が使う Allow の全体: inline policy、workload の3つの policy（deployment-identity/ADR-0201 決定17）、作る role の boundary。
+allow_sources contains a if {
+	some a in array.concat([target], [object.get(wl_decl, k, "") | some k in workload_keys])
+	a != ""
+}
+
+allow_sources contains a if {
+	boundaries := object.get(wl_decl, "boundaries", {})
+	is_object(boundaries)
+	some _, a in boundaries
+}
+
+allows contains {"path": r.document.path, "address": r.document.address, "s": s} if {
+	some r in lib.readable
+	r.document.address in allow_sources
+	some s in lib.statements(r.body)
+	s.Effect == "Allow"
+}
+
+# Service Authorization Reference（IAM、v1.5）が resource type role を挙げる Action のうち、読み取りと List でないもの。
+# アカウントの設定の書き込み（iam:UpdateAccountPasswordPolicy など）は role に向かないので数えない。wildcard の Action は、
+# この一覧のどれかに当たれば数える。iam:PassRole も数える。前提の service-linked role は渡す先を持たない。
+role_write_actions := {
+	"iam:attachrolepolicy",
+	"iam:createrole",
+	"iam:createservicelinkedrole",
+	"iam:deleterole",
+	"iam:deleterolepermissionsboundary",
+	"iam:deleterolepolicy",
+	"iam:deleteservicelinkedrole",
+	"iam:detachrolepolicy",
+	"iam:passrole",
+	"iam:putrolepermissionsboundary",
+	"iam:putrolepolicy",
+	"iam:tagrole",
+	"iam:untagrole",
+	"iam:updateassumerolepolicy",
+	"iam:updaterole",
+	"iam:updateroledescription",
+}
+
+iam_write_action(a) if {
+	some w in role_write_actions
+	lib.iam_match(a, w)
+}
+
+service_linked_create(s, a, service) if {
+	a == "iam:createservicelinkedrole"
+	service in prerequisite_set
+	lib.as_array(object.get(object.get(object.get(s, "Condition", {}), "StringEquals", {}), "iam:AWSServiceName", [])) == [service]
+	service_linked_resources(s, service)
+}
+
+# Resource は、そのサービスの service-linked role の ARN（plan の値）と完全一致する要素だけを持つ。
+service_linked_resources(s, service) if {
+	not "NotResource" in object.keys(s)
+	resources := lib.as_array(object.get(s, "Resource", []))
+	count(resources) > 0
+	every r in resources {
+		[r, service] in service_linked_roles
+	}
+}
+
+deny contains msg if {
+	some [arn, service] in service_linked_roles
+	some x in allows
+	applies_to(x.s, arn)
+	some a in lib.lower_all(object.get(x.s, "Action", []))
+	iam_write_action(a)
+	not service_linked_create(x.s, a, service)
+	msg := sprintf("[PLAN-APPLY-02] %s: %s の Allow が、service-linked role %s に %s を許しています。許してよい role への IAM の書き込みは、iam:AWSServiceName を StringEquals で前提のサービス（%v）に限った iam:CreateServiceLinkedRole だけです（deployment-identity/ADR-0002 決定6）", [x.path, x.address, arn, a, sort(prerequisite_set)])
+}
+
+deny contains msg if {
+	some [arn, _] in service_linked_roles
+	some x in allows
+	"NotAction" in object.keys(x.s)
+	applies_to(x.s, arn)
+	not iam_excluded(x.s.NotAction)
+	msg := sprintf("[PLAN-APPLY-02] %s: %s の Allow の NotAction が、service-linked role %s への IAM の書き込みを許しています", [x.path, x.address, arn])
+}
+
+iam_excluded(not_actions) if {
+	some a in lib.lower_all(not_actions)
+	a in {"*", "iam:*"}
 }
 
 # --- PLAN-APPLY-03: 構成物の ARN ごとの Deny の形 ---
@@ -790,4 +917,50 @@ deny contains msg if {
 	some a in required_governance_actions
 	not governance_denied(a)
 	msg := sprintf("[PLAN-APPLY-06] apply の role %q が、%s を Resource \"*\" の条件なしの Deny で拒んでいません（deployment-identity/ADR-0201 決定5）", [target, a])
+}
+
+# --- PLAN-APPLY-07: アカウントの前提の service-linked role の置き場（deployment-identity/ADR-0002 決定6）---
+
+service_linked_changes contains {"path": c.path, "address": c.rc.address, "service": object.get(c.rc.change.after, "aws_service_name", null)} if {
+	some c in lib.changes
+	c.rc.type == "aws_iam_service_linked_role"
+	is_object(c.rc.change.after)
+}
+
+prerequisites contains p if {
+	some p in service_linked_changes
+	p.service in prerequisite_set
+}
+
+in_prerequisite_module(address) if startswith(address, prerequisite_module)
+
+deny contains msg if {
+	well_formed_bootstrap
+	some p in service_linked_changes
+	not is_string(p.service)
+	msg := sprintf("[PLAN-APPLY-07] %s: %s の aws_service_name が plan で決まっていません。前提の service-linked role かを判定できません", [p.path, p.address])
+}
+
+deny contains msg if {
+	well_formed_bootstrap
+	some p in prerequisites
+	not in_prerequisite_module(p.address)
+	msg := sprintf("[PLAN-APPLY-07] %s: %s が、宣言した前提の service-linked role（%s）を %s の外で作っています。identity root の %s だけが持ちます", [p.path, p.address, p.service, prerequisite_module, prerequisite_module])
+}
+
+deny contains msg if {
+	well_formed_bootstrap
+	some p in service_linked_changes
+	in_prerequisite_module(p.address)
+	is_string(p.service)
+	not p.service in prerequisite_set
+	msg := sprintf("[PLAN-APPLY-07] %s: %s の service-linked role（%s）が、宣言した前提のサービス（%v）にありません。data.policy_plan.deployment_identity.apply_role.bootstrap.prerequisite_services に足してください", [p.path, p.address, p.service, sort(prerequisite_set)])
+}
+
+deny contains msg if {
+	well_formed_bootstrap
+	some service in prerequisite_set
+	n := count({p | some p in prerequisites; p.service == service; in_prerequisite_module(p.address)})
+	n != 1
+	msg := sprintf("[PLAN-APPLY-07] 宣言した前提の service-linked role（%s）が、%s の下に %d 件です（1件を期待）", [service, prerequisite_module, n])
 }

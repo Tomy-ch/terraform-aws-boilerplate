@@ -184,6 +184,10 @@
             "module.state_backend.",
             "module.deployment_identity."
           ],
+          "prerequisite_module": "module.deployment_identity.",
+          "prerequisite_services": [
+            "management.chatbot.amazonaws.com"
+          ],
           "types": {
             "aws_iam_openid_connect_provider": {
               "class": "target"
@@ -217,6 +221,9 @@
               "parent": "aws_iam_role",
               "ref": "role_name",
               "parent_ref": "name"
+            },
+            "aws_iam_service_linked_role": {
+              "class": "service_linked"
             },
             "aws_kms_alias": {
               "class": "covered_by",

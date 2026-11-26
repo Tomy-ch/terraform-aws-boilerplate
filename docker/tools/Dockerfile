@@ -101,7 +101,6 @@ ENV GOCACHE=/tmp/go-build \
 
 # root で動かさない。bind mount した生成物が root 所有になると、道具が直した行を直した本人が
 # 消せない状態がリポジトリに残る。compose も user を渡すが、イメージ単体でも既定を非 root にする。
-# 数値で書くのは、ホスト側が名前を解決できるとは限らないため（hadolint DL3066）。
 # 65534 は nobody:nogroup。この段に mise も home も残していないため、書き込む先を持たない。
 USER 65534:65534
 
@@ -126,9 +125,9 @@ RUN apk add --no-cache ca-certificates curl
 # 版と照合値は make pin-pnpm-resolve が mise.toml の宣言から書く写しで、make pin-pnpm-check が守る。
 ARG TARGETARCH
 RUN set -eu; \
-    pnpm_version="12.17.0"; \
-    pnpm_sha256_amd64="0a3f8f12f4d894ba5013c7d445136eec5260dcffb63477247ca9b1c23d4fe27f"; \
-    pnpm_sha256_arm64="57f5f13647270dd55f4c463b5ad8e6e9157fc0463bb1ac62216da7c18531cb5b"; \
+    pnpm_version="12.19.0"; \
+    pnpm_sha256_amd64="b41d7b2d8f47187fdf9b3df170f984ffb02ef14bd27d353ccff704cef0d1af6e"; \
+    pnpm_sha256_arm64="cf6a59cbbd06800575d8274cd5f84eb9de74794ec495630b554bfef341ecd0d8"; \
     case "${TARGETARCH:-}" in \
       amd64) asset=x64; sum="$pnpm_sha256_amd64" ;; \
       arm64) asset=arm64; sum="$pnpm_sha256_arm64" ;; \
@@ -149,7 +148,7 @@ COPY docker/tools/node/package.json docker/tools/node/pnpm-lock.yaml docker/tool
 RUN pnpm install --frozen-lockfile --prod --store-dir /tmp/pnpm-store
 
 # ==============================================================================
-# node_tools: npm エコシステムの道具。markdownlint-cli2 / commitlint
+# node_tools: npm エコシステムの道具
 # ==============================================================================
 # pnpm と curl はこの段へ持ち込まない（ADR-0503 決定11）。
 FROM node:26.13.1-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS node_tools
