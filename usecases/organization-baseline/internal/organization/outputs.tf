@@ -12,3 +12,8 @@ output "bootstrapping_account_ids" {
   description = "立ち上げ中のメンバーアカウントの env から ID への map。"
   value       = { for k, a in aws_organizations_account.this : k => a.id if contains(var.bootstrapping, k) }
 }
+
+output "arn" {
+  description = "組織の ARN。アカウントの ID の一覧を共有する宛先。"
+  value       = aws_organizations_organization.this.arn
+}

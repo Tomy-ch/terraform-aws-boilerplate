@@ -59,6 +59,11 @@ run "outputs" {
   }
 
   assert {
+    condition     = output.account_ids_parameter_arn == module.account_ids.parameter_arn
+    error_message = "account_ids_parameter_arn が、アカウントの ID の一覧を持つ parameter の ARN を返していません。"
+  }
+
+  assert {
     condition     = output.bootstrapping_account_ids == {}
     error_message = "bootstrapping の既定（空）で、bootstrapping_account_ids が空になっていません。"
   }

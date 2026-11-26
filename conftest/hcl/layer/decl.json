@@ -1351,6 +1351,26 @@
         "parent_arguments": {},
         "whole_document": false
       },
+      "aws_ram_principal_association": {
+        "parents": {
+          "resource_share_arn": [
+            "aws_ram_resource_share"
+          ]
+        },
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
+      },
+      "aws_ram_resource_association": {
+        "parents": {
+          "resource_share_arn": [
+            "aws_ram_resource_share"
+          ]
+        },
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
+      },
       "aws_rds_cluster_activity_stream": {
         "parents": {
           "resource_arn": [
@@ -2242,6 +2262,7 @@
       "aws_organizations_policy": "親になる resource（自前の identity と lifecycle を持ち、他の resource の設定を書き換えない）",
       "aws_organizations_resource_policy": "親を持たない（アカウントかリージョンの単位で設定する）",
       "aws_pinpointsmsvoicev2_configuration_set": "親になる resource（自前の identity と lifecycle を持ち、他の resource の設定を書き換えない）",
+      "aws_ram_resource_share": "親になる resource（自前の identity と lifecycle を持ち、他の resource の設定を書き換えない）",
       "aws_rds_cluster": "親になる resource（自前の identity と lifecycle を持ち、他の resource の設定を書き換えない）",
       "aws_rds_cluster_instance": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
       "aws_redshiftserverless_endpoint_access": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
@@ -2267,6 +2288,7 @@
       "aws_sesv2_email_identity": "親になる resource（自前の identity と lifecycle を持ち、他の resource の設定を書き換えない）",
       "aws_sns_topic": "親になる resource（自前の identity と lifecycle を持ち、他の resource の設定を書き換えない）",
       "aws_sqs_queue": "親になる resource（自前の identity と lifecycle を持ち、他の resource の設定を書き換えない）",
+      "aws_ssm_parameter": "自前の identity と lifecycle を持ち、他の resource の設定を書き換えない",
       "aws_ssm_service_setting": "親を持たない（アカウントかリージョンの単位で設定する）",
       "aws_ssoadmin_application": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
       "aws_ssoadmin_instance_access_control_attributes": "親の IAM Identity Center の instance を Terraform が作らない",

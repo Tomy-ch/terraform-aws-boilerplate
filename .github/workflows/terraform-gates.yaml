@@ -717,6 +717,7 @@ jobs:
             iam.amazonaws.com
             kms.ap-northeast-1.amazonaws.com
             organizations.us-east-1.amazonaws.com
+            ram.ap-northeast-1.amazonaws.com
             *.s3-control.ap-northeast-1.amazonaws.com
             ssm.ap-northeast-1.amazonaws.com
       - name: Harden the runner (retry)
@@ -767,6 +768,7 @@ jobs:
             iam.amazonaws.com
             kms.ap-northeast-1.amazonaws.com
             organizations.us-east-1.amazonaws.com
+            ram.ap-northeast-1.amazonaws.com
             *.s3-control.ap-northeast-1.amazonaws.com
             ssm.ap-northeast-1.amazonaws.com
 
@@ -871,6 +873,7 @@ jobs:
             iam.amazonaws.com
             kms.ap-northeast-1.amazonaws.com
             organizations.us-east-1.amazonaws.com
+            ram.ap-northeast-1.amazonaws.com
             *.s3-control.ap-northeast-1.amazonaws.com
             ssm.ap-northeast-1.amazonaws.com
             sns.ap-northeast-1.amazonaws.com
@@ -927,6 +930,7 @@ jobs:
             iam.amazonaws.com
             kms.ap-northeast-1.amazonaws.com
             organizations.us-east-1.amazonaws.com
+            ram.ap-northeast-1.amazonaws.com
             *.s3-control.ap-northeast-1.amazonaws.com
             ssm.ap-northeast-1.amazonaws.com
             sns.ap-northeast-1.amazonaws.com
