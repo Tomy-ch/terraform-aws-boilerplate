@@ -24,6 +24,8 @@ import (
 const (
 	planSecret  = "PLAN-SECRET"
 	applySecret = "APPLY-SECRET"
+	// planLineOne は、偽の show の既定（create 1件）に合う terraform の「Plan:」の行。
+	planLineOne = "Plan: 1 to add, 0 to change, 0 to destroy.\n"
 	onePolicy   = "package plan.p\n\ndeny contains msg if {\n\tfalse\n\tmsg := \"x\"\n}\n"
 )
 
@@ -38,9 +40,9 @@ func fakeFlow(t *testing.T, knobs map[string]string) (toolFunc, string) {
 		stepCallerIdentity + ".out":       callerIdentity,
 		stepListAliases + ".out":          withAlias,
 		stepBucketEncrypt + ".out":        encKMS(stateKeyARN),
-		stepCIPlanNoLock + ".out":         planSecret + "\n",
+		stepCIPlanNoLock + ".out":         planSecret + "\n" + planLineOne,
 		stepCIPlanNoLock + ".rc":          "2",
-		stepCIPlanLock + ".out":           planSecret + "\n",
+		stepCIPlanLock + ".out":           planSecret + "\n" + planLineOne,
 		stepCIPlanLock + ".rc":            "2",
 		stepCIShow + ".out":               planWith(change("a.b", `"create"`), ""),
 		stepCIConftest + ".out":           `[{"namespace":"plan.p","successes":1}]`,
@@ -606,6 +608,68 @@ func Test_ciRunPlan(t *testing.T) {
 		f := newFlow(t, nil)
 		require.NoError(t, f.all(ciModePlan, "identity"))
 		assert.NotContains(t, f.calls(), "-target=x")
+	})
+
+	t.Run("変わる resource の一覧をログと job summary に出し、値と識別子を出さない", func(t *testing.T) {
+		t.Parallel()
+		show := `{"format_version":"1.2","resource_changes":[` +
+			`{"address":"a.b[\"` + account + `\"]","change":{"actions":["create"],"after":{"v":"` + planSecret + `"}}},` +
+			`{"address":"a.c[\"x<y\"]","change":{"actions":["update"],"before":{"v":"` + planSecret + `"}}}]}`
+		f := newFlow(t, map[string]string{
+			stepCIShow + ".out":       show,
+			stepCIPlanNoLock + ".out": planSecret + "\nPlan: 1 to add, 1 to change, 0 to destroy.\n",
+		})
+		require.NoError(t, f.all(ciModePlan, "identity"))
+		assert.Contains(t, f.stdout.String(), "変わる resource（2 件）:\n  create a.b[<伏せた key>]\n  update a.c[\"x<y\"]\n")
+		assert.Contains(t, readKnob(t, filepath.Dir(f.summary), "summary"),
+			"Plan: 0 to import, 1 to add, 1 to change, 0 to destroy.\n\n<pre>\ncreate a.b[&lt;伏せた key&gt;]\nupdate a.c[&#34;x&lt;y&#34;]\n</pre>\n\n- key:")
+		assert.NotContains(t, readKnob(t, filepath.Dir(f.summary), "summary"), planSecret)
+		assert.NotContains(t, readKnob(t, filepath.Dir(f.summary), "summary"), account)
+		f.public()
+	})
+
+	t.Run("apply の入口も、plan し直した一覧をログに出す", func(t *testing.T) {
+		t.Parallel()
+		f := newFlow(t, nil)
+		require.NoError(t, f.all(ciModeApply, "identity"))
+		assert.Contains(t, f.stdout.String(), "変わる resource（1 件）:\n  create a.b\n")
+		assert.Contains(t, readKnob(t, filepath.Dir(f.summary), "summary"), "<pre>\ncreate a.b\n</pre>")
+		assert.Contains(t, readKnob(t, filepath.Dir(f.output), "output"), "plan=Plan: 0 to import, 1 to add, 0 to change, 0 to destroy.\n")
+	})
+
+	t.Run("一覧の件数が「Plan:」の行と食い違えば plan の段で落ち、判定に届かないので終了コード 2", func(t *testing.T) {
+		t.Parallel()
+		f := newFlow(t, map[string]string{stepCIPlanNoLock + ".out": planSecret + "\nPlan: 2 to add, 0 to change, 0 to destroy.\n"})
+		err := f.all(ciModePlan, "identity")
+		require.ErrorIs(t, f.errs["ci-plan"], errPlanList)
+		require.ErrorIs(t, err, errCINotEstablished)
+		assert.Equal(t, 2, exitCode(err))
+		assert.NotContains(t, f.stdout.String(), "変わる resource")
+		assert.Empty(t, readKnob(t, filepath.Dir(f.summary), "summary"))
+		assert.NotEmpty(t, readKnob(t, f.k, "body.txt"), "落ちても全文は置く")
+		f.public()
+		f.leftovers()
+	})
+
+	t.Run("変更があるのに「Plan:」の行が無ければ plan の段で落ちる", func(t *testing.T) {
+		t.Parallel()
+		f := newFlow(t, map[string]string{stepCIPlanNoLock + ".out": planSecret + "\n"})
+		require.Error(t, f.all(ciModePlan, "identity"))
+		require.ErrorIs(t, f.errs["ci-plan"], errPlanList)
+	})
+}
+
+func Test_changeList(t *testing.T) {
+	t.Parallel()
+
+	t.Run("一覧が空なら、変わる resource が無いと書く", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, "変わる resource はありません\n", changeList(nil))
+	})
+
+	t.Run("件数と、1件ずつ字下げした行を書く", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, "変わる resource（2 件）:\n  create a.b\n  delete a.c\n", changeList([]string{"create a.b", "delete a.c"}))
 	})
 }
 
