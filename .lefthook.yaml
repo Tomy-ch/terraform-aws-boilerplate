@@ -87,6 +87,8 @@ pre-commit:
     versions-check:
       glob:
         - "mise.toml"
+        - "mise.lock"
+        - ".github/actions/setup-mise/action.yaml"
         - "docker/**/Dockerfile"
         - "scripts/go.mod"
         - "scripts/versions/*.go"

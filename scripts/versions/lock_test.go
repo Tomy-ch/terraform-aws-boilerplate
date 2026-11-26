@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,7 +37,7 @@ version = "1.7.12"
 backend = "aqua:rhysd/actionlint"
 
 [tools.actionlint."platforms.linux-x64"]
-checksum = "sha256:a"
+checksum = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 url = "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz"
 
 [[tools."aqua:aws/aws-cli"]]
@@ -51,7 +52,7 @@ version = "0.50.0"
 backend = "github:terraform-linters/tflint-ruleset-aws"
 
 [tools."github:terraform-linters/tflint-ruleset-aws"."platforms.linux-x64"]
-checksum = "sha256:b"
+checksum = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 url = "https://github.com/terraform-linters/tflint-ruleset-aws/releases/download/v0.50.0/tflint-ruleset-aws_linux_amd64.zip"
 
 [[tools."go:golang.org/x/vuln/cmd/govulncheck"]]
@@ -210,12 +211,13 @@ func Test_checkLock(t *testing.T) {
 func Test_checkSources(t *testing.T) {
 	t.Parallel()
 
+	sum := "sha256:" + strings.Repeat("c", 64)
 	github := misetoml.LockEntry{
 		Key: "aqua:o/r", Version: "1.0.0", Backend: "aqua:o/r",
-		Platforms: map[string]misetoml.LockPlatform{"linux-x64": {URL: "https://github.com/o/r/releases/download/v1.0.0/r.tar.gz"}},
+		Platforms: map[string]misetoml.LockPlatform{"linux-x64": {URL: "https://github.com/o/r/releases/download/v1.0.0/r.tar.gz", Checksum: sum}},
 	}
 
-	t.Run("lockfile_platforms の各 platform の url が配布元を指すなら、問題を返さない", func(t *testing.T) {
+	t.Run("lockfile_platforms の各 platform の url が配布元を指し照合値を持つなら、問題を返さない", func(t *testing.T) {
 		t.Parallel()
 
 		assert.Empty(t, checkSources("aqua:o/r", github, []string{"linux-x64"}))
@@ -233,12 +235,51 @@ func Test_checkSources(t *testing.T) {
 		assert.Equal(t, []string{"aqua:o/r の linux-x64 は lockfile_platforms にありません"}, checkSources("aqua:o/r", github, nil))
 	})
 
+	t.Run("照合値が無いか sha256 でなければ名指す", func(t *testing.T) {
+		t.Parallel()
+		for _, bad := range []string{"", "sha256:abc", "sha512:" + strings.Repeat("c", 64), "sha256:" + strings.Repeat("C", 64)} {
+			e := github
+			e.Platforms = map[string]misetoml.LockPlatform{"linux-x64": {URL: github.Platforms["linux-x64"].URL, Checksum: bad}}
+
+			assert.Equal(t, []string{fmt.Sprintf("aqua:o/r の linux-x64 の照合値 %q が sha256 ではありません", bad)}, checkSources("aqua:o/r", e, []string{"linux-x64"}), bad)
+		}
+	})
+
+	t.Run("照合値を持てない配布元は照合値が無くてよく、持てば名指す", func(t *testing.T) {
+		t.Parallel()
+		e := misetoml.LockEntry{
+			Key: "aqua:aws/aws-cli", Version: "2.36.40", Backend: "aqua:aws/aws-cli",
+			Platforms: map[string]misetoml.LockPlatform{"linux-x64": {URL: "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.36.40.zip"}},
+		}
+		assert.Empty(t, checkSources("aqua:aws/aws-cli", e, []string{"linux-x64"}))
+
+		e.Platforms["linux-x64"] = misetoml.LockPlatform{URL: e.Platforms["linux-x64"].URL, Checksum: sum}
+		assert.Equal(t, []string{"aqua:aws/aws-cli の linux-x64 が照合値を持ちます（unverifiedSources から外す）"}, checkSources("aqua:aws/aws-cli", e, []string{"linux-x64"}))
+	})
+
 	t.Run("owner/repo を書いたキーの backend が別なら名指す", func(t *testing.T) {
 		t.Parallel()
 		e := github
 		e.Backend = "aqua:x/r"
 
-		assert.Equal(t, []string{"aqua:o/r の backend が aqua:x/r です"}, checkSources("aqua:o/r", e, []string{"linux-x64"}))
+		assert.Equal(t, []string{"aqua:o/r の backend が aqua:x/r です（宣言からは aqua:o/r）"}, checkSources("aqua:o/r", e, []string{"linux-x64"}))
+	})
+
+	t.Run("短い名前の道具の backend が表と違えば名指す", func(t *testing.T) {
+		t.Parallel()
+		e := misetoml.LockEntry{
+			Key: "actionlint", Version: "1.0.0", Backend: "aqua:evil/actionlint",
+			Platforms: map[string]misetoml.LockPlatform{"linux-x64": {URL: "https://github.com/evil/actionlint/releases/download/v1.0.0/a.tar.gz", Checksum: sum}},
+		}
+
+		assert.Equal(t, []string{"actionlint の backend が aqua:evil/actionlint です（宣言からは aqua:rhysd/actionlint）"}, checkSources("actionlint", e, []string{"linux-x64"}))
+	})
+
+	t.Run("表に無い短い名前は名指す", func(t *testing.T) {
+		t.Parallel()
+		e := misetoml.LockEntry{Key: "unknown", Version: "1", Backend: "aqua:o/unknown"}
+
+		assert.Equal(t, []string{"unknown の解決されるべき backend を決められません（shortBackends に足す）"}, checkSources("unknown", e, []string{"linux-x64"}))
 	})
 
 	t.Run("go: の道具は platform を持たなければ問題を返さず、持てば名指す", func(t *testing.T) {
@@ -249,6 +290,28 @@ func Test_checkSources(t *testing.T) {
 		e.Platforms["linux-x64"] = misetoml.LockPlatform{URL: "https://x/1"}
 		assert.Equal(t, []string{"go:x は platform の取得元を持たない backend です"}, checkSources("go:x", e, []string{"linux-x64"}))
 	})
+
+	t.Run("go: の道具の backend がキーと違えば名指す", func(t *testing.T) {
+		t.Parallel()
+		e := misetoml.LockEntry{Key: "go:x", Version: "1", Backend: "go:y"}
+
+		assert.Equal(t, []string{"go:x の backend が go:y です（宣言からは go:x）"}, checkSources("go:x", e, nil))
+	})
+}
+
+func Test_expectedBackend(t *testing.T) {
+	t.Parallel()
+
+	for key, want := range map[string]string{"aqua:o/r": "aqua:o/r", "github:o/r": "github:o/r", "go:x/y": "go:x/y", "npm:a": "npm:a", "actionlint": "aqua:rhysd/actionlint", "go": "core:go", "unknown": ""} {
+		t.Run(key, func(t *testing.T) {
+			t.Parallel()
+
+			got, ok := expectedBackend(key)
+
+			assert.Equal(t, want != "", ok)
+			assert.Equal(t, want, got)
+		})
+	}
 }
 
 func Test_checkURL(t *testing.T) {
@@ -259,8 +322,13 @@ func Test_checkURL(t *testing.T) {
 	}{
 		"backend の Release を指せば空":        {"aqua:o/r", "1.0.0", "https://github.com/o/r/releases/download/v1.0.0/r.zip", ""},
 		"GitHub の外の配布元を指せば空":             {"core:go", "1.27.4", "https://dl.google.com/go/go1.27.4.linux-amd64.tar.gz", ""},
-		"https でなければ名指す":                 {"aqua:o/r", "1.0.0", "http://github.com/o/r/releases/download/v1.0.0/r.zip", "https の url ではありません"},
+		"https でなければ名指す":                 {"aqua:o/r", "1.0.0", "http://github.com/o/r/releases/download/v1.0.0/r.zip", "query・fragment・利用者を持たない https の url ではありません"},
+		"query があれば名指す":                  {"aqua:o/r", "1.0.0", "https://github.com/o/r/releases/download/v1.0.0/r.zip?x=1", "query・fragment・利用者を持たない https の url ではありません"},
+		"fragment があれば名指す":               {"aqua:o/r", "1.0.0", "https://github.com/o/r/releases/download/v1.0.0/r.zip#x", "query・fragment・利用者を持たない https の url ではありません"},
+		"利用者があれば名指す":                     {"aqua:o/r", "1.0.0", "https://u@github.com/o/r/releases/download/v1.0.0/r.zip", "query・fragment・利用者を持たない https の url ではありません"},
+		"path に .. があれば名指す":              {"aqua:o/r", "1.0.0", "https://github.com/o/r/releases/download/v1.0.0/../../../../x/y/releases/download/v1.0.0/r.zip", "path が正規化されていません"},
 		"版を含まなければ名指す":                    {"aqua:o/r", "1.0.0", "https://github.com/o/r/releases/download/v1.0.1/r.zip", "版 1.0.0 を含みません"},
+		"版が別の版の一部としてしか現れなければ名指す":         {"aqua:o/r", "0.5", "https://github.com/o/r/releases/download/v0.50.0/r.zip", "版 0.5 を含みません"},
 		"別の repo の Release なら名指す":        {"aqua:o/r", "1.0.0", "https://github.com/o/other/releases/download/v1.0.0/r.zip", "配布元は github.com/o/r の Release です"},
 		"Release の外の github.com なら名指す":   {"aqua:o/r", "1.0.0", "https://github.com/o/r/archive/v1.0.0.zip", "配布元は github.com/o/r の Release です"},
 		"GitHub の外の配布元が別の host なら名指す":    {"core:go", "1.27.4", "https://example.com/go1.27.4.tar.gz", "配布元は dl.google.com です"},
@@ -271,6 +339,30 @@ func Test_checkURL(t *testing.T) {
 			t.Parallel()
 
 			assert.Equal(t, tt.want, checkURL(tt.backend, tt.version, tt.url))
+		})
+	}
+}
+
+func Test_versionIn(t *testing.T) {
+	t.Parallel()
+
+	for name, tt := range map[string]struct {
+		path, version string
+		want          bool
+	}{
+		"v の後ろの版":           {"/o/r/releases/download/v1.7.12/a.tar.gz", "1.7.12", true},
+		"名前の中の版の後ろに . と語":   {"/go/go1.27.4.linux-amd64.tar.gz", "1.27.4", true},
+		"- の後ろで . と拡張子で終わる": {"/awscli-exe-linux-x86_64-2.36.40.zip", "2.36.40", true},
+		"末尾の版":              {"/x/1.0.0", "1.0.0", true},
+		"後ろに数字が続く":          {"/o/r/releases/download/v0.50.0/a", "0.5", false},
+		"後ろに . と数字が続く":      {"/o/r/releases/download/v1.2.3/a", "1.2", false},
+		"前に数字が付く":           {"/o/r/releases/download/v11.0.0/a", "1.0.0", false},
+		"前に . が付く":          {"/o/r/releases/download/v2.1.0.0/a", "1.0.0", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.want, versionIn(tt.path, tt.version))
 		})
 	}
 }
@@ -290,44 +382,51 @@ func Test_repoOf(t *testing.T) {
 	}
 }
 
+// soundAction は、mise install を走らせる step が MISE_LOCKED を持つ composite action。
+const soundAction = "" +
+	"runs:\n" +
+	"  using: composite\n" +
+	"  steps:\n" +
+	"    - name: Resolve\n" +
+	"      shell: bash\n" +
+	"      run: echo x\n" +
+	"    - name: Install requested tools\n" +
+	"      shell: bash\n" +
+	"      env:\n" +
+	"        MISE_LOCKED: \"1\"\n" +
+	"      run: |\n" +
+	"        mise install $TOOLS\n"
+
+// soundToolsDockerfile は、最初の mise install より前に MISE_LOCKED を1つだけ代入する Dockerfile。
+const soundToolsDockerfile = "# MISE_LOCKED=0 はコメント\nENV A=1 \\\n    MISE_LOCKED=1\nRUN mise install x\n"
+
 func Test_checkLockedInstalls(t *testing.T) {
 	t.Parallel()
 
 	write := func(t *testing.T, action, dockerfile string) string {
 		t.Helper()
 		root := t.TempDir()
-		for path, content := range map[string]string{lockedInstalls[0].path: action, lockedInstalls[1].path: dockerfile} {
-			require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(root, path)), 0o700))
-			require.NoError(t, os.WriteFile(filepath.Join(root, path), []byte(content), 0o600))
+		for p, content := range map[string]string{setupMiseAction: action, toolsDockerfile: dockerfile} {
+			require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(root, p)), 0o700))
+			require.NoError(t, os.WriteFile(filepath.Join(root, p), []byte(content), 0o600))
 		}
 		return root
 	}
-	action := "      env:\n        MISE_LOCKED: \"1\"\n"
-	dockerfile := "ENV A=1 \\\n    MISE_LOCKED=1\n"
 
 	t.Run("setup-mise と Dockerfile が MISE_LOCKED を持てば成功する", func(t *testing.T) {
 		t.Parallel()
 
-		require.NoError(t, checkLockedInstalls(write(t, action, dockerfile)))
+		require.NoError(t, checkLockedInstalls(write(t, soundAction, soundToolsDockerfile)))
 	})
 
 	t.Run("どちらかが持たなければ errLock で、そのファイルを名指す", func(t *testing.T) {
 		t.Parallel()
 
-		err := checkLockedInstalls(write(t, "      env:\n        MISE_LOCKED: \"0\"\n", dockerfile))
+		err := checkLockedInstalls(write(t, strings.Replace(soundAction, `MISE_LOCKED: "1"`, `MISE_LOCKED: "0"`, 1), soundToolsDockerfile))
 
 		require.ErrorIs(t, err, errLock)
-		assert.Contains(t, err.Error(), lockedInstalls[0].path)
-		assert.NotContains(t, err.Error(), lockedInstalls[1].path)
-	})
-
-	t.Run("コメントの中の MISE_LOCKED は数えない", func(t *testing.T) {
-		t.Parallel()
-
-		err := checkLockedInstalls(write(t, action, "# MISE_LOCKED=1\n"))
-
-		require.ErrorIs(t, err, errLock)
-		assert.Contains(t, err.Error(), lockedInstalls[1].path)
+		assert.Contains(t, err.Error(), setupMiseAction)
+		assert.NotContains(t, err.Error(), toolsDockerfile)
 	})
 
 	t.Run("ファイルを読めなければエラー", func(t *testing.T) {
@@ -335,4 +434,53 @@ func Test_checkLockedInstalls(t *testing.T) {
 
 		require.ErrorIs(t, checkLockedInstalls(t.TempDir()), os.ErrNotExist)
 	})
+}
+
+func Test_lockedAction(t *testing.T) {
+	t.Parallel()
+
+	for name, tt := range map[string]struct {
+		content, want string
+	}{
+		"mise install の step が MISE_LOCKED を持てば空": {soundAction, ""},
+		"MISE_LOCKED を別の step へ移せば名指す": {
+			strings.Replace(strings.Replace(soundAction, "      env:\n        MISE_LOCKED: \"1\"\n", "", 1), "      run: echo x\n", "      env:\n        MISE_LOCKED: \"1\"\n      run: echo x\n", 1),
+			`step "Install requested tools" が MISE_LOCKED を "1" にしていません`,
+		},
+		"mise install の step が無ければ名指す": {strings.ReplaceAll(soundAction, "mise install", "mise exec"), "mise install を走らせる step がありません"},
+		"YAML として読めなければ名指す":            {"runs: [", "読めません"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got := lockedAction([]byte(tt.content))
+
+			if tt.want == "" {
+				assert.Empty(t, got)
+				return
+			}
+			assert.Contains(t, got, tt.want)
+		})
+	}
+}
+
+func Test_lockedDockerfile(t *testing.T) {
+	t.Parallel()
+
+	for name, tt := range map[string]struct {
+		content, want string
+	}{
+		"代入が1つで 1 で、mise install より前なら空": {soundToolsDockerfile, ""},
+		"後から 0 で上書きすれば名指す":               {soundToolsDockerfile + "ENV MISE_LOCKED=0\n", "MISE_LOCKED の代入が 2 件です（1件にする）"},
+		"代入が無ければ名指す":                     {"RUN mise install x\n", "MISE_LOCKED の代入が 0 件です（1件にする）"},
+		"値が 1 でなければ名指す":                  {"ENV MISE_LOCKED=0\nRUN mise install x\n", "MISE_LOCKED が 0 です"},
+		"mise install より後ろなら名指す":         {"RUN mise install x\nENV MISE_LOCKED=1\n", "MISE_LOCKED の代入が最初の mise install より後ろにあります"},
+		"mise install が無ければ名指す":          {"ENV MISE_LOCKED=1\n", "mise install がありません"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.want, lockedDockerfile([]byte(tt.content)))
+		})
+	}
 }

@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -15,6 +16,7 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/misetoml"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
+	"gopkg.in/yaml.v3"
 )
 
 type toolFunc = toolrun.Func
@@ -142,9 +144,52 @@ func checkLock(root string) error {
 	return nil
 }
 
-// checkSources は1つの道具の、platform ごとの取得元を検めます。go: と npm: は配布物を持たない backend なので、
-// platform を持たないことだけを見ます。
+// shortBackends は、mise.toml が短い名前で宣言する道具と、その名前が解決されるべき backend です。lock の backend を
+// 宣言の側から決めた値と突き合わせるために持ちます —— lock が書いた backend を信じると、backend と url を揃えて
+// 別の repo へ向けた lock が通ります。表に無い短い名前は落とします。
+var shortBackends = map[string]string{
+	"actionlint":    "aqua:rhysd/actionlint",
+	"golangci-lint": "aqua:golangci/golangci-lint",
+	"hadolint":      "aqua:hadolint/hadolint",
+	"lefthook":      "aqua:evilmartians/lefthook",
+	"shellcheck":    "aqua:koalaman/shellcheck",
+	"go":            "core:go",
+	"node":          "core:node",
+}
+
+// unverifiedSources は、配布元が照合値を公開しないので mise.lock に照合値を持てない backend と、その理由です。
+// ここに載る道具は TLS だけで配布元を信じて入る。
+var unverifiedSources = map[string]string{
+	// 撤回: AWS CLI の配布物の照合値を宣言して照合するようになったとき（#131）。
+	"aqua:aws/aws-cli": "AWS は awscli.amazonaws.com の配布物の照合値を公開しない",
+}
+
+// checksumRe は mise.lock の照合値の形です。
+var checksumRe = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+// expectedBackend は、mise.toml のキーが解決されるべき backend を返します。
+func expectedBackend(key string) (string, bool) {
+	if _, ok := repoOf(key); ok {
+		return key, true
+	}
+	if strings.HasPrefix(key, "go:") || strings.HasPrefix(key, "npm:") {
+		return key, true
+	}
+	b, ok := shortBackends[key]
+
+	return b, ok
+}
+
+// checkSources は1つの道具の backend と、platform ごとの取得元と照合値を検めます。go: と npm: は配布物を持たない
+// backend なので、platform を持たないことだけを見ます。
 func checkSources(key string, e misetoml.LockEntry, platforms []string) []string {
+	want, ok := expectedBackend(key)
+	if !ok {
+		return []string{key + " の解決されるべき backend を決められません（shortBackends に足す）"}
+	}
+	if e.Backend != want {
+		return []string{fmt.Sprintf("%s の backend が %s です（宣言からは %s）", key, e.Backend, want)}
+	}
 	if strings.HasPrefix(e.Backend, "go:") || strings.HasPrefix(e.Backend, "npm:") {
 		if len(e.Platforms) > 0 {
 			return []string{key + " は platform の取得元を持たない backend です"}
@@ -152,11 +197,9 @@ func checkSources(key string, e misetoml.LockEntry, platforms []string) []string
 
 		return nil
 	}
-	if _, ok := repoOf(key); ok && e.Backend != key {
-		return []string{fmt.Sprintf("%s の backend が %s です", key, e.Backend)}
-	}
 
 	var problems []string
+	_, unverified := unverifiedSources[e.Backend]
 	for _, p := range platforms {
 		src, ok := e.Platforms[p]
 		if !ok || src.URL == "" {
@@ -166,6 +209,12 @@ func checkSources(key string, e misetoml.LockEntry, platforms []string) []string
 		}
 		if msg := checkURL(e.Backend, e.Version, src.URL); msg != "" {
 			problems = append(problems, fmt.Sprintf("%s の %s の url %s: %s", key, p, src.URL, msg))
+		}
+		switch {
+		case unverified && src.Checksum != "":
+			problems = append(problems, fmt.Sprintf("%s の %s が照合値を持ちます（unverifiedSources から外す）", key, p))
+		case !unverified && !checksumRe.MatchString(src.Checksum):
+			problems = append(problems, fmt.Sprintf("%s の %s の照合値 %q が sha256 ではありません", key, p, src.Checksum))
 		}
 	}
 	for p := range e.Platforms {
@@ -177,13 +226,17 @@ func checkSources(key string, e misetoml.LockEntry, platforms []string) []string
 	return problems
 }
 
-// checkURL は、url が backend の配布元を https で指し、版を含むかを見ます。問題が無ければ空を返します。
+// checkURL は、url が backend の配布元を https で指し、正規化した path に版を含むかを見ます。問題が無ければ
+// 空を返します。
 func checkURL(backend, version, raw string) string {
 	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" {
-		return "https の url ではありません"
+	if err != nil || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "query・fragment・利用者を持たない https の url ではありません"
 	}
-	if !strings.Contains(u.Path, version) {
+	if path.Clean(u.Path) != u.Path {
+		return "path が正規化されていません"
+	}
+	if !versionIn(u.Path, version) {
 		return "版 " + version + " を含みません"
 	}
 	if host, ok := offGitHubHosts[backend]; ok {
@@ -204,6 +257,15 @@ func checkURL(backend, version, raw string) string {
 	return ""
 }
 
+// versionIn は、p の中に version が別の版の一部としてでなく現れるかを見ます。前は数字と `.` 以外、後ろは数字以外
+// （`.` なら、その次が数字以外）でなければなりません。`go1.27.4.linux-amd64` は 1.27.4 を含み、`v0.50.0` は 0.5 を
+// 含みません。
+func versionIn(p, version string) bool {
+	re := regexp.MustCompile(`(?:^|[^0-9.])` + regexp.QuoteMeta(version) + `(?:$|[^0-9.]|\.[^0-9])`)
+
+	return re.MatchString(p)
+}
+
 // repoOf は `aqua:owner/repo` と `github:owner/repo` の owner/repo を返します。
 func repoOf(key string) (string, bool) {
 	for _, prefix := range []string{"aqua:", "github:"} {
@@ -215,31 +277,88 @@ func repoOf(key string) (string, bool) {
 	return "", false
 }
 
-// lockedInstalls は、道具を mise.lock からだけ入れる設定を持つべきファイルと、その行です。どちらかが外れると、
-// その経路は lock を読まずに上流の API で版を解決し、照合値も確かめません。
-var lockedInstalls = []struct {
-	path string
-	re   *regexp.Regexp
-}{
-	{".github/actions/setup-mise/action.yaml", regexp.MustCompile(`(?m)^\s*MISE_LOCKED: "1"\s*$`)},
-	{"docker/tools/Dockerfile", regexp.MustCompile(`(?m)^\s*MISE_LOCKED=1\s*$`)},
-}
+const (
+	setupMiseAction = ".github/actions/setup-mise/action.yaml"
+	toolsDockerfile = "docker/tools/Dockerfile"
+)
 
-// checkLockedInstalls は、CI とイメージのビルドが MISE_LOCKED で道具を入れることを検めます。
+// checkLockedInstalls は、CI とイメージのビルドが MISE_LOCKED で道具を入れることを検めます。どちらかが外れると、
+// その経路は lock を読まずに上流の API で版を解決し、照合値も確かめません。
 func checkLockedInstalls(root string) error {
-	var missing []string
-	for _, l := range lockedInstalls {
-		content, err := os.ReadFile(filepath.Clean(filepath.Join(root, l.path)))
-		if err != nil {
-			return xerrors.Wrap(err, l.path)
-		}
-		if !l.re.Match(content) {
-			missing = append(missing, l.path)
-		}
+	var problems []string
+	action, err := os.ReadFile(filepath.Clean(filepath.Join(root, setupMiseAction)))
+	if err != nil {
+		return xerrors.Wrap(err, setupMiseAction)
 	}
-	if len(missing) > 0 {
-		return xerrors.Wrap(errLock, "MISE_LOCKED で道具を入れていません: "+strings.Join(missing, ", "))
+	if msg := lockedAction(action); msg != "" {
+		problems = append(problems, setupMiseAction+": "+msg)
+	}
+	dockerfile, err := os.ReadFile(filepath.Clean(filepath.Join(root, toolsDockerfile)))
+	if err != nil {
+		return xerrors.Wrap(err, toolsDockerfile)
+	}
+	if msg := lockedDockerfile(dockerfile); msg != "" {
+		problems = append(problems, toolsDockerfile+": "+msg)
+	}
+	if len(problems) > 0 {
+		return xerrors.Wrap(errLock, strings.Join(problems, "; "))
 	}
 
 	return nil
+}
+
+// lockedAction は、composite action の `mise install` を走らせる step がどれも env の MISE_LOCKED を "1" に持ち、
+// そうした step が1つ以上あるかを見ます。問題が無ければ空を返します。
+func lockedAction(content []byte) string {
+	var action struct {
+		Runs struct {
+			Steps []struct {
+				Name string            `yaml:"name"`
+				Run  string            `yaml:"run"`
+				Env  map[string]string `yaml:"env"`
+			} `yaml:"steps"`
+		} `yaml:"runs"`
+	}
+	if err := yaml.Unmarshal(content, &action); err != nil {
+		return "読めません: " + err.Error()
+	}
+	installs := 0
+	for _, st := range action.Runs.Steps {
+		if !strings.Contains(st.Run, "mise install") {
+			continue
+		}
+		installs++
+		if st.Env["MISE_LOCKED"] != "1" {
+			return fmt.Sprintf("step %q が MISE_LOCKED を \"1\" にしていません", st.Name)
+		}
+	}
+	if installs == 0 {
+		return "mise install を走らせる step がありません"
+	}
+
+	return ""
+}
+
+// lockedDockerfileRe は、コメントの外の MISE_LOCKED の代入です。
+var lockedDockerfileRe = regexp.MustCompile(`(?m)^[^#\n]*\bMISE_LOCKED=(\S*)`)
+
+// lockedDockerfile は、Dockerfile の MISE_LOCKED の代入がちょうど1つで 1 であり、最初の `mise install` より前にあるかを
+// 見ます。問題が無ければ空を返します。
+func lockedDockerfile(content []byte) string {
+	m := lockedDockerfileRe.FindAllSubmatchIndex(content, -1)
+	if len(m) != 1 {
+		return fmt.Sprintf("MISE_LOCKED の代入が %d 件です（1件にする）", len(m))
+	}
+	if v := string(content[m[0][2]:m[0][3]]); v != "1" {
+		return "MISE_LOCKED が " + v + " です"
+	}
+	install := strings.Index(string(content), "mise install")
+	if install < 0 {
+		return "mise install がありません"
+	}
+	if m[0][0] > install {
+		return "MISE_LOCKED の代入が最初の mise install より後ろにあります"
+	}
+
+	return ""
 }
