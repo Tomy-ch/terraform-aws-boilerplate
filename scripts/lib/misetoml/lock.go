@@ -15,6 +15,10 @@ import (
 // LockFile は `mise lock` が書く lockfile の名前です。
 const LockFile = "mise.lock"
 
+// lockFormat は、読める mise.lock の lockfile_version です。形が変われば知らない行や key として落ちるとは限らない
+// ので、版で止めます。
+const lockFormat = "3"
+
 // ErrInvalidLock は mise.lock に解釈できない行があった場合のエラー。
 var ErrInvalidLock = xerrors.New("mise.lock に解釈できない行があります")
 
@@ -98,6 +102,9 @@ func ParseLock(content []byte) ([]LockEntry, error) {
 			if m == nil || format {
 				return nil, xerrors.Wrap(ErrInvalidLock, where)
 			}
+			if m[1] != lockFormat {
+				return nil, xerrors.Wrap(ErrInvalidLock, "読める lockfile_version は "+lockFormat+" だけです "+where)
+			}
 			format = true
 
 			continue
@@ -133,8 +140,14 @@ func lockField(cur *LockEntry, platform, line string) error {
 		}
 		switch m[1] {
 		case "version":
+			if cur.Version != "" {
+				return xerrors.Wrap(ErrInvalidLock, "version の重複")
+			}
 			cur.Version = m[2]
 		case "backend":
+			if cur.Backend != "" {
+				return xerrors.Wrap(ErrInvalidLock, "backend の重複")
+			}
 			cur.Backend = m[2]
 		default:
 			return xerrors.Wrap(ErrInvalidLock, "知らない key "+m[1])
@@ -150,8 +163,14 @@ func lockField(cur *LockEntry, platform, line string) error {
 	p := cur.Platforms[platform]
 	switch m[1] {
 	case "url":
+		if p.URL != "" {
+			return xerrors.Wrap(ErrInvalidLock, "url の重複")
+		}
 		p.URL = m[2]
 	case "checksum":
+		if p.Checksum != "" {
+			return xerrors.Wrap(ErrInvalidLock, "checksum の重複")
+		}
 		p.Checksum = m[2]
 	case "url_api", "provenance":
 		// 取得には使わない（url_api は locked のとき引かず、provenance は lock の生成のときの記録）。

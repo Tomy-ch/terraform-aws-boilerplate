@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"net/url"
 	"os"
 	"os/exec"
@@ -66,7 +67,7 @@ func lockTools(root string) ([]misetoml.Entry, error) {
 
 // writeLock は mise.lock を `mise lock` で書き直します。取得元と照合値の解決には上流の API が要るので、
 // これを走らせるのは手元だけです。
-func writeLock(root string, out io.Writer, tool toolFunc) error {
+func writeLock(root string, out io.Writer, tool toolFunc, tables sourceTables) error {
 	tools, err := lockTools(root)
 	if err != nil {
 		return err
@@ -89,16 +90,19 @@ func writeLock(root string, out io.Writer, tool toolFunc) error {
 		return xerrors.Wrapf(errLockFailed, "mise lock の終了コード %d", code)
 	}
 
-	return checkLock(root)
+	return checkLock(root, tables)
 }
 
 // checkLock は、mise.lock が mise.toml の宣言と同じ道具・版を持ち、lockfile_platforms の各 platform の取得元が
 // 宣言の指す配布元であることを検めます。mise.lock は CI とイメージのビルドが道具を引く唯一の出所なので
 // （ADR-0503 決定2）、ここで見ない取得元は誰も見ません。
-func checkLock(root string) error {
+func checkLock(root string, tables sourceTables) error {
 	tools, err := lockTools(root)
 	if err != nil {
 		return err
+	}
+	if len(tools) == 0 {
+		return xerrors.Wrap(errShape, miseFile+" の [tools] に lock する道具がありません")
 	}
 	platforms, found, err := misetoml.LockfilePlatformsFile(filepath.Join(root, miseFile))
 	if err != nil {
@@ -137,6 +141,7 @@ func checkLock(root string) error {
 			problems = append(problems, e.Key+" は lock する道具ではありません")
 		}
 	}
+	problems = append(problems, orphanEntries(tools, locked, tables)...)
 	if len(problems) > 0 {
 		return xerrors.Wrap(errLock, strings.Join(problems, "; "))
 	}
@@ -166,6 +171,50 @@ var unverifiedSources = map[string]string{
 
 // checksumRe は mise.lock の照合値の形です。
 var checksumRe = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+// sourceTables は、宣言の道具と突き合わせる3つの表です。孤児の検査が、どの表を宣言と突き合わせるかを
+// 呼び出し側から受けるために束ねます。
+type sourceTables struct {
+	short, offGitHub, unverified map[string]string
+}
+
+// repoTables は、このリポジトリの mise.toml と mise.lock に当てる表です。
+var repoTables = sourceTables{short: shortBackends, offGitHub: offGitHubHosts, unverified: unverifiedSources}
+
+// orphanEntries は、shortBackends・offGitHubHosts・unverifiedSources のうち、宣言のどの道具にも当たらない
+// エントリを名指します。消えた道具のエントリが残ると、同じ名前の道具が戻ったとき、照合値の免除などが黙って
+// 掛かります。
+func orphanEntries(tools []misetoml.Entry, locked []misetoml.LockEntry, tables sourceTables) []string {
+	declared := map[string]bool{}
+	for _, t := range tools {
+		declared[t.Key] = true
+	}
+	backends := map[string]bool{}
+	for _, e := range locked {
+		backends[e.Backend] = true
+	}
+	var problems []string
+	for _, key := range slices.Sorted(maps.Keys(tables.short)) {
+		if !declared[key] {
+			problems = append(problems, "shortBackends の "+key+" は mise.toml の [tools] にありません")
+		}
+	}
+	for _, table := range []struct {
+		name    string
+		entries []string
+	}{
+		{"offGitHubHosts", slices.Sorted(maps.Keys(tables.offGitHub))},
+		{"unverifiedSources", slices.Sorted(maps.Keys(tables.unverified))},
+	} {
+		for _, b := range table.entries {
+			if !backends[b] {
+				problems = append(problems, table.name+" の "+b+" は mise.lock のどの backend にも当たりません")
+			}
+		}
+	}
+
+	return problems
+}
 
 // expectedBackend は、mise.toml のキーが解決されるべき backend を返します。
 func expectedBackend(key string) (string, bool) {
@@ -307,7 +356,11 @@ func checkLockedInstalls(root string) error {
 	return nil
 }
 
-// lockedAction は、composite action の `mise install` を走らせる step がどれも env の MISE_LOCKED を "1" に持ち、
+// miseInstallsRe は、run の中で mise が道具を入れる起動です。install のほか、入っていない道具を入れる use・exec と
+// その略記も数えます。
+var miseInstallsRe = regexp.MustCompile(`\bmise\s+(?:install|i|use|u|exec|x)\b`)
+
+// lockedAction は、composite action の、mise が道具を入れる step がどれも env の MISE_LOCKED を "1" に持ち、
 // そうした step が1つ以上あるかを見ます。問題が無ければ空を返します。
 func lockedAction(content []byte) string {
 	var action struct {
@@ -324,7 +377,7 @@ func lockedAction(content []byte) string {
 	}
 	installs := 0
 	for _, st := range action.Runs.Steps {
-		if !strings.Contains(st.Run, "mise install") {
+		if !miseInstallsRe.MatchString(st.Run) {
 			continue
 		}
 		installs++
@@ -333,31 +386,47 @@ func lockedAction(content []byte) string {
 		}
 	}
 	if installs == 0 {
-		return "mise install を走らせる step がありません"
+		return "mise が道具を入れる step がありません"
 	}
 
 	return ""
 }
 
-// lockedDockerfileRe は、コメントの外の MISE_LOCKED の代入です。
-var lockedDockerfileRe = regexp.MustCompile(`(?m)^[^#\n]*\bMISE_LOCKED=(\S*)`)
+// lockedAssignRe は、MISE_LOCKED の代入です。
+var lockedAssignRe = regexp.MustCompile(`\bMISE_LOCKED=(\S*)`)
 
-// lockedDockerfile は、Dockerfile の MISE_LOCKED の代入がちょうど1つで 1 であり、最初の `mise install` より前にあるかを
-// 見ます。問題が無ければ空を返します。
+// lockedDockerfile は、Dockerfile の MISE_LOCKED の代入がちょうど1つで 1 であり、mise が最初に道具を入れるより前に
+// あるかを見ます。`#` で始まる行はコメントとして読みません。問題が無ければ空を返します。
 func lockedDockerfile(content []byte) string {
-	m := lockedDockerfileRe.FindAllSubmatchIndex(content, -1)
-	if len(m) != 1 {
-		return fmt.Sprintf("MISE_LOCKED の代入が %d 件です（1件にする）", len(m))
+	var (
+		assigns []string
+		at      int
+		install = -1
+		offset  int
+	)
+	for line := range strings.Lines(string(content)) {
+		if !strings.HasPrefix(strings.TrimSpace(line), "#") {
+			for _, m := range lockedAssignRe.FindAllStringSubmatchIndex(line, -1) {
+				assigns = append(assigns, line[m[2]:m[3]])
+				at = offset + m[0]
+			}
+			if loc := miseInstallsRe.FindStringIndex(line); loc != nil && install < 0 {
+				install = offset + loc[0]
+			}
+		}
+		offset += len(line)
 	}
-	if v := string(content[m[0][2]:m[0][3]]); v != "1" {
-		return "MISE_LOCKED が " + v + " です"
+	if len(assigns) != 1 {
+		return fmt.Sprintf("MISE_LOCKED の代入が %d 件です（1件にする）", len(assigns))
 	}
-	install := strings.Index(string(content), "mise install")
+	if assigns[0] != "1" {
+		return "MISE_LOCKED が " + assigns[0] + " です"
+	}
 	if install < 0 {
-		return "mise install がありません"
+		return "mise が道具を入れる行がありません"
 	}
-	if m[0][0] > install {
-		return "MISE_LOCKED の代入が最初の mise install より後ろにあります"
+	if at > install {
+		return "MISE_LOCKED の代入が、mise が最初に道具を入れるより後ろにあります"
 	}
 
 	return ""

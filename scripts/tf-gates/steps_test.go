@@ -769,12 +769,30 @@ func Test_runLint(t *testing.T) {
 		assert.Empty(t, calls())
 	})
 
-	t.Run("-config・-ruleset・-mise のどれかが無ければ errUsage", func(t *testing.T) {
+	for missing, args := range map[string][]string{
+		"-config":  {"-base", ".", "-ruleset", "r", "-mise", "m", "modules"},
+		"-ruleset": {"-base", ".", "-config", "c", "-mise", "m", "modules"},
+		"-mise":    {"-base", ".", "-config", "c", "-ruleset", "r", "modules"},
+	} {
+		t.Run(missing+" が無ければ errUsage", func(t *testing.T) {
+			t.Parallel()
+			tool, _ := fakeTool(t)
+
+			require.ErrorIs(t, runLint(args, &bytes.Buffer{}, tool), errUsage)
+		})
+	}
+
+	t.Run("mise.toml が ruleset を宣言しなければ、起動せずに errRuleset で終了コードは 2", func(t *testing.T) {
 		t.Parallel()
-		tool, _ := fakeTool(t)
-		require.ErrorIs(t, runLint([]string{"-base", ".", "-ruleset", "r", "-mise", "m", "modules"}, &bytes.Buffer{}, tool), errUsage)
-		require.ErrorIs(t, runLint([]string{"-base", ".", "-config", "c", "-mise", "m", "modules"}, &bytes.Buffer{}, tool), errUsage)
-		require.ErrorIs(t, runLint([]string{"-base", ".", "-config", "c", "-ruleset", "r", "modules"}, &bytes.Buffer{}, tool), errUsage)
+		_, args := lintFixture(t, nil)
+		require.NoError(t, os.WriteFile(args[7], []byte("[tools]\ngo = \"1.27.4\"\n"), 0o600))
+		tool, calls := fakeTool(t)
+
+		err := runLint(append(args, "modules"), &bytes.Buffer{}, tool)
+
+		require.ErrorIs(t, err, errRuleset)
+		assert.Equal(t, 2, exitCode(err))
+		assert.Empty(t, calls())
 	})
 
 	t.Run("対象が0件なら起動せずに errNoTargets", func(t *testing.T) {
@@ -866,32 +884,29 @@ func Test_checkRulesetVersion(t *testing.T) {
 	env := []string{"TFLINT_DISABLE_VERSION_CHECK=1"}
 	tests := map[string]struct {
 		files map[string]string
-		ok    bool
+		say   string
 	}{
-		"報告した版が宣言と同じなら成功する":            {map[string]string{"version.out": "+ ruleset.aws (0.50.0)\n"}, true},
-		"報告した版が宣言と違えば落ちる":              {map[string]string{"version.out": "+ ruleset.aws (0.50.1)\n"}, false},
-		"AWS ruleset を報告しなければ落ちる":      {map[string]string{"version.out": "+ ruleset.terraform (0.15.0-bundled)\n"}, false},
-		"AWS ruleset を2行報告すれば落ちる":      {map[string]string{"version.out": "+ ruleset.aws (0.50.0)\n+ ruleset.aws (0.50.0)\n"}, false},
-		"tflint --version が 0 以外なら落ちる": {map[string]string{"version.out": "+ ruleset.aws (0.50.0)\n", "rc-lint-version": "1"}, false},
+		"報告した版が宣言と同じなら成功する":                      {map[string]string{"version.out": "+ ruleset.aws (0.50.0)\n"}, ""},
+		"報告した版が宣言と違えば、両方の版を名指して落ちる":              {map[string]string{"version.out": "+ ruleset.aws (0.50.1)\n"}, "置かれた AWS ruleset は 0.50.1、mise.toml の宣言は 0.50.0 です"},
+		"AWS ruleset を報告しなければ落ちる":                {map[string]string{"version.out": "+ ruleset.terraform (0.15.0-bundled)\n"}, "1行で報告しません"},
+		"AWS ruleset を2行報告すれば落ちる":                {map[string]string{"version.out": "+ ruleset.aws (0.50.0)\n+ ruleset.aws (0.50.0)\n"}, "1行で報告しません"},
+		"tflint --version が 0 以外なら終了コードを名指して落ちる": {map[string]string{"version.out": "+ ruleset.aws (0.50.0)\n", "rc-lint-version": "1"}, "tflint --version の終了コード 1"},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			tool, _ := fakeTool(t)
+
 			err := checkRulesetVersion(tool, tree(t, tt.files), env, "0.50.0")
-			if tt.ok {
+
+			if tt.say == "" {
 				require.NoError(t, err)
 				return
 			}
 			require.ErrorIs(t, err, errRuleset)
+			assert.Contains(t, err.Error(), tt.say)
 		})
 	}
-
-	t.Run("版の問い合わせを止める環境変数が無ければ、偽の tflint が落ちる（呼び出し側が渡す取り決めの確かめ）", func(t *testing.T) {
-		t.Parallel()
-		tool, _ := fakeTool(t)
-		require.ErrorIs(t, checkRulesetVersion(tool, tree(t, map[string]string{"version.out": "+ ruleset.aws (0.50.0)\n"}), nil, "0.50.0"), errRuleset)
-	})
 
 	t.Run("道具を起動できなければ errTool", func(t *testing.T) {
 		t.Parallel()

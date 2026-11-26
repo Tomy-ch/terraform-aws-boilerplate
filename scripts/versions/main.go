@@ -258,13 +258,13 @@ type rule struct {
 func main() {
 	log.SetFlags(0)
 
-	if err := run(os.Args[1:], ".", os.Stdout, command); err != nil {
+	if err := run(os.Args[1:], ".", os.Stdout, command, repoTables); err != nil {
 		log.Fatalf("%v", err)
 	}
 }
 
 // run は、サブコマンドを解釈して固定処理へ振り分けます（scripts/README.md の Test Strategy）。
-func run(args []string, root string, out io.Writer, tool toolFunc) error {
+func run(args []string, root string, out io.Writer, tool toolFunc, tables sourceTables) error {
 	if len(args) != 1 {
 		return errUsage
 	}
@@ -275,9 +275,9 @@ func run(args []string, root string, out io.Writer, tool toolFunc) error {
 	case "check":
 		return applyAll(root, true, out)
 	case "lock":
-		return writeLock(root, out, tool)
+		return writeLock(root, out, tool, tables)
 	case "lock-check":
-		if err := checkLock(root); err != nil {
+		if err := checkLock(root, tables); err != nil {
 			return err
 		}
 		if err := checkLockedInstalls(root); err != nil {

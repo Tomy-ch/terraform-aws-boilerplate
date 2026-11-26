@@ -189,7 +189,7 @@ func Test_settingList(t *testing.T) {
 	t.Run("[settings] の key の配列を返し、ほかの key と節を読まない", func(t *testing.T) {
 		t.Parallel()
 
-		got, found, err := settingList([]byte("[tools]\na = \"1\"\n[settings]\nother = [\"x\"]\nkey = [\"a\", \"b\"]\n"), "key", ErrInvalidLine)
+		got, found, err := settingList([]byte("[tools]\nkey = [\"t\"]\n[settings]\nother = [\"x\"]\nkey = [\"a\", \"b\"]\n"), "key", ErrInvalidLine)
 
 		require.NoError(t, err)
 		assert.True(t, found)
@@ -254,10 +254,19 @@ func Test_settingListRe(t *testing.T) {
 	t.Parallel()
 
 	re := settingListRe("lockfile_platforms")
-	assert.True(t, re.MatchString(`lockfile_platforms = ["linux-x64"]`))
-	assert.True(t, re.MatchString(`"lockfile_platforms" = []`))
-	assert.False(t, re.MatchString(`disable_tools = ["npm:a"]`))
-	assert.False(t, re.MatchString(`lockfile_platforms = "linux-x64"`))
+	for line, want := range map[string]bool{
+		`lockfile_platforms = ["linux-x64"]`: true,
+		`"lockfile_platforms" = []`:          true,
+		`'lockfile_platforms' = []`:          false,
+		`disable_tools = ["npm:a"]`:          false,
+		`lockfile_platforms = "linux-x64"`:   false,
+	} {
+		t.Run(line, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, want, re.MatchString(line))
+		})
+	}
 }
 
 func Test_lockField(t *testing.T) {
@@ -286,12 +295,16 @@ func Test_lockField(t *testing.T) {
 		assert.Equal(t, LockPlatform{URL: "https://x/1", Checksum: "sha256:a"}, e.Platforms["linux-x64"])
 	})
 
-	t.Run("知らない key と、entry の中の url は ErrInvalidLock", func(t *testing.T) {
-		t.Parallel()
-		e := &LockEntry{Platforms: map[string]LockPlatform{"linux-x64": {}}}
+	for name, tt := range map[string]struct{ platform, line string }{
+		"entry の中の url":          {"", `url = "https://x/1"`},
+		"platform の中の version":   {"linux-x64", `version = "1"`},
+		"entry の中の inline table": {"", `options = { a = 1 }`},
+	} {
+		t.Run(name+"は ErrInvalidLock", func(t *testing.T) {
+			t.Parallel()
+			e := &LockEntry{Platforms: map[string]LockPlatform{"linux-x64": {}}}
 
-		require.ErrorIs(t, lockField(e, "", `url = "https://x/1"`), ErrInvalidLock)
-		require.ErrorIs(t, lockField(e, "linux-x64", `version = "1"`), ErrInvalidLock)
-		require.ErrorIs(t, lockField(e, "", `options = { a = 1 }`), ErrInvalidLock)
-	})
+			require.ErrorIs(t, lockField(e, tt.platform, tt.line), ErrInvalidLock)
+		})
+	}
 }

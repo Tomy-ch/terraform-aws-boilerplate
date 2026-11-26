@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/misetoml"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun/tooltest"
 )
 
 const soundMise = `min_version = "2026.6.0"
@@ -164,13 +165,62 @@ func Test_run(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
+		// lockRunRepo は lock-check が読む4つのファイルを持つ一時リポジトリ。
+		lockRunRepo := func(t *testing.T, lock, action string) string {
+			t.Helper()
+			root := lockRepo(t, lockMise, lock)
+			for p, content := range map[string]string{setupMiseAction: action, toolsDockerfile: soundToolsDockerfile} {
+				require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(root, p)), 0o700))
+				require.NoError(t, os.WriteFile(filepath.Join(root, p), []byte(content), 0o600))
+			}
+			return root
+		}
+
+		t.Run("lock-check は lock と MISE_LOCKED が揃えば成功を報告する", func(t *testing.T) {
+			t.Parallel()
+			var out bytes.Buffer
+
+			require.NoError(t, run([]string{"lock-check"}, lockRunRepo(t, lockSound, soundAction), &out, nil, lockTables))
+			assert.Contains(t, out.String(), "✅ versions: mise.lock")
+		})
+
+		t.Run("lock-check は lock がずれれば errLock で、成功を報告しない", func(t *testing.T) {
+			t.Parallel()
+			var out bytes.Buffer
+			root := lockRunRepo(t, strings.Replace(lockSound, `version = "1.7.12"`, `version = "1.7.11"`, 1), soundAction)
+
+			require.ErrorIs(t, run([]string{"lock-check"}, root, &out, nil, lockTables), errLock)
+			assert.NotContains(t, out.String(), "✅")
+		})
+
+		t.Run("lock-check は lock が揃っていても MISE_LOCKED が外れれば errLock", func(t *testing.T) {
+			t.Parallel()
+			var out bytes.Buffer
+			root := lockRunRepo(t, lockSound, strings.Replace(soundAction, `MISE_LOCKED: "1"`, `MISE_LOCKED: "0"`, 1))
+
+			err := run([]string{"lock-check"}, root, &out, nil, lockTables)
+
+			require.ErrorIs(t, err, errLock)
+			assert.Contains(t, err.Error(), setupMiseAction)
+			assert.NotContains(t, out.String(), "✅")
+		})
+
+		t.Run("lock は道具を名指して mise lock を起動する", func(t *testing.T) {
+			t.Parallel()
+			f := tooltest.New(t, tooltest.WithPrelude(`cp "$ctl/lock.src" ./mise.lock`))
+			f.Set("lock", "src", lockSound)
+
+			require.NoError(t, run([]string{"lock"}, lockRepo(t, lockMise, ""), &bytes.Buffer{}, f.Tool(), lockTables))
+			assert.Equal(t, []string{"mise-lock actionlint aqua:aws/aws-cli github:terraform-linters/tflint-ruleset-aws go:golang.org/x/vuln/cmd/govulncheck"}, f.Args())
+		})
+
 		t.Run("check は書き換えず errDrift を返す", func(t *testing.T) {
 			t.Parallel()
 			drifted := strings.ReplaceAll(soundDockerfile, "golang:1.27.1", "golang:1.26.0")
 			root := newRepo(t, soundMise, drifted, soundGoMod)
 			var out bytes.Buffer
 
-			require.ErrorIs(t, run([]string{"check"}, root, &out, nil), errDrift)
+			require.ErrorIs(t, run([]string{"check"}, root, &out, nil, repoTables), errDrift)
 			assert.Equal(t, drifted, readAt(t, root, "docker", "tools", "Dockerfile"))
 			// 出力そのものが契約である —— CI ログを読む人が、どの写しがずれたかを知る唯一の手掛かり。
 			assert.Contains(t, out.String(), "Dockerfile")
@@ -182,7 +232,7 @@ func Test_run(t *testing.T) {
 			root := newRepo(t, soundMise, drifted, soundGoMod)
 			var out bytes.Buffer
 
-			require.NoError(t, run([]string{"apply"}, root, &out, nil))
+			require.NoError(t, run([]string{"apply"}, root, &out, nil, repoTables))
 			assert.Equal(t, soundDockerfile, readAt(t, root, "docker", "tools", "Dockerfile"))
 			assert.Contains(t, out.String(), "Dockerfile")
 		})
@@ -193,7 +243,7 @@ func Test_run(t *testing.T) {
 			root := newRepo(t, soundMise, soundDockerfile, soundGoMod, driftedHostTools)
 			var out bytes.Buffer
 
-			require.ErrorIs(t, run([]string{"check"}, root, &out, nil), errDrift)
+			require.ErrorIs(t, run([]string{"check"}, root, &out, nil, repoTables), errDrift)
 			assert.Equal(t, driftedHostTools, readAt(t, root, ".makefiles", "host-tools.mk"))
 			assert.Contains(t, out.String(), "host-tools.mk")
 		})
@@ -203,7 +253,7 @@ func Test_run(t *testing.T) {
 			root := newRepo(t, soundMise, soundDockerfile, soundGoMod, driftedHostTools)
 			var out bytes.Buffer
 
-			require.NoError(t, run([]string{"apply"}, root, &out, nil))
+			require.NoError(t, run([]string{"apply"}, root, &out, nil, repoTables))
 			assert.Equal(t, soundHostTools, readAt(t, root, ".makefiles", "host-tools.mk"))
 		})
 
@@ -219,8 +269,8 @@ func Test_run(t *testing.T) {
 			root := newRepo(t, soundMise, drifted, soundGoMod)
 			var out bytes.Buffer
 
-			require.ErrorIs(t, run([]string{"check"}, root, &out, nil), errDrift)
-			require.NoError(t, run([]string{"apply"}, root, &out, nil))
+			require.ErrorIs(t, run([]string{"check"}, root, &out, nil, repoTables), errDrift)
+			require.NoError(t, run([]string{"apply"}, root, &out, nil, repoTables))
 			assert.Equal(t, soundDockerfile, readAt(t, root, "docker", "tools", "Dockerfile"))
 		})
 
@@ -239,10 +289,10 @@ func Test_run(t *testing.T) {
 				require.NoError(t, os.WriteFile(ws, []byte(drifted), 0o600))
 				var out bytes.Buffer
 
-				require.ErrorIs(t, run([]string{"check"}, root, &out, nil), errDrift)
+				require.ErrorIs(t, run([]string{"check"}, root, &out, nil, repoTables), errDrift)
 				assert.Contains(t, out.String(), "pnpm-workspace.yaml")
 				assert.Equal(t, drifted, readAt(t, root, "docker", "tools", "node", "pnpm-workspace.yaml"))
-				require.NoError(t, run([]string{"apply"}, root, &out, nil))
+				require.NoError(t, run([]string{"apply"}, root, &out, nil, repoTables))
 				assert.Equal(t, soundWorkspace, readAt(t, root, "docker", "tools", "node", "pnpm-workspace.yaml"))
 			})
 		}
@@ -259,10 +309,10 @@ func Test_run(t *testing.T) {
 			require.NoError(t, os.WriteFile(pkg, []byte(drifted), 0o600))
 			var out bytes.Buffer
 
-			require.ErrorIs(t, run([]string{"check"}, root, &out, nil), errDrift)
+			require.ErrorIs(t, run([]string{"check"}, root, &out, nil, repoTables), errDrift)
 			assert.Equal(t, drifted, readAt(t, root, "docker", "tools", "node", "package.json"))
 			assert.Contains(t, out.String(), "package.json")
-			require.NoError(t, run([]string{"apply"}, root, &out, nil))
+			require.NoError(t, run([]string{"apply"}, root, &out, nil, repoTables))
 			assert.Equal(t, soundPackageJSON, readAt(t, root, "docker", "tools", "node", "package.json"))
 		})
 
@@ -272,7 +322,7 @@ func Test_run(t *testing.T) {
 			root := newRepo(t, soundMise, drifted, soundGoMod, driftedHostTools)
 			var out bytes.Buffer
 
-			require.NoError(t, run([]string{"apply"}, root, &out, nil))
+			require.NoError(t, run([]string{"apply"}, root, &out, nil, repoTables))
 			assert.Equal(t, soundDockerfile, readAt(t, root, "docker", "tools", "Dockerfile"))
 			assert.Equal(t, soundHostTools, readAt(t, root, ".makefiles", "host-tools.mk"))
 		})
@@ -282,14 +332,14 @@ func Test_run(t *testing.T) {
 			root := newRepo(t, soundMise, strings.ReplaceAll(soundDockerfile, "1.27.1", "1.26.0"), soundGoMod)
 			var out bytes.Buffer
 
-			require.NoError(t, run([]string{"apply"}, root, &out, nil))
-			require.NoError(t, run([]string{"check"}, root, &out, nil))
+			require.NoError(t, run([]string{"apply"}, root, &out, nil, repoTables))
+			require.NoError(t, run([]string{"check"}, root, &out, nil, repoTables))
 		})
 
 		t.Run("一致していれば宣言の値を報告する", func(t *testing.T) {
 			t.Parallel()
 			var out bytes.Buffer
-			require.NoError(t, run([]string{"check"}, newRepo(t, soundMise, soundDockerfile, soundGoMod), &out, nil))
+			require.NoError(t, run([]string{"check"}, newRepo(t, soundMise, soundDockerfile, soundGoMod), &out, nil, repoTables))
 			assert.Contains(t, out.String(), "1.27.1")
 			assert.Contains(t, out.String(), "1.16.2")
 			assert.Contains(t, out.String(), "2.36.40")
@@ -308,8 +358,8 @@ func Test_run(t *testing.T) {
 			root := newRepo(t, soundMise, soundDockerfile, soundGoMod, drifted)
 			var out bytes.Buffer
 
-			require.ErrorIs(t, run([]string{"check"}, root, &out, nil), errDrift)
-			require.NoError(t, run([]string{"apply"}, root, &out, nil))
+			require.ErrorIs(t, run([]string{"check"}, root, &out, nil, repoTables), errDrift)
+			require.NoError(t, run([]string{"apply"}, root, &out, nil, repoTables))
 			assert.Equal(t, soundHostTools, readAt(t, root, ".makefiles", "host-tools.mk"))
 		})
 	})
@@ -325,7 +375,7 @@ func Test_run(t *testing.T) {
 			t.Run(name+"ならエラーにする", func(t *testing.T) {
 				t.Parallel()
 				var out bytes.Buffer
-				require.ErrorIs(t, run(args, t.TempDir(), &out, nil), errUsage)
+				require.ErrorIs(t, run(args, t.TempDir(), &out, nil, repoTables), errUsage)
 			})
 		}
 
@@ -336,7 +386,7 @@ func Test_run(t *testing.T) {
 			root := newRepo(t, soundMise, drifted, "module example\n")
 			var out bytes.Buffer
 
-			require.Error(t, run([]string{"apply"}, root, &out, nil))
+			require.Error(t, run([]string{"apply"}, root, &out, nil, repoTables))
 			assert.Equal(t, drifted, readAt(t, root, "docker", "tools", "Dockerfile"))
 		})
 
@@ -348,8 +398,8 @@ func Test_run(t *testing.T) {
 			root := newRepo(t, mise, drifted, soundGoMod)
 			var out bytes.Buffer
 
-			require.ErrorIs(t, run([]string{"check"}, root, &out, nil), errShape)
-			require.ErrorIs(t, run([]string{"apply"}, root, &out, nil), errShape)
+			require.ErrorIs(t, run([]string{"check"}, root, &out, nil, repoTables), errShape)
+			require.ErrorIs(t, run([]string{"apply"}, root, &out, nil, repoTables), errShape)
 			assert.Equal(t, drifted, readAt(t, root, "docker", "tools", "Dockerfile"))
 		})
 
@@ -360,7 +410,7 @@ func Test_run(t *testing.T) {
 				require.NoError(t, os.Remove(filepath.Join(root, "docker", "tools", "node", name)))
 				var out bytes.Buffer
 
-				err := run([]string{"check"}, root, &out, nil)
+				err := run([]string{"check"}, root, &out, nil, repoTables)
 				require.ErrorIs(t, err, os.ErrNotExist)
 				assert.Contains(t, err.Error(), name)
 			})
@@ -387,7 +437,7 @@ func Test_run(t *testing.T) {
 				require.NoError(t, os.WriteFile(path, []byte(after), 0o600))
 				var out bytes.Buffer
 
-				require.ErrorIs(t, run([]string{"apply"}, root, &out, nil), errShape)
+				require.ErrorIs(t, run([]string{"apply"}, root, &out, nil, repoTables), errShape)
 				assert.Contains(t, readAt(t, root, "docker", "tools", "Dockerfile"), "golang:1.26.0")
 			})
 		}

@@ -173,6 +173,7 @@ func Test_check(t *testing.T) {
 		body  string
 		lines []int
 		count int
+		say   string
 	}{
 		"印が無い": {body: "a\nb\n"},
 		"閉じた範囲が2つ": {
@@ -233,11 +234,13 @@ func Test_check(t *testing.T) {
 			body:  disable + " " + enable + "\n",
 			lines: []int{1, 1},
 			count: 1,
+			say:   "印の出現 2 件のうち 1 件しか分類できていない",
 		},
 		"綴りを誤った印": {
 			body:  "// " + prefix + "disble\n",
 			lines: []int{1},
 			count: 1,
+			say:   "印として解釈できない",
 		},
 		"dis と en で始まらない語は印として数えない": {
 			body:  "// " + prefix + "pause\n",
@@ -264,6 +267,13 @@ func Test_check(t *testing.T) {
 			}
 			assert.Equal(t, tt.lines, lines)
 			assert.Equal(t, tt.count, count)
+			if tt.say != "" {
+				var messages []string
+				for _, f := range findings {
+					messages = append(messages, f.Message)
+				}
+				assert.Contains(t, strings.Join(messages, "\n"), tt.say)
+			}
 		})
 	}
 }
@@ -457,6 +467,11 @@ func Test_candidateIndex(t *testing.T) {
 		"dis で始まる語の位置を返す":  {"ab " + prefix + "disable", 3},
 		"en で始まる語の位置を返す":   {prefix + "enable", 0},
 		"ほかの語だけなら -1":      {prefix + "linux-amd64", -1},
+		"接頭辞が行末なら -1":      {"x " + prefix, -1},
+		"後ろが d だけなら -1":    {prefix + "d", -1},
+		"後ろが di なら -1":     {prefix + "di-x", -1},
+		"後ろが e だけなら -1":    {prefix + "e", -1},
+		"en で始まる別の語も候補にする": {prefix + "engine", 0},
 		"ほかの語の後ろの候補の位置を返す": {prefix + "linux " + prefix + "enable", len(prefix + "linux ")},
 		"接頭辞が無ければ -1":      {"editorconfig", -1},
 	} {
@@ -467,10 +482,21 @@ func Test_candidateIndex(t *testing.T) {
 	}
 }
 
-func Test_candidateCount(t *testing.T) {
+func Test_candidateRe(t *testing.T) {
 	t.Parallel()
 
-	body := prefix + "disable " + prefix + "linux\n" + prefix + "enable " + prefix + "enable\n"
-	assert.Equal(t, 3, candidateCount(body))
-	assert.Equal(t, 0, candidateCount(prefix+"linux-amd64\n"))
+	for name, tt := range map[string]struct {
+		body string
+		want int
+	}{
+		"候補だけを数える":   {prefix + "disable " + prefix + "linux " + prefix + "enable", 2},
+		"候補が無ければ0":   {prefix + "linux-amd64", 0},
+		"行をまたいでも数える": {prefix + "disable\n" + prefix + "enable\n", 2},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Len(t, candidateRe.FindAllStringIndex(tt.body, -1), tt.want)
+		})
+	}
 }

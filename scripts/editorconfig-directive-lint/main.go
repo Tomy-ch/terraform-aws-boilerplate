@@ -28,6 +28,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/gitenv"
@@ -228,7 +229,7 @@ func check(path string, raw []byte) ([]lintreport.Finding, int) {
 		add(open, "範囲を開いたまま閉じていない。ファイルの残りが検査の外に出る")
 	}
 	// 行ごとの分類は各行の最初の印しか見ない。全体の出現数と食い違えば、分類から漏れた印がある。
-	if total := candidateCount(string(raw)); total != count {
+	if total := len(candidateRe.FindAllStringIndex(string(raw), -1)); total != count {
 		add(1, fmt.Sprintf("印の出現 %d 件のうち %d 件しか分類できていない。1行に印を2つ書かない", total, count))
 	}
 	return findings, count
@@ -238,6 +239,10 @@ func check(path string, raw []byte) ([]lintreport.Finding, int) {
 // どれも disable か enable で始まるので、綴りの誤り（disble など）もここに入ります。接頭辞の後ろがほかの語の
 // もの（道具の配布物の名前 `<接頭辞>linux-amd64.tar.gz` など）は印にならないので数えません。
 var candidates = []string{"dis", "en"}
+
+// candidateRe は印の候補を、candidateIndex とは別の経路で数えるための形です。check は行ごとの分類の数を
+// これと突き合わせます。
+var candidateRe = regexp.MustCompile(regexp.QuoteMeta(prefix) + `(?:` + strings.Join(candidates, "|") + `)`)
 
 // candidateIndex は、line の中で最初の印の候補の位置を返します。無ければ -1 です。
 func candidateIndex(line string) int {
@@ -254,18 +259,6 @@ func candidateIndex(line string) int {
 			}
 		}
 		from = at + len(prefix)
-	}
-}
-
-func candidateCount(s string) int {
-	n := 0
-	for from := 0; ; {
-		i := candidateIndex(s[from:])
-		if i < 0 {
-			return n
-		}
-		n++
-		from += i + len(prefix)
 	}
 }
 

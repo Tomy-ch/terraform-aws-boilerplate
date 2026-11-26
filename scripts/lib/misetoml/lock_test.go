@@ -1,8 +1,10 @@
 package misetoml_test
 
 import (
+	"bufio"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -64,66 +66,49 @@ func TestParseLock(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		tests := map[string]string{
-			"lockfile_version が無い場合": `[[tools.a]]
-version = "1"
-backend = "aqua:o/a"
-`,
-			"lockfile_version が2つある場合": "lockfile_version = 3\nlockfile_version = 3\n",
-			"道具の entry の前に知らない行がある場合":  "lockfile_version = 3\nfoo = 1\n",
-			"同じ道具の entry が2つある場合": `lockfile_version = 3
-[[tools.a]]
-version = "1"
-backend = "aqua:o/a"
-[[tools.a]]
-version = "2"
-backend = "aqua:o/a"
-`,
-			"entry に知らない key がある場合": `lockfile_version = 3
-[[tools."npm:a"]]
-version = "1"
-aube = { path = ".mise/locks/npm-a/1" }
-backend = "npm:a"
-`,
-			"platform に知らない key がある場合": `lockfile_version = 3
-[[tools.a]]
-version = "1"
-backend = "aqua:o/a"
-[tools.a."platforms.linux-x64"]
-size = "1"
-`,
-			"別の道具の platform が混ざる場合": `lockfile_version = 3
-[[tools.a]]
-version = "1"
-backend = "aqua:o/a"
-[tools.b."platforms.linux-x64"]
-url = "https://example.com"
-`,
-			"entry の外に platform がある場合": "lockfile_version = 3\n[tools.a.\"platforms.linux-x64\"]\n",
-			"同じ platform が2つある場合": `lockfile_version = 3
-[[tools.a]]
-version = "1"
-backend = "aqua:o/a"
-[tools.a."platforms.linux-x64"]
-url = "https://example.com/1"
-[tools.a."platforms.linux-x64"]
-url = "https://example.com/1"
-`,
-			"version が無い場合":          "lockfile_version = 3\n[[tools.a]]\nbackend = \"aqua:o/a\"\n",
-			"backend が無い場合":          "lockfile_version = 3\n[[tools.a]]\nversion = \"1\"\n",
-			"文字列でない値がある場合":           "lockfile_version = 3\n[[tools.a]]\nversion = 1\nbackend = \"aqua:o/a\"\n",
-			"platform に文字列でない値がある場合": "lockfile_version = 3\n[[tools.a]]\nversion = \"1\"\nbackend = \"aqua:o/a\"\n[tools.a.\"platforms.linux-x64\"]\nurl = 1\n",
+		tests := map[string]struct{ content, say string }{
+			"lockfile_version が無い":    {"[[tools.a]]\nversion = \"1\"\nbackend = \"aqua:o/a\"\n", "lockfile_version がありません"},
+			"空の入力":                    {"", "lockfile_version がありません"},
+			"lockfile_version が2つある":  {"lockfile_version = 3\nlockfile_version = 3\n", "2行目"},
+			"読めない lockfile_version":   {"lockfile_version = 99\n", "読める lockfile_version は 3 だけです"},
+			"道具の entry の前に知らない行がある":   {"lockfile_version = 3\nfoo = 1\n", "2行目"},
+			"同じ道具の entry が2つある":       {"lockfile_version = 3\n[[tools.a]]\nversion = \"1\"\nbackend = \"aqua:o/a\"\n[[tools.a]]\nversion = \"2\"\nbackend = \"aqua:o/a\"\n", "道具の entry の重複"},
+			"entry に知らない文字列の key がある": {"lockfile_version = 3\n[[tools.a]]\nversion = \"1\"\noptions = \"x\"\nbackend = \"aqua:o/a\"\n", "知らない key options"},
+			"entry に文字列でない値の行がある":     {"lockfile_version = 3\n[[tools.\"npm:a\"]]\nversion = \"1\"\naube = { path = \".mise/locks/npm-a/1\" }\nbackend = \"npm:a\"\n", "4行目"},
+			"platform に知らない key がある":  {"lockfile_version = 3\n[[tools.a]]\nversion = \"1\"\nbackend = \"aqua:o/a\"\n[tools.a.\"platforms.linux-x64\"]\nsize = \"1\"\n", "知らない key size"},
+			"platform の中に配列がある":       {"lockfile_version = 3\n[[tools.a]]\nversion = \"1\"\nbackend = \"aqua:o/a\"\n[tools.a.\"platforms.linux-x64\"]\nspecifiers = [\"1\"]\n", "6行目"},
+			"別の道具の platform が混ざる":     {"lockfile_version = 3\n[[tools.a]]\nversion = \"1\"\nbackend = \"aqua:o/a\"\n[tools.b.\"platforms.linux-x64\"]\nurl = \"https://example.com\"\n", "道具の entry の外の platform"},
+			"entry の外に platform がある":  {"lockfile_version = 3\n[tools.a.\"platforms.linux-x64\"]\n", "道具の entry の外の platform"},
+			"同じ platform が2つある":       {"lockfile_version = 3\n[[tools.a]]\nversion = \"1\"\nbackend = \"aqua:o/a\"\n[tools.a.\"platforms.linux-x64\"]\nurl = \"https://example.com/1\"\n[tools.a.\"platforms.linux-x64\"]\n", "platform の重複"},
+			"version が2つある":           {"lockfile_version = 3\n[[tools.a]]\nversion = \"1\"\nbackend = \"aqua:o/a\"\nversion = \"2\"\n", "version の重複"},
+			"backend が2つある":           {"lockfile_version = 3\n[[tools.a]]\nversion = \"1\"\nbackend = \"aqua:o/a\"\nbackend = \"aqua:o/b\"\n", "backend の重複"},
+			"url が2つある":               {"lockfile_version = 3\n[[tools.a]]\nversion = \"1\"\nbackend = \"aqua:o/a\"\n[tools.a.\"platforms.linux-x64\"]\nurl = \"https://example.com/1\"\nurl = \"https://example.com/2\"\n", "url の重複"},
+			"checksum が2つある":          {"lockfile_version = 3\n[[tools.a]]\nversion = \"1\"\nbackend = \"aqua:o/a\"\n[tools.a.\"platforms.linux-x64\"]\nchecksum = \"sha256:a\"\nchecksum = \"sha256:b\"\n", "checksum の重複"},
+			"version が無い":             {"lockfile_version = 3\n[[tools.a]]\nbackend = \"aqua:o/a\"\n", "version か backend がありません"},
+			"backend が無い":             {"lockfile_version = 3\n[[tools.a]]\nversion = \"1\"\n", "version か backend がありません"},
+			"entry に文字列でない値がある":       {"lockfile_version = 3\n[[tools.a]]\nversion = 1\nbackend = \"aqua:o/a\"\n", "3行目"},
+			"platform に文字列でない値がある":    {"lockfile_version = 3\n[[tools.a]]\nversion = \"1\"\nbackend = \"aqua:o/a\"\n[tools.a.\"platforms.linux-x64\"]\nurl = 1\n", "6行目"},
 		}
-		for name, content := range tests {
-			t.Run(name+"、ErrInvalidLock を返す", func(t *testing.T) {
+		for name, tt := range tests {
+			t.Run(name+"場合、ErrInvalidLock で理由を名指す", func(t *testing.T) {
 				t.Parallel()
 
-				got, err := misetoml.ParseLock([]byte(content))
+				got, err := misetoml.ParseLock([]byte(tt.content))
 
 				require.ErrorIs(t, err, misetoml.ErrInvalidLock)
+				assert.Contains(t, err.Error(), tt.say)
 				assert.Nil(t, got)
 			})
 		}
+	})
+
+	t.Run("bufio の上限を超える1行は、走査のエラーで落ちる", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := misetoml.ParseLock([]byte("lockfile_version = 3\n# " + strings.Repeat("x", 70*1024) + "\n"))
+
+		require.ErrorIs(t, err, bufio.ErrTooLong)
+		assert.Nil(t, got)
 	})
 }
 
