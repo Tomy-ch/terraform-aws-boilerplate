@@ -39,7 +39,7 @@
 //     push に paths を持たず、concurrency を持ち、workflow 全体と job に在る concurrency が
 //     すべて cancel-in-progress: false で —— 後から起動した run が、実行中の apply を途中で止めない ——、id が refuse-stale で
 //     if: と continue-on-error: を持たない step を資格情報の取得より前に置き
-//     （古い commit の再実行を拒む。その step は REST API を呼ばない）、terraform を `make ci-apply-*` でだけ、ちょうど1回走らせる（Policy を通った plan だけを
+//     （古い commit の再実行を拒む。その step は先頭を git ls-remote で取って比べ、REST API を呼ぶ道具を書かない）、terraform を `make ci-apply-*` でだけ、ちょうど1回走らせる（Policy を通った plan だけを
 //     apply する経路。ADR-0604 決定11）
 //   - lock の解除の job（`make ci-unlock-*` を持つ job）は、外す root の lock の解除の role（identity root は
 //     unlock-identity、ほかの root は unlock）を取り、workflow の起動が
@@ -149,8 +149,12 @@ var (
 	makeFlags    = regexp.MustCompile(`\b(?:GNU)?MAKEFLAGS\b|\bMFLAGS\b|\bMAKEFILES\b`)
 	pathKey      = regexp.MustCompile(`(?:^|[\s{,])["']?PATH["']?[ \t]*:`)
 	stepFiles    = regexp.MustCompile(`\bGITHUB_(?:PATH|ENV)\b`)
-	// restCall は REST API を呼ぶ道具と host。refuse-stale はブランチの先頭を git で取り、REST の上限を分け合わない。
-	restCall = regexp.MustCompile(`(?:^|[\s;&|(/"'$])(?:gh|curl|wget)(?:[\s;&|)"']|$)|\bapi\.github\.com\b`)
+	// restCall は REST API を呼ぶ道具と、その host を指す名前。refuse-stale はブランチの先頭を REST ではなく git で
+	// 取る。字面を見るだけで、別の道具や組み立てた URL からの呼び出しまでは見えない。
+	restCall = regexp.MustCompile("(?:^|[\\s;&|(/\"'$`{=:\\-\\\\])(?:gh|curl|wget)(?:[\\s;&|)\"'`}\\\\]|$)|\\bapi\\.github\\.com\\b|\\bGITHUB_(?:API|GRAPHQL)_URL\\b|\\bgithub-script\\b|\\boctokit\\b")
+	// lsRemote と staleCompare は refuse-stale の中身。先頭を git ls-remote で取り、run の commit と比べる。
+	lsRemote     = regexp.MustCompile(`(?:^|[\s;&|(])git\s(?:.*\s)?ls-remote\s`)
+	staleCompare = regexp.MustCompile(`\btest\s+"\$SHA"\s+=\s+"\$head"`)
 	// アンカーとエイリアスは、別の場所に書いた値をこの行へ持ち込む。行ごとの読み方では追えない。
 	yamlAlias     = regexp.MustCompile(`(?:^|[:\-][ \t]+)[&*][A-Za-z0-9_-]+(?:[ \t]|$)|<<[ \t]*:`)
 	envAt         = regexp.MustCompile(`^["']?env["']?[ \t]*:`)
@@ -1402,13 +1406,34 @@ func checkRefusal(job workflow.Job, cred workflow.Line, id string, finding func(
 			if stepIf.MatchString(l.Text) || stepContinue.MatchString(l.Text) {
 				findings = append(findings, finding(l.Number, "step %s に if: と continue-on-error: を置かないでください。拒否は skip ではなく失敗にします（ADR-0602 決定14）", id))
 			}
-			if id == refuseStale && !commentLine.MatchString(l.Text) && restCall.MatchString(l.Text) {
-				findings = append(findings, finding(l.Number, "step %s で REST API を呼ばないでください（gh・curl・wget・api.github.com）。ブランチの先頭は git ls-remote で取ります。REST の上限に当たると apply の経路が止まります", id))
-			}
+		}
+		if id == refuseStale {
+			findings = append(findings, checkStaleBody(step, finding)...)
 		}
 	}
 	if !refused {
 		findings = append(findings, finding(cred.Number, "資格情報を取る前に、id が %s の step を置いてください（ADR-0602 決定14）", id))
+	}
+	return findings
+}
+
+// checkStaleBody は、refuse-stale の step がブランチの先頭を git ls-remote で取って run の commit と比べ、REST API を
+// 呼ぶ道具を書かないことを検査します。REST の上限は PR の CI と分け合います。
+func checkStaleBody(step workflow.Step, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+	var findings []lintreport.Finding
+	fetches, compares := false, false
+	for _, l := range step.Lines {
+		if commentLine.MatchString(l.Text) {
+			continue
+		}
+		if restCall.MatchString(l.Text) {
+			findings = append(findings, finding(l.Number, "step %s に REST API を呼ぶ道具を書かないでください（gh・curl・wget・api.github.com・GITHUB_API_URL・github-script）。ブランチの先頭は git ls-remote で取ります", refuseStale))
+		}
+		fetches = fetches || lsRemote.MatchString(l.Text)
+		compares = compares || staleCompare.MatchString(l.Text)
+	}
+	if !fetches || !compares {
+		findings = append(findings, finding(step.Number, "step %s は、ブランチの先頭を git ls-remote で取り、test \"$SHA\" = \"$head\" で run の commit と比べてください", refuseStale))
 	}
 	return findings
 }

@@ -220,6 +220,7 @@ jobs:
           ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
         run: |
           auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          test -n "$auth" || { echo "❌ token から認証の header を組めません"; exit 1; }
           echo "::add-mask::$auth"
           head=$(git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" ls-remote "https://github.com/$REPO.git" "refs/heads/$REF" \
             | awk -v ref="refs/heads/$REF" '$2 == ref { n++; sha = $1 } END { if (n != 1) exit 1; print sha }') \
@@ -352,6 +353,7 @@ jobs:
           ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
         run: |
           auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          test -n "$auth" || { echo "❌ token から認証の header を組めません"; exit 1; }
           echo "::add-mask::$auth"
           head=$(git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" ls-remote "https://github.com/$REPO.git" "refs/heads/$REF" \
             | awk -v ref="refs/heads/$REF" '$2 == ref { n++; sha = $1 } END { if (n != 1) exit 1; print sha }') \

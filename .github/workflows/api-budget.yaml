@@ -2,6 +2,7 @@ name: API Budget
 
 # GITHUB_TOKEN の REST API の枠（core）の limit・used・remaining・reset を出す診断の口。
 # GET /rate_limit は枠を数えないので、上限に当たっている最中でも呼べる。必須の検査にしない。
+# ls-remote を true にすると、refuse-stale と同じ git ls-remote を1回呼び、その前後の used を出す。
 on:
   workflow_dispatch:
     inputs:
@@ -80,6 +81,7 @@ jobs:
           if [ "$LS_REMOTE" = true ]; then
             before=$(used)
             auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+            test -n "$auth" || { echo "❌ token から認証の header を組めません"; exit 1; }
             echo "::add-mask::$auth"
             git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" ls-remote "https://github.com/$REPO.git" "refs/heads/$REF" >/dev/null
             after=$(used)
