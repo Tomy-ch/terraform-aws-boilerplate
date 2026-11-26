@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 	"github.com/stretchr/testify/assert"
@@ -31,8 +32,10 @@ func testDeps(f *fakeAWS, input string, read *[]string) deps {
 
 			return files(name)
 		},
-		stdin: strings.NewReader(input),
-		isTTY: true,
+		stdin:  strings.NewReader(input),
+		isTTY:  true,
+		hidden: hiddenLines(testPassword, testPassword, testPassword, testPassword),
+		now:    func() time.Time { return testNow },
 	}
 }
 
@@ -43,16 +46,24 @@ func Test_entries(t *testing.T) {
 		t.Parallel()
 
 		want := map[string][]string{
-			"member-emails":          {"ssm put-parameter"},
-			"member-emails-check":    nil,
-			"member-email-update":    {"organizations enable-aws-service-access", "account start-primary-email-update", "account accept-primary-email-update", "ssm put-parameter"},
-			"account-quota-check":    nil,
-			"member-accounts-check":  nil,
-			"stacksets-access":       {"cloudformation activate-organizations-access"},
-			"stacksets-access-check": nil,
-			"stack-instances-check":  nil,
-			"service-access":         {"organizations enable-aws-service-access"},
-			"service-access-check":   nil,
+			"member-emails":              {"ssm put-parameter"},
+			"member-emails-check":        nil,
+			"member-email-update":        {"organizations enable-aws-service-access", "account start-primary-email-update", "account accept-primary-email-update", "ssm put-parameter"},
+			"account-quota-check":        nil,
+			"member-accounts-check":      nil,
+			"stacksets-access":           {"cloudformation activate-organizations-access"},
+			"stacksets-access-check":     nil,
+			"stack-instances-check":      nil,
+			"service-access":             {"organizations enable-aws-service-access"},
+			"service-access-check":       nil,
+			"delegated-admin-check":      nil,
+			"organization-check":         nil,
+			"identity-center-check":      nil,
+			"identity-center-user-check": nil,
+			"break-glass-login":          {"iam create-login-profile"},
+			"break-glass-mfa":            {"iam enable-mfa-device"},
+			"break-glass-check":          nil,
+			"break-glass-usage-check":    nil,
 		}
 		require.Equal(t, slices.Sorted(maps.Keys(want)), slices.Sorted(maps.Keys(entries)))
 
@@ -74,7 +85,7 @@ func Test_entries(t *testing.T) {
 			}
 		}
 
-		assert.Equal(t, 6, checks)
+		assert.Equal(t, 12, checks)
 	})
 
 	// 各入口を run から起動し、入口に固有の操作が起動されることで、entries の配線（run・usecase・needsEnv）を固定する。
@@ -126,6 +137,31 @@ func Test_entries(t *testing.T) {
 		"service-access-check": {nil, func(t *testing.T) *fakeAWS {
 			return serviceWorld(t, principals(securityServicePrincipals...), "")
 		}, "", "organizations list-aws-service-access-for-organization"},
+		"delegated-admin-check": {[]string{"-usecase", testUsecase}, func(t *testing.T) *fakeAWS {
+			return delegatedWorld(t, `{"Id":"222222222222","Name":"tabp-security","State":"ACTIVE"}`,
+				map[string]string{"cloudtrail.amazonaws.com": `{"Id":"222222222222"}`, "config.amazonaws.com": `{"Id":"222222222222"}`})
+		}, "", "organizations list-delegated-administrators --service-principal config.amazonaws.com"},
+		"organization-check": {[]string{"-usecase", testUsecase}, func(t *testing.T) *fakeAWS {
+			return orgWorld(t, nil)
+		}, "", topOUsCall},
+		"identity-center-check": {nil, func(t *testing.T) *fakeAWS {
+			return orgWorld(t, map[string]awsResult{listSSO: ok(ssoJSON)})
+		}, "", listSSO},
+		"identity-center-user-check": {[]string{"-usecase", testUsecase, "-user", "alice"}, func(t *testing.T) *fakeAWS {
+			return idcUserWorld(t, ok(`{"UserId":"u-1"}`), `{"UserName":"alice"}`)
+		}, "", getUserID},
+		"break-glass-login": {[]string{"-usecase", testUsecase}, func(t *testing.T) *fakeAWS {
+			return loginWorld(t, map[string]bool{bg1: true})
+		}, "tabp\n", createLogin},
+		"break-glass-mfa": {[]string{"-usecase", testUsecase}, func(t *testing.T) *fakeAWS {
+			return mfaWorld(t, map[string][]string{bg1: {hwSerial}})
+		}, "tabp\n" + hwSerial + "\n123456\n654321\n", enableMFA},
+		"break-glass-check": {[]string{"-usecase", testUsecase}, func(t *testing.T) *fakeAWS {
+			return bgWorld(t, bothLogin(), bothMFA())
+		}, "", passwordPol},
+		"break-glass-usage-check": {[]string{"-usecase", testUsecase}, func(t *testing.T) *fakeAWS {
+			return usageWorld(t, daysAgo(1), daysAgo(1), daysAgo(1))
+		}, "", "iam get-role --role-name tabp-break-glass"},
 	}
 
 	t.Run("run の表が entries のすべての入口を覆う", func(t *testing.T) {
@@ -348,11 +384,13 @@ func Test_parseArgs(t *testing.T) {
 		"region が無い":  {[]string{"stacksets-access", "-project", "p"}, "-project と -region は必須です"},
 		"余分な引数がある":    {[]string{"stacksets-access", "-project", "p", "-region", "r", "x"}, "余分な引数があります"},
 		"知らない旗":       {[]string{"stacksets-access", "-project", "p", "-region", "r", "-x"}, "flag provided but not defined"},
-		"Terraform を読む入口に -usecase が無い":     {[]string{"member-emails", "-project", "p", "-region", "r"}, "-usecase は"},
-		"Terraform を読まない入口に -usecase":       {[]string{"stacksets-access", "-project", "p", "-region", "r", "-usecase", "a"}, "-usecase は"},
-		"member-email-update に -env が無い":    {[]string{"member-email-update", "-project", "p", "-region", "r", "-usecase", "a"}, "-env は"},
-		"ほかの入口に -env":                       {[]string{"member-emails", "-project", "p", "-region", "r", "-usecase", "a", "-env", "x"}, "-env は"},
-		"member-accounts-check でない入口に -ids": {[]string{"member-emails-check", "-project", "p", "-region", "r", "-usecase", "a", "-ids"}, "-ids は"},
+		"Terraform を読む入口に -usecase が無い":          {[]string{"member-emails", "-project", "p", "-region", "r"}, "-usecase は"},
+		"Terraform を読まない入口に -usecase":            {[]string{"stacksets-access", "-project", "p", "-region", "r", "-usecase", "a"}, "-usecase は"},
+		"member-email-update に -env が無い":         {[]string{"member-email-update", "-project", "p", "-region", "r", "-usecase", "a"}, "-env は"},
+		"ほかの入口に -env":                            {[]string{"member-emails", "-project", "p", "-region", "r", "-usecase", "a", "-env", "x"}, "-env は"},
+		"identity-center-user-check に -user が無い": {[]string{"identity-center-user-check", "-project", "p", "-region", "r", "-usecase", "a"}, "-user は"},
+		"ほかの入口に -user":                           {[]string{"break-glass-check", "-project", "p", "-region", "r", "-usecase", "a", "-user", "x"}, "-user は"},
+		"member-accounts-check でない入口に -ids":      {[]string{"member-emails-check", "-project", "p", "-region", "r", "-usecase", "a", "-ids"}, "-ids は"},
 	}
 	for name, tc := range bad {
 		t.Run(name+"なら errUsage", func(t *testing.T) {

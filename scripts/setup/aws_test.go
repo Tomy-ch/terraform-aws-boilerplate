@@ -339,7 +339,7 @@ func Test_client_writeSecret(t *testing.T) {
 		t.Parallel()
 
 		f := newFakeAWS(t, map[string]awsResult{accept: ok("")})
-		require.NoError(t, testClient(f, "account accept-primary-email-update").writeSecret(map[string]string{"Otp": "ABC123"}, strings.Fields(accept)...))
+		require.NoError(t, testClient(f, "account accept-primary-email-update").writeSecret(map[string]any{"Otp": "ABC123"}, strings.Fields(accept)...))
 		assert.Equal(t, []string{`{"Otp":"ABC123"}`}, f.secrets)
 		assert.NotContains(t, strings.Join(f.joined(), " "), "ABC123")
 
@@ -352,7 +352,7 @@ func Test_client_writeSecret(t *testing.T) {
 		t.Parallel()
 
 		f := newFakeAWS(t, map[string]awsResult{accept: fail(t, "ValidationException")})
-		err := testClient(f, "account accept-primary-email-update").writeSecret(map[string]string{"Otp": "ABC123"}, strings.Fields(accept)...)
+		err := testClient(f, "account accept-primary-email-update").writeSecret(map[string]any{"Otp": "ABC123"}, strings.Fields(accept)...)
 		require.ErrorIs(t, err, errAWSFailed)
 
 		file := strings.TrimPrefix(f.calls[0][len(f.calls[0])-5], "file://")
@@ -364,7 +364,7 @@ func Test_client_writeSecret(t *testing.T) {
 		t.Parallel()
 
 		f := newFakeAWS(t, nil)
-		require.ErrorIs(t, testClient(f).writeSecret(map[string]string{"Otp": "x"}, strings.Fields(accept)...), errNotAllowed)
+		require.ErrorIs(t, testClient(f).writeSecret(map[string]any{"Otp": "x"}, strings.Fields(accept)...), errNotAllowed)
 		assert.Empty(t, f.calls)
 	})
 

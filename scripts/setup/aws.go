@@ -13,9 +13,8 @@ import (
 )
 
 var (
-	// errNoProfile は、AWS_PROFILE が空なこと。資格情報を変える環境変数を外し、profile を渡すのは make である。
-	errNoProfile = xerrors.New("AWS_PROFILE が空です。make の setup- の入口から起動してください")
-	// errStaticCredentials は、profile より優先される資格情報か、profile の読み先を変える指定が環境に在ること。
+	// errNoProfile: 資格情報を変える環境変数を外し、profile を渡すのは make である。
+	errNoProfile         = xerrors.New("AWS_PROFILE が空です。make の setup- の入口から起動してください")
 	errStaticCredentials = xerrors.New("環境に profile を迂回する資格情報の指定が在ります。make の setup- の入口から起動してください（make が外します）")
 	// errAWSStart は、aws を起動できないこと（PATH に無いなど）。
 	errAWSStart    = xerrors.New("aws を起動できません")
@@ -168,7 +167,7 @@ func (c *client) write(args ...string) error {
 
 // writeSecret は write と同じだが、secret を引数に載せず、所有者だけが読める一時ファイルの JSON として
 // --cli-input-json で渡す（ADR-0702 決定27）。一時ファイルは起動の後に消す。
-func (c *client) writeSecret(secret map[string]string, args ...string) error {
+func (c *client) writeSecret(secret map[string]any, args ...string) error {
 	if isRead(args) {
 		return xerrors.Wrap(errNotAllowed, "aws "+op(args))
 	}

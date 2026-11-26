@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"maps"
 	"os"
 	"os/exec"
 	"path"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -19,10 +21,20 @@ const (
 	paramName   = "/tabp/organization-baseline/member-account-emails"
 
 	usecaseMainTF = `locals {
+	break_glass_path      = "/break-glass/"
 	break_glass_role_name = "${var.project}-break-glass"
 }
 `
-	ouMainTF = `locals {
+	ouMainTF = `resource "aws_organizations_organization" "this" {
+	feature_set          = "ALL"
+	enabled_policy_types = ["SERVICE_CONTROL_POLICY", "RESOURCE_CONTROL_POLICY"]
+}
+
+resource "aws_iam_organizations_features" "this" {
+	enabled_features = ["RootCredentialsManagement", "RootSessions"]
+}
+
+locals {
 	root_id = "r"
 }
 
@@ -56,13 +68,80 @@ resource "aws_organizations_account" "this" {
 	}
 }
 `
+	breakGlassTF = `locals {
+	user_names = toset(["break-glass-1", "break-glass-2"])
+}
+
+resource "aws_iam_account_password_policy" "this" {
+	minimum_password_length = 14
+	require_symbols         = true
+	hard_expiry             = false
+}
+`
+	delegatedTF = `resource "aws_organizations_delegated_administrator" "this" {
+	for_each = toset(["config.amazonaws.com"])
+
+	account_id        = aws_organizations_account.this["security"].id
+	service_principal = each.key
+}
+`
+	outputsTF = `output "delegated_admin" {
+	value = {
+		account_id         = aws_organizations_account.this["security"].id
+		service_principals = sort(concat(["cloudtrail.amazonaws.com"], keys(aws_organizations_delegated_administrator.this)))
+	}
+}
+`
 )
 
+// fixtureFiles は、organization-baseline の宣言の fixture。束ごとの3つを引数で替え、残りは既定の fixture を置く。
 func fixtureFiles(usecaseMain, ouMain, accounts string) map[string]string {
 	return map[string]string{
-		path.Join(testUsecase, usecaseFile):  usecaseMain,
-		path.Join(testUsecase, ouFile):       ouMain,
-		path.Join(testUsecase, accountsFile): accounts,
+		path.Join(testUsecase, usecaseFile):    usecaseMain,
+		path.Join(testUsecase, ouFile):         ouMain,
+		path.Join(testUsecase, accountsFile):   accounts,
+		path.Join(testUsecase, breakGlassFile): breakGlassTF,
+		path.Join(testUsecase, delegatedFile):  delegatedTF,
+		path.Join(testUsecase, outputsFile):    outputsTF,
+	}
+}
+
+func withFile(files map[string]string, name, src string) map[string]string {
+	out := maps.Clone(files)
+	out[path.Join(testUsecase, name)] = src
+
+	return out
+}
+
+func testOptionsUC(files map[string]string) options {
+	o := testOptions()
+	o.usecase = testUsecase
+	o.readFile = readFiles(files)
+	o.now = func() time.Time { return testNow }
+
+	return o
+}
+
+const testPassword = "Pw-correct-horse-1"
+
+var testNow = time.Date(2026, 11, 26, 0, 0, 0, 0, time.UTC)
+
+// hiddenLines は、伏せた入力として lines を順に返す。尽きたら errNoInput。
+func hiddenLines(lines ...string) func() ([]byte, error) {
+	var mu sync.Mutex
+
+	return func() ([]byte, error) {
+		mu.Lock()
+		defer mu.Unlock()
+
+		if len(lines) == 0 {
+			return nil, errNoInput
+		}
+
+		l := lines[0]
+		lines = lines[1:]
+
+		return []byte(l), nil
 	}
 }
 

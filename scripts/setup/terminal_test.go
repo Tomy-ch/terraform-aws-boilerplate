@@ -100,3 +100,48 @@ func Test_terminal_confirm(t *testing.T) {
 		assert.Empty(t, out.String())
 	})
 }
+
+func Test_terminal_secret(t *testing.T) {
+	t.Parallel()
+
+	t.Run("問いを出し、伏せた入力を返して改行を出す", func(t *testing.T) {
+		t.Parallel()
+
+		term, out := tty("")
+		term.hidden = hiddenLines("s3cret")
+
+		got, err := term.secret("P: ")
+		require.NoError(t, err)
+		assert.Equal(t, "s3cret", got)
+		assert.Equal(t, "P: \n", out.String())
+	})
+
+	t.Run("端末でなければ読まずに errNotTerminal", func(t *testing.T) {
+		t.Parallel()
+
+		term := newTerminal(strings.NewReader(""), &bytes.Buffer{}, false)
+		term.hidden = func() ([]byte, error) { t.Error("読んだ"); return nil, nil }
+
+		_, err := term.secret("P: ")
+		require.ErrorIs(t, err, errNotTerminal)
+	})
+
+	t.Run("伏せて読む手段が無ければ errNoHidden（伏せずに読まない）", func(t *testing.T) {
+		t.Parallel()
+
+		term, _ := tty("s3cret\n")
+
+		_, err := term.secret("P: ")
+		require.ErrorIs(t, err, errNoHidden)
+	})
+
+	t.Run("読めなければ errNoHidden", func(t *testing.T) {
+		t.Parallel()
+
+		term, _ := tty("")
+		term.hidden = hiddenLines()
+
+		_, err := term.secret("P: ")
+		require.ErrorIs(t, err, errNoHidden)
+	})
+}

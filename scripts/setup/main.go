@@ -3,7 +3,7 @@
 // 手順の実行は、資格情報が組織の管理アカウントのものであることと前提と現状を読み取りで確かめ、差分を示し、
 // project の名前の打ち込みを受けてから書き込み、読み直して確かめる。
 //
-//	setup <入口> -project <project> -region <region> [-usecase <dir>] [-env <env>] [-ids]
+//	setup <入口> -project <project> -region <region> [-usecase <dir>] [-env <env>] [-user <user>] [-ids]
 //
 // 入口（organization-baseline の手順書。-usecase は usecases/organization-baseline）:
 //
@@ -17,8 +17,17 @@
 //	stack-instances-check  3.5 の昇格の後: break-glass の StackSet が在り、project の StackSet がメンバーアカウントのそれぞれに CURRENT の stack instance を持つ（-usecase）
 //	service-access         3.9: セキュリティのサービスの信頼アクセスを有効にする
 //	service-access-check   3.9 の確認
+//	delegated-admin-check  3.9 の昇格の後: サービスの主体のそれぞれで、委任管理者が security のアカウントだけ（-usecase）
+//	organization-check     3.2: 組織の機能、Root の policy の種類、Root の直下の OU、IAM の組織の機能（-usecase）
+//	identity-center-check  3.3 手順1 の確認: 組織の管理アカウントのインスタンスが ACTIVE でただ1つ在る
+//	identity-center-user-check 3.3 手順4 の確認: user が在り、その ID を出す。user の名前に環境の接尾辞が無い（-usecase・-user）
+//	break-glass-login      3.4 手順1: パスワードの無い break-glass の user に、伏せて打ち込んだパスワードを置く（-usecase）
+//	break-glass-mfa        3.4 手順2: MFA の無い break-glass の user に、ハードウェアの TOTP の装置を登録する（-usecase）
+//	break-glass-check      3.4 の確認: パスワードとハードウェアの MFA が在り、アクセスキーが無く、password policy が宣言どおり（-usecase）
+//	break-glass-usage-check 3.6 の忘れ: break-glass の user のサインインと role の引き受けが45日以内（-usecase）
 //
-// env の一覧、OU の階層、メールの形、break-glass の StackSet の名前は、-usecase の Terraform から毎回読む。
+// env の一覧、OU の階層、メールの形、break-glass の user と role と password policy、委任管理者のサービスの主体は、
+// -usecase の Terraform から毎回読む。
 //
 // 終了コードは、0 が完了か確認の一致、1 が確認の NG か、組織の状態が前提に合わず書かなかったこと（OU や
 // Root が決まらない、同じ名前のアカウント、使われているメール、在るアカウントのメールの変更）、2 がそれ以外
@@ -30,6 +39,9 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"time"
+
+	"golang.org/x/term"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
@@ -37,7 +49,7 @@ import (
 var (
 	accountPattern = regexp.MustCompile(`[0-9]{12}`)
 
-	errUsage = xerrors.New("使い方: setup <入口> -project <project> -region <region> [-usecase <dir>] [-env <env>] [-ids]（入口は scripts/setup/main.go の冒頭）")
+	errUsage = xerrors.New("使い方: setup <入口> -project <project> -region <region> [-usecase <dir>] [-env <env>] [-user <user>] [-ids]（入口は scripts/setup/main.go の冒頭）")
 )
 
 type deps struct {
@@ -46,6 +58,8 @@ type deps struct {
 	readFile func(string) ([]byte, error)
 	stdin    io.Reader
 	isTTY    bool
+	hidden   func() ([]byte, error)
+	now      func() time.Time
 }
 
 type options struct {
@@ -54,16 +68,21 @@ type options struct {
 	region  string
 	usecase string
 	env     string
+	user    string
 	showIDs bool
+
+	readFile func(string) ([]byte, error)
+	now      func() time.Time
 }
 
 // entry は、1つの入口。writes はその入口が起動してよい書き込みの操作（"<service> <operation>"）で、確認は空。
 // usecase は、その入口が organization-baseline の Terraform を読むか。
 type entry struct {
-	writes   []string
-	usecase  bool
-	needsEnv bool
-	run      func(o options, c *client, t *terminal, org organization) error
+	writes    []string
+	usecase   bool
+	needsEnv  bool
+	needsUser bool
+	run       func(o options, c *client, t *terminal, org organization) error
 }
 
 var entries = map[string]entry{
@@ -122,11 +141,60 @@ var entries = map[string]entry{
 			return checkServiceAccess(c, t.out)
 		},
 	},
+	"delegated-admin-check": {
+		usecase: true,
+		run: func(o options, c *client, t *terminal, _ organization) error {
+			return checkDelegatedAdmin(o, c, t.out)
+		},
+	},
+	"organization-check": {
+		usecase: true,
+		run: func(o options, c *client, t *terminal, _ organization) error {
+			return checkOrganization(o, c, t.out)
+		},
+	},
+	"identity-center-check": {
+		run: func(o options, c *client, t *terminal, _ organization) error {
+			return checkIdentityCenter(o, c, t.out)
+		},
+	},
+	"identity-center-user-check": {
+		usecase: true, needsUser: true,
+		run: func(o options, c *client, t *terminal, org organization) error {
+			return checkIdentityCenterUser(o, c, t.out, org)
+		},
+	},
+	"break-glass-login": {
+		writes: []string{"iam create-login-profile"}, usecase: true,
+		run: func(o options, c *client, t *terminal, _ organization) error {
+			return setBreakGlassLogin(o, c, t)
+		},
+	},
+	"break-glass-mfa": {
+		writes: []string{"iam enable-mfa-device"}, usecase: true,
+		run: func(o options, c *client, t *terminal, _ organization) error {
+			return setBreakGlassMFA(o, c, t)
+		},
+	},
+	"break-glass-check": {
+		usecase: true,
+		run: func(o options, c *client, t *terminal, _ organization) error {
+			return checkBreakGlass(o, c, t.out)
+		},
+	},
+	"break-glass-usage-check": {
+		usecase: true,
+		run: func(o options, c *client, t *terminal, _ organization) error {
+			return checkBreakGlassUsage(o, c, t.out)
+		},
+	},
 }
 
 func main() {
 	os.Exit(execute(os.Args[1:], os.Stdout, deps{
 		aws: hostAWS("aws"), getenv: os.Getenv, readFile: os.ReadFile, stdin: os.Stdin, isTTY: isTerminal(os.Stdin),
+		hidden: func() ([]byte, error) { return term.ReadPassword(int(os.Stdin.Fd())) }, //nolint:gosec // 標準入力の記述子は int に収まる。
+		now:    time.Now,
 	}))
 }
 
@@ -206,6 +274,7 @@ func parseArgs(args []string) (options, entry, error) {
 	fs.StringVar(&o.region, "region", "", "")
 	fs.StringVar(&o.usecase, "usecase", "", "")
 	fs.StringVar(&o.env, "env", "", "")
+	fs.StringVar(&o.user, "user", "", "")
 	fs.BoolVar(&o.showIDs, "ids", false, "")
 
 	if err := fs.Parse(args[1:]); err != nil {
@@ -221,6 +290,8 @@ func parseArgs(args []string) (options, entry, error) {
 		return options{}, entry{}, xerrors.Wrap(errUsage, "-usecase は organization-baseline の Terraform を読む入口にだけ渡します")
 	case e.needsEnv != (o.env != ""):
 		return options{}, entry{}, xerrors.Wrap(errUsage, "-env は member-email-update にだけ渡します")
+	case e.needsUser != (o.user != ""):
+		return options{}, entry{}, xerrors.Wrap(errUsage, "-user は identity-center-user-check にだけ渡します")
 	case o.showIDs && o.entry != "member-accounts-check":
 		return options{}, entry{}, xerrors.Wrap(errUsage, "-ids は member-accounts-check にだけ渡します")
 	}
@@ -239,6 +310,8 @@ func run(args []string, out io.Writer, d deps) error {
 		return err
 	}
 
+	o.readFile, o.now = d.readFile, d.now
+
 	var org organization
 
 	if e.usecase {
@@ -249,6 +322,7 @@ func run(args []string, out io.Writer, d deps) error {
 
 	c := &client{aws: d.aws, region: o.region, writes: e.writes}
 	t := newTerminal(d.stdin, out, d.isTTY)
+	t.hidden = d.hidden
 
 	if len(e.writes) > 0 {
 		if err := requireManagementAccount(c, profile, out); err != nil {
