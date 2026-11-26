@@ -60,7 +60,7 @@ ADR-0401 は検証レイヤーを定義したが、検証がどの時点で実�
 
 8. Pull Request 契機で実行するレイヤーは ADR-0401 決定8 に従う。本 ADR はそこへ `terraform plan` と Infracost（ADR-0501 決定24）を加える。
 9. AWS credentials を要する検証を、要さない検証より先に実行しない。credentials の取得失敗によって ADR-0401 決定6 のレイヤーが巻き添えで失敗する順序を採らない。`terraform` を AWS credentials 付きで実行する job（`terraform plan` を含む）は、ADR-0103 のコード実行の検出の成功に依存させる。
-10. 検証が失敗した Pull Request を merge しない。デプロイブランチへの merge は apply を起動するので、その merge の可否は実環境への適用の可否と同義である。リリース線へ merge した commit は、昇格でそのままデプロイブランチへ入る（決定4）ので、リリース線への merge にも同じ検証を課す。
+10. 検証が失敗した Pull Request を merge しない。デプロイブランチへの merge は apply を起動するので、その merge の可否は実環境への適用の可否と同義である。リリース線へ merge した commit は、昇格でそのままデプロイブランチへ入る（決定4）ので、リリース線への merge にも同じ検証を課す。昇格の Pull Request は、その CI の plan の行と変わる resource の一覧が、本文に書いた見込みと一致することを確かめて merge する。見込みに無い変更（destroy を含む）と、取り消せない変更を含むときは、merge の前に人が止める。
 
 ### Drift
 

@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-11-19
 - Scope: ops-notification
-- Related: repository-wide/ADR-0102, repository-wide/ADR-0204, repository-wide/ADR-0207, repository-wide/ADR-0301, ops-notification/ADR-0001, ops-notification/ADR-0102
+- Related: repository-wide/ADR-0102, repository-wide/ADR-0204, repository-wide/ADR-0207, repository-wide/ADR-0301, repository-wide/ADR-0602, repository-wide/ADR-0604, ops-notification/ADR-0001, ops-notification/ADR-0102, deployment-identity/ADR-0002
 
 ## Context
 
@@ -32,6 +32,7 @@ Chatbot の API は us-east-2・us-west-2・eu-west-1・ap-southeast-1 にだけ
 6. 構成の `region` は `us-west-2` を明示する。Provider が寄せる region と宣言を一致させるためで、AWS の文書の推奨ではない。この宛先は、env の配線（#222 PR-B）で egress の宣言に足す。Topic は provider の region と us-east-1 に置き、構成は us-west-2 から2つを購読する。
 7. `logging_level = "NONE"` にする。ログは Terraform の管理の外の Log Group に出る。
 8. Teams はまだ持たない。別の resource 型（`aws_chatbot_teams_channel_configuration`）で、届くことを確かめる tenant が無い（repository-wide/ADR-0401 (testing-policy) 決定3）。入力 `chat` は `teams` を後から足せる形にする。
+9. Chatbot の service-linked role（`AWSServiceRoleForAWSChatbot`）を、このユースケースは作らない。アカウントの前提の構成物として identity root が先に作る（repository-wide/ADR-0602 決定1、repository-wide/ADR-0604 決定3、deployment-identity/ADR-0002）。`internal/chat-slack` は、その role を data source（`aws_iam_role`）で名前で読み、path が `/aws-service-role/management.chatbot.amazonaws.com/` であることを postcondition で確かめ、Chatbot の構成の precondition からその data を参照して、読み取りを構成の作成より前に置く。role が無ければ、data source の読み取りが provider の失敗（`NoSuchEntity`）で plan を落とす。data source の失敗は文言を変えられないので、修復の手順は README の「plan で落ちたときに見るもの」が持つ。`data "aws_iam_roles"`（path_prefix で無くても空で返る）は採らない。`iam:ListRoles` を Resource `"*"` で plan と apply の role に与えることになるからである。
 
 ### 公式推奨からの逸脱（repository-wide/ADR-0207 決定11）
 
@@ -60,11 +61,11 @@ AWS が Action を足すと黙って広がる。repository-wide/ADR-0301 決定1
 
 ## 保証範囲
 
-policy の文書、guardrail と channel role の一致、`user_authorization_required` は Unit Test（`internal/chat-slack/tests/`）と Policy Test（`PLAN-NOTIFY-06`・`07`）が見る。描画に要る Action が8つで足りることは保証しない（sandbox で確かめる）。
+policy の文書、guardrail と channel role の一致、`user_authorization_required` は Unit Test（`internal/chat-slack/tests/`）と Policy Test（`PLAN-NOTIFY-06`・`07`）が見る。描画に要る Action が8つで足りることは保証しない（sandbox で確かめる）。service-linked role の path は data source の postcondition が、アカウント・partition・`aws-service-role/` の path は Chatbot の構成の precondition が plan で見る（`internal/chat-slack/tests/` が、それぞれ別の実体で落ちることを見る）。role が無いときに plan が落ちることは、provider の data source の読み取りの失敗（`NoSuchEntity`）に依り、mock の Unit Test では確かめない。role が在っても Chatbot が購読を作ることは保証しない。
 
 ## 検証方法
 
-`internal/chat-slack/tests/`、`plan.ops_notification`、`plan.iam_action_wildcard`（`PLAN-IAM-03`・`06`）。
+`internal/chat-slack/tests/`（service-linked role の path の postcondition と、アカウント・partition の precondition を含む）、`plan.ops_notification`、`plan.iam_action_wildcard`（`PLAN-IAM-03`・`06`）。
 
 ## 影響
 
@@ -76,3 +77,4 @@ Chatbot が描く通知の部分（metric の画像など）が8つの Action �
 - Chatbot が信頼の principal か confused deputy の条件を文書で示したとき
 - 2つ目のユースケースが Chatbot の構成を要るとき（一般 module へ移す）
 - Teams の tenant で届くことを確かめる手段ができたとき
+- AWS が、Chatbot の構成の作成と同時の service-linked role の作成で購読が欠けないことを示したとき

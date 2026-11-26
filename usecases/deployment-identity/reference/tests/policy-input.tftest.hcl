@@ -85,6 +85,12 @@ override_resource {
   values          = { arn = "arn:aws:iam::123456789012:policy/tabp-admin-ci-boundary-ops-notification" }
 }
 
+override_resource {
+  target          = module.deployment_identity.module.service_linked_roles.aws_iam_service_linked_role.chatbot[0]
+  override_during = plan
+  values          = { arn = "arn:aws:iam::123456789012:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot" }
+}
+
 run "policy_input" {
   command = plan
 }

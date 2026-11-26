@@ -3,9 +3,7 @@ name: Config Scan
 # Trivy misconfiguration scanning for Terraform and Dockerfiles, kept out of
 # trivy-fs.yaml on purpose: a misconfiguration is introduced by the change under review and
 # blocks here, whereas a dependency finding is inherited from an upstream advisory, reported,
-# and gated at release time. Folding it into the dependency scan would also break that
-# workflow's summary, which counts .Results[].Vulnerabilities and would have to start
-# distinguishing .Misconfigurations from it.
+# and gated at release time.
 #
 # docker-compose files are NOT covered: Trivy ships no compose checks. hadolint
 # (docker-lint.yaml) lints the Dockerfiles for style and correctness; this workflow
@@ -32,6 +30,7 @@ on:
       - '.trivyignore.yaml'
       - '.github/actions/setup-mise/**'
       - 'mise.toml'
+      - 'mise.lock'
       - 'Makefile'
       - 'docker/**/Dockerfile'
       - 'usecases/**'
@@ -127,6 +126,7 @@ jobs:
               - '.trivyignore.yaml'
               - '.github/actions/setup-mise/**'
               - 'mise.toml'
+              - 'mise.lock'
               - 'Makefile'
               - 'docker/**/Dockerfile'
               - 'usecases/**'

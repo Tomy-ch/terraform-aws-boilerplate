@@ -58,6 +58,18 @@ resource "aws_iam_role_policy_attachments_exclusive" "this" {
   policy_arns = [aws_iam_role_policy_attachment.read.policy_arn]
 }
 
+# identity root が先に作る service-linked role を名前で読み、無ければ plan で落とす（ops-notification/ADR-0201 決定9）。
+data "aws_iam_role" "chatbot_service_linked" {
+  name = "AWSServiceRoleForAWSChatbot"
+
+  lifecycle {
+    postcondition {
+      condition     = self.path == "/aws-service-role/management.chatbot.amazonaws.com/"
+      error_message = "AWSServiceRoleForAWSChatbot の path が /aws-service-role/management.chatbot.amazonaws.com/ ではありません。Chatbot の service-linked role ではない role が同じ名前で在ります。"
+    }
+  }
+}
+
 # Chatbot の API は us-east-2・us-west-2・eu-west-1・ap-southeast-1 にだけ在り、Provider はほかの region を us-west-2 へ寄せる（ops-notification/ADR-0201）。
 resource "aws_chatbot_slack_channel_configuration" "this" {
   region                      = "us-west-2"
@@ -73,6 +85,11 @@ resource "aws_chatbot_slack_channel_configuration" "this" {
   depends_on = [aws_iam_role_policy_attachments_exclusive.this]
 
   lifecycle {
+    precondition {
+      condition     = startswith(data.aws_iam_role.chatbot_service_linked.arn, "arn:${local.partition}:iam::${local.account}:role/aws-service-role/")
+      error_message = "Chatbot の service-linked role が、この module と同じアカウントと partition の role ではありません。"
+    }
+
     precondition {
       condition     = startswith(var.topic_arn, "arn:${local.partition}:sns:") && split(":", var.topic_arn)[4] == local.account
       error_message = "topic_arn が、この module と同じアカウントと partition の Topic ではありません。"

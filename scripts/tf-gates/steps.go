@@ -9,10 +9,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/misetoml"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/tfexec"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workdir"
@@ -28,7 +30,7 @@ const (
 	stepInitReadonly = "init-readonly"
 	stepValidate     = "validate"
 	stepTest         = "test"
-	stepLintInit     = "lint-init"
+	stepLintVersion  = "lint-version"
 	stepLint         = "lint"
 )
 
@@ -48,8 +50,8 @@ func command(ctx context.Context, dir string, env []string, step string, _ ...st
 		cmd = exec.CommandContext(ctx, "terraform", "validate", "-json")
 	case stepTest:
 		cmd = exec.CommandContext(ctx, "terraform", "test")
-	case stepLintInit:
-		cmd = exec.CommandContext(ctx, "tflint", "--init")
+	case stepLintVersion:
+		cmd = exec.CommandContext(ctx, "tflint", "--version")
 	default:
 		cmd = exec.CommandContext(ctx, "tflint")
 	}
@@ -274,41 +276,105 @@ func runTest(args []string, w io.Writer, tool toolFunc) error {
 	})
 }
 
-// runLint は、TFLint の ruleset を取得してから、各ディレクトリで TFLint を起動します。
+// runLint は、置かれた AWS ruleset の版が mise.toml の宣言と同じことを確かめてから、各ディレクトリで TFLint を
+// 起動します。ruleset は mise が mise.lock の照合値で取ったものを使い、TFLint には取らせません（tflint --init を
+// 走らせない）。TFLint は置かれた plugin の版を確かめないので、ここで確かめます。
 func runLint(args []string, w io.Writer, tool toolFunc) error {
-	var config, plugins string
+	var config, ruleset, miseToml string
 	s, err := parseCommon("lint", args, w, func(f *flag.FlagSet) {
 		f.StringVar(&config, "config", "", "TFLint の設定（.tflint.hcl）")
-		f.StringVar(&plugins, "plugin-dir", "", "ruleset を置くディレクトリ")
+		f.StringVar(&ruleset, "ruleset", "", "AWS ruleset の実行ファイル（"+rulesetFile+"）")
+		f.StringVar(&miseToml, "mise", "", "ruleset の版を宣言する mise.toml")
 	})
 	if err != nil {
 		return err
 	}
-	if config == "" || plugins == "" {
-		return xerrors.Wrap(errUsage, "tf-gates lint は -config と -plugin-dir が要ります")
+	if config == "" || ruleset == "" || miseToml == "" {
+		return xerrors.Wrap(errUsage, "tf-gates lint は -config と -ruleset と -mise が要ります")
 	}
 	targets, err := requireDirs(s)
 	if err != nil {
 		return err
 	}
-	base := s.base
 	config, err = filepath.Abs(config)
 	if err != nil {
 		return xerrors.Wrapf(err, "%s", config)
 	}
-	plugins, err = filepath.Abs(plugins)
+	want, err := declaredRuleset(miseToml)
 	if err != nil {
-		return xerrors.Wrapf(err, "%s", plugins)
+		return err
 	}
-	if err := os.MkdirAll(plugins, 0o750); err != nil {
-		return xerrors.Wrapf(err, "%s の作成", plugins)
+	plugins, err := rulesetDir(ruleset)
+	if err != nil {
+		return err
 	}
-	env := tfexec.Env(os.Environ(), "TFLINT_CONFIG_FILE="+config, "TFLINT_PLUGIN_DIR="+plugins)
-	if err := runEach("tf-lint の ruleset の取得", []target{{rel: ".", path: base}}, w, nil, func(t target) *exec.Cmd {
-		return tool(context.Background(), t.path, env, stepLintInit)
-	}); err != nil {
+	// TFLINT_DISABLE_VERSION_CHECK は、tflint --version が上流へ最新の版を問い合わせるのを止める。
+	env := tfexec.Env(os.Environ(), "TFLINT_CONFIG_FILE="+config, "TFLINT_PLUGIN_DIR="+plugins, "TFLINT_DISABLE_VERSION_CHECK=1")
+	if err := checkRulesetVersion(tool, s.base, env, want); err != nil {
 		return err
 	}
 
 	return runEach("tf-lint", targets, w, detectLint, func(t target) *exec.Cmd { return tool(context.Background(), t.path, env, stepLint) })
+}
+
+// rulesetKey は AWS ruleset を宣言する mise.toml のキーです。取得元を terraform-linters の org に限るのは、このキーと
+// mise.lock の取得元の検査（scripts/versions）です。
+const (
+	rulesetKey  = "github:terraform-linters/tflint-ruleset-aws"
+	rulesetFile = "tflint-ruleset-aws"
+)
+
+// rulesetVersionRe は tflint --version が AWS ruleset の版を報告する行です。
+var rulesetVersionRe = regexp.MustCompile(`(?m)^\+ ruleset\.aws \(([^)]+)\)$`)
+
+func declaredRuleset(path string) (string, error) {
+	entries, err := misetoml.ParseFile(path)
+	if err != nil {
+		return "", xerrors.Wrap(errRuleset, err.Error())
+	}
+	v, ok := misetoml.Lookup(entries, rulesetKey)
+	if !ok {
+		return "", xerrors.Wrapf(errRuleset, "%s に %s の宣言がありません", path, rulesetKey)
+	}
+
+	return v, nil
+}
+
+// rulesetDir は ruleset の実行ファイルを確かめ、TFLint の plugin の置き場として、それを含むディレクトリを返します。
+func rulesetDir(ruleset string) (string, error) {
+	if filepath.Base(ruleset) != rulesetFile {
+		return "", xerrors.Wrapf(errRuleset, "%s は %s ではありません", ruleset, rulesetFile)
+	}
+	abs, err := filepath.Abs(ruleset)
+	if err != nil {
+		return "", xerrors.Wrapf(errRuleset, "%s: %v", ruleset, err)
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return "", xerrors.Wrapf(errRuleset, "%s: %v", abs, err)
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		return "", xerrors.Wrapf(errRuleset, "%s は実行できるファイルではありません", abs)
+	}
+
+	return filepath.Dir(abs), nil
+}
+
+func checkRulesetVersion(tool toolFunc, base string, env []string, want string) error {
+	r, err := toolrun.Run(tool(context.Background(), base, env, stepLintVersion))
+	if err != nil {
+		return err
+	}
+	if r.Code != 0 {
+		return xerrors.Wrapf(errRuleset, "tflint --version の終了コード %d: %s", r.Code, strings.TrimSpace(r.Combined))
+	}
+	m := rulesetVersionRe.FindAllStringSubmatch(r.Stdout, -1)
+	if len(m) != 1 {
+		return xerrors.Wrapf(errRuleset, "tflint --version が AWS ruleset の版を1行で報告しません: %s", strings.TrimSpace(r.Stdout))
+	}
+	if m[0][1] != want {
+		return xerrors.Wrapf(errRuleset, "置かれた AWS ruleset は %s、mise.toml の宣言は %s です", m[0][1], want)
+	}
+
+	return nil
 }

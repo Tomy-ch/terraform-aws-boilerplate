@@ -70,7 +70,7 @@ IAM の role の `sns:Publish` は Topic Policy に書かない。同じアカ�
 ## 版
 
 - AWS Provider は `>= 6.68.0, < 7.0.0`。引数は v6.70.0 の Provider の文書と schema で確かめた。テストを実行して確かめたのは v6.73.0（`.terraform.lock.hcl`）だけである
-- Terraform は `>= 1.7.0, < 2.0.0`。下限はテストが使う `mock_provider` の要求であり、実行して確かめたのは 1.17.1（`mise.toml`）だけである
+- Terraform は `>= 1.7.0, < 2.0.0`。下限はテストが使う `mock_provider` の要求であり、実行して確かめたのは 1.17.2（`mise.toml`）だけである
 
 ## 公式実装の参照（ADR-0206 決定7・8）
 
