@@ -48,8 +48,11 @@
       "organizations:ListAWSServiceAccessForOrganization",
       "organizations:ListAccounts",
       "organizations:ListRoots",
+      "ram:GetResourceShareAssociations",
+      "ram:GetResourceShares",
       "s3:GetAccountPublicAccessBlock",
-      "s3:PutAccountPublicAccessBlock"
+      "s3:PutAccountPublicAccessBlock",
+      "ssm:DescribeParameters"
     ],
     "documents": {
       "aws_iam_role": [

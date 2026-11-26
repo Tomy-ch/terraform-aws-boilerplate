@@ -131,6 +131,10 @@ locals {
   org_account_arns = ["${local.org_arn_prefix}:account/o-*/*"]
   # メンバーアカウントのメールは、organization-baseline が管理アカウントの parameter から読む（organization-baseline/README.md）。
   member_account_emails_parameter_arn = "arn:${data.aws_partition.current.partition}:ssm:${local.regional_arn_suffix}:parameter/${trimsuffix(var.name_prefix, "-${var.env}")}/organization-baseline/member-account-emails"
+  # アカウントの ID の一覧は、organization-baseline が parameter に書き、RAM で組織へ共有する（repository-wide/ADR-0605）。
+  account_ids_parameter_arn = "arn:${data.aws_partition.current.partition}:ssm:${local.regional_arn_suffix}:parameter/${trimsuffix(var.name_prefix, "-${var.env}")}/organization-baseline/account-ids"
+  # 共有の ARN の末尾の ID は作るまで決まらない。
+  account_ids_share_arns = ["arn:${data.aws_partition.current.partition}:ram:${local.regional_arn_suffix}:resource-share/*"]
 
   break_glass_user_arns  = [for a in var.break_glass_arns : a if strcontains(a, ":user/")]
   break_glass_group_arns = [for a in var.break_glass_arns : a if strcontains(a, ":group/")]
@@ -439,6 +443,9 @@ locals {
     "organizations:ListAWSServiceAccessForOrganization",
     "organizations:ListAccounts",
     "organizations:ListRoots",
+    "ram:GetResourceShareAssociations",
+    "ram:GetResourceShares",
+    "ssm:DescribeParameters",
   ]
   governance_read_statements = [for s in concat(
     [for a in local.governance_wildcard_read_actions : { Sid = replace(title(replace(a, ":", " ")), " ", ""), Effect = "Allow", Action = a, Resource = "*" }],
@@ -457,6 +464,8 @@ locals {
       },
       { Sid = "ReadMemberAccounts", Effect = "Allow", Action = ["organizations:DescribeAccount", "organizations:ListParents", "organizations:ListTagsForResource"], Resource = local.org_account_arns },
       { Sid = "ReadMemberAccountEmails", Effect = "Allow", Action = "ssm:GetParameter", Resource = local.member_account_emails_parameter_arn },
+      { Sid = "ReadAccountIdsParameter", Effect = "Allow", Action = ["ssm:GetParameter", "ssm:ListTagsForResource"], Resource = local.account_ids_parameter_arn },
+      { Sid = "ReadAccountIdsShare", Effect = "Allow", Action = "ram:ListResourceSharePermissions", Resource = local.account_ids_share_arns },
       { Sid = "ReadBreakGlassUsers", Effect = "Allow", Action = ["iam:GetUser", "iam:ListUserTags"], Resource = local.break_glass_user_arns },
       { Sid = "ReadBreakGlassGroup", Effect = "Allow", Action = ["iam:GetGroup", "iam:GetGroupPolicy"], Resource = local.break_glass_group_arns },
       {
@@ -566,6 +575,19 @@ locals {
         Action    = ["iam:AttachRolePolicy", "iam:DetachRolePolicy"]
         Resource  = local.break_glass_role_arns
         Condition = { ArnEquals = { "iam:PolicyARN" = local.administrator_access } }
+      },
+      # RAM の API を呼ぶ role には、共有する parameter の resource policy の読み書きが要る（Systems Manager User Guide「Working with shared parameters」）。
+      {
+        Sid      = "ManageAccountIdsParameter"
+        Effect   = "Allow"
+        Action   = ["ssm:AddTagsToResource", "ssm:DeleteParameter", "ssm:DeleteResourcePolicy", "ssm:GetResourcePolicies", "ssm:PutParameter", "ssm:PutResourcePolicy", "ssm:RemoveTagsFromResource"]
+        Resource = local.account_ids_parameter_arn
+      },
+      {
+        Sid      = "ManageAccountIdsShare"
+        Effect   = "Allow"
+        Action   = ["ram:AssociateResourceShare", "ram:CreateResourceShare", "ram:DeleteResourceShare", "ram:DisassociateResourceShare", "ram:TagResource", "ram:UntagResource", "ram:UpdateResourceShare"]
+        Resource = local.account_ids_share_arns
       },
     ],
   )

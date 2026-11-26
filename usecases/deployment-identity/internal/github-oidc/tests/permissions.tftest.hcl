@@ -245,6 +245,9 @@ run "policies" {
       },
       { Sid = "OrganizationsListAccounts", Effect = "Allow", Action = "organizations:ListAccounts", Resource = "*" },
       { Sid = "OrganizationsListRoots", Effect = "Allow", Action = "organizations:ListRoots", Resource = "*" },
+      { Sid = "RamGetResourceShareAssociations", Effect = "Allow", Action = "ram:GetResourceShareAssociations", Resource = "*" },
+      { Sid = "RamGetResourceShares", Effect = "Allow", Action = "ram:GetResourceShares", Resource = "*" },
+      { Sid = "SsmDescribeParameters", Effect = "Allow", Action = "ssm:DescribeParameters", Resource = "*" },
       {
         Sid    = "ReadOrganizationalUnits"
         Effect = "Allow"
@@ -277,6 +280,18 @@ run "policies" {
         Effect   = "Allow"
         Action   = "ssm:GetParameter"
         Resource = "arn:aws:ssm:ap-northeast-1:123456789012:parameter/tabp/organization-baseline/member-account-emails"
+      },
+      {
+        Sid      = "ReadAccountIdsParameter"
+        Effect   = "Allow"
+        Action   = ["ssm:GetParameter", "ssm:ListTagsForResource"]
+        Resource = "arn:aws:ssm:ap-northeast-1:123456789012:parameter/tabp/organization-baseline/account-ids"
+      },
+      {
+        Sid      = "ReadAccountIdsShare"
+        Effect   = "Allow"
+        Action   = "ram:ListResourceSharePermissions"
+        Resource = ["arn:aws:ram:ap-northeast-1:123456789012:resource-share/*"]
       },
       {
         Sid    = "ReadBreakGlassUsers"
@@ -672,6 +687,9 @@ run "policies" {
       },
       { Sid = "OrganizationsListAccounts", Effect = "Allow", Action = "organizations:ListAccounts", Resource = "*" },
       { Sid = "OrganizationsListRoots", Effect = "Allow", Action = "organizations:ListRoots", Resource = "*" },
+      { Sid = "RamGetResourceShareAssociations", Effect = "Allow", Action = "ram:GetResourceShareAssociations", Resource = "*" },
+      { Sid = "RamGetResourceShares", Effect = "Allow", Action = "ram:GetResourceShares", Resource = "*" },
+      { Sid = "SsmDescribeParameters", Effect = "Allow", Action = "ssm:DescribeParameters", Resource = "*" },
       {
         Sid    = "ReadOrganizationalUnits"
         Effect = "Allow"
@@ -704,6 +722,18 @@ run "policies" {
         Effect   = "Allow"
         Action   = "ssm:GetParameter"
         Resource = "arn:aws:ssm:ap-northeast-1:123456789012:parameter/tabp/organization-baseline/member-account-emails"
+      },
+      {
+        Sid      = "ReadAccountIdsParameter"
+        Effect   = "Allow"
+        Action   = ["ssm:GetParameter", "ssm:ListTagsForResource"]
+        Resource = "arn:aws:ssm:ap-northeast-1:123456789012:parameter/tabp/organization-baseline/account-ids"
+      },
+      {
+        Sid      = "ReadAccountIdsShare"
+        Effect   = "Allow"
+        Action   = "ram:ListResourceSharePermissions"
+        Resource = ["arn:aws:ram:ap-northeast-1:123456789012:resource-share/*"]
       },
       {
         Sid    = "ReadBreakGlassUsers"
@@ -1451,6 +1481,34 @@ run "policies" {
         Action    = ["iam:AttachRolePolicy", "iam:DetachRolePolicy"]
         Resource  = ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
         Condition = { ArnEquals = { "iam:PolicyARN" = "arn:aws:iam::aws:policy/AdministratorAccess" } }
+      },
+      {
+        Sid    = "ManageAccountIdsParameter"
+        Effect = "Allow"
+        Action = [
+          "ssm:AddTagsToResource",
+          "ssm:DeleteParameter",
+          "ssm:DeleteResourcePolicy",
+          "ssm:GetResourcePolicies",
+          "ssm:PutParameter",
+          "ssm:PutResourcePolicy",
+          "ssm:RemoveTagsFromResource",
+        ]
+        Resource = "arn:aws:ssm:ap-northeast-1:123456789012:parameter/tabp/organization-baseline/account-ids"
+      },
+      {
+        Sid    = "ManageAccountIdsShare"
+        Effect = "Allow"
+        Action = [
+          "ram:AssociateResourceShare",
+          "ram:CreateResourceShare",
+          "ram:DeleteResourceShare",
+          "ram:DisassociateResourceShare",
+          "ram:TagResource",
+          "ram:UntagResource",
+          "ram:UpdateResourceShare",
+        ]
+        Resource = ["arn:aws:ram:ap-northeast-1:123456789012:resource-share/*"]
       },
     ]
     error_message = "統制の customer managed policy の文書が、統制の構成物の作成と設定だけになっていません。"
