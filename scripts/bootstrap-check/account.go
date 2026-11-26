@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/awsenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -29,25 +30,12 @@ var (
 	// errNotReadOnly は、読むだけでない aws の操作を起動しようとしたこと（確認の表の誤り）。
 	errNotReadOnly = xerrors.New("読むだけでない aws の操作は起動しません")
 
-	// staticCredentials は、AWS_PROFILE より優先されるか、profile の読み先を変える環境変数。
-	staticCredentials = []string{
-		"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_ROLE_ARN", "AWS_WEB_IDENTITY_TOKEN_FILE",
-		"AWS_CONTAINER_CREDENTIALS_FULL_URI", "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE",
-	}
 	readOnlyPrefixes = []string{"get-", "list-", "describe-", "head-", "simulate-"}
 )
 
 // awsProfile は、aws に使わせる profile。静的な資格情報が環境に在るか、AWS_PROFILE が空なら、aws を起動せずに止める。
 func awsProfile(getenv func(string) string) (string, error) {
-	var found []string
-
-	for _, k := range staticCredentials {
-		if getenv(k) != "" {
-			found = append(found, k)
-		}
-	}
-
-	if len(found) > 0 {
+	if found := awsenv.Found(getenv); len(found) > 0 {
 		return "", xerrors.Wrapf(errStaticCredentials, "%s", strings.Join(found, "・"))
 	}
 
