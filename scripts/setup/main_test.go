@@ -302,6 +302,37 @@ func Test_execute(t *testing.T) {
 		assert.True(t, strings.HasSuffix(out.String(), "❌ "+errNG.Error()+"\n"))
 	})
 
+	digitsArgs := []string{"dns-delegation-values", "-project", testProject, "-region", testRegion, "-usecase", testUsecase, "-env", "dev", "-zone", devZone}
+	digitsWorld := func(t *testing.T) deps {
+		t.Helper()
+
+		ksk := testKSK(kskActive)
+		ksk.DSRecord = digitsDS
+
+		d := testDeps(zoneWorld(t, devZone, serveSigning, ksk), "", nil)
+		d.readFile = readFiles(dnsFiles())
+
+		return d
+	}
+
+	t.Run("DS に12桁続く数字が在れば、-ids でなければ 1 で、伏せて壊した DS を出さない", func(t *testing.T) {
+		t.Parallel()
+
+		var out bytes.Buffer
+		assert.Equal(t, 1, execute(digitsArgs, &out, digitsWorld(t)))
+		assert.NotContains(t, out.String(), "ds_record")
+		assert.NotContains(t, out.String(), "<account>")
+		assert.Contains(t, out.String(), "IDS=1")
+	})
+
+	t.Run("DS に12桁続く数字が在っても、-ids なら DS をそのまま出す", func(t *testing.T) {
+		t.Parallel()
+
+		var out bytes.Buffer
+		assert.Equal(t, 0, execute(append(slices.Clone(digitsArgs), "-ids"), &out, digitsWorld(t)))
+		assert.Contains(t, out.String(), `  ds_record    = "`+digitsDS+`"`+"\n")
+	})
+
 	t.Run("引数の誤りは 2 で、-ids を付けても伏せる", func(t *testing.T) {
 		t.Parallel()
 
@@ -455,6 +486,14 @@ func Test_parseArgs(t *testing.T) {
 		assert.True(t, o.showIDs)
 	})
 
+	t.Run("dns-delegation-values は -ids を受ける", func(t *testing.T) {
+		t.Parallel()
+
+		o, _, err := parseArgs([]string{"dns-delegation-values", "-project", "p", "-region", "r", "-usecase", "u", "-env", "dev", "-zone", "dev.example.com", "-ids"})
+		require.NoError(t, err)
+		assert.True(t, o.showIDs)
+	})
+
 	bad := map[string]struct {
 		args []string
 		msg  string
@@ -477,6 +516,7 @@ func Test_parseArgs(t *testing.T) {
 		"ほかの入口に -repo だけ":                           {[]string{"bootstrap-contacts", "-project", "p", "-region", "r", "-repo", "a/b"}, "-environments と -repo は"},
 		"ほかの入口に -replace":                           {[]string{"bootstrap-contacts", "-project", "p", "-region", "r", "-replace"}, "-replace は"},
 		"member-accounts-check でない入口に -ids":         {[]string{"member-emails-check", "-project", "p", "-region", "r", "-usecase", "a", "-ids"}, "-ids は"},
+		"dns-delegation-values でない dns- の入口に -ids":  {[]string{"dns-signing-check", "-project", "p", "-region", "r", "-usecase", "a", "-env", "dev", "-zone", "z", "-ids"}, "-ids は"},
 		"ops- の入口に -env が無い":                        {[]string{"ops-chatbot-role-check", "-project", "p", "-region", "r"}, "-env は"},
 		"ops- の Terraform を読む入口に -usecase が無い":      {[]string{"ops-subscriptions-check", "-project", "p", "-region", "r", "-env", "dev"}, "-usecase は"},
 		"ops-chatbot-role-check に -usecase":         {[]string{"ops-chatbot-role-check", "-project", "p", "-region", "r", "-env", "dev", "-usecase", "a"}, "-usecase は"},

@@ -5,13 +5,17 @@ import (
 	"encoding/json"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zclconf/go-cty/cty"
+	"github.com/zclconf/go-cty/cty/convert"
 )
 
 const (
@@ -71,10 +75,91 @@ variable "delegations" {
 )
 
 var (
-	zoneNS     = []string{"ns-1.awsdns-01.com", "ns-2.awsdns-02.net", "ns-3.awsdns-03.org", "ns-4.awsdns-04.co.uk"}
-	testDS     = "12345 13 2 " + strings.Repeat("AB", 32)
+	zoneNS = []string{"ns-1.awsdns-01.com", "ns-2.awsdns-02.net", "ns-3.awsdns-03.org", "ns-4.awsdns-04.co.uk"}
+	testDS = "12345 13 2 " + strings.Repeat("AB", 32)
+	// digitsDS は、digest に12桁続く数字を持つ DS。
+	digitsDS   = "12345 13 2 123456789012" + strings.Repeat("AB", 26)
 	goodKeyRes = ok(`{"KeyMetadata":{"KeyState":"Enabled","KeySpec":"ECC_NIST_P256","KeyUsage":"SIGN_VERIFY"}}`)
 )
+
+// realDNSZoneDir は、写しと正本のずれを確かめるために読む、実物の dns-zone の usecase（ADR-0702 決定17）。
+const realDNSZoneDir = "../../usecases/dns-zone"
+
+func realDNSZoneFile(t *testing.T, file string) ([]byte, *hclsyntax.Body) {
+	t.Helper()
+
+	src, err := os.ReadFile(path.Join(realDNSZoneDir, file))
+	require.NoError(t, err)
+
+	f, diags := hclsyntax.ParseConfig(src, file, hcl.InitialPos)
+	require.False(t, diags.HasErrors(), diags.Error())
+
+	body, ok := f.Body.(*hclsyntax.Body)
+	require.True(t, ok)
+
+	return src, body
+}
+
+// realComparisons は、実物の dns-zone の file の二項演算のうち、左辺の字面が lhs のものの、右辺のリテラルを文字列にした並び。
+func realComparisons(t *testing.T, file, lhs string) []string {
+	t.Helper()
+
+	src, body := realDNSZoneFile(t, file)
+
+	var out []string
+
+	diags := hclsyntax.VisitAll(body, func(n hclsyntax.Node) hcl.Diagnostics {
+		e, ok := n.(*hclsyntax.BinaryOpExpr)
+		if !ok || string(e.LHS.Range().SliceBytes(src)) != lhs {
+			return nil
+		}
+
+		v, diags := e.RHS.Value(nil)
+		if diags.HasErrors() {
+			return diags
+		}
+
+		s, err := convert.Convert(v, cty.String)
+		if err != nil {
+			return hcl.Diagnostics{{Severity: hcl.DiagError, Summary: err.Error()}}
+		}
+
+		out = append(out, s.AsString())
+
+		return nil
+	})
+	require.False(t, diags.HasErrors(), diags.Error())
+
+	return out
+}
+
+// realKMSKeyAttr は、実物の dns-zone の internal/dnssec-key/main.tf の aws_kms_key の attr の文字列の値。
+func realKMSKeyAttr(t *testing.T, attr string) string {
+	t.Helper()
+
+	_, body := realDNSZoneFile(t, "internal/dnssec-key/main.tf")
+
+	var found []string
+
+	for _, b := range body.Blocks {
+		if b.Type != "resource" || len(b.Labels) == 0 || b.Labels[0] != "aws_kms_key" {
+			continue
+		}
+
+		a, ok := b.Body.Attributes[attr]
+		require.True(t, ok, attr)
+
+		v, diags := a.Expr.Value(nil)
+		require.False(t, diags.HasErrors(), diags.Error())
+		require.Equal(t, cty.String, v.Type())
+
+		found = append(found, v.AsString())
+	}
+
+	require.Len(t, found, 1)
+
+	return found[0]
+}
 
 func listZones(name string) string { return "route53 list-hosted-zones-by-name --dns-name " + name }
 
@@ -222,6 +307,7 @@ func Test_readDNSShape(t *testing.T) {
 
 	for name, src := range map[string]string{
 		"apex_domain の regex が無ければ":  strings.Replace(dnsVariablesTF, `can(regex("^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$", var.apex_domain)) && `, "", 1),
+		"apex_domain の regex が2つなら":  strings.Replace(dnsVariablesTF, `&& length(var.apex_domain) <= 240`, `&& can(regex("^x$", var.apex_domain))`, 1),
 		"delegations の key の一覧が無ければ": strings.Replace(dnsVariablesTF, `length(setsubtract(keys(var.delegations), ["dev", "stg"])) == 0`, "true", 1),
 		"DS の regex が無ければ":           strings.Replace(dnsVariablesTF, `can(regex("^[0-9]{1,5} 13 2 [0-9A-F]{64}$", d.ds_record)) && `, "", 1),
 		"delegations が無ければ":          withoutDelegations,
@@ -235,6 +321,13 @@ func Test_readDNSShape(t *testing.T) {
 			require.ErrorIs(t, err, errDeclShape)
 		})
 	}
+
+	t.Run("apex の zone の env は、実物の main.tf と outputs.tf が var.env と比べる値と同じ", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Equal(t, []string{apexEnv}, realComparisons(t, "main.tf", "var.env"))
+		assert.Equal(t, []string{apexEnv}, realComparisons(t, "outputs.tf", "var.env"))
+	})
 }
 
 func Test_delegationPatterns(t *testing.T) {
@@ -315,6 +408,14 @@ func Test_dnsShape_validNameServers(t *testing.T) {
 			assert.Equal(t, tc.want, s.validNameServers(tc.ns))
 		})
 	}
+
+	t.Run("NS の数は、実物の variables.tf の delegations の validation の数と同じ", func(t *testing.T) {
+		t.Parallel()
+
+		want := []string{strconv.Itoa(delegationNameServers)}
+		assert.Equal(t, want, realComparisons(t, dnsVariablesFile, "length(d.name_servers)"))
+		assert.Equal(t, want, realComparisons(t, dnsVariablesFile, "length(distinct(d.name_servers))"))
+	})
 }
 
 func Test_dnsShape_validDS(t *testing.T) {
@@ -341,6 +442,12 @@ func Test_dnsShape_validDS(t *testing.T) {
 			assert.Equal(t, tc.want, s.validDS(tc.ds))
 		})
 	}
+
+	t.Run("key tag の上限は、実物の variables.tf の delegations の validation の上限と同じ", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Equal(t, []string{strconv.Itoa(maxKeyTag)}, realComparisons(t, dnsVariablesFile, `tonumber(split(" ", d.ds_record)[0])`))
+	})
 }
 
 func Test_hostedZoneID(t *testing.T) {
@@ -570,6 +677,26 @@ func Test_dnssecKeyChecks(t *testing.T) {
 		require.ErrorIs(t, err, errAWSResponse)
 	})
 
+	for name, body := range map[string]string{
+		"KeyState だけが欠けていれば": `{"KeyMetadata":{"KeySpec":"ECC_NIST_P256","KeyUsage":"SIGN_VERIFY"}}`,
+		"KeySpec だけが欠けていれば":  `{"KeyMetadata":{"KeyState":"Enabled","KeyUsage":"SIGN_VERIFY"}}`,
+		"KeyUsage だけが欠けていれば": `{"KeyMetadata":{"KeyState":"Enabled","KeySpec":"ECC_NIST_P256"}}`,
+	} {
+		t.Run(name+" errAWSResponse", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := dnssecKeyChecks(testClient(newFakeAWS(t, map[string]awsResult{describeKey: ok(body)})), dnsKeyARN)
+			require.ErrorIs(t, err, errAWSResponse)
+		})
+	}
+
+	t.Run("鍵の要件は、実物の dnssec-key の aws_kms_key の値と同じ", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Equal(t, kskKeySpec, realKMSKeyAttr(t, "customer_master_key_spec"))
+		assert.Equal(t, kskKeyUsage, realKMSKeyAttr(t, "key_usage"))
+	})
+
 	t.Run("ほかの失敗は errAWSFailed", func(t *testing.T) {
 		t.Parallel()
 
@@ -656,6 +783,42 @@ func Test_printDelegationValues(t *testing.T) {
 		f.responses[listZones(devZone)] = ok(`{"HostedZones":[]}`)
 		require.ErrorIs(t, printDelegationValues(dnsOptions("dev", devZone), testClient(f), &bytes.Buffer{}), errPrecondition)
 	})
+
+	digitsKSK := testKSK(kskActive)
+	digitsKSK.DSRecord = digitsDS
+
+	t.Run("DS に12桁続く数字が在れば、-ids でなければ errPrecondition で何も出さず、IDS=1 を伝える", func(t *testing.T) {
+		t.Parallel()
+
+		var out bytes.Buffer
+
+		err := printDelegationValues(dnsOptions("dev", devZone), testClient(zoneWorld(t, devZone, serveSigning, digitsKSK)), &out)
+		require.ErrorIs(t, err, errPrecondition)
+		assert.Contains(t, err.Error(), "IDS=1")
+		assert.Empty(t, out.String())
+	})
+
+	t.Run("DS に12桁続く数字が在っても、-ids なら出す", func(t *testing.T) {
+		t.Parallel()
+
+		o := dnsOptions("dev", devZone)
+		o.showIDs = true
+
+		var out bytes.Buffer
+		require.NoError(t, printDelegationValues(o, testClient(zoneWorld(t, devZone, serveSigning, digitsKSK)), &out))
+		assert.Contains(t, out.String(), `  ds_record    = "`+digitsDS+`"`+"\n")
+	})
+
+	t.Run("DS を省くときは、KSK の DS に12桁続く数字が在っても出す", func(t *testing.T) {
+		t.Parallel()
+
+		ksk := testKSK(kskActionNeeded)
+		ksk.DSRecord = digitsDS
+
+		var out bytes.Buffer
+		require.NoError(t, printDelegationValues(dnsOptions("dev", devZone), testClient(zoneWorld(t, devZone, serveSigning, ksk)), &out))
+		assert.Contains(t, out.String(), "# ds_record を出しません")
+	})
 }
 
 func Test_checkSigning(t *testing.T) {
@@ -730,6 +893,16 @@ func Test_checkSigning(t *testing.T) {
 		require.ErrorIs(t, checkSigning(dnsOptions("dev", apexZone), testClient(f), &bytes.Buffer{}), errZoneName)
 		assert.Empty(t, f.calls)
 	})
+
+	t.Run("鍵を NotFound でない失敗で読めなければ errAWSFailed", func(t *testing.T) {
+		t.Parallel()
+
+		f := zoneWorld(t, devZone, serveSigning, testKSK(kskActive))
+		f.responses[describeKey] = fail(t, "An error occurred (AccessDeniedException)")
+		_, err := run(t, f)
+		require.ErrorIs(t, err, errAWSFailed)
+		assert.Empty(t, f.writes())
+	})
 }
 
 func activateWorld(t *testing.T, ksks ...signingKey) *fakeAWS {
@@ -756,6 +929,7 @@ func Test_activateKSK(t *testing.T) {
 		term, out := tty("tabp\n")
 		require.NoError(t, activateKSK(dnsOptions("dev", devZone), activateClient(f), term))
 		assert.Equal(t, []string{activateWrite}, f.writes())
+		assert.Contains(t, out.String(), "zone dev.example.com の KSK tabpdev を有効に戻します")
 		assert.Contains(t, out.String(), "✅ KSK tabpdev を有効に戻しました")
 		assert.Equal(t, getDNSSEC, f.joined()[len(f.joined())-1])
 	})
@@ -836,6 +1010,53 @@ func Test_activateKSK(t *testing.T) {
 		term, _ := tty("tabp\n")
 		require.ErrorIs(t, activateKSK(dnsOptions("dev", devZone), activateClient(f), term), errAWSFailed)
 	})
+
+	t.Run("読み直しで同じ名前の KSK が ACTIVE でなければ、ほかの KSK が ACTIVE でも errAWSResponse", func(t *testing.T) {
+		t.Parallel()
+
+		other := testKSK(kskActive)
+		other.Name = "other"
+
+		f := activateWorld(t, testKSK(kskActionNeeded))
+		f.onWrite(activateWrite, map[string]awsResult{getDNSSEC: dnssecJSON(serveSigning, other, testKSK("INACTIVE"))})
+		term, _ := tty("tabp\n")
+		require.ErrorIs(t, activateKSK(dnsOptions("dev", devZone), activateClient(f), term), errAWSResponse)
+	})
+
+	t.Run("読み直しを読めなければ、やり直さずに errAWSFailed", func(t *testing.T) {
+		t.Parallel()
+
+		f := activateWorld(t, testKSK(kskActionNeeded))
+		f.onWrite(activateWrite, map[string]awsResult{getDNSSEC: fail(t, "Throttling")})
+
+		var sleeps int
+
+		o := dnsOptions("dev", devZone)
+		o.sleep = func(time.Duration) { sleeps++ }
+
+		term, _ := tty("tabp\n")
+		require.ErrorIs(t, activateKSK(o, activateClient(f), term), errAWSFailed)
+		assert.Zero(t, sleeps)
+	})
+
+	t.Run("鍵を NotFound でない失敗で読めなければ errAWSFailed で書かない", func(t *testing.T) {
+		t.Parallel()
+
+		f := activateWorld(t, testKSK(kskActionNeeded))
+		f.responses[describeKey] = fail(t, "An error occurred (AccessDeniedException)")
+		term, _ := tty("tabp\n")
+		require.ErrorIs(t, activateKSK(dnsOptions("dev", devZone), activateClient(f), term), errAWSFailed)
+		assert.Empty(t, f.writes())
+	})
+
+	t.Run("端末でなければ書かない", func(t *testing.T) {
+		t.Parallel()
+
+		f := activateWorld(t, testKSK(kskActionNeeded))
+		term := newTerminal(strings.NewReader("tabp\n"), &bytes.Buffer{}, false)
+		require.ErrorIs(t, activateKSK(dnsOptions("dev", devZone), activateClient(f), term), errNotTerminal)
+		assert.Empty(t, f.writes())
+	})
 }
 
 func Test_readRegistrar(t *testing.T) {
@@ -854,13 +1075,17 @@ func Test_readRegistrar(t *testing.T) {
 	t.Run("このアカウントに無いドメインは errPrecondition", func(t *testing.T) {
 		t.Parallel()
 
-		f := newFakeAWS(t, map[string]awsResult{domainDetail(apexZone): fail(t, "An error occurred (InvalidInput) when calling the GetDomainDetail operation")})
+		f := newFakeAWS(t, map[string]awsResult{domainDetail(apexZone): fail(t, "An error occurred (InvalidInput) when calling the GetDomainDetail operation: Domain example.com not found")})
 		_, err := readRegistrar(testClient(f), apexZone)
 		require.ErrorIs(t, err, errPrecondition)
+		assert.Contains(t, err.Error(), "無いか、名前が正しくありません")
+		assert.Contains(t, err.Error(), "Domain example.com not found")
 		assert.Contains(t, err.Error(), "手で行う手順")
 	})
 
 	for name, body := range map[string]string{
+		"Nameservers の無い応答":     `{"DnssecKeys":[]}`,
+		"Nameservers が空の応答":     `{"Nameservers":[],"DnssecKeys":[]}`,
 		"Name の欠けた name server": `{"Nameservers":[{"Name":""}]}`,
 		"PublicKey の欠けた DS":     `{"Nameservers":[{"Name":"a"}],"DnssecKeys":[{"KeyTag":1}]}`,
 		"object でない":            `"x"`,
@@ -883,8 +1108,16 @@ func Test_readRegistrar(t *testing.T) {
 
 func Test_normalizeNS(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, []string{"ns-1.awsdns-01.com", "ns-2.awsdns-02.net"}, normalizeNS([]string{"NS-1.awsdns-01.com.", "ns-2.awsdns-02.net"}))
-	assert.Empty(t, normalizeNS(nil))
+
+	t.Run("末尾のドットを除き、小文字にする", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, []string{"ns-1.awsdns-01.com", "ns-2.awsdns-02.net"}, normalizeNS([]string{"NS-1.awsdns-01.com.", "ns-2.awsdns-02.net"}))
+	})
+
+	t.Run("0件は空を返す", func(t *testing.T) {
+		t.Parallel()
+		assert.Empty(t, normalizeNS(nil))
+	})
 }
 
 func Test_sameNameServers(t *testing.T) {
@@ -910,8 +1143,15 @@ func Test_sameNameServers(t *testing.T) {
 func Test_requireApex(t *testing.T) {
 	t.Parallel()
 
-	require.NoError(t, requireApex(dnsOptions("prd", apexZone)))
-	require.ErrorIs(t, requireApex(dnsOptions("dev", devZone)), errEnvNotApplicable)
+	t.Run("prd なら通す", func(t *testing.T) {
+		t.Parallel()
+		require.NoError(t, requireApex(dnsOptions("prd", apexZone)))
+	})
+
+	t.Run("prd でなければ errEnvNotApplicable", func(t *testing.T) {
+		t.Parallel()
+		require.ErrorIs(t, requireApex(dnsOptions("dev", devZone)), errEnvNotApplicable)
+	})
 }
 
 var oldNS = []string{"ns1.registrar.example", "ns2.registrar.example"}
@@ -946,6 +1186,7 @@ func Test_updateRegistrarNS(t *testing.T) {
 		require.NoError(t, updateRegistrarNS(prd, registrarClient(f), term))
 		assert.Equal(t, []string{nsWrite(zoneNS...)}, f.writes())
 		assert.Contains(t, out.String(), "  registrar の NS: ns1.registrar.example・ns2.registrar.example\n")
+		assert.Contains(t, out.String(), "ドメイン example.com の registrar の NS を zone の NS に替えます\n")
 		assert.Contains(t, out.String(), "✅ registrar の NS を zone の NS に替えました")
 
 		for _, c := range f.calls {
@@ -1020,7 +1261,73 @@ func Test_updateRegistrarNS(t *testing.T) {
 		term, _ := tty("tabp\n")
 		err := updateRegistrarNS(prd, registrarClient(f), term)
 		require.ErrorIs(t, err, errAWSResponse)
-		assert.Contains(t, err.Error(), "make setup-dns-zone-registrar-ns をやり直す")
+		assert.Contains(t, err.Error(), "受け付けられました")
+		assert.Contains(t, err.Error(), "数分後に make setup-dns-zone-registrar-ns をやり直して")
+	})
+
+	t.Run("読み直しで NS の一部だけが替わって見えれば errAWSResponse", func(t *testing.T) {
+		t.Parallel()
+
+		f := registrarWorld(t, oldNS)
+		f.onWrite(nsWrite(zoneNS...), map[string]awsResult{domainDetail(apexZone): registrarJSON(append(append([]string{}, zoneNS[:3]...), oldNS[0]))})
+		term, _ := tty("tabp\n")
+		require.ErrorIs(t, updateRegistrarNS(prd, registrarClient(f), term), errAWSResponse)
+	})
+
+	t.Run("読み直しを読めなければ、やり直さずに errAWSFailed", func(t *testing.T) {
+		t.Parallel()
+
+		f := registrarWorld(t, oldNS)
+		f.onWrite(nsWrite(zoneNS...), map[string]awsResult{domainDetail(apexZone): fail(t, "Throttling")})
+
+		var sleeps int
+
+		o := dnsOptions("prd", apexZone)
+		o.sleep = func(time.Duration) { sleeps++ }
+
+		term, _ := tty("tabp\n")
+		require.ErrorIs(t, updateRegistrarNS(o, registrarClient(f), term), errAWSFailed)
+		assert.Zero(t, sleeps)
+	})
+
+	t.Run("書き込みが失敗すればそのエラーを返し、替えたとは出さない", func(t *testing.T) {
+		t.Parallel()
+
+		f := registrarWorld(t, oldNS)
+		f.responses[nsWrite(zoneNS...)] = fail(t, "An error occurred (TLDRulesViolation)")
+		term, out := tty("tabp\n")
+		require.ErrorIs(t, updateRegistrarNS(prd, registrarClient(f), term), errAWSFailed)
+		assert.NotContains(t, out.String(), "✅")
+	})
+
+	t.Run("registrar に zone の KSK の DS とほかの鍵の DS が在れば errPrecondition で書かない", func(t *testing.T) {
+		t.Parallel()
+
+		f := registrarWorld(t, oldNS, registrarKey{KeyTag: 12345, PublicKey: kskPublicKey}, registrarKey{KeyTag: 999, PublicKey: "other"})
+		term, _ := tty("tabp\n")
+		err := updateRegistrarNS(prd, registrarClient(f), term)
+		require.ErrorIs(t, err, errPrecondition)
+		assert.Contains(t, err.Error(), "key tag 999")
+		assert.Empty(t, f.writes())
+	})
+
+	t.Run("registrar に DS が在って zone の DNSSEC を読めなければ書かない", func(t *testing.T) {
+		t.Parallel()
+
+		f := registrarWorld(t, oldNS, registrarKey{KeyTag: 12345, PublicKey: kskPublicKey})
+		f.responses[getDNSSEC] = fail(t, "AccessDenied")
+		term, _ := tty("tabp\n")
+		require.ErrorIs(t, updateRegistrarNS(prd, registrarClient(f), term), errAWSFailed)
+		assert.Empty(t, f.writes())
+	})
+
+	t.Run("端末でなければ書かない", func(t *testing.T) {
+		t.Parallel()
+
+		f := registrarWorld(t, oldNS)
+		term := newTerminal(strings.NewReader("tabp\n"), &bytes.Buffer{}, false)
+		require.ErrorIs(t, updateRegistrarNS(prd, registrarClient(f), term), errNotTerminal)
+		assert.Empty(t, f.writes())
 	})
 }
 
@@ -1036,8 +1343,28 @@ func Test_associateRegistrarDS(t *testing.T) {
 		term, out := tty("tabp\n")
 		require.NoError(t, associateRegistrarDS(prd, registrarClient(f), term))
 		assert.Equal(t, []string{dsWrite()}, f.writes())
-		assert.Contains(t, out.String(), "Algorithm 13、Flags 257、key tag 12345")
+		assert.Contains(t, out.String(), "ドメイン example.com の registrar に KSK tabpdev の DS（Algorithm 13、Flags 257、key tag 12345）を足します")
 		assert.Contains(t, out.String(), "早いと名前が引けなくなります")
+	})
+
+	t.Run("DS の書き込みと registrar の読み直しを us-east-1 で行う", func(t *testing.T) {
+		t.Parallel()
+
+		f := registrarWorld(t, zoneNS)
+		term, _ := tty("tabp\n")
+		require.NoError(t, associateRegistrarDS(prd, registrarClient(f), term))
+
+		seen := map[string]int{}
+
+		for _, c := range f.calls {
+			if o := op(c); o == "route53domains associate-delegation-signer-to-domain" || o == "route53domains get-domain-detail" {
+				seen[o]++
+				assert.Equal(t, "us-east-1", lastRegion(c), o)
+			}
+		}
+
+		assert.Equal(t, 1, seen["route53domains associate-delegation-signer-to-domain"])
+		assert.GreaterOrEqual(t, seen["route53domains get-domain-detail"], 2)
 	})
 
 	t.Run("同じ公開鍵の DS が在れば書かない", func(t *testing.T) {
@@ -1140,6 +1467,42 @@ func Test_associateRegistrarDS(t *testing.T) {
 		term, _ := tty("tabp\n")
 		err := associateRegistrarDS(prd, registrarClient(f), term)
 		require.ErrorIs(t, err, errAWSResponse)
-		assert.Contains(t, err.Error(), "registrar-ds をやり直す")
+		assert.Contains(t, err.Error(), "受け付けられました")
+		assert.Contains(t, err.Error(), "数分後に make setup-dns-zone-registrar-ds をやり直して")
+	})
+
+	t.Run("読み直しでほかの公開鍵の DS だけが見えれば errAWSResponse", func(t *testing.T) {
+		t.Parallel()
+
+		f := registrarWorld(t, zoneNS)
+		f.onWrite(dsWrite(), map[string]awsResult{domainDetail(apexZone): registrarJSON(zoneNS, registrarKey{KeyTag: 12345, PublicKey: "other"})})
+		term, _ := tty("tabp\n")
+		require.ErrorIs(t, associateRegistrarDS(prd, registrarClient(f), term), errAWSResponse)
+	})
+
+	t.Run("読み直しを読めなければ、やり直さずに errAWSFailed", func(t *testing.T) {
+		t.Parallel()
+
+		f := registrarWorld(t, zoneNS)
+		f.onWrite(dsWrite(), map[string]awsResult{domainDetail(apexZone): fail(t, "Throttling")})
+
+		var sleeps int
+
+		o := dnsOptions("prd", apexZone)
+		o.sleep = func(time.Duration) { sleeps++ }
+
+		term, _ := tty("tabp\n")
+		require.ErrorIs(t, associateRegistrarDS(o, registrarClient(f), term), errAWSFailed)
+		assert.Zero(t, sleeps)
+	})
+
+	t.Run("書き込みが失敗すればそのエラーを返し、足したとは出さない", func(t *testing.T) {
+		t.Parallel()
+
+		f := registrarWorld(t, zoneNS)
+		f.responses[dsWrite()] = fail(t, "An error occurred (DnssecLimitExceeded)")
+		term, out := tty("tabp\n")
+		require.ErrorIs(t, associateRegistrarDS(prd, registrarClient(f), term), errAWSFailed)
+		assert.NotContains(t, out.String(), "✅")
 	})
 }

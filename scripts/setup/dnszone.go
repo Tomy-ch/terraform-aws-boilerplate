@@ -28,7 +28,11 @@ const (
 	delegationNameServers = 4
 	// maxKeyTag は、DS の key tag の上限。variables.tf の delegations の validation の tonumber(...) <= 65535 と同じ数。
 	maxKeyTag = 65535
-	// notRegisteredCode は、このアカウントの Route 53 Domains に無いドメインへの操作の error code。
+	// kskKeySpec と kskKeyUsage は、KSK の KMS の鍵の要件。usecases/dns-zone/internal/dnssec-key/main.tf の
+	// aws_kms_key の customer_master_key_spec と key_usage と同じ値。
+	kskKeySpec  = "ECC_NIST_P256"
+	kskKeyUsage = "SIGN_VERIFY"
+	// notRegisteredCode は、このアカウントの Route 53 Domains に無いドメインか、正しくない名前への操作の error code。
 	notRegisteredCode = "InvalidInput"
 	kmsNotFoundCode   = "NotFoundException"
 )
@@ -312,13 +316,14 @@ func dnssecKeyChecks(c *client, arn string) ([]keyCheck, error) {
 
 	return []keyCheck{
 		{m.KeyState == "Enabled", "KSK の鍵が Enabled（今: " + m.KeyState + "）"},
-		{m.KeySpec == "ECC_NIST_P256", "KSK の鍵が ECC_NIST_P256（今: " + m.KeySpec + "）"},
-		{m.KeyUsage == "SIGN_VERIFY", "KSK の鍵が SIGN_VERIFY（今: " + m.KeyUsage + "）"},
+		{m.KeySpec == kskKeySpec, "KSK の鍵が " + kskKeySpec + "（今: " + m.KeySpec + "）"},
+		{m.KeyUsage == kskKeyUsage, "KSK の鍵が " + kskKeyUsage + "（今: " + m.KeyUsage + "）"},
 	}, nil
 }
 
 // printDelegationValues は、3.2: 子の zone の NS と、署名が SIGNING でただ1つの ACTIVE な KSK の DS を、prd の
-// delegations に書く HCL の形で出す。DS を出せなければ ds_record を省き、その理由を出す。
+// delegations に書く HCL の形で出す。DS を出せなければ ds_record を省き、その理由を出す。DS に12桁続く数字が在れば、
+// 出力を伏せる処理が値を壊すので、-ids でなければ何も出さずに errPrecondition。
 func printDelegationValues(o options, c *client, w io.Writer) error {
 	shape, err := readDNSShape(o)
 	if err != nil {
@@ -351,6 +356,10 @@ func printDelegationValues(o options, c *client, w io.Writer) error {
 	ksk, reason := st.activeKSK()
 	if reason == "" && !shape.validDS(ksk.DSRecord) {
 		return xerrors.Wrapf(errPrecondition, "KSK の DS（%s）が delegations の ds_record の形に合いません", ksk.DSRecord)
+	}
+
+	if reason == "" && !o.showIDs && accountPattern.MatchString(ksk.DSRecord) {
+		return xerrors.Wrapf(errPrecondition, "KSK の DS（key tag %d）に12桁続く数字が在り、アカウント ID を伏せる処理が値を壊します。IDS=1 で出し直してください", ksk.KeyTag)
 	}
 
 	quoted := make([]string, len(ns))
@@ -458,7 +467,7 @@ func activateKSK(o options, c *client, t *terminal) error {
 		}
 	}
 
-	fmt.Fprintf(t.out, "KSK %s を有効に戻します（今: ACTION_NEEDED。%s）\n", ksk.Name, ksk.StatusMessage)
+	fmt.Fprintf(t.out, "zone %s の KSK %s を有効に戻します（今: ACTION_NEEDED。%s）\n", o.zone, ksk.Name, ksk.StatusMessage)
 
 	if err := t.confirm(o.project); err != nil {
 		return err
@@ -495,7 +504,8 @@ type registrarDomain struct {
 	keys        []registrarKey
 }
 
-// readRegistrar は、このアカウントの Route 53 Domains の domain の NS と DS。登録されていなければ errPrecondition。
+// readRegistrar は、このアカウントの Route 53 Domains の domain の NS と DS。InvalidInput（登録されていないか、名前が
+// 正しくない）なら、aws のエラーの文を添えて errPrecondition。
 func readRegistrar(c *client, domain string) (registrarDomain, error) {
 	var resp struct {
 		Nameservers []struct {
@@ -504,13 +514,18 @@ func readRegistrar(c *client, domain string) (registrarDomain, error) {
 		DnssecKeys []registrarKey `json:"DnssecKeys"`
 	}
 
-	found, err := c.readOptionalIn(usEast1Region, notRegisteredCode, &resp, "route53domains", "get-domain-detail", "--domain-name", domain)
+	err := c.readIn(usEast1Region, &resp, "route53domains", "get-domain-detail", "--domain-name", domain)
+	if xerrors.Is(err, errAWSFailed) && strings.Contains(err.Error(), notRegisteredCode) {
+		return registrarDomain{}, xerrors.Wrap(errPrecondition, "ドメイン "+domain+" はこのアカウントの Route 53 Domains に無いか、名前が正しくありません（"+err.Error()+
+			"）。ほかの registrar では手順書 3.4 の手で行う手順で登録します")
+	}
+
 	if err != nil {
 		return registrarDomain{}, err
 	}
 
-	if !found {
-		return registrarDomain{}, xerrors.Wrap(errPrecondition, "ドメイン "+domain+" はこのアカウントの Route 53 Domains に在りません。ほかの registrar では手順書 3.4 の手で行う手順で登録します")
+	if len(resp.Nameservers) == 0 {
+		return registrarDomain{}, xerrors.Wrap(errAWSResponse, "route53domains get-domain-detail: Nameservers がありません")
 	}
 
 	var ns []string
@@ -602,7 +617,7 @@ func updateRegistrarNS(o options, c *client, t *terminal) error {
 		}
 	}
 
-	fmt.Fprintln(t.out, "registrar の NS を zone の NS に替えます")
+	fmt.Fprintf(t.out, "ドメイン %s の registrar の NS を zone の NS に替えます\n", o.zone)
 
 	if err := t.confirm(o.project); err != nil {
 		return err
@@ -625,7 +640,8 @@ func updateRegistrarNS(o options, c *client, t *terminal) error {
 
 		return sameNameServers(got.nameServers, ns), nil
 	}); err != nil {
-		return xerrors.Wrap(err, "registrar の NS が zone の NS に見えません。少し後に make setup-dns-zone-registrar-ns をやり直すと確かめます（一致していれば書きません）")
+		return xerrors.Wrap(err, "registrar の NS の書き換えは受け付けられましたが、読み直しで zone の NS に見えません。Route 53 Domains の操作は非同期で、まだ進んでいることがあります。"+
+			"数分後に make setup-dns-zone-registrar-ns をやり直して確かめます（反映されていれば書きません）")
 	}
 
 	fmt.Fprintln(t.out, "✅ registrar の NS を zone の NS に替えました。DS は、切り替えが行き渡ってから make setup-dns-zone-registrar-ds で足します")
@@ -687,8 +703,8 @@ func associateRegistrarDS(o options, c *client, t *terminal) error {
 		fmt.Fprintf(t.out, "  registrar に、この KSK のものでない DS（key tag %d）が在ります。この入口は外しません\n", k.KeyTag)
 	}
 
-	fmt.Fprintf(t.out, "registrar に KSK %s の DS（Algorithm %d、Flags %d、key tag %d）を足します。NS の切り替えが行き渡ってから（registrar の NS の TTL を過ぎてから）行います。早いと名前が引けなくなります\n",
-		ksk.Name, ksk.SigningAlgorithmType, kskFlag, ksk.KeyTag)
+	fmt.Fprintf(t.out, "ドメイン %s の registrar に KSK %s の DS（Algorithm %d、Flags %d、key tag %d）を足します。NS の切り替えが行き渡ってから（registrar の NS の TTL を過ぎてから）行います。早いと名前が引けなくなります\n",
+		o.zone, ksk.Name, ksk.SigningAlgorithmType, kskFlag, ksk.KeyTag)
 
 	if err := t.confirm(o.project); err != nil {
 		return err
@@ -711,7 +727,8 @@ func associateRegistrarDS(o options, c *client, t *terminal) error {
 
 		return slices.ContainsFunc(got.keys, func(k registrarKey) bool { return k.PublicKey == ksk.PublicKey }), nil
 	}); err != nil {
-		return xerrors.Wrap(err, "registrar に DS が見えません。少し後に make setup-dns-zone-registrar-ds をやり直すと確かめます（在れば書きません）")
+		return xerrors.Wrap(err, "registrar への DS の追加は受け付けられましたが、読み直しで DS が見えません。Route 53 Domains の操作は非同期で、まだ進んでいることがあります。"+
+			"数分後に make setup-dns-zone-registrar-ds をやり直して確かめます（反映されていれば書きません）")
 	}
 
 	fmt.Fprintln(t.out, "✅ registrar に DS を足しました。make setup-dns-zone-signing-check と手順書 3.5 の dig で確かめます")

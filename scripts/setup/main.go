@@ -44,7 +44,7 @@
 //
 // 入口（dns-zone の手順書。-env は zone を置くアカウントの env、-zone は zone の名前、-usecase は usecases/dns-zone）:
 //
-//	dns-delegation-values  3.2: 子の zone の NS と DS を、prd の delegations に書く形で出す（-env は dev か stg）
+//	dns-delegation-values  3.2: 子の zone の NS と DS を、prd の delegations に書く形で出す（-env は dev か stg。DS に12桁続く数字が在れば -ids）
 //	dns-signing-check      3.5・4 の確認: 署名が SIGNING で、KSK がただ1つ ACTIVE で、その KMS の鍵が要件に合う
 //	dns-ksk-activate       4 手順3: ACTION_NEEDED の KSK を有効に戻す
 //	dns-registrar-ns       3.4: Route 53 Domains の registrar の NS を zone の NS に替える（-env prd）
@@ -124,6 +124,8 @@ type entry struct {
 	needsUser         bool
 	needsZone         bool
 	needsEnvironments bool
+	// ids は、その入口が -ids（12桁の数字を伏せない）を受けるか。
+	ids bool
 	// bootstrap は、組織より前の bootstrap の手順で、資格情報が一時 IAM user であることを書き込みの前提にするか。
 	bootstrap bool
 	// account は、各アカウントで行う手順で、資格情報の主体とアカウントを出すことだけを書き込みの前提にするか
@@ -155,7 +157,7 @@ var entries = map[string]entry{
 		},
 	},
 	"member-accounts-check": {
-		usecase: true,
+		usecase: true, ids: true,
 		run: func(o options, c *client, t *terminal, org organization) error {
 			return checkMemberAccounts(o, c, t.out, org)
 		},
@@ -273,7 +275,7 @@ var entries = map[string]entry{
 		},
 	},
 	"dns-delegation-values": {
-		terraform: true, needsEnv: true, needsZone: true,
+		terraform: true, needsEnv: true, needsZone: true, ids: true,
 		run: func(o options, c *client, t *terminal, _ organization) error {
 			return printDelegationValues(o, c, t.out)
 		},
@@ -480,8 +482,8 @@ func parseArgs(args []string) (options, entry, error) {
 		return options{}, entry{}, xerrors.Wrap(errUsage, "-environments と -repo は bootstrap-env-secrets にだけ、両方を渡します")
 	case o.replace && !e.needsEnvironments:
 		return options{}, entry{}, xerrors.Wrap(errUsage, "-replace は bootstrap-env-secrets にだけ渡します")
-	case o.showIDs && o.entry != "member-accounts-check":
-		return options{}, entry{}, xerrors.Wrap(errUsage, "-ids は member-accounts-check にだけ渡します")
+	case o.showIDs && !e.ids:
+		return options{}, entry{}, xerrors.Wrap(errUsage, "-ids は member-accounts-check と dns-delegation-values にだけ渡します")
 	}
 
 	return o, e, nil
