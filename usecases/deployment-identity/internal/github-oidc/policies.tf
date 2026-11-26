@@ -443,9 +443,6 @@ locals {
     "organizations:ListAWSServiceAccessForOrganization",
     "organizations:ListAccounts",
     "organizations:ListRoots",
-    "ram:GetResourceShareAssociations",
-    "ram:GetResourceShares",
-    "ssm:DescribeParameters",
   ]
   governance_read_statements = [for s in concat(
     [for a in local.governance_wildcard_read_actions : { Sid = replace(title(replace(a, ":", " ")), " ", ""), Effect = "Allow", Action = a, Resource = "*" }],
@@ -464,8 +461,6 @@ locals {
       },
       { Sid = "ReadMemberAccounts", Effect = "Allow", Action = ["organizations:DescribeAccount", "organizations:ListParents", "organizations:ListTagsForResource"], Resource = local.org_account_arns },
       { Sid = "ReadMemberAccountEmails", Effect = "Allow", Action = "ssm:GetParameter", Resource = local.member_account_emails_parameter_arn },
-      { Sid = "ReadAccountIdsParameter", Effect = "Allow", Action = ["ssm:GetParameter", "ssm:ListTagsForResource"], Resource = local.account_ids_parameter_arn },
-      { Sid = "ReadAccountIdsShare", Effect = "Allow", Action = "ram:ListResourceSharePermissions", Resource = local.account_ids_share_arns },
       { Sid = "ReadBreakGlassUsers", Effect = "Allow", Action = ["iam:GetUser", "iam:ListUserTags"], Resource = local.break_glass_user_arns },
       { Sid = "ReadBreakGlassGroup", Effect = "Allow", Action = ["iam:GetGroup", "iam:GetGroupPolicy"], Resource = local.break_glass_group_arns },
       {
@@ -486,6 +481,16 @@ locals {
         ]
         Resource = local.stack_set_arns
       },
+    ],
+  ) : s if local.management]
+
+  # アカウントの ID の一覧の parameter と共有の読み（repository-wide/ADR-0605）。plan の role は inline policy に、
+  # apply-identity の role は統制の policy に置く。apply-identity の role の inline policy は入力の境界で上限を超えるからである。
+  account_ids_read_statements = [for s in concat(
+    [for a in ["ram:GetResourceShareAssociations", "ram:GetResourceShares", "ssm:DescribeParameters"] : { Sid = replace(title(replace(a, ":", " ")), " ", ""), Effect = "Allow", Action = a, Resource = "*" }],
+    [
+      { Sid = "ReadAccountIdsParameter", Effect = "Allow", Action = ["ssm:GetParameter", "ssm:ListTagsForResource"], Resource = local.account_ids_parameter_arn },
+      { Sid = "ReadAccountIdsShare", Effect = "Allow", Action = "ram:ListResourceSharePermissions", Resource = local.account_ids_share_arns },
     ],
   ) : s if local.management]
 
@@ -717,6 +722,7 @@ locals {
       ],
       local.identity_read_statements,
       local.governance_read_statements,
+      local.account_ids_read_statements,
       local.bootstrap_assume_statements.plan,
       local.baseline_region_deny.plan,
     )

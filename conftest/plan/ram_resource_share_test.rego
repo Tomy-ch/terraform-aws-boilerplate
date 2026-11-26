@@ -7,7 +7,9 @@ address := "module.o.module.account_ids.aws_ram_resource_share.this"
 
 share(after, unknown) := {"address": address, "type": "aws_ram_resource_share", "change": {"actions": ["create"], "after": after, "after_unknown": unknown}}
 
-messages(rcs) := gate.deny with input as fixture.plan(rcs)
+messages(rcs) := msgs if {
+	msgs := gate.deny with input as fixture.plan(rcs)
+}
 
 test_pass_internal_only if {
 	count(messages([share({"name": "tabp-account-ids", "allow_external_principals": false}, {})])) == 0

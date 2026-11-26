@@ -245,9 +245,6 @@ run "policies" {
       },
       { Sid = "OrganizationsListAccounts", Effect = "Allow", Action = "organizations:ListAccounts", Resource = "*" },
       { Sid = "OrganizationsListRoots", Effect = "Allow", Action = "organizations:ListRoots", Resource = "*" },
-      { Sid = "RamGetResourceShareAssociations", Effect = "Allow", Action = "ram:GetResourceShareAssociations", Resource = "*" },
-      { Sid = "RamGetResourceShares", Effect = "Allow", Action = "ram:GetResourceShares", Resource = "*" },
-      { Sid = "SsmDescribeParameters", Effect = "Allow", Action = "ssm:DescribeParameters", Resource = "*" },
       {
         Sid    = "ReadOrganizationalUnits"
         Effect = "Allow"
@@ -280,18 +277,6 @@ run "policies" {
         Effect   = "Allow"
         Action   = "ssm:GetParameter"
         Resource = "arn:aws:ssm:ap-northeast-1:123456789012:parameter/tabp/organization-baseline/member-account-emails"
-      },
-      {
-        Sid      = "ReadAccountIdsParameter"
-        Effect   = "Allow"
-        Action   = ["ssm:GetParameter", "ssm:ListTagsForResource"]
-        Resource = "arn:aws:ssm:ap-northeast-1:123456789012:parameter/tabp/organization-baseline/account-ids"
-      },
-      {
-        Sid      = "ReadAccountIdsShare"
-        Effect   = "Allow"
-        Action   = "ram:ListResourceSharePermissions"
-        Resource = ["arn:aws:ram:ap-northeast-1:123456789012:resource-share/*"]
       },
       {
         Sid    = "ReadBreakGlassUsers"
@@ -334,6 +319,21 @@ run "policies" {
           "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-break-glass:*",
           "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-bootstrap-read:*",
         ]
+      },
+      { Sid = "RamGetResourceShareAssociations", Effect = "Allow", Action = "ram:GetResourceShareAssociations", Resource = "*" },
+      { Sid = "RamGetResourceShares", Effect = "Allow", Action = "ram:GetResourceShares", Resource = "*" },
+      { Sid = "SsmDescribeParameters", Effect = "Allow", Action = "ssm:DescribeParameters", Resource = "*" },
+      {
+        Sid      = "ReadAccountIdsParameter"
+        Effect   = "Allow"
+        Action   = ["ssm:GetParameter", "ssm:ListTagsForResource"]
+        Resource = "arn:aws:ssm:ap-northeast-1:123456789012:parameter/tabp/organization-baseline/account-ids"
+      },
+      {
+        Sid      = "ReadAccountIdsShare"
+        Effect   = "Allow"
+        Action   = "ram:ListResourceSharePermissions"
+        Resource = ["arn:aws:ram:ap-northeast-1:123456789012:resource-share/*"]
       },
       {
         Sid      = "AssumeBootstrapReadRoles"
@@ -687,9 +687,6 @@ run "policies" {
       },
       { Sid = "OrganizationsListAccounts", Effect = "Allow", Action = "organizations:ListAccounts", Resource = "*" },
       { Sid = "OrganizationsListRoots", Effect = "Allow", Action = "organizations:ListRoots", Resource = "*" },
-      { Sid = "RamGetResourceShareAssociations", Effect = "Allow", Action = "ram:GetResourceShareAssociations", Resource = "*" },
-      { Sid = "RamGetResourceShares", Effect = "Allow", Action = "ram:GetResourceShares", Resource = "*" },
-      { Sid = "SsmDescribeParameters", Effect = "Allow", Action = "ssm:DescribeParameters", Resource = "*" },
       {
         Sid    = "ReadOrganizationalUnits"
         Effect = "Allow"
@@ -722,18 +719,6 @@ run "policies" {
         Effect   = "Allow"
         Action   = "ssm:GetParameter"
         Resource = "arn:aws:ssm:ap-northeast-1:123456789012:parameter/tabp/organization-baseline/member-account-emails"
-      },
-      {
-        Sid      = "ReadAccountIdsParameter"
-        Effect   = "Allow"
-        Action   = ["ssm:GetParameter", "ssm:ListTagsForResource"]
-        Resource = "arn:aws:ssm:ap-northeast-1:123456789012:parameter/tabp/organization-baseline/account-ids"
-      },
-      {
-        Sid      = "ReadAccountIdsShare"
-        Effect   = "Allow"
-        Action   = "ram:ListResourceSharePermissions"
-        Resource = ["arn:aws:ram:ap-northeast-1:123456789012:resource-share/*"]
       },
       {
         Sid    = "ReadBreakGlassUsers"
@@ -1508,6 +1493,21 @@ run "policies" {
           "ram:UntagResource",
           "ram:UpdateResourceShare",
         ]
+        Resource = ["arn:aws:ram:ap-northeast-1:123456789012:resource-share/*"]
+      },
+      { Sid = "RamGetResourceShareAssociations", Effect = "Allow", Action = "ram:GetResourceShareAssociations", Resource = "*" },
+      { Sid = "RamGetResourceShares", Effect = "Allow", Action = "ram:GetResourceShares", Resource = "*" },
+      { Sid = "SsmDescribeParameters", Effect = "Allow", Action = "ssm:DescribeParameters", Resource = "*" },
+      {
+        Sid      = "ReadAccountIdsParameter"
+        Effect   = "Allow"
+        Action   = ["ssm:GetParameter", "ssm:ListTagsForResource"]
+        Resource = "arn:aws:ssm:ap-northeast-1:123456789012:parameter/tabp/organization-baseline/account-ids"
+      },
+      {
+        Sid      = "ReadAccountIdsShare"
+        Effect   = "Allow"
+        Action   = "ram:ListResourceSharePermissions"
         Resource = ["arn:aws:ram:ap-northeast-1:123456789012:resource-share/*"]
       },
     ]
