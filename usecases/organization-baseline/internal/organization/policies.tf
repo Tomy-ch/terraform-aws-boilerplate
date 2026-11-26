@@ -261,6 +261,8 @@ locals {
       "data-perimeter-prod-principals",
       "ec2-defaults",
     ] : "${k}/policy-staging" => { policy = k, target_id = aws_organizations_organizational_unit.top["PolicyStaging"].id } },
+    # 立ち上げを終えたアカウントでは、OrganizationAccountAccessRole を使わせない（organization-baseline/ADR-0101）。
+    { for k, a in aws_organizations_account.this : "deny-bootstrap-role/${k}" => { policy = "deny-bootstrap-role", target_id = a.id } if !contains(var.bootstrapping, k) },
   )
 }
 

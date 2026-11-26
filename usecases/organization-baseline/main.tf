@@ -9,6 +9,7 @@ module "organization" {
   project               = var.project
   break_glass_role_name = local.break_glass_role_name
   break_glass_role_path = local.break_glass_path
+  bootstrapping         = var.bootstrapping
 }
 
 module "break_glass" {

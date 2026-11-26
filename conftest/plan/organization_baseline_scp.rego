@@ -12,6 +12,9 @@ declared_targets := object.get(ob, "attachments", {})
 
 ou_addresses := object.get(ob, "organizational_units", {})
 
+# メンバーアカウントの env から、その address と置く OU の名前（organizational_units の key）へ。
+accounts := object.get(ob, "accounts", {})
+
 task_actions := {lower(a) | some a in object.get(ob, "assume_root_task_actions", [])}
 
 break_glass := object.get(ob, "break_glass", {})
@@ -43,6 +46,13 @@ attachment_declared(key) if is_array(declared_targets[key])
 target_names[id] := name if {
 	some name, address in ou_addresses
 	id := after(address).id
+	is_string(id)
+}
+
+# アカウントを付け先にした attachment は env の名前で読む（立ち上げを終えたアカウントの deny-bootstrap-role）。
+target_names[id] := env if {
+	some env, a in accounts
+	id := after(a.address).id
 	is_string(id)
 }
 
@@ -120,7 +130,10 @@ deny contains msg if {
 	is_object(object.get(data.policy_plan, "organization_baseline", null))
 	some address in array.concat(
 		[object.get(ob, "organization", ""), object.get(break_glass, "role", "")],
-		array.concat([a | some _, a in ou_addresses], [a | some _, a in policy_addresses]),
+		array.concat(
+			array.concat([a | some _, a in ou_addresses], [a | some _, a in policy_addresses]),
+			[a.address | some _, a in accounts],
+		),
 	)
 	not after(address)
 	msg := sprintf("[PLAN-ORG-00] 宣言した %s が入力にありません", [address])
@@ -436,4 +449,18 @@ enable_region_shape if {
 	s.Effect == "Deny"
 	"account:enableregion" in lib.lower_all(object.get(s, "Action", []))
 	not s.Condition
+}
+
+deny contains msg if {
+	some env, a in accounts
+	not ou_addresses[a.ou]
+	msg := sprintf("[PLAN-ORG-10] アカウント %s の OU %v が宣言の organizational_units にありません", [env, a.ou])
+}
+
+deny contains msg if {
+	some env, a in accounts
+	after(a.address)
+	ou_id := after(ou_addresses[a.ou]).id
+	object.get(after(a.address), "parent_id", null) != ou_id
+	msg := sprintf("[PLAN-ORG-10] アカウント %s が宣言した OU %s に置かれていないか、置き先が plan で決まりません", [env, a.ou])
 }

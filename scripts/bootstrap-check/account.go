@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/anomaly"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/awsenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -29,25 +31,12 @@ var (
 	// errNotReadOnly は、読むだけでない aws の操作を起動しようとしたこと（確認の表の誤り）。
 	errNotReadOnly = xerrors.New("読むだけでない aws の操作は起動しません")
 
-	// staticCredentials は、AWS_PROFILE より優先されるか、profile の読み先を変える環境変数。
-	staticCredentials = []string{
-		"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_ROLE_ARN", "AWS_WEB_IDENTITY_TOKEN_FILE",
-		"AWS_CONTAINER_CREDENTIALS_FULL_URI", "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE",
-	}
 	readOnlyPrefixes = []string{"get-", "list-", "describe-", "head-", "simulate-"}
 )
 
 // awsProfile は、aws に使わせる profile。静的な資格情報が環境に在るか、AWS_PROFILE が空なら、aws を起動せずに止める。
 func awsProfile(getenv func(string) string) (string, error) {
-	var found []string
-
-	for _, k := range staticCredentials {
-		if getenv(k) != "" {
-			found = append(found, k)
-		}
-	}
-
-	if len(found) > 0 {
+	if found := awsenv.Found(getenv); len(found) > 0 {
 		return "", xerrors.Wrapf(errStaticCredentials, "%s", strings.Join(found, "・"))
 	}
 
@@ -291,59 +280,47 @@ func accountChecks(user, project string) []check {
 	)
 }
 
-// serviceMonitor は、MonitorDimension が SERVICE の monitor（AWS services monitor）の ARN。
-// ちょうど1つでなければ理由を返す。
+// serviceMonitor は、get-anomaly-monitors を読み、anomaly.ServiceMonitor で決めた ARN か、決まらない理由を返す。
 func serviceMonitor(q *query) (string, string, error) {
 	v, reason, err := q.object("ce", "get-anomaly-monitors")
 	if err != nil || reason != "" {
 		return "", reason, err
 	}
 
-	var arns []string
+	var monitors []anomaly.Monitor
 
 	for _, m := range arrayAt(at(v, "AnomalyMonitors")) {
-		if at(m, "MonitorDimension") == "SERVICE" {
-			arn, _ := at(m, "MonitorArn").(string)
-			arns = append(arns, arn)
-		}
+		arn, _ := at(m, "MonitorArn").(string)
+		dim, _ := at(m, "MonitorDimension").(string)
+		monitors = append(monitors, anomaly.Monitor{Arn: arn, Dimension: dim})
 	}
 
-	return exactlyOne(arns, "AWS services monitor")
+	arn, reason := anomaly.ServiceMonitor(monitors)
+
+	return arn, reason, nil
 }
 
-// monitorSubscription は、monitor を MonitorArnList に含む subscription の ARN。ちょうど1つでなければ理由を返す。
+// monitorSubscription は、get-anomaly-subscriptions を読み、anomaly.MonitorSubscription で決めた ARN か、決まらない理由を返す。
 func monitorSubscription(q *query, monitor string) (string, string, error) {
 	v, reason, err := q.object("ce", "get-anomaly-subscriptions")
 	if err != nil || reason != "" {
 		return "", reason, err
 	}
 
-	var arns []string
+	var subs []anomaly.Subscription
 
 	for _, s := range arrayAt(at(v, "AnomalySubscriptions")) {
 		monitors, _ := stringsAt(at(s, "MonitorArnList"), "")
-		if slices.Contains(monitors, monitor) {
-			arn, _ := at(s, "SubscriptionArn").(string)
-			arns = append(arns, arn)
-		}
+		arn, _ := at(s, "SubscriptionArn").(string)
+		subs = append(subs, anomaly.Subscription{Arn: arn, Monitors: monitors})
 	}
 
-	return exactlyOne(arns, "その monitor の subscription")
+	arn, reason := anomaly.MonitorSubscription(subs, monitor)
+
+	return arn, reason, nil
 }
 
-func exactlyOne(arns []string, what string) (string, string, error) {
-	if len(arns) != 1 {
-		return "", fmt.Sprintf("%s が1つではない（%d 個）", what, len(arns)), nil
-	}
-
-	if arns[0] == "" {
-		return "", what + " の ARN を読めない", nil
-	}
-
-	return arns[0], "", nil
-}
-
-// hasTag は、resource が key の tag を持てば ok とする。値は見ない（apply の role の Deny は key の有無を見る）。
+// hasTag は、resource が key の tag を持てば ok とする。値は見ない。
 func hasTag(q *query, arn, key string) (verdict, error) {
 	v, reason, err := q.object("ce", "list-tags-for-resource", "--resource-arn", arn)
 	if err != nil || reason != "" {
