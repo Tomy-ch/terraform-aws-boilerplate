@@ -171,7 +171,7 @@ func Test_entries(t *testing.T) {
 		"bootstrap-anomaly-tag": {nil, func(t *testing.T) *fakeAWS {
 			return anomalyWorld(t, map[string]bool{monitorARN: true})
 		}, "tabp\n", tagResource(subARN)},
-		"bootstrap-env-secrets": {[]string{"-environments", "admin-plan"}, callerWorld, "tabp\n", "sts get-caller-identity"},
+		"bootstrap-env-secrets": {[]string{"-environments", "admin-plan", "-repo", testRepo}, callerWorld, "tabp\n", "sts get-caller-identity"},
 	}
 
 	t.Run("run の表が entries のすべての入口を覆う", func(t *testing.T) {
@@ -191,7 +191,10 @@ func Test_entries(t *testing.T) {
 			require.NoError(t, run(args, &bytes.Buffer{}, d))
 
 			if name == "bootstrap-env-secrets" {
-				assert.Contains(t, g.calls, setPlan)
+				assert.Equal(t, []string{listPlan, setPlan, listPlan}, g.calls)
+				assert.Equal(t, "111111111111", g.stdins[1])
+			} else {
+				assert.Empty(t, g.calls)
 			}
 			assert.Contains(t, append(f.joined(), f.writes()...), tc.want)
 
@@ -412,8 +415,10 @@ func Test_parseArgs(t *testing.T) {
 		"ほかの入口に -env":                               {[]string{"member-emails", "-project", "p", "-region", "r", "-usecase", "a", "-env", "x"}, "-env は"},
 		"identity-center-user-check に -user が無い":    {[]string{"identity-center-user-check", "-project", "p", "-region", "r", "-usecase", "a"}, "-user は"},
 		"ほかの入口に -user":                              {[]string{"break-glass-check", "-project", "p", "-region", "r", "-usecase", "a", "-user", "x"}, "-user は"},
-		"bootstrap-env-secrets に -environments が無い": {[]string{"bootstrap-env-secrets", "-project", "p", "-region", "r"}, "-environments は"},
-		"ほかの入口に -environments":                      {[]string{"bootstrap-contacts", "-project", "p", "-region", "r", "-environments", "x"}, "-environments は"},
+		"bootstrap-env-secrets に -environments が無い": {[]string{"bootstrap-env-secrets", "-project", "p", "-region", "r"}, "-environments と -repo は"},
+		"ほかの入口に -environments":                      {[]string{"bootstrap-contacts", "-project", "p", "-region", "r", "-environments", "x"}, "-environments と -repo は"},
+		"bootstrap-env-secrets に -repo が無い":         {[]string{"bootstrap-env-secrets", "-project", "p", "-region", "r", "-environments", "x"}, "-environments と -repo は"},
+		"ほかの入口に -replace":                           {[]string{"bootstrap-contacts", "-project", "p", "-region", "r", "-replace"}, "-replace は"},
 		"member-accounts-check でない入口に -ids":         {[]string{"member-emails-check", "-project", "p", "-region", "r", "-usecase", "a", "-ids"}, "-ids は"},
 	}
 	for name, tc := range bad {

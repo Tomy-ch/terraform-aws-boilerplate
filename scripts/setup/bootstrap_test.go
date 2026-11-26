@@ -89,23 +89,49 @@ func Test_requireBootstrapUser(t *testing.T) {
 
 		var out bytes.Buffer
 		require.NoError(t, requireBootstrapUser(testClient(newFakeAWS(t, map[string]awsResult{"sts get-caller-identity": ok(callerUser)})), "tabp-bootstrap", &out))
-		assert.Equal(t, "# 書き込む先: profile tabp-bootstrap、bootstrap の一時 IAM user\n", out.String())
+		assert.Equal(t, "# 書き込む先: profile tabp-bootstrap、IAM user bootstrap-temp、アカウント ID の末尾 1111\n", out.String())
 	})
 
 	for name, arn := range map[string]string{
-		"root なら errPrecondition": "arn:aws:iam::111111111111:root",
-		"role なら errPrecondition": "arn:aws:sts::111111111111:assumed-role/x/y",
+		"root なら errPrecondition":           "arn:aws:iam::111111111111:root",
+		"role なら errPrecondition":           "arn:aws:sts::111111111111:assumed-role/x/y",
+		"federated user なら errPrecondition": "arn:aws:sts::111111111111:federated-user/x",
+		"ARN の形でなければ errPrecondition":       "user/x",
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
 			var out bytes.Buffer
 
-			f := newFakeAWS(t, map[string]awsResult{"sts get-caller-identity": ok(`{"Arn":"` + arn + `"}`)})
+			f := newFakeAWS(t, map[string]awsResult{"sts get-caller-identity": ok(`{"Account":"111111111111","Arn":"` + arn + `"}`)})
 			require.ErrorIs(t, requireBootstrapUser(testClient(f), "p", &out), errPrecondition)
 			assert.Empty(t, out.String())
 		})
 	}
+
+	t.Run("path の下の user なら名前だけを出す", func(t *testing.T) {
+		t.Parallel()
+
+		var out bytes.Buffer
+
+		f := newFakeAWS(t, map[string]awsResult{"sts get-caller-identity": ok(`{"Account":"111111111111","Arn":"arn:aws:iam::111111111111:user/ops/temp"}`)})
+		require.NoError(t, requireBootstrapUser(testClient(f), "p", &out))
+		assert.Contains(t, out.String(), "IAM user temp、")
+	})
+
+	t.Run("アカウント ID が12桁でなければ errAWSResponse", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeAWS(t, map[string]awsResult{"sts get-caller-identity": ok(`{"Account":"1111","Arn":"arn:aws:iam::111111111111:user/x"}`)})
+		require.ErrorIs(t, requireBootstrapUser(testClient(f), "p", &bytes.Buffer{}), errAWSResponse)
+	})
+
+	t.Run("読めなければ errAWSFailed", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeAWS(t, map[string]awsResult{"sts get-caller-identity": fail(t, "ExpiredToken")})
+		require.ErrorIs(t, requireBootstrapUser(testClient(f), "p", &bytes.Buffer{}), errAWSFailed)
+	})
 
 	t.Run("ARN が無ければ errAWSResponse", func(t *testing.T) {
 		t.Parallel()
@@ -211,6 +237,65 @@ func Test_askContact(t *testing.T) {
 		_, err := askContact(term)
 		require.ErrorIs(t, err, errNoInput)
 	})
+
+	fieldInput := func(idx int, v string) string {
+		vals := []string{"Taro", "", "1-1", "", "Chiyoda", "Tokyo", "100-0001", "JP", "+81312345678"}
+		vals[idx] = v
+
+		return strings.Join(vals, "\n") + "\n"
+	}
+
+	for name, tc := range map[string]struct {
+		idx  int
+		ok   string
+		ng   string
+		want string
+	}{
+		"会社名 50/51":       {1, strings.Repeat("a", 50), strings.Repeat("a", 51), "会社名"},
+		"住所1 60/61":       {2, strings.Repeat("a", 60), strings.Repeat("a", 61), "住所1"},
+		"住所2 60/61":       {3, strings.Repeat("a", 60), strings.Repeat("a", 61), "住所2"},
+		"市区町村 50/51":      {4, strings.Repeat("a", 50), strings.Repeat("a", 51), "市区町村"},
+		"都道府県 50/51":      {5, strings.Repeat("a", 50), strings.Repeat("a", 51), "都道府県"},
+		"郵便番号 20/21":      {6, strings.Repeat("1", 20), strings.Repeat("1", 21), "郵便番号"},
+		"氏名は文字で数える 50/51": {0, strings.Repeat("あ", 50), strings.Repeat("あ", 51), "氏名"},
+		"電話の桁 2/1":        {8, "+81", "+8", "電話番号"},
+		"電話の桁 19/20":      {8, "+" + strings.Repeat("1", 19), "+" + strings.Repeat("1", 20), "電話番号"},
+	} {
+		t.Run(name+" の境界", func(t *testing.T) {
+			t.Parallel()
+
+			term, _ := tty(fieldInput(tc.idx, tc.ok))
+			_, err := askContact(term)
+			require.NoError(t, err)
+
+			term, _ = tty(fieldInput(tc.idx, tc.ng))
+			_, err = askContact(term)
+			require.ErrorIs(t, err, errContactInput)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
+
+	for name, idx := range map[string]int{"住所1": 2, "市区町村": 4, "郵便番号": 6, "国": 7, "電話番号": 8} {
+		t.Run(name+"が空なら errContactInput", func(t *testing.T) {
+			t.Parallel()
+
+			term, _ := tty(fieldInput(idx, ""))
+			_, err := askContact(term)
+			require.ErrorIs(t, err, errContactInput)
+		})
+	}
+
+	for _, cc := range stateRequired {
+		t.Run(cc+" で都道府県・州が空なら errContactInput", func(t *testing.T) {
+			t.Parallel()
+
+			in := strings.Replace(fieldInput(5, ""), "\nJP\n", "\n"+cc+"\n", 1)
+			term, _ := tty(in)
+			_, err := askContact(term)
+			require.ErrorIs(t, err, errContactInput)
+			assert.Contains(t, err.Error(), cc+" では都道府県・州が必須")
+		})
+	}
 }
 
 func Test_askAlternate(t *testing.T) {
@@ -257,6 +342,40 @@ func Test_askAlternate(t *testing.T) {
 		term, _ := tty("Hanako\nOps\nops@example.com\n" + strings.Repeat("1", 25) + "\n")
 		_, err := askAlternate(term, "BILLING", nil)
 		require.NoError(t, err)
+	})
+
+	altInput := func(name, title, email, phone string) string {
+		return name + "\n" + title + "\n" + email + "\n" + phone + "\n"
+	}
+
+	for label, tc := range map[string]struct{ ok, ng, want string }{
+		"氏名 64/65": {altInput(strings.Repeat("a", 64), "Ops", "o@x.y", "1"), altInput(strings.Repeat("a", 65), "Ops", "o@x.y", "1"), "氏名"},
+		"役職 50/51": {altInput("H", strings.Repeat("a", 50), "o@x.y", "1"), altInput("H", strings.Repeat("a", 51), "o@x.y", "1"), "役職"},
+		"メール 254/255": {
+			altInput("H", "Ops", strings.Repeat("a", 242)+"@example.com", "1"),
+			altInput("H", "Ops", strings.Repeat("a", 243)+"@example.com", "1"), "メール",
+		},
+	} {
+		t.Run(label+" の境界", func(t *testing.T) {
+			t.Parallel()
+
+			term, _ := tty(tc.ok)
+			_, err := askAlternate(term, "BILLING", nil)
+			require.NoError(t, err)
+
+			term, _ = tty(tc.ng)
+			_, err = askAlternate(term, "BILLING", nil)
+			require.ErrorIs(t, err, errContactInput)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
+
+	t.Run("入力が途中で尽きれば errNoInput", func(t *testing.T) {
+		t.Parallel()
+
+		term, _ := tty("Hanako\nOps\n")
+		_, err := askAlternate(term, "BILLING", nil)
+		require.ErrorIs(t, err, errNoInput)
 	})
 }
 
@@ -355,6 +474,94 @@ func Test_setContacts(t *testing.T) {
 		require.ErrorIs(t, setContacts(bgOptions(), testClient(f, putContact, putAlternate), term), errAWSFailed)
 		assert.Equal(t, []string{putContact}, f.writes())
 	})
+
+	t.Run("主の連絡先だけが違えば、主の連絡先だけを書く", func(t *testing.T) {
+		t.Parallel()
+
+		f := contactsWorld(t)
+		other := wantContact
+		other.City = "Minato"
+		f.responses[getContact] = contactJSON(other)
+
+		for _, typ := range alternateTypes {
+			f.responses[getAlternate(typ)] = alternateJSON(wantAlt)
+		}
+
+		term, _ := tty(contactInput + alternateInput + "tabp\n")
+		require.NoError(t, setContacts(bgOptions(), testClient(f, putContact, putAlternate), term))
+		assert.Equal(t, []string{putContact}, f.writes())
+	})
+
+	t.Run("在る代替連絡先が違えば、その種類だけを書く", func(t *testing.T) {
+		t.Parallel()
+
+		f := contactsWorld(t)
+		f.responses[getContact] = contactJSON(wantContact)
+		other := wantAlt
+		other.Title = "CTO"
+
+		for _, typ := range alternateTypes {
+			f.responses[getAlternate(typ)] = alternateJSON(wantAlt)
+		}
+
+		f.responses[getAlternate("OPERATIONS")] = alternateJSON(other)
+
+		term, _ := tty(contactInput + alternateInput + "tabp\n")
+		require.NoError(t, setContacts(bgOptions(), testClient(f, putContact, putAlternate), term))
+		assert.Equal(t, []string{putAlternate}, f.writes())
+		assert.Contains(t, f.secrets[0], `"AlternateContactType":"OPERATIONS"`)
+	})
+
+	t.Run("入力で問わない項目は今の値を引き継ぐ", func(t *testing.T) {
+		t.Parallel()
+
+		f := contactsWorld(t)
+		cur := wantContact
+		cur.AddressLine3, cur.WebsiteURL = "Bldg 3", "https://example.com"
+		f.responses[getContact] = contactJSON(cur)
+
+		for _, typ := range alternateTypes {
+			f.responses[getAlternate(typ)] = alternateJSON(wantAlt)
+		}
+
+		term, out := tty(contactInput + alternateInput)
+		require.NoError(t, setContacts(bgOptions(), testClient(f, putContact, putAlternate), term))
+		assert.Empty(t, f.writes())
+		assert.Contains(t, out.String(), "書き込みません")
+	})
+
+	t.Run("2件目の代替連絡先で失敗すれば、それまでの書き込みで止まり ✅ を出さない", func(t *testing.T) {
+		t.Parallel()
+
+		f := contactsWorld(t)
+		f.seq = map[string][]awsResult{putAlternate: {ok(""), fail(t, "ValidationException")}}
+		term, out := tty(contactInput + alternateInput + "tabp\n")
+		require.ErrorIs(t, setContacts(bgOptions(), testClient(f, putContact, putAlternate), term), errAWSFailed)
+		assert.Equal(t, []string{putContact, putAlternate, putAlternate}, f.writes())
+		assert.NotContains(t, out.String(), "✅")
+	})
+
+	t.Run("代替連絡先の入力が誤りなら書かない", func(t *testing.T) {
+		t.Parallel()
+
+		f := contactsWorld(t)
+		term, _ := tty(contactInput + "Hanako\nOps\nbad\n+81312345679\n")
+		require.ErrorIs(t, setContacts(bgOptions(), testClient(f, putContact, putAlternate), term), errContactInput)
+		assert.Empty(t, f.writes())
+	})
+
+	t.Run("個人の情報は引数にも出力にも出ない", func(t *testing.T) {
+		t.Parallel()
+
+		f := contactsWorld(t)
+		term, out := tty(contactInput + alternateInput + "tabp\n")
+		require.NoError(t, setContacts(bgOptions(), testClient(f, putContact, putAlternate), term))
+
+		for _, v := range []string{"Taro", "Chiyoda", "100-0001", "+81312345678", "Hanako", "ops@example.com", "+81312345679"} {
+			assert.NotContains(t, strings.Join(f.joined(), " "), v)
+			assert.NotContains(t, out.String(), v)
+		}
+	})
 }
 
 func Test_verifyContacts(t *testing.T) {
@@ -391,10 +598,31 @@ func Test_verifyContacts(t *testing.T) {
 		err := verifyContacts(bgOptions(), testClient(newFakeAWS(t, m)), &out, wantContact, alts)
 		require.ErrorIs(t, err, errAWSResponse)
 		assert.Contains(t, err.Error(), "make bootstrap-check-account")
+		assert.Contains(t, err.Error(), "（City）")
+		assert.NotContains(t, err.Error(), "Minato")
 		assert.Empty(t, out.String())
 	})
 
-	t.Run("代替連絡先が一致しなければ errAWSResponse", func(t *testing.T) {
+	t.Run("代替連絡先が値の違うまま在れば errAWSResponse で、違う項目の名前だけを出す", func(t *testing.T) {
+		t.Parallel()
+
+		other := wantAlt
+		other.Title = "CTO"
+
+		m := map[string]awsResult{getContact: contactJSON(wantContact)}
+		for _, typ := range alternateTypes {
+			m[getAlternate(typ)] = alternateJSON(wantAlt)
+		}
+
+		m[getAlternate("SECURITY")] = alternateJSON(other)
+
+		err := verifyContacts(bgOptions(), testClient(newFakeAWS(t, m)), &bytes.Buffer{}, wantContact, alts)
+		require.ErrorIs(t, err, errAWSResponse)
+		assert.Contains(t, err.Error(), "SECURITY が入力と一致しません（Title）")
+		assert.NotContains(t, err.Error(), "CTO")
+	})
+
+	t.Run("代替連絡先が無ければ errAWSResponse", func(t *testing.T) {
 		t.Parallel()
 
 		m := map[string]awsResult{getContact: contactJSON(wantContact)}
@@ -479,6 +707,15 @@ func Test_anomalyTargets(t *testing.T) {
 		_, _, err := anomalyTargets(testClient(f))
 		require.ErrorIs(t, err, errAWSFailed)
 	})
+
+	t.Run("subscription を読めなければ errAWSFailed", func(t *testing.T) {
+		t.Parallel()
+
+		f := anomalyWorld(t, nil)
+		f.responses["ce get-anomaly-subscriptions"] = fail(t, "AccessDenied")
+		_, _, err := anomalyTargets(testClient(f))
+		require.ErrorIs(t, err, errAWSFailed)
+	})
 }
 
 func Test_hasCostTag(t *testing.T) {
@@ -501,12 +738,36 @@ func Test_hasCostTag(t *testing.T) {
 		assert.False(t, no)
 	})
 
-	t.Run("ResourceTags が無ければ errAWSResponse", func(t *testing.T) {
+	for name, stdout := range map[string]string{
+		"ResourceTags が無ければ tag が無いと読む":     `{}`,
+		"ResourceTags が null なら tag が無いと読む": `{"ResourceTags":null}`,
+		"key が似ているだけなら無いと読む":                `{"ResourceTags":[{"Key":"tabp:bootstrap2"},{"Key":"TABP:bootstrap"}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			f := newFakeAWS(t, map[string]awsResult{listCostTags("a"): ok(stdout)})
+			has, err := hasCostTag(testClient(f), "a", "tabp:bootstrap")
+			require.NoError(t, err)
+			assert.False(t, has)
+		})
+	}
+
+	t.Run("us-east-1 で読む", func(t *testing.T) {
 		t.Parallel()
 
-		f := newFakeAWS(t, map[string]awsResult{listCostTags("a"): ok(`{}`)})
+		f := newFakeAWS(t, map[string]awsResult{listCostTags("a"): ok(`{"ResourceTags":[]}`)})
 		_, err := hasCostTag(testClient(f), "a", "tabp:bootstrap")
-		require.ErrorIs(t, err, errAWSResponse)
+		require.NoError(t, err)
+		assert.Equal(t, costRegion, f.calls[0][len(f.calls[0])-1])
+	})
+
+	t.Run("読めなければ errAWSFailed", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeAWS(t, map[string]awsResult{listCostTags("a"): fail(t, "AccessDenied")})
+		_, err := hasCostTag(testClient(f), "a", "tabp:bootstrap")
+		require.ErrorIs(t, err, errAWSFailed)
 	})
 }
 
@@ -582,5 +843,42 @@ func Test_tagAnomaly(t *testing.T) {
 		term, _ := tty("acme\n")
 		require.NoError(t, tagAnomaly(o, testClient(f, tagWrite), term))
 		assert.Equal(t, []string{tagWrite + " --resource-arn " + subARN + " --resource-tags Key=acme:bootstrap,Value=true"}, f.writes())
+	})
+
+	t.Run("どちらにも無ければ、monitor・subscription の順に付け、すべて us-east-1 で起動する", func(t *testing.T) {
+		t.Parallel()
+
+		f := anomalyWorld(t, nil)
+		term, _ := tty("tabp\n")
+		require.NoError(t, tagAnomaly(bgOptions(), testClient(f, tagWrite), term))
+		assert.Equal(t, []string{tagResource(monitorARN), tagResource(subARN)}, f.writes())
+
+		for _, c := range f.calls {
+			assert.Equal(t, costRegion, c[len(c)-1], strings.Join(c, " "))
+		}
+	})
+
+	t.Run("2つ目の tag で失敗すれば errAWSFailed で ✅ を出さない", func(t *testing.T) {
+		t.Parallel()
+
+		f := anomalyWorld(t, nil)
+		f.responses[tagResource(subARN)] = fail(t, "AccessDenied")
+		term, out := tty("tabp\n")
+		require.ErrorIs(t, tagAnomaly(bgOptions(), testClient(f, tagWrite), term), errAWSFailed)
+		assert.Equal(t, []string{tagResource(monitorARN), tagResource(subARN)}, f.writes())
+		assert.NotContains(t, out.String(), "✅ tag を付けました")
+	})
+}
+
+func Test_differingFields(t *testing.T) {
+	t.Parallel()
+
+	t.Run("値の違う field の名前を、宣言の順に返す", func(t *testing.T) {
+		t.Parallel()
+
+		other := wantAlt
+		other.Title, other.PhoneNumber = "x", "y"
+		assert.Equal(t, []string{"Title", "PhoneNumber"}, differingFields(wantAlt, other))
+		assert.Empty(t, differingFields(wantAlt, wantAlt))
 	})
 }
