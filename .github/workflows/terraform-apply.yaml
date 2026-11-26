@@ -556,7 +556,11 @@ jobs:
           SHA: ${{ github.sha }}
           ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
         run: |
-          head=$(gh api "repos/$REPO/git/ref/heads/$REF" --jq .object.sha)
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          head=$(git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" ls-remote "https://github.com/$REPO.git" "refs/heads/$REF" \
+            | awk -v ref="refs/heads/$REF" '$2 == ref { n++; sha = $1 } END { if (n != 1) exit 1; print sha }') \
+            || { echo "❌ git ls-remote で $REF の先頭を1つに決められません"; exit 1; }
           test "$SHA" = "$head" || { echo "❌ $SHA は $REF の先頭（$head）ではないので apply しません"; exit 1; }
           test -n "$ACCOUNT_ID" || { echo "❌ environment admin-apply-identity の secret AWS_ACCOUNT_ID がありません"; exit 1; }
 
@@ -719,7 +723,11 @@ jobs:
           SHA: ${{ github.sha }}
           ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
         run: |
-          head=$(gh api "repos/$REPO/git/ref/heads/$REF" --jq .object.sha)
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          head=$(git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" ls-remote "https://github.com/$REPO.git" "refs/heads/$REF" \
+            | awk -v ref="refs/heads/$REF" '$2 == ref { n++; sha = $1 } END { if (n != 1) exit 1; print sha }') \
+            || { echo "❌ git ls-remote で $REF の先頭を1つに決められません"; exit 1; }
           test "$SHA" = "$head" || { echo "❌ $SHA は $REF の先頭（$head）ではないので apply しません"; exit 1; }
           test -n "$ACCOUNT_ID" || { echo "❌ environment admin-apply の secret AWS_ACCOUNT_ID がありません"; exit 1; }
 

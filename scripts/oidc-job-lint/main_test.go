@@ -2008,6 +2008,42 @@ func Test_checkRefusal(t *testing.T) {
 		assert.Contains(t, messages(checkRefusal(job, credOf(job), refuseStale, formatted)), "id が refuse-stale の step")
 	})
 
+	staleRun := "        run: test \"$SHA\" = \"$HEAD\""
+	for name, run := range map[string]string{
+		"gh api":               `        run: head=$(gh api "repos/$REPO/git/ref/heads/$REF" --jq .object.sha)`,
+		"ブロックの中の gh":           "        run: |\n          x=1\n          gh api rate_limit",
+		"curl":                 `        run: curl -fsS "https://github.com/$REPO"`,
+		"wget":                 `        run: wget -qO- "https://github.com/$REPO"`,
+		"api.github.com を引く道具": `        run: python3 -c 'import urllib.request; urllib.request.urlopen("https://api.github.com/x")'`,
+	} {
+		t.Run("refuse-stale の step で REST を呼ぶ "+name+" は違反", func(t *testing.T) {
+			t.Parallel()
+
+			job := jobOf(t, replaced(t, applyWorkflow, staleRun, run), "apply-admin-identity")
+			assert.Contains(t, messages(checkRefusal(job, credOf(job), refuseStale, formatted)), "REST API を呼ばないでください")
+		})
+	}
+
+	for name, run := range map[string]string{
+		"git ls-remote": "        run: |\n          auth=$(printf 'x-access-token:%s' \"$GH_TOKEN\" | base64 -w0)\n          head=$(git -c \"http.https://github.com/.extraheader=AUTHORIZATION: basic $auth\" ls-remote \"https://github.com/$REPO.git\" \"refs/heads/$REF\")",
+		"コメントの gh":      "        run: |\n          # gh api は使わない\n          test \"$SHA\" = \"$HEAD\"",
+		"gh を含む語":       "        run: test \"$SHA\" = \"$HEAD\" || echo high-gh-x",
+	} {
+		t.Run("refuse-stale の step の "+name+" は違反0件", func(t *testing.T) {
+			t.Parallel()
+
+			job := jobOf(t, replaced(t, applyWorkflow, staleRun, run), "apply-admin-identity")
+			assert.Empty(t, checkRefusal(job, credOf(job), refuseStale, formatted))
+		})
+	}
+
+	t.Run("refuse-untrusted の step の gh は REST の検査の外", func(t *testing.T) {
+		t.Parallel()
+
+		job := planWith(t, "        run: test \"$HEAD_REPO_ID\" = \"$REPO_ID\"", "        run: gh api rate_limit")
+		assert.Empty(t, checkRefusal(job, credOf(job), refuseUntrusted, formatted))
+	})
+
 	t.Run("拒否の step の引用符付きの if: は違反", func(t *testing.T) {
 		t.Parallel()
 
@@ -2918,6 +2954,13 @@ func Test_checkStepEnv(t *testing.T) {
 
 		step := stepOf(t, "      - env:", "          CI_ACCOUNT_ID: x", "          # TF_BIN: y", "          CI_PR: |", "            1", "        run: make ci-apply-admin-identity RUNNER_MODE=host")
 		assert.Empty(t, checkStepEnv(step, formatted))
+	})
+
+	t.Run("git の設定を替える GIT_CONFIG_ の名前は違反", func(t *testing.T) {
+		t.Parallel()
+
+		step := stepOf(t, "      - env:", "          GIT_CONFIG_COUNT: \"1\"", "        run: make ci-apply-admin-identity RUNNER_MODE=host")
+		assert.Contains(t, messages(checkStepEnv(step, formatted)), "env: に置けるのは")
 	})
 
 	t.Run("env: の後の step のキーは名前と読まない", func(t *testing.T) {

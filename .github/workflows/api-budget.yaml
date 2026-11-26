@@ -4,6 +4,11 @@ name: API Budget
 # GET /rate_limit は枠を数えないので、上限に当たっている最中でも呼べる。必須の検査にしない。
 on:
   workflow_dispatch:
+    inputs:
+      ls-remote:
+        description: refuse-stale と同じ git ls-remote を1回呼び、その前後で used が増えないかを出す
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -65,6 +70,18 @@ jobs:
       - name: Report the core rate limit
         env:
           GH_TOKEN: ${{ github.token }}
+          LS_REMOTE: ${{ inputs.ls-remote }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref_name }}
         run: |
+          used() { gh api rate_limit --jq .resources.core.used; }
           gh api rate_limit --jq '.resources.core | "limit=\(.limit) used=\(.used) remaining=\(.remaining) reset=\(.reset | todate)"' \
             | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$LS_REMOTE" = true ]; then
+            before=$(used)
+            auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+            echo "::add-mask::$auth"
+            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" ls-remote "https://github.com/$REPO.git" "refs/heads/$REF" >/dev/null
+            after=$(used)
+            echo "ls-remote: used $before -> $after（差 $((after - before))）" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
