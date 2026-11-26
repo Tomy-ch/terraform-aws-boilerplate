@@ -22,8 +22,7 @@
 //	identity-center-check  3.3 手順1 の確認: 組織の管理アカウントのインスタンスが ACTIVE でただ1つ在る
 //	identity-center-user-check 3.3 手順4 の確認: user が在り、その ID を出す。user の名前に環境の接尾辞が無い（-usecase・-user）
 //	break-glass-login      3.4 手順1: パスワードの無い break-glass の user に、伏せて打ち込んだパスワードを置く（-usecase）
-//	break-glass-mfa        3.4 手順2: MFA の無い break-glass の user に、ハードウェアの TOTP の装置を登録する（-usecase）
-//	break-glass-check      3.4 の確認: パスワードとハードウェアの MFA が在り、アクセスキーが無く、password policy が宣言どおり（-usecase）
+//	break-glass-check      3.4 の確認: パスワードと FIDO の MFA だけが在り、アクセスキーが無く、password policy が宣言どおり（-usecase）
 //	break-glass-usage-check 3.6 の忘れ: break-glass の user のサインインと role の引き受けが45日以内（-usecase）
 //
 // env の一覧、OU の階層、メールの形、break-glass の user と role と password policy、委任管理者のサービスの主体は、
@@ -174,12 +173,7 @@ var entries = map[string]entry{
 			return setBreakGlassLogin(o, c, t)
 		},
 	},
-	"break-glass-mfa": {
-		writes: []string{"iam enable-mfa-device"}, usecase: true,
-		run: func(o options, c *client, t *terminal, _ organization) error {
-			return setBreakGlassMFA(o, c, t)
-		},
-	},
+
 	"break-glass-check": {
 		usecase: true,
 		run: func(o options, c *client, t *terminal, _ organization) error {

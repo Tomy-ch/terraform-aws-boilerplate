@@ -19,7 +19,7 @@
 - 管理アカウントが組織の管理アカウントで、Security・Workloads（Prod・NonProd）・Sandbox・PolicyStaging の OU が在る
 - Root には組織からの離脱とアカウントの閉鎖の拒否だけが付き、ほかの policy は PolicyStaging に付いている
 - root の資格情報の中央管理が有効で、この後に作るメンバーアカウントは root の資格情報を持たない
-- 管理アカウントに break-glass の IAM user が2つ在り、それぞれにパスワードとハードウェア MFA が設定されている
+- 管理アカウントに break-glass の IAM user が2つ在り、それぞれにパスワードと FIDO の MFA（セキュリティキーかパスキー）が設定されている
 - 管理アカウントの password policy が、14文字以上・24世代の再利用の禁止・4種の文字を求める
 - Security OU にメンバーアカウント security と log-archive が在り、それぞれに break-glass の role が StackSet で置かれている
 
@@ -71,10 +71,11 @@
 管理アカウントの管理者の資格情報で行う。メンバーアカウントを作る変更より前に終える。break-glass の user（`usecases/organization-baseline` の宣言の user）が apply で作られていなければ、書き込む入口は書き込まずに止まり、確認の入口は `❌` を出す。
 
 1. `make setup-organization-baseline-break-glass-login PROFILE=<管理アカウントの profile>` で、パスワードの無い user に、コンソールのパスワードを置く。パスワードは表示されない打ち込みで2回入れ、引数と shell の履歴に残らない。password policy に合わなければ AWS が拒む（アクセスキーは作らない。group の policy が拒む）
-2. それぞれにハードウェア MFA を登録する
-   - ハードウェアの TOTP の装置なら、`make setup-organization-baseline-break-glass-mfa PROFILE=<管理アカウントの profile>` で、MFA の無い user に、装置のシリアルと続いて出た2つのコードを入れて登録する
-   - FIDO のセキュリティキーは、AWS の API で登録できないので、コンソールの IAM の user の「セキュリティ認証情報」から登録する
-3. `make setup-organization-baseline-break-glass-check PROFILE=<管理アカウントの profile>` で、`/break-glass/` の下の user が宣言の user と一致し、それぞれにパスワードとハードウェアの MFA が在って仮想 MFA とアクセスキーが無く、password policy が宣言の値であることを確かめ、出力を Pull Request に書く
+2. それぞれに、フィッシングに強い MFA（FIDO）を登録する。TOTP（認証アプリの仮想 MFA と、ハードウェアの TOTP の装置）は使わない
+   - コンソールの IAM →「Users」→ break-glass の user →「Security credentials」→「Assign MFA device」で、種類に「Passkey or security key」を選んで登録する。AWS の API では FIDO の装置を登録できないので、コンソールで行う
+   - FIDO のセキュリティキー（物理の鍵）を強く勧める。パスワードと別の場所に保管できる
+   - 次点として、その端末にだけ置くパスキーを使ってよい。クラウドで同期するパスキーは、同期先のアカウントが break-glass の資格情報への経路になるので使わない
+3. `make setup-organization-baseline-break-glass-check PROFILE=<管理アカウントの profile>` で、`/break-glass/` の下の user が宣言の user と一致し、それぞれにパスワードと FIDO の MFA だけが在って TOTP とアクセスキーが無く、password policy が宣言の値であることを確かめ、出力を Pull Request に書く
 4. パスワードと MFA の装置を、別々の安全な場所に保管する
 5. 3.6 の試験を1回行う
 

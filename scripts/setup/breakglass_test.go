@@ -19,7 +19,6 @@ const (
 	virtualMFA   = "arn:aws:iam::111111111111:mfa/break-glass-1"
 	fidoMFA      = "arn:aws:iam::111111111111:u2f/user/break-glass-1/fidosecuritykey1-7XNL7NFNLZ123456789EXAMPLE"
 	createLogin  = "iam create-login-profile"
-	enableMFA    = "iam enable-mfa-device"
 	listBGUsers  = "iam list-users --path-prefix /break-glass/"
 	passwordPol  = "iam get-account-password-policy"
 	bgPolicyJSON = `{"PasswordPolicy":{"MinimumPasswordLength":14,"PasswordReusePrevention":24,"RequireLowercaseCharacters":true,` +
@@ -77,7 +76,7 @@ func bgWorld(t *testing.T, login map[string]bool, mfa map[string][]string) *fake
 
 func bothLogin() map[string]bool { return map[string]bool{bg1: true, bg2: true} }
 
-func bothMFA() map[string][]string { return map[string][]string{bg1: {hwSerial}, bg2: {fidoMFA}} }
+func bothMFA() map[string][]string { return map[string][]string{bg1: {fidoMFA}, bg2: {fidoMFA + "2"}} }
 
 func Test_readBreakGlass(t *testing.T) {
 	t.Parallel()
@@ -218,34 +217,37 @@ func Test_mfaSerials(t *testing.T) {
 	}
 }
 
-func Test_isVirtualMFA(t *testing.T) {
+func Test_isFIDO(t *testing.T) {
 	t.Parallel()
 
-	t.Run("mfa/ の ARN だけが仮想", func(t *testing.T) {
+	t.Run("u2f/ の ARN だけが FIDO", func(t *testing.T) {
 		t.Parallel()
 
-		assert.True(t, isVirtualMFA(virtualMFA))
-		assert.False(t, isVirtualMFA(fidoMFA))
-		assert.False(t, isVirtualMFA(hwSerial))
+		assert.True(t, isFIDO(fidoMFA))
+		assert.False(t, isFIDO(virtualMFA))
+		assert.False(t, isFIDO(hwSerial))
+		assert.False(t, isFIDO("u2f/user/x"))
 	})
 }
 
-func Test_hasHardwareMFA(t *testing.T) {
+func Test_hasOnlyFIDO(t *testing.T) {
 	t.Parallel()
 
-	t.Run("仮想でない装置だけが在れば true", func(t *testing.T) {
+	t.Run("FIDO の装置だけが1つ以上在れば true", func(t *testing.T) {
 		t.Parallel()
 
-		assert.True(t, hasHardwareMFA([]string{hwSerial}))
-		assert.True(t, hasHardwareMFA([]string{hwSerial, fidoMFA}))
+		assert.True(t, hasOnlyFIDO([]string{fidoMFA}))
+		assert.True(t, hasOnlyFIDO([]string{fidoMFA, fidoMFA + "2"}))
 	})
 
-	t.Run("0件か、仮想 MFA が混じれば false", func(t *testing.T) {
+	t.Run("0件か、TOTP（仮想かハードウェア）が混じれば false", func(t *testing.T) {
 		t.Parallel()
 
-		assert.False(t, hasHardwareMFA(nil))
-		assert.False(t, hasHardwareMFA([]string{virtualMFA}))
-		assert.False(t, hasHardwareMFA([]string{hwSerial, virtualMFA}))
+		assert.False(t, hasOnlyFIDO(nil))
+		assert.False(t, hasOnlyFIDO([]string{virtualMFA}))
+		assert.False(t, hasOnlyFIDO([]string{hwSerial}))
+		assert.False(t, hasOnlyFIDO([]string{fidoMFA, virtualMFA}))
+		assert.False(t, hasOnlyFIDO([]string{fidoMFA, hwSerial}))
 	})
 }
 
@@ -449,213 +451,6 @@ func Test_setBreakGlassLogin(t *testing.T) {
 	})
 }
 
-func mfaWorld(t *testing.T, before map[string][]string) *fakeAWS {
-	t.Helper()
-
-	f := bgWorld(t, nil, before)
-
-	f.responses[enableMFA] = ok("")
-	f.onWrite(enableMFA, map[string]awsResult{listMFA(bg1): mfaJSON(hwSerial), listMFA(bg2): mfaJSON(hwSerial)})
-
-	return f
-}
-
-func Test_setBreakGlassMFA(t *testing.T) {
-	t.Parallel()
-
-	t.Run("MFA の無い user にだけ、シリアルと2つのコードを一時ファイルで渡して登録し、読み直す", func(t *testing.T) {
-		t.Parallel()
-
-		f := mfaWorld(t, map[string][]string{bg1: {fidoMFA}})
-		term, out := tty("tabp\n" + hwSerial + "\n123456\n654321\n")
-
-		require.NoError(t, setBreakGlassMFA(bgOptions(), testClient(f, enableMFA), term))
-		assert.Equal(t, []string{enableMFA}, f.writes())
-		assert.Equal(t, []string{`{"AuthenticationCode1":"123456","AuthenticationCode2":"654321","SerialNumber":"` + hwSerial + `","UserName":"` + bg2 + `"}`}, f.secrets)
-		assert.Contains(t, out.String(), "✅ "+bg2+" に MFA を登録しました")
-	})
-
-	t.Run("すべてに MFA が在れば、書き込まない", func(t *testing.T) {
-		t.Parallel()
-
-		f := mfaWorld(t, map[string][]string{bg1: {hwSerial}, bg2: {virtualMFA}})
-		term, out := tty("")
-
-		require.NoError(t, setBreakGlassMFA(bgOptions(), testClient(f, enableMFA), term))
-		assert.Empty(t, f.writes())
-		assert.Contains(t, out.String(), "仮想 MFA は break-glass-check が NG にします")
-	})
-
-	t.Run("確認が project の名前でなければ書き込まない", func(t *testing.T) {
-		t.Parallel()
-
-		f := mfaWorld(t, nil)
-		term, _ := tty("x\n")
-
-		require.ErrorIs(t, setBreakGlassMFA(bgOptions(), testClient(f, enableMFA), term), errNotConfirmed)
-		assert.Empty(t, f.writes())
-	})
-
-	t.Run("user が無ければ errPrecondition", func(t *testing.T) {
-		t.Parallel()
-
-		f := mfaWorld(t, nil)
-		f.responses[getUser(bg2)] = fail(t, "An error occurred (NoSuchEntity)")
-		term, _ := tty("tabp\n")
-
-		require.ErrorIs(t, setBreakGlassMFA(bgOptions(), testClient(f, enableMFA), term), errPrecondition)
-		assert.Empty(t, f.writes())
-	})
-
-	t.Run("2人目のシリアルの形が誤りなら、1人目だけを登録して errMFAInput", func(t *testing.T) {
-		t.Parallel()
-
-		f := mfaWorld(t, nil)
-		term, _ := tty("tabp\n" + hwSerial + "\n123456\n654321\n" + "short\n123456\n654321\n")
-
-		require.ErrorIs(t, setBreakGlassMFA(bgOptions(), testClient(f, enableMFA), term), errMFAInput)
-		assert.Equal(t, []string{enableMFA}, f.writes())
-		assert.Contains(t, f.secrets[0], `"UserName":"`+bg1+`"`)
-	})
-
-	t.Run("宣言を読めなければ aws を起動しない", func(t *testing.T) {
-		t.Parallel()
-
-		f := bgWorld(t, nil, nil)
-		o := bgOptions()
-		o.readFile = readFiles(map[string]string{})
-		term, _ := tty("tabp\n")
-		require.ErrorIs(t, setBreakGlassMFA(o, testClient(f, enableMFA), term), errHCL)
-		assert.Empty(t, f.ops())
-	})
-}
-
-func Test_registerTOTP(t *testing.T) {
-	t.Parallel()
-
-	t.Run("登録した装置を読み直せれば nil", func(t *testing.T) {
-		t.Parallel()
-
-		f := mfaWorld(t, nil)
-		term, _ := tty(hwSerial + "\n123456\n654321\n")
-		require.NoError(t, registerTOTP(bgOptions(), testClient(f, enableMFA), term, bg1))
-	})
-
-	for name, input := range map[string]string{
-		"ARN のシリアルは errMFAInput": virtualMFA + "\n123456\n654321\n",
-		"短いシリアルは errMFAInput":    "GAKT1\n123456\n654321\n",
-		"6桁でないコードは errMFAInput":  hwSerial + "\n12345\n654321\n",
-		"数字でないコードは errMFAInput":  hwSerial + "\n12345a\n654321\n",
-		"同じ2つのコードは errMFAInput":  hwSerial + "\n123456\n123456\n",
-		"空白を含むシリアルは errMFAInput": "GAKT 12345678\n123456\n654321\n",
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			f := mfaWorld(t, nil)
-			term, _ := tty(input)
-			require.ErrorIs(t, registerTOTP(bgOptions(), testClient(f, enableMFA), term, bg1), errMFAInput)
-			assert.Empty(t, f.writes())
-		})
-	}
-
-	t.Run("登録した後に装置が無ければ errAWSResponse", func(t *testing.T) {
-		t.Parallel()
-
-		f := bgWorld(t, nil, nil)
-		f.responses[enableMFA] = ok("")
-		term, _ := tty(hwSerial + "\n123456\n654321\n")
-		require.ErrorIs(t, registerTOTP(bgOptions(), testClient(f, enableMFA), term, bg1), errAWSResponse)
-	})
-
-	t.Run("入力が尽きれば errNoInput", func(t *testing.T) {
-		t.Parallel()
-
-		term, _ := tty(hwSerial + "\n")
-		f := mfaWorld(t, nil)
-		require.ErrorIs(t, registerTOTP(bgOptions(), testClient(f, enableMFA), term, bg1), errNoInput)
-		assert.Empty(t, f.writes())
-	})
-
-	t.Run("書き込みが拒まれれば errAWSFailed で、読み直さず ✅ を出さない", func(t *testing.T) {
-		t.Parallel()
-
-		f := bgWorld(t, nil, nil)
-		f.responses[enableMFA] = fail(t, "An error occurred (InvalidAuthenticationCode)")
-		term, out := tty(hwSerial + "\n123456\n654321\n")
-
-		require.ErrorIs(t, registerTOTP(bgOptions(), testClient(f, enableMFA), term, bg1), errAWSFailed)
-		assert.NotContains(t, out.String(), "✅")
-		assert.Equal(t, enableMFA, f.ops()[len(f.ops())-1])
-	})
-
-	for name, serial := range map[string]string{
-		"9文字のシリアルは受ける":   strings.Repeat("A", 9),
-		"256文字のシリアルは受ける": strings.Repeat("A", 256),
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			f := bgWorld(t, nil, nil)
-			f.responses[enableMFA] = ok("")
-			f.onWrite(enableMFA, map[string]awsResult{listMFA(bg1): mfaJSON(serial)})
-			term, _ := tty(serial + "\n123456\n654321\n")
-			require.NoError(t, registerTOTP(bgOptions(), testClient(f, enableMFA), term, bg1))
-		})
-	}
-
-	for name, input := range map[string]string{
-		"8文字のシリアルは errMFAInput":   strings.Repeat("A", 8) + "\n123456\n654321\n",
-		"257文字のシリアルは errMFAInput": strings.Repeat("A", 257) + "\n123456\n654321\n",
-		"7桁のコードは errMFAInput":     hwSerial + "\n1234567\n654321\n",
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			f := mfaWorld(t, nil)
-			term, _ := tty(input)
-			require.ErrorIs(t, registerTOTP(bgOptions(), testClient(f, enableMFA), term, bg1), errMFAInput)
-			assert.Empty(t, f.writes())
-		})
-	}
-
-	t.Run("登録の直後に見えなくても、読み直しをやり直して見えれば nil", func(t *testing.T) {
-		t.Parallel()
-
-		f := mfaWorld(t, nil)
-		f.seq = map[string][]awsResult{listMFA(bg1): {mfaJSON(), mfaJSON()}}
-		term, out := tty(hwSerial + "\n123456\n654321\n")
-
-		var waits int
-
-		o := bgOptions()
-		o.sleep = func(time.Duration) { waits++ }
-
-		require.NoError(t, registerTOTP(o, testClient(f, enableMFA), term, bg1))
-		assert.Equal(t, 2, waits)
-		assert.Contains(t, out.String(), "✅ "+bg1+" に MFA を登録しました")
-	})
-
-	t.Run("読み直しを尽くしても装置が見えなければ errAWSResponse で、break-glass-check を案内し ✅ を出さない", func(t *testing.T) {
-		t.Parallel()
-
-		f := bgWorld(t, nil, nil)
-		f.responses[enableMFA] = ok("")
-		term, out := tty(hwSerial + "\n123456\n654321\n")
-
-		var waits int
-
-		o := bgOptions()
-		o.sleep = func(time.Duration) { waits++ }
-
-		err := registerTOTP(o, testClient(f, enableMFA), term, bg1)
-		require.ErrorIs(t, err, errAWSResponse)
-		assert.Contains(t, err.Error(), "break-glass-check")
-		assert.Equal(t, rereadTries-1, waits)
-		assert.NotContains(t, out.String(), "MFA を登録しました")
-	})
-}
-
 func Test_checkBreakGlass(t *testing.T) {
 	t.Parallel()
 
@@ -678,8 +473,10 @@ func Test_checkBreakGlass(t *testing.T) {
 		}, "❌ path /break-glass/ の IAM user"},
 		"path の下に user が無ければ NG": {listBGUsers, func(*testing.T) awsResult { return ok(`{"Users":[]}`) }, "（今: なし）"},
 		"パスワードが無ければ NG":          {getLogin(bg2), func(t *testing.T) awsResult { return fail(t, noSuchUser) }, "❌ " + bg2 + " にパスワードが在る"},
-		"MFA が無ければ NG":           {listMFA(bg2), func(*testing.T) awsResult { return mfaJSON() }, "❌ " + bg2 + " にハードウェアの MFA"},
-		"仮想 MFA が在れば NG":         {listMFA(bg1), func(*testing.T) awsResult { return mfaJSON(hwSerial, virtualMFA) }, "❌ " + bg1 + " にハードウェアの MFA"},
+		"MFA が無ければ NG":           {listMFA(bg2), func(*testing.T) awsResult { return mfaJSON() }, "❌ " + bg2 + " の MFA がすべて FIDO"},
+		"仮想 MFA が在れば NG":         {listMFA(bg1), func(*testing.T) awsResult { return mfaJSON(fidoMFA, virtualMFA) }, "❌ " + bg1 + " の MFA がすべて FIDO"},
+		"ハードウェアの TOTP が在れば NG":   {listMFA(bg1), func(*testing.T) awsResult { return mfaJSON(fidoMFA, hwSerial) }, "❌ " + bg1 + " の MFA がすべて FIDO"},
+		"ハードウェアの TOTP だけなら NG":   {listMFA(bg2), func(*testing.T) awsResult { return mfaJSON(hwSerial) }, "❌ " + bg2 + " の MFA がすべて FIDO"},
 		"アクセスキーが在れば NG":          {listKeys(bg1), func(*testing.T) awsResult { return ok(`{"AccessKeyMetadata":[{"AccessKeyId":"AKIA"}]}`) }, "❌ " + bg1 + " にアクセスキーが無い（今: 1 件）"},
 		"password policy の値が違えば NG": {passwordPol, func(*testing.T) awsResult {
 			return ok(strings.Replace(bgPolicyJSON, `"MinimumPasswordLength":14`, `"MinimumPasswordLength":8`, 1))
