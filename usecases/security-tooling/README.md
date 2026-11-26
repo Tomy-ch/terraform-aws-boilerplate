@@ -20,6 +20,24 @@
 
 GuardDuty、Config の集約、Access Analyzer（組織）、Inspector、Security Hub は、このユースケースが持つ予定の範囲で、決定はまだ無い（#473）。
 
+## 公式実装の参照（[ADR-0206](../../docs/adr/0206-official-implementations-as-reference.md) 決定7・8）
+
+参照日: 2026-11-27
+
+- 参照した一次資料: [AWS SRA の Security Tooling のアカウント](https://docs.aws.amazon.com/prescriptive-guidance/latest/security-reference-architecture/security-tooling.html)、CloudTrail User Guide（[Organization trails](https://docs.aws.amazon.com/awscloudtrail/latest/userguide/creating-trail-organization.html)、[Delegated administrator](https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-delegated-administrator.html)、[Concepts](https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-concepts.html)、[AWS console sign-in events](https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-event-reference-aws-console-sign-in-events.html)）、[IAM User Guide の CloudTrail との統合](https://docs.aws.amazon.com/IAM/latest/UserGuide/cloudtrail-integration.html)、Amazon EventBridge User Guide（[CloudTrail の事象](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-service-event-cloudtrail.html)、[リージョン越え](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-cross-region.html)）、[Amazon SNS の鍵の管理](https://docs.aws.amazon.com/sns/latest/dg/sns-key-management.html)、[Security Hub の CloudTrail の control](https://docs.aws.amazon.com/securityhub/latest/userguide/cloudtrail-controls.html)・[CloudWatch の control](https://docs.aws.amazon.com/securityhub/latest/userguide/cloudwatch-controls.html)
+- AWS Provider 6.73.0（このリポジトリの lock の版）の `aws_cloudtrail`・`aws_cloudwatch_log_metric_filter`・`aws_cloudwatch_metric_alarm` の schema は、Terraform の実装を足す変更が確かめる。この README は Terraform の実装を持たない
+
+採用した知見:
+
+- 組織の trail を CloudTrail の委任管理者から管理する（SRA）。所有者は管理アカウントのまま（CloudTrail User Guide）
+- 管理イベントの読み書きを記録する multi-region の trail（Security Hub CloudTrail.1）、保管時の暗号化（CloudTrail.2）、log file validation（CloudTrail.4）、CloudWatch Logs との統合（CloudTrail.5）
+- root の使用の metric filter と alarm（Security Hub CloudWatch.1）
+
+採用しなかった知見と理由:
+
+- Amazon EventBridge の rule による通知: リージョンごとの rule と role と、`ops-notification` の鍵の契約の変更が要り、opt-in のリージョンが漏れる（[security-tooling/ADR-0102](docs/adr/0102-break-glass-and-root-usage-alarms.md)）
+- Security Hub CloudWatch.2-14 の metric filter と alarm: [security-tooling/ADR-0102](docs/adr/0102-break-glass-and-root-usage-alarms.md) の「公式推奨からの逸脱」
+
 ## supported / unsupported
 
 supported:
