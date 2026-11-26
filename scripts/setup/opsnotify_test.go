@@ -771,6 +771,56 @@ func Test_resubscribeChatbot(t *testing.T) {
 		require.ErrorIs(t, resubscribeChatbot(opsOptions(nil), resubscribeClient(f), term), errHCL)
 		assert.Empty(t, f.calls)
 	})
+
+	t.Run("読み直しで購読が2つ見えれば errAWSResponse", func(t *testing.T) {
+		t.Parallel()
+
+		f := resubscribeWorld(t, subsJSON(chatbotSub(opsUSTopicARN)))
+		f.onWrite(updateCall(opsTopicARN, opsUSTopicARN), map[string]awsResult{listSubs: subsJSON(chatbotSub(opsTopicARN), chatbotSub(opsTopicARN), chatbotSub(opsUSTopicARN))})
+
+		term, _ := tty("tabp\n")
+		err := resubscribeChatbot(opsOptions(opsFiles()), resubscribeClient(f), term)
+		require.ErrorIs(t, err, errAWSResponse)
+		assert.Contains(t, err.Error(), "3.4 手順2 のコンソールの手順")
+	})
+
+	t.Run("読み直しを読めなければ、やり直さずに errAWSFailed", func(t *testing.T) {
+		t.Parallel()
+
+		f := resubscribeWorld(t, subsJSON(chatbotSub(opsUSTopicARN)))
+		f.onWrite(updateCall(opsTopicARN, opsUSTopicARN), map[string]awsResult{listSubs: fail(t, "AccessDenied")})
+
+		var sleeps int
+
+		o := opsOptions(opsFiles())
+		o.sleep = func(time.Duration) { sleeps++ }
+
+		term, _ := tty("tabp\n")
+		require.ErrorIs(t, resubscribeChatbot(o, resubscribeClient(f), term), errAWSFailed)
+		assert.Zero(t, sleeps)
+	})
+
+	t.Run("2つ目の Topic を外す保存が失敗すれば、1つ目を直した後で止め、2つ目の Topic を名指す", func(t *testing.T) {
+		t.Parallel()
+
+		f := resubscribeWorld(t, subsJSON())
+		f.responses[updateCall(opsTopicARN)] = fail(t, "Throttling")
+
+		term, _ := tty("tabp\n")
+		err := resubscribeChatbot(opsOptions(opsFiles()), resubscribeClient(f), term)
+		require.ErrorIs(t, err, errAWSFailed)
+		assert.Contains(t, err.Error(), "tabp-dev-ops-notification-us-east-1 を外す保存が失敗しました")
+		assert.Equal(t, []string{updateCall(opsUSTopicARN), updateCall(opsTopicARN, opsUSTopicARN), updateCall(opsTopicARN)}, f.writes())
+	})
+
+	t.Run("購読の無い Topic の後に購読が2つの Topic があれば errPrecondition で書かない", func(t *testing.T) {
+		t.Parallel()
+
+		f := resubscribeWorld(t, subsJSON(chatbotSub(opsUSTopicARN), chatbotSub(opsUSTopicARN)))
+		term, _ := tty("tabp\n")
+		require.ErrorIs(t, resubscribeChatbot(opsOptions(opsFiles()), resubscribeClient(f), term), errPrecondition)
+		assert.Empty(t, f.writes())
+	})
 }
 
 func Test_requireSameConfiguration(t *testing.T) {

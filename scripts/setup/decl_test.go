@@ -226,6 +226,13 @@ func Test_evalLocals(t *testing.T) {
 		_, _, err := evalLocals(parseBody(t, src), []string{"nope"}, nil)
 		require.ErrorIs(t, err, errDeclShape)
 	})
+
+	t.Run("null の local は errDeclShape", func(t *testing.T) {
+		t.Parallel()
+
+		_, _, err := evalLocals(parseBody(t, "locals {\n  n = null\n}\n"), []string{"n"}, nil)
+		require.ErrorIs(t, err, errDeclShape)
+	})
 }
 
 func Test_localItemString(t *testing.T) {
