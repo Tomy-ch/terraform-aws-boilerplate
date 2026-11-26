@@ -19,41 +19,41 @@ const (
 	paramName   = "/tabp/organization-baseline/member-account-emails"
 
 	usecaseMainTF = `locals {
-  break_glass_role_name = "${var.project}-break-glass"
+	break_glass_role_name = "${var.project}-break-glass"
 }
 `
 	ouMainTF = `locals {
-  root_id = "r"
+	root_id = "r"
 }
 
 resource "aws_organizations_organizational_unit" "top" {
-  for_each  = toset(["Security", "Workloads", "Sandbox"])
-  name      = each.key
-  parent_id = local.root_id
+	for_each  = toset(["Security", "Workloads", "Sandbox"])
+	name      = each.key
+	parent_id = local.root_id
 }
 
 resource "aws_organizations_organizational_unit" "workloads" {
-  for_each  = toset(["Prod", "NonProd"])
-  name      = each.key
-  parent_id = aws_organizations_organizational_unit.top["Workloads"].id
+	for_each  = toset(["Prod", "NonProd"])
+	name      = each.key
+	parent_id = aws_organizations_organizational_unit.top["Workloads"].id
 }
 `
 	accountsTF = `locals {
-  member_accounts = {
-    security      = aws_organizations_organizational_unit.top["Security"].id
-    "log-archive" = aws_organizations_organizational_unit.top["Security"].id
-  }
+	member_accounts = {
+		security      = aws_organizations_organizational_unit.top["Security"].id
+		"log-archive" = aws_organizations_organizational_unit.top["Security"].id
+	}
 }
 
 resource "aws_organizations_account" "this" {
-  for_each = local.member_accounts
+	for_each = local.member_accounts
 
-  lifecycle {
-    precondition {
-      condition     = can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", local.member_account_emails[each.key]))
-      error_message = "x"
-    }
-  }
+	lifecycle {
+		precondition {
+			condition     = can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", local.member_account_emails[each.key]))
+			error_message = "x"
+		}
+	}
 }
 `
 )

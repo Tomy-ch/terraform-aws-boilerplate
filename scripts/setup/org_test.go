@@ -9,8 +9,8 @@ import (
 )
 
 const accountsJSON = `{"Accounts":[
- {"Id":"111111111111","Name":"tabp-management","Email":"m@x.y","State":"ACTIVE","Status":"ACTIVE"},
- {"Id":"222222222222","Name":"tabp-security","Email":"sec@x.y","State":"ACTIVE"}
+	{"Id":"111111111111","Name":"tabp-management","Email":"m@x.y","State":"ACTIVE","Status":"ACTIVE"},
+	{"Id":"222222222222","Name":"tabp-security","Email":"sec@x.y","State":"ACTIVE"}
 ]}`
 
 func Test_listAccounts(t *testing.T) {

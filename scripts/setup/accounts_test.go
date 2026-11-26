@@ -224,50 +224,50 @@ func Test_readOUHierarchy(t *testing.T) {
 	bad := map[string]string{
 		"OU の resource が無ければ errOUShape": `locals {}`,
 		"for_each が無ければ errOUShape": `resource "aws_organizations_organizational_unit" "a" {
-  parent_id = local.root_id
+	parent_id = local.root_id
 }`,
 		"for_each が toset でなければ errOUShape": `resource "aws_organizations_organizational_unit" "a" {
-  for_each  = var.ous
-  parent_id = local.root_id
+	for_each  = var.ous
+	parent_id = local.root_id
 }`,
 		"for_each に重複があれば errOUShape": `resource "aws_organizations_organizational_unit" "a" {
-  for_each  = toset(["X", "X"])
-  parent_id = local.root_id
+	for_each  = toset(["X", "X"])
+	parent_id = local.root_id
 }`,
 		"for_each が空なら errOUShape": `resource "aws_organizations_organizational_unit" "a" {
-  for_each  = toset([])
-  parent_id = local.root_id
+	for_each  = toset([])
+	parent_id = local.root_id
 }`,
 		"parent_id が無ければ errOUShape": `resource "aws_organizations_organizational_unit" "a" {
-  for_each = toset(["X"])
+	for_each = toset(["X"])
 }`,
 		"parent_id が参照でなければ errOUShape": `resource "aws_organizations_organizational_unit" "a" {
-  for_each  = toset(["X"])
-  parent_id = "r-1"
+	for_each  = toset(["X"])
+	parent_id = "r-1"
 }`,
 		"parent_id が別の local なら errOUShape": `resource "aws_organizations_organizational_unit" "a" {
-  for_each  = toset(["X"])
-  parent_id = local.other
+	for_each  = toset(["X"])
+	parent_id = local.other
 }`,
 		"親の resource が無ければ errOUShape": `resource "aws_organizations_organizational_unit" "a" {
-  for_each  = toset(["X"])
-  parent_id = aws_organizations_organizational_unit.b["Y"].id
+	for_each  = toset(["X"])
+	parent_id = aws_organizations_organizational_unit.b["Y"].id
 }`,
 		"親の OU が for_each に無ければ errOUShape": `resource "aws_organizations_organizational_unit" "a" {
-  for_each  = toset(["X"])
-  parent_id = local.root_id
+	for_each  = toset(["X"])
+	parent_id = local.root_id
 }
 resource "aws_organizations_organizational_unit" "b" {
-  for_each  = toset(["Y"])
-  parent_id = aws_organizations_organizational_unit.a["Z"].id
+	for_each  = toset(["Y"])
+	parent_id = aws_organizations_organizational_unit.a["Z"].id
 }`,
 		"parent_id が循環すれば errOUShape": `resource "aws_organizations_organizational_unit" "a" {
-  for_each  = toset(["X"])
-  parent_id = aws_organizations_organizational_unit.b["Y"].id
+	for_each  = toset(["X"])
+	parent_id = aws_organizations_organizational_unit.b["Y"].id
 }
 resource "aws_organizations_organizational_unit" "b" {
-  for_each  = toset(["Y"])
-  parent_id = aws_organizations_organizational_unit.a["X"].id
+	for_each  = toset(["Y"])
+	parent_id = aws_organizations_organizational_unit.a["X"].id
 }`,
 	}
 	for name, src := range bad {
@@ -404,14 +404,14 @@ func Test_readMemberAccounts(t *testing.T) {
 		t.Parallel()
 
 		got, err := read(t, `locals {
-  other = 1
+	other = 1
 }
 locals {
-  member_accounts = {
-    stg           = aws_organizations_organizational_unit.workloads["NonProd"].id
-    security      = aws_organizations_organizational_unit.top["Security"].id
-    "log-archive" = aws_organizations_organizational_unit.top["Security"].id
-  }
+	member_accounts = {
+		stg           = aws_organizations_organizational_unit.workloads["NonProd"].id
+		security      = aws_organizations_organizational_unit.top["Security"].id
+		"log-archive" = aws_organizations_organizational_unit.top["Security"].id
+	}
 }
 `)
 		require.NoError(t, err)
