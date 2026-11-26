@@ -55,7 +55,7 @@ const (
 )
 
 var (
-	errUsage = xerrors.New("usage: versions <apply|check>")
+	errUsage = xerrors.New("usage: versions <apply|check|lock|lock-check>")
 	errDrift = xerrors.New("版の写しが mise.toml からずれています")
 	errShape = xerrors.New("版の宣言または写しの形が想定と異なります")
 )
@@ -255,18 +255,16 @@ type rule struct {
 	block    string
 }
 
-// main は判断を持ちません。分岐は run に置きます（scripts/README.md の Test Strategy）。
 func main() {
 	log.SetFlags(0)
 
-	if err := run(os.Args[1:], ".", os.Stdout); err != nil {
+	if err := run(os.Args[1:], ".", os.Stdout, command, repoTables); err != nil {
 		log.Fatalf("%v", err)
 	}
 }
 
-// run は、サブコマンドを解釈して固定処理へ振り分けます。root を引数で受けるのは、分岐を
-// テストから到達可能にするためです（scripts/README.md の Test Strategy）。
-func run(args []string, root string, out io.Writer) error {
+// run は、サブコマンドを解釈して固定処理へ振り分けます（scripts/README.md の Test Strategy）。
+func run(args []string, root string, out io.Writer, tool toolFunc, tables sourceTables) error {
 	if len(args) != 1 {
 		return errUsage
 	}
@@ -276,6 +274,18 @@ func run(args []string, root string, out io.Writer) error {
 		return applyAll(root, false, out)
 	case "check":
 		return applyAll(root, true, out)
+	case "lock":
+		return writeLock(root, out, tool, tables)
+	case "lock-check":
+		if err := checkLock(root, tables); err != nil {
+			return err
+		}
+		if err := checkLockedInstalls(root); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "✅ versions: %s が %s の宣言と一致し、取得元が配布元を指しています\n", misetoml.LockFile, miseFile)
+
+		return nil
 	default:
 		return xerrors.Wrap(errUsage, "unknown subcommand: "+args[0])
 	}
@@ -446,8 +456,7 @@ func applyRule(r rule, content string) (string, error) {
 
 // parseMise は mise.toml の [tools] が宣言する版のうち、rules が写し先を持つものを返します。
 //
-// **[tools] の読み取りそのものは misetoml が持つ。** 同じ宣言を読む実装をリポジトリに2つ置くと、
-// 一方だけが読める宣言が生まれる。ここが決めるのは、どのキーを要求するかだけである。
+// [tools] の読み取りそのものは misetoml が持ち、ここが決めるのはどのキーを要求するかだけである。
 func parseMise(path string) (declared, error) {
 	entries, err := misetoml.ParseFile(path)
 	if err != nil {

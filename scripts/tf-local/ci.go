@@ -36,6 +36,12 @@ var (
 	counterPattern = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
 	branchPattern  = regexp.MustCompile(`^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$`)
 	rootPattern    = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+	// planLinePattern は、terraform plan が変更の件数を書く行。forget と move と read と output は数えない。
+	planLinePattern = regexp.MustCompile(`^Plan: (?:([0-9]+) to import, )?([0-9]+) to add, ([0-9]+) to change, ([0-9]+) to destroy\.$`)
+	// addressKeyPattern は、address の中の文字列の key（`["..."]`）。
+	addressKeyPattern = regexp.MustCompile(`\["(?:[^"\\]|\\.)*"\]`)
+	// identifierPattern は、address に出さない識別子（12桁の数字のアカウント ID と、`@` を含むメール）。
+	identifierPattern = regexp.MustCompile(`[0-9]{12}|@`)
 	// assumeErrorPattern は、aws CLI が API のエラーを stderr に書く行。行頭の接頭辞は CLI の版で変わるので見ない。
 	assumeErrorPattern = regexp.MustCompile(`An error occurred \(([A-Za-z0-9]{1,64})\) when calling the AssumeRoleWithWebIdentity operation`)
 
@@ -50,6 +56,8 @@ var (
 	errPlanExitCode = xerrors.New("❌ plan の終了コードは 0 か 2 です")
 	errPlanMismatch = xerrors.New("❌ plan の終了コードと JSON の変更の有無が食い違います")
 	errPlanKey      = xerrors.New("❌ plan の出力の key を組めません")
+	errPlanLine     = xerrors.New("❌ plan の全文から terraform の「Plan:」の行を1つに読めません")
+	errPlanList     = xerrors.New("❌ 変わる resource の一覧の件数が、terraform の「Plan:」の行と食い違います")
 	errApplyKey     = xerrors.New("❌ apply の出力の key を組めません")
 	errApplyFailed  = xerrors.New("❌ apply が失敗しました")
 	errApplyTimeout = xerrors.New("❌ apply を打ち切りました（timeout）")
@@ -290,6 +298,130 @@ func countChanges(p planJSON) (planCounts, error) {
 	}
 
 	return c, nil
+}
+
+// planChanges は、`terraform show -json` の resource_changes から、変わる resource の address と操作の一覧を作ります。
+// 一覧の件数は plan の全文の terraform の「Plan:」の行と突き合わせ、食い違えば失敗します（ADR-0702 決定15）。
+// 値を読まない型で受けるので、属性の値は一覧に入らない。識別子を含む key は maskAddress が伏せる。
+func planChanges(data, out []byte) ([]string, error) {
+	var p struct {
+		ResourceChanges []resourceChange `json:"resource_changes"`
+	}
+	if err := json.Unmarshal(data, &p); err != nil {
+		return nil, errPlanJSON
+	}
+
+	var (
+		lines  []string
+		counts [4]int // import・add・change・destroy
+	)
+
+	for _, rc := range p.ResourceChanges {
+		var ops []string
+
+		if len(rc.Change.Importing) > 0 && string(rc.Change.Importing) != "null" {
+			ops = append(ops, "import")
+			counts[0]++
+		}
+
+		address := maskAddress(rc.Address)
+		if rc.PreviousAddress != "" && rc.PreviousAddress != rc.Address {
+			ops = append(ops, "move")
+			address = maskAddress(rc.PreviousAddress) + " -> " + address
+		}
+
+		switch strings.Join(rc.Change.Actions, ",") {
+		case "no-op":
+		case "create":
+			ops = append(ops, "create")
+			counts[1]++
+		case "update":
+			ops = append(ops, "update")
+			counts[2]++
+		case "delete":
+			ops = append(ops, "delete")
+			counts[3]++
+		case "delete,create", "create,delete":
+			ops = append(ops, "replace")
+			counts[1]++
+			counts[3]++
+		case "read":
+			ops = append(ops, "read")
+		case "forget":
+			ops = append(ops, "forget")
+		default:
+			return nil, xerrors.Wrap(errPlanJSON, "知らない actions")
+		}
+
+		if len(ops) > 0 {
+			lines = append(lines, strings.Join(ops, "+")+" "+address)
+		}
+	}
+
+	want, found, err := planLineCounts(out)
+	if err != nil {
+		return nil, err
+	}
+
+	if found && counts != want || !found && len(lines) > 0 {
+		return nil, xerrors.Wrap(errPlanList, fmt.Sprintf("一覧 %v、「Plan:」の行 %v（import・add・change・destroy）", counts, want))
+	}
+
+	return lines, nil
+}
+
+// planLineCounts は、plan の全文から terraform の「Plan:」の行を読みます。行が無いのは、変更が無いか output だけが
+// 変わる plan です。2つ以上あるか、形が読めなければ失敗します。
+func planLineCounts(out []byte) ([4]int, bool, error) {
+	var (
+		counts [4]int
+		found  bool
+	)
+
+	for line := range strings.SplitSeq(string(out), "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if !strings.HasPrefix(line, "Plan:") {
+			continue
+		}
+
+		m := planLinePattern.FindStringSubmatch(line)
+		if found || m == nil {
+			return [4]int{}, false, errPlanLine
+		}
+
+		found = true
+
+		for i, v := range m[1:] {
+			if v == "" {
+				continue
+			}
+
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return [4]int{}, false, errPlanLine
+			}
+
+			counts[i] = n
+		}
+	}
+
+	return counts, found, nil
+}
+
+// maskAddress は、address の key のうち識別子を含むものを伏せます。key の外に識別子が残れば address ごと伏せる。
+func maskAddress(address string) string {
+	masked := addressKeyPattern.ReplaceAllStringFunc(address, func(key string) string {
+		if identifierPattern.MatchString(key) {
+			return "[<伏せた key>]"
+		}
+
+		return key
+	})
+	if identifierPattern.MatchString(masked) {
+		return "<伏せた address>"
+	}
+
+	return masked
 }
 
 // planKey は、plan の出力を置く object の key を返します。Pull Request の plan は `pr/`、保護ブランチの

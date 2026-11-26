@@ -35,6 +35,8 @@ case "$step" in fmt-check) rc=3 ;; lint) rc=2 ;; esac
 if [ -e "fail-$step" ]; then echo "$step が落ちた"; exit "$rc"; fi
 if [ -e "rc-$step" ]; then exit "$(cat "rc-$step")"; fi
 if [ "$step" = validate ] && [ -e validate.out ]; then cat validate.out; fi
+if [ "$step" = lint-version ] && [ "${TFLINT_DISABLE_VERSION_CHECK:-}" != 1 ]; then echo "版の問い合わせが止まっていません"; exit 98; fi
+if [ "$step" = lint-version ] && [ -e version.out ]; then cat version.out; fi
 exit 0
 `
 	require.NoError(t, os.WriteFile(script, []byte(body), 0o600))

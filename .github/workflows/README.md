@@ -710,6 +710,10 @@ mise のバイナリをリトライ付きでファイルへ落とし、版と di
 不一致で job を落とす。
 
 道具の版は [`mise.toml`](../../mise.toml) に残る。呼び出し側が渡すのは、必要な道具の指定だけである。
+action は道具を `MISE_LOCKED` で [`mise.lock`](../../mise.lock) の取得元と照合値からだけ入れ、版と取得元を
+GitHub API に問い合わせない —— 問い合わせると、並ぶ Pull Request の CI が `GITHUB_TOKEN` の API の上限を
+分け合い、上限に当たった job が落ちる（ADR-0503 決定2）。lock に無い道具と宣言と違う版は入れずに落ちる。
+版を変えたら `make mise-lock` で lock を書き直す。lock と宣言のずれは `make versions-check` が落とす。
 `make actions-mise-pin-lint` が、action の版・digest・キャッシュキーの三点の不一致を拒む。mise 自身を
 更新するときは、release の `SHASUMS256.txt` から checksum を取り、三点を同時に更新する。
 

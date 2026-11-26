@@ -10,15 +10,13 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-// tflintFile は TFLint の plugin の版を宣言するファイル。窓を掛ける理由は scripts/README.md の
-// tool-cooldown の行が持つ。
+// tflintFile は TFLint の plugin の版を宣言するファイル。
 const tflintFile = ".tflint.hcl"
 
 var (
 	// ErrInvalidTflint は .tflint.hcl に解釈できない記述があった場合のエラー。
 	ErrInvalidTflint = xerrors.New(".tflint.hcl に解釈できない記述があります")
 	// ErrUntrustedPlugin は TFLint の公式の org 以外から plugin を取得しようとした場合のエラー。
-	// plugin は手元の資格情報が届く環境で実行されるので、窓を満たしても取得元を広げない。
 	ErrUntrustedPlugin = xerrors.New("TFLint の plugin は github.com/terraform-linters/ からだけ取得します")
 
 	tflintPluginOpen = regexp.MustCompile(`^plugin\s+"([^"]+)"\s*\{\s*(#.*)?$`)
@@ -31,7 +29,7 @@ var (
 // parseTflintPlugins は .tflint.hcl の `plugin` block が固定する版を読む。
 //
 // 読めない記述は読み飛ばさずエラーにする（ADR-0702 決定14）。読み飛ばすと、その plugin は窓を
-// 掛けられないまま `tflint --init` に取得される。どの block が対象かは tflintPluginTool が決める。
+// 掛けられないまま TFLint に使われる。どの block が対象かは tflintPluginTool が決める。
 func parseTflintPlugins(content []byte) ([]tool, error) {
 	var (
 		tools   []tool
@@ -100,7 +98,8 @@ func parseTflintPlugins(content []byte) ([]tool, error) {
 }
 
 // tflintPluginTool は plugin block の属性を検査の対象へ変換する。第2戻り値が false のものは、
-// `source` を持たない、取得を伴わない TFLint 同梱の ruleset である。`source` を持ちながら
+// `source` を持たない、TFLint が取得しない plugin（同梱の ruleset と、置き場を渡す ruleset）である。
+// 置き場を渡す ruleset の版は mise.toml が宣言し、窓はそちらに掛かる。`source` を持ちながら
 // `version` が無い・空の block は版を固定していないので、`source` を持たずに `version` だけが
 // ある block は記述の誤りなので、いずれもエラーにする。
 func tflintPluginTool(name string, attrs map[string]string) (tool, bool, error) {

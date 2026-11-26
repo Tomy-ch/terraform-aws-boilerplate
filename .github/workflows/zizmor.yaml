@@ -17,6 +17,7 @@ on:
       - '.github/zizmor.yml'
       - '.makefiles/security/zizmor.mk'
       - 'mise.toml'
+      - 'mise.lock'
   schedule:
     - cron: '0 2 * * 1'
   workflow_dispatch:
@@ -116,9 +117,6 @@ jobs:
             fulcio.sigstore.dev
             awscli.amazonaws.com
 
-      # persist-credentials: false — nothing after checkout talks to git, and this
-      # job holds security-events: write, so the job token must not be left behind
-      # in .git/config.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

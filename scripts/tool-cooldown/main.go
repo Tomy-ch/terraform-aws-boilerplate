@@ -5,8 +5,8 @@
 //	       報告し、非ゼロで終了する。
 //	audit: 宣言の全件を棚卸しし、窓内のものを報告する。窓を理由には落ちないが、バイパス自身の
 //	       規約違反（期限切れ・期限過長・対象不在）では失敗する。
-//	check: 宣言を読めることだけを確かめる。上流に問い合わせないので、tflint --init が plugin を
-//	       取得する前に走らせ、読めない記述と許さない取得元をそこで止める。
+//	check: 宣言を読めることだけを確かめる。上流に問い合わせないので、TFLint を起動する前に走らせ、
+//	       読めない記述と許さない取得元をそこで止める。
 //
 // バイパスは .github/tool-cooldown-bypass.toml が受ける。期限は宣言が変わらなくても訪れるので、
 // このツールはスケジュール実行にも載せる必要がある。窓の値と規約は scripts/README.md の
@@ -85,18 +85,14 @@ var (
 	errUsage    = xerrors.New("invalid usage")
 	errBlocking = xerrors.New("blocking violations")
 	// errBaseUnresolved は、比較対象の base が commit として解決できないか、mise.toml を持たないことです。
-	errBaseUnresolved = xerrors.New("base を解決できません")
-	errMiseRegistry   = xerrors.New("mise registry が落ちました")
-	// errUnsupportedBackend は、公開時刻の取得経路を持たない backend を指すエラー。
-	errUnsupportedBackend = xerrors.New("no publish-time source for this backend")
-	// errNotFound は、上流がそのバージョンを知らない場合のエラー。
-	errNotFound       = xerrors.New("version not found upstream")
-	errUpstreamStatus = xerrors.New("unexpected upstream status")
-	errUnconfirmed    = xerrors.New("upstream could not be confirmed")
-	// errUnsupportedPackage は、aqua の定義が配布物の所在を辿れない形だった場合のエラー。
-	errUnsupportedPackage = xerrors.New("unsupported aqua package definition")
-	errNoLastModified     = xerrors.New("artifact has no Last-Modified")
-	// errUnversionedArtifact は、配布物の URL がその版を指していない場合のエラー。
+	errBaseUnresolved      = xerrors.New("base を解決できません")
+	errMiseRegistry        = xerrors.New("mise registry が落ちました")
+	errUnsupportedBackend  = xerrors.New("no publish-time source for this backend")
+	errNotFound            = xerrors.New("version not found upstream")
+	errUpstreamStatus      = xerrors.New("unexpected upstream status")
+	errUnconfirmed         = xerrors.New("upstream could not be confirmed")
+	errUnsupportedPackage  = xerrors.New("unsupported aqua package definition")
+	errNoLastModified      = xerrors.New("artifact has no Last-Modified")
 	errUnversionedArtifact = xerrors.New("artifact url does not bind the version")
 	errBypassInvalidLine   = xerrors.New("invalid bypass line")
 	errBypassDuplicateKey  = xerrors.New("duplicate bypass key")
@@ -144,7 +140,6 @@ type finding struct {
 	window    int
 }
 
-// options はサブコマンドに続けて与えられたフラグ。
 type options struct {
 	base       string
 	summaryOut string
@@ -236,7 +231,6 @@ func run(args []string, client *http.Client, now time.Time, launch toolFunc) err
 			"❌ "+strings.Join(paths, ", ")+" から道具の宣言を1件も読めませんでした（[tools] の見出しと書式を確認してください）")
 	}
 
-	// check は宣言を読めることだけを見る。上流に問い合わせないので、取得の前に走らせられる。
 	if sub == "check" {
 		log.Printf("✅ tool-cooldown check: 宣言 %d 件を読めました", len(declared))
 		return nil
@@ -631,7 +625,7 @@ func getJSON(ctx context.Context, client *http.Client, url string, into any) err
 	return json.NewDecoder(body).Decode(into)
 }
 
-// getText は本文をそのまま読む。module proxy の @v/list だけが JSON ではない。
+// getText は、JSON ではない応答（module proxy の @v/list、aqua の registry.yaml）の本文をそのまま読む。
 func getText(ctx context.Context, client *http.Client, url string) (string, error) {
 	body, err := fetchBody(ctx, client, url)
 	if err != nil {
