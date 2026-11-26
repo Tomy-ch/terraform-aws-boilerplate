@@ -157,9 +157,11 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
   `.makefiles/terraform/operation/ci.mk` の `CI_APPLY`）。plan は lock を取る。変更の無い plan も apply する
 - **古い commit を apply しない。** 再実行は元の run の commit と payload を使うので、job の `if:` は古い
   run を止めない。資格情報を取る前の step（`refuse-stale`）が、起動したブランチの先頭の commit を
-  `git ls-remote` で取り直し、run の commit と違えば失敗する。先頭を1つに決められなくても失敗する。その step
-  は REST API を呼ぶ道具（`gh`・`curl`・`wget`・`api.github.com`）を書かない —— REST の上限は PR の CI と分け
-  合う（`make oidc-job-lint`）。どのブランチから起動できるかは environment が限る
+  `git ls-remote` で取り直し、run の commit と違えば失敗する。先頭を1つに決められなくても失敗する。lint
+  （`make oidc-job-lint`）が見るのは、その step が `head=$(git ... ls-remote ...)` で取って
+  `test "$SHA" = "$head" || ... exit 1` で比べる行を持ち、REST API を呼ぶ道具（`gh`・`curl`・`wget`・
+  `api.github.com`）を字面に持たないことまでである —— REST の上限は PR の CI と分け合う。どのブランチから
+  起動できるかは environment が限る
 - **concurrency は workflow 全体に1つ置き、実行中の apply を止めない。** 待っている run は後から来た
   run に置き換わるので、線の途中の commit は apply されず、最新の commit だけが apply される
 - **公開されるログに terraform の出力を出さない。** ログには plan の終了コード・件数・Policy の違反の文と

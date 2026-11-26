@@ -2,7 +2,7 @@ name: API Budget
 
 # GITHUB_TOKEN の REST API の枠（core）の limit・used・remaining・reset を出す診断の口。
 # GET /rate_limit は枠を数えないので、上限に当たっている最中でも呼べる。必須の検査にしない。
-# ls-remote を true にすると、refuse-stale と同じ git ls-remote を1回呼び、その前後の used を出す。
+# ls-remote を true にすると、refuse-stale と同じ種類の git ls-remote を1回呼び、その前後の used を出す。
 on:
   workflow_dispatch:
     inputs:

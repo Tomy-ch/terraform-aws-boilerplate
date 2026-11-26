@@ -152,9 +152,9 @@ var (
 	// restCall は REST API を呼ぶ道具と、その host を指す名前。refuse-stale はブランチの先頭を REST ではなく git で
 	// 取る。字面を見るだけで、別の道具や組み立てた URL からの呼び出しまでは見えない。
 	restCall = regexp.MustCompile("(?:^|[\\s;&|(/\"'$`{=:\\-\\\\])(?:gh|curl|wget)(?:[\\s;&|)\"'`}\\\\]|$)|\\bapi\\.github\\.com\\b|\\bGITHUB_(?:API|GRAPHQL)_URL\\b|\\bgithub-script\\b|\\boctokit\\b")
-	// lsRemote と staleCompare は refuse-stale の中身。先頭を git ls-remote で取り、run の commit と比べる。
-	lsRemote     = regexp.MustCompile(`(?:^|[\s;&|(])git\s(?:.*\s)?ls-remote\s`)
-	staleCompare = regexp.MustCompile(`\btest\s+"\$SHA"\s+=\s+"\$head"`)
+	// lsRemote と staleCompare は refuse-stale の中身。先頭を git ls-remote で head に取り、run の commit と違えば exit 1 する。
+	lsRemote     = regexp.MustCompile(`\bhead=\$\(git\s(?:.*\s)?ls-remote\s`)
+	staleCompare = regexp.MustCompile(`\btest\s+"\$SHA"\s+=\s+"\$head"\s*\|\|\s*(?:\{[^}]*;\s*)?exit\s+1\b`)
 	// アンカーとエイリアスは、別の場所に書いた値をこの行へ持ち込む。行ごとの読み方では追えない。
 	yamlAlias     = regexp.MustCompile(`(?:^|[:\-][ \t]+)[&*][A-Za-z0-9_-]+(?:[ \t]|$)|<<[ \t]*:`)
 	envAt         = regexp.MustCompile(`^["']?env["']?[ \t]*:`)
@@ -1433,7 +1433,7 @@ func checkStaleBody(step workflow.Step, finding func(int, string, ...any) lintre
 		compares = compares || staleCompare.MatchString(l.Text)
 	}
 	if !fetches || !compares {
-		findings = append(findings, finding(step.Number, "step %s は、ブランチの先頭を git ls-remote で取り、test \"$SHA\" = \"$head\" で run の commit と比べてください", refuseStale))
+		findings = append(findings, finding(step.Number, "step %s は、ブランチの先頭を head=$(git ... ls-remote ...) で取り、test \"$SHA\" = \"$head\" || exit 1 で run の commit と比べてください", refuseStale))
 	}
 	return findings
 }
