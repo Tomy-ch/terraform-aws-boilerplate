@@ -75,11 +75,7 @@ setup-organization-baseline-identity-center-user-check:
 setup-organization-baseline-break-glass-login:
 	$(call SETUP_RUN,break-glass-login,-usecase "$(SETUP_USECASE)")
 
-.PHONY: setup-organization-baseline-break-glass-mfa ## 3.4 手順2: MFA の無い break-glass の user に、ハードウェアの TOTP の装置を登録する（PROFILE=<profile>）
-setup-organization-baseline-break-glass-mfa:
-	$(call SETUP_RUN,break-glass-mfa,-usecase "$(SETUP_USECASE)")
-
-.PHONY: setup-organization-baseline-break-glass-check ## 3.4 の確認: パスワードとハードウェアの MFA が在り、アクセスキーが無く、password policy が宣言どおりである（PROFILE=<profile>）
+.PHONY: setup-organization-baseline-break-glass-check ## 3.4 の確認: パスワードと FIDO の MFA だけが在り、TOTP とアクセスキーが無く、password policy が宣言どおりである（PROFILE=<profile>）
 setup-organization-baseline-break-glass-check:
 	$(call SETUP_RUN,break-glass-check,-usecase "$(SETUP_USECASE)")
 
