@@ -155,4 +155,4 @@ declarative policy は、付ける前に account status report で影響を見�
 1. `make setup-organization-baseline-service-access PROFILE=<管理アカウントの profile>` を実行する。CloudTrail・AWS Config・IAM Access Analyzer の信頼アクセスのうち無効なものを差分として示し、project の名前の入力を受けてから有効にし、確かめ直す。既にすべて有効なら何もしない
 2. `make setup-organization-baseline-service-access-check PROFILE=<管理アカウントの profile>` の出力を Pull Request に書く（3つの信頼アクセスが有効である）
 
-指定の変更が昇格した後に、`aws organizations list-delegated-administrators` で security のアカウントが委任管理者であることを確かめ、結果を Pull Request に書く。
+指定の変更が昇格した後に、`make setup-organization-baseline-delegated-admin-check PROFILE=<管理アカウントの profile>` の出力を Pull Request に書く（サービスの主体のそれぞれで、委任管理者が security のアカウントだけである）。
