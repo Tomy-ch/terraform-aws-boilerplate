@@ -80,3 +80,4 @@ resource "aws_s3_bucket_lifecycle_configuration" "this" {
 
   depends_on = [aws_s3_bucket_versioning.this]
 }
+# 576-measure 1
