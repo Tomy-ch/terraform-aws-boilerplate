@@ -260,7 +260,6 @@ func underRoots(dir string, roots []string) bool {
 	return false
 }
 
-// gitLsFiles は、base の git が追跡するファイルを返します。
 func gitLsFiles(base string) ([]string, error) {
 	cmd := exec.CommandContext(context.Background(), "git", "ls-files", "-z")
 	cmd.Dir = base
