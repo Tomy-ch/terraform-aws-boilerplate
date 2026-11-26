@@ -28,5 +28,4 @@ lock を書く platform は `mise.toml` の `lockfile_platforms` から導く。
 ## 保証しないこと
 
 - `h1:` が、どの platform の照合値かを照らすこと。数が `lockfile_platforms` と同じことと、値の形だけを見る
-
 - root で人が `terraform init -upgrade` や `terraform providers lock` を走らせた結果を、正本へ戻すこと。ずれは `make tf-lock-check` が落とすので、`make tf-lock-apply` で写し直すか、`make tf-providers-lock` で作り直す
