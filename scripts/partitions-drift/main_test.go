@@ -386,6 +386,7 @@ func Test_compareWithUpstream(t *testing.T) {
 			assert.False(t, r.compared)
 			assert.Equal(t, tc.wantCalls, calls.Load())
 			assert.Equal(t, tc.wantProvider, r.provider)
+			assert.NotEmpty(t, r.lock, "失敗しても正本の lock のパスを残す")
 			assert.Equal(t, tc.wantSDK, r.sdk)
 			assert.Equal(t, tc.wantGoModURL, r.goModURL != "")
 			assert.Equal(t, tc.wantURL, r.endpointsURL != "")

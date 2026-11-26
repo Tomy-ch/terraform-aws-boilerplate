@@ -190,8 +190,10 @@ func runInit(args []string, w io.Writer, tool toolFunc) error {
 }
 
 // initTargets は、すべてのディレクトリを -lockfile=readonly で init します。root でないディレクトリには、先に
-// 正本の lock を置きます（[placeLock]）。c が nil のときに root でないディレクトリがあれば、1つも起動しません。
+// 正本の lock を置くか消します（[planLock]）。どれか1つでも決められなければ、何も書かず1つも起動しません。c が nil の
+// ときに root でないディレクトリがあれば、同じく1つも起動しません。
 func initTargets(data string, targets []target, w io.Writer, tool toolFunc, c *canonical) error {
+	var plans []lockPlan
 	for _, t := range targets {
 		if isRoot(t.rel) {
 			continue
@@ -199,7 +201,14 @@ func initTargets(data string, targets []target, w io.Writer, tool toolFunc, c *c
 		if c == nil {
 			return xerrors.Wrapf(errUsage, "root でない %s に置く provider の版の正本がありません", t.rel)
 		}
-		if err := placeLock(t.path, *c); err != nil {
+		p, err := planLock(t.path, *c)
+		if err != nil {
+			return err
+		}
+		plans = append(plans, p)
+	}
+	for _, p := range plans {
+		if err := applyLock(p, c.content); err != nil {
 			return err
 		}
 	}

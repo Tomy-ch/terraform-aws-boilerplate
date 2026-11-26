@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"path"
+	"regexp"
 	"strings"
 	"time"
 
@@ -20,6 +21,8 @@ const (
 	terraformRegistryBase = "https://" + tflock.Registry + "/"
 )
 
+var providerVersionRe = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+
 // parseProviderLock は、正本の lock の provider を道具として返します。版は lock が固定したもので、init が
 // 実際に取る版です。
 func parseProviderLock(content []byte) ([]tool, error) {
@@ -29,6 +32,10 @@ func parseProviderLock(content []byte) ([]tool, error) {
 	}
 	tools := make([]tool, 0, len(providers))
 	for _, p := range providers {
+		// 版は Registry の URL の path に入るので、完全一致の版の形だけを受ける。
+		if !providerVersionRe.MatchString(p.Version) {
+			return nil, xerrors.Wrapf(tflock.ErrInvalidLock, "%s: %s の版 %q は X.Y.Z ではありません", providerLockFile, p.Addr, p.Version)
+		}
 		tools = append(tools, tool{key: providerBackend + ":" + p.Addr, version: p.Version})
 	}
 

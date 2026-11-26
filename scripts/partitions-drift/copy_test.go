@@ -57,6 +57,12 @@ func Test_readLockedVersion(t *testing.T) {
 		require.ErrorIs(t, err, errLocked)
 	})
 
+	t.Run("hashicorp/aws の block が2つある lock は errLocked", func(t *testing.T) {
+		t.Parallel()
+		_, err := readLockedVersion(writeFile(t, ".terraform.lock.hcl", lockHCL+lockHCL))
+		require.ErrorIs(t, err, errLocked)
+	})
+
 	t.Run("hashicorp/aws が無い lock は errLocked", func(t *testing.T) {
 		t.Parallel()
 		_, err := readLockedVersion(writeFile(t, ".terraform.lock.hcl", strings.Replace(lockHCL, "hashicorp/aws", "hashicorp/random", 1)))

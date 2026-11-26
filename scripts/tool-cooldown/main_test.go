@@ -324,6 +324,13 @@ func Test_parseDeclarations(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
+		t.Run("provider の正本の lock を宣言として読み、file を lock のパスにする", func(t *testing.T) {
+			t.Parallel()
+			got, err := parseDeclarations([]declaration{{path: providerLockFile, content: []byte(providerFixture)}})
+			require.NoError(t, err)
+			assert.Equal(t, []tool{{key: providerKey, version: "6.73.0", file: providerLockFile}}, got)
+		})
+
 		t.Run("宣言を 1 つの一覧へまとめる", func(t *testing.T) {
 			t.Parallel()
 			got, err := parseDeclarations([]declaration{
@@ -513,6 +520,12 @@ func Test_backendKind(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
+		t.Run("terraform-registry は terraform-registry に分類し、窓はレジストリの窓", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, providerBackend, backendKind(providerKey))
+			assert.Equal(t, registryWindowDays, windowFor(providerKey))
+		})
+
 		t.Run("aqua は GitHub リリース系に分類する", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, "github", backendKind("aqua:owner/repo"))
@@ -612,6 +625,14 @@ func Test_readBypasses(t *testing.T) {
 
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
+
+		t.Run("provider の key のエントリを読む", func(t *testing.T) {
+			t.Parallel()
+			path := writeBypass(t, `"`+providerKey+`@6.74.0" = { expires = 2026-12-01, issue = 162, reason = "x" }`+"\n")
+			got, err := readBypasses(path)
+			require.NoError(t, err)
+			assert.Contains(t, got, providerKey+"@6.74.0")
+		})
 
 		t.Run("コメントと空行を読み飛ばして 1 エントリを読む", func(t *testing.T) {
 			t.Parallel()
@@ -1676,6 +1697,12 @@ func Test_publishedAt(t *testing.T) {
 
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
+
+		t.Run("terraform-registry は Registry の v1 を引く", func(t *testing.T) {
+			t.Parallel()
+			got := requestedPath(t, tool{key: providerKey, version: "6.73.0", backend: providerKey})
+			assert.Equal(t, "/v1/providers/hashicorp/aws/6.73.0", got)
+		})
 
 		t.Run("GitHub リリース系はリリース API を引く", func(t *testing.T) {
 			t.Parallel()

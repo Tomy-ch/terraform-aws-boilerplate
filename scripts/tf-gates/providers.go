@@ -27,6 +27,9 @@ func requiredProviders(dir string) ([]string, error) {
 	}
 	seen := map[string]bool{}
 	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".tf.json") {
+			return nil, xerrors.Wrapf(errProviders, "%s: JSON の構成は読みません", filepath.Join(dir, e.Name()))
+		}
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".tf") {
 			continue
 		}
@@ -75,7 +78,11 @@ func requiredIn(src []byte, name string) ([]string, error) {
 				if diags.HasErrors() || !val.Type().IsObjectType() || !val.Type().HasAttribute("source") || val.GetAttr("source").Type() != cty.String {
 					return nil, xerrors.Wrapf(errProviders, "%s: required_providers の %s の source を読めません", name, local)
 				}
-				addrs = append(addrs, providerAddr(val.GetAttr("source").AsString()))
+				source := val.GetAttr("source").AsString()
+				if parts := strings.Split(source, "/"); len(parts) < 2 || len(parts) > 3 || slices.Contains(parts, "") {
+					return nil, xerrors.Wrapf(errProviders, "%s: required_providers の %s の source %q は [host/]namespace/type ではありません", name, local, source)
+				}
+				addrs = append(addrs, providerAddr(source))
 			}
 		}
 	}
@@ -93,21 +100,23 @@ func providerAddr(source string) string {
 	return s
 }
 
-// placeLock は、root でないディレクトリ dir に正本の lock を置くか消すかします。provider を要求しないディレクトリには
+// lockPlan は、root でないディレクトリ1つに正本の lock を置くか消すかです。
+type lockPlan struct {
+	path  string
+	place bool
+}
+
+// planLock は、root でないディレクトリ dir に正本の lock を置くか消すかを決めます。provider を要求しないディレクトリには
 // 置かず、前の起動が置いた lock を消します（readonly の init は、要らない provider の entry も変更として落とす）。
 // 要求する provider の集合が正本と違えば errProviders です —— 写しの絞り込みは持たない。
-func placeLock(dir string, c canonical) error {
+func planLock(dir string, c canonical) (lockPlan, error) {
 	req, err := requiredProviders(dir)
 	if err != nil {
-		return err
+		return lockPlan{}, err
 	}
-	lockPath := filepath.Join(dir, tflock.LockFile)
-	if len(req) == 0 {
-		if err := os.Remove(lockPath); err != nil && !xerrors.Is(err, fs.ErrNotExist) {
-			return xerrors.Wrapf(err, "%s の削除", lockPath)
-		}
-
-		return nil
+	p := lockPlan{path: filepath.Join(dir, tflock.LockFile), place: len(req) > 0}
+	if !p.place {
+		return p, nil
 	}
 	want := make([]string, 0, len(c.decls))
 	for _, d := range c.decls {
@@ -115,10 +124,23 @@ func placeLock(dir string, c canonical) error {
 	}
 	slices.Sort(want)
 	if !slices.Equal(req, want) {
-		return xerrors.Wrapf(errProviders, "%s は %s を要求し、正本は %s を固定します", dir, strings.Join(req, " "), strings.Join(want, " "))
+		return lockPlan{}, xerrors.Wrapf(errProviders, "%s は %s を要求し、正本は %s を固定します", dir, strings.Join(req, " "), strings.Join(want, " "))
 	}
-	if err := os.WriteFile(lockPath, c.content, lockPerm); err != nil {
-		return xerrors.Wrapf(err, "%s の書き込み", lockPath)
+
+	return p, nil
+}
+
+// applyLock は、planLock が決めたとおりに lock を置くか消します。
+func applyLock(p lockPlan, content []byte) error {
+	if p.place {
+		if err := os.WriteFile(p.path, content, lockPerm); err != nil {
+			return xerrors.Wrapf(err, "%s の書き込み", p.path)
+		}
+
+		return nil
+	}
+	if err := os.Remove(p.path); err != nil && !xerrors.Is(err, fs.ErrNotExist) {
+		return xerrors.Wrapf(err, "%s の削除", p.path)
 	}
 
 	return nil

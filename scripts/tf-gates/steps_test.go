@@ -410,21 +410,63 @@ func Test_runInit(t *testing.T) {
 		assert.NoFileExists(t, filepath.Join(base, "modules", "a", tflock.LockFile))
 	})
 
-	t.Run("正本を読めなければ、1つも起動しない", func(t *testing.T) {
+	t.Run("1つでも要求が合わなければ、ほかのディレクトリにも lock を置かず1つも起動しない", func(t *testing.T) {
 		t.Parallel()
-		base := okTree(t, nil)
-		args := initArgs(t, base)
-		require.NoError(t, os.Remove(filepath.Join(base, "providers", tflock.LockFile)))
+		base := okTree(t, map[string]string{"modules/a/versions.tf": awsRequired, "usecases/b/versions.tf": strings.Replace(awsRequired, "hashicorp/aws", "hashicorp/random", 1), "modules/a/.terraform.lock.hcl": "old\n"})
 		tool, calls := fakeTool(t)
-		require.ErrorIs(t, runInit(append(args, "modules"), &bytes.Buffer{}, tool), os.ErrNotExist)
+		require.ErrorIs(t, runInit(append(initArgs(t, base), "usecases", "modules"), &bytes.Buffer{}, tool), errProviders)
 		assert.Empty(t, calls())
+		assert.Equal(t, "old\n", readFile(t, filepath.Join(base, "modules", "a", tflock.LockFile)))
 	})
 
-	t.Run("-providers か -mise が無ければ errUsage", func(t *testing.T) {
+	t.Run("root は要求する provider が正本と違っても、lock を置かず errProviders にもしない", func(t *testing.T) {
 		t.Parallel()
-		base := okTree(t, nil)
-		require.ErrorIs(t, runInit([]string{"-base", base, "-data", "/d", "-mise", "m", "modules"}, &bytes.Buffer{}, command), errUsage)
-		require.ErrorIs(t, runInit([]string{"-base", base, "-data", "/d", "-providers", "p", "modules"}, &bytes.Buffer{}, command), errUsage)
+		base := okTree(t, map[string]string{"env/dev/versions.tf": strings.Replace(awsRequired, "hashicorp/aws", "hashicorp/random", 1), "env/dev/.terraform.lock.hcl": "root\n"})
+		tool, _ := fakeTool(t)
+		require.NoError(t, runInit(append(initArgs(t, base), "env"), &bytes.Buffer{}, tool))
+		assert.Equal(t, "root\n", readFile(t, filepath.Join(base, "env", "dev", tflock.LockFile)))
+	})
+
+	for name, c := range map[string]struct {
+		mutate func(t *testing.T, base string)
+		want   error
+	}{
+		"正本の lock が無い": {func(t *testing.T, base string) {
+			t.Helper()
+			require.NoError(t, os.Remove(filepath.Join(base, "providers", tflock.LockFile)))
+		}, os.ErrNotExist},
+		"providers.toml を読めない": {func(t *testing.T, base string) {
+			t.Helper()
+			require.NoError(t, os.WriteFile(filepath.Join(base, "providers", tflock.DeclFile), []byte("x\n"), 0o600))
+		}, tflock.ErrInvalidDecl},
+		"lockfile_platforms が無い": {func(t *testing.T, base string) {
+			t.Helper()
+			require.NoError(t, os.WriteFile(filepath.Join(base, "mise.toml"), []byte("[tools]\n"), 0o600))
+		}, tflock.ErrInvalidPlatform},
+		"正本の lock が宣言とずれている": {func(t *testing.T, base string) {
+			t.Helper()
+			require.NoError(t, os.WriteFile(filepath.Join(base, "providers", tflock.LockFile), []byte(strings.Replace(testLock, "\"6.73.0\"\n  constraints", "\"6.70.0\"\n  constraints", 1)), 0o600))
+		}, errLock},
+	} {
+		t.Run(name+"なら、1つも起動しない", func(t *testing.T) {
+			t.Parallel()
+			base := okTree(t, nil)
+			args := initArgs(t, base)
+			c.mutate(t, base)
+			tool, calls := fakeTool(t)
+			require.ErrorIs(t, runInit(append(args, "modules"), &bytes.Buffer{}, tool), c.want)
+			assert.Empty(t, calls())
+		})
+	}
+
+	t.Run("-providers が無ければ errUsage", func(t *testing.T) {
+		t.Parallel()
+		require.ErrorIs(t, runInit([]string{"-base", okTree(t, nil), "-data", "/d", "-mise", "m", "modules"}, &bytes.Buffer{}, command), errUsage)
+	})
+
+	t.Run("-mise が無ければ errUsage", func(t *testing.T) {
+		t.Parallel()
+		require.ErrorIs(t, runInit([]string{"-base", okTree(t, nil), "-data", "/d", "-providers", "p", "modules"}, &bytes.Buffer{}, command), errUsage)
 	})
 
 	t.Run("落ちたディレクトリを名指す", func(t *testing.T) {
@@ -463,7 +505,16 @@ func Test_initTargets(t *testing.T) {
 		assert.Len(t, calls(), 1)
 		err := initTargets("/d", []target{{rel: "modules/a", path: filepath.Join(base, "modules", "a")}}, &bytes.Buffer{}, tool, nil)
 		require.ErrorIs(t, err, errUsage)
-		assert.Len(t, calls(), 1)
+		assert.Len(t, calls(), 1, "root でないディレクトリだけのときは起動しない")
+	})
+
+	t.Run("正本が無いときに root と root でないディレクトリが混ざれば、root も起動しない", func(t *testing.T) {
+		t.Parallel()
+		base := okTree(t, nil)
+		tool, calls := fakeTool(t)
+		targets := []target{{rel: "env/dev", path: filepath.Join(base, "env", "dev")}, {rel: "modules/a", path: filepath.Join(base, "modules", "a")}}
+		require.ErrorIs(t, initTargets("/d", targets, &bytes.Buffer{}, tool, nil), errUsage)
+		assert.Empty(t, calls())
 	})
 }
 

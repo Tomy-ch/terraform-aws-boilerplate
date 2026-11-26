@@ -121,14 +121,13 @@ func run(ctx context.Context, args []string, up upstream, out io.Writer) error {
 
 // compareWithUpstream は、途中で失敗しても、そこまでに分かった版と URL を report に残します。
 func compareWithUpstream(ctx context.Context, up upstream, lockPath, copyPath string) report {
-	var r report
+	r := report{lock: lockPath}
 	cp, err := readCopy(copyPath)
 	if err != nil {
 		r.err = err
 
 		return r
 	}
-	r.lock = lockPath
 	r.provider, err = readLockedVersion(lockPath)
 	if err != nil {
 		r.err = err

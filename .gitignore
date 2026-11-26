@@ -40,6 +40,9 @@ terraform.rc
 modules/**/.terraform.lock.hcl
 usecases/**/.terraform.lock.hcl
 !usecases/*/reference/.terraform.lock.hcl
+env/**/.terraform.lock.hcl
+!env/*/.terraform.lock.hcl
+!env/*/identity/.terraform.lock.hcl
 
 # ------------------------------------------------------------------------------
 # 運用機構（scripts/）

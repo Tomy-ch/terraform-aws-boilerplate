@@ -95,7 +95,7 @@ resourceを生成しないため影響は小さいように見えるが、依存
 - Static Analysis: `required_providers` および `required_version` の宣言が存在することを検査する。
 - Contract Test: provider version更新時に、公開契約のsnapshotが変化しないことを検証する。
 - Integration / E2E Test: provider version更新時の実挙動を検証する（ADR-0401）。
-- Static Analysis: root の lock が正本と同じ内容であること、git が追跡する lock が root と正本に限られること、正本の provider と版が `providers/providers.toml` の固定と一致することを検査する（`make tf-lock-check`。`make tf-init` が先に走らせる）。
+- Static Analysis: root の lock が正本と同じ内容であること、走査の root の下で git が追跡する lock が root のものに限られ、正本とどの root の lock も追跡されていること、正本の provider と版が `providers/providers.toml` の固定と一致することを検査する（`make tf-lock-check`。`make tf-init` が先に走らせる）。
 - 供給網の待機期間: 正本が固定する provider の版の公開時刻を Terraform Registry から取り、待機期間に照らす（`make tool-cooldown-gate`）。
 
 ## 影響

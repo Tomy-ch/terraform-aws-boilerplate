@@ -178,6 +178,23 @@ func Test_evaluate(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
+		t.Run("provider は Registry v2 の版から、窓（7日）を満たす最新を選ぶ", func(t *testing.T) {
+			t.Parallel()
+			client := upstreamStub(t, map[string]string{
+				"/v2/providers/hashicorp/aws?include=provider-versions": `{"included":[` +
+					`{"type":"provider-versions","attributes":{"version":"6.74.0","published-at":"` + daysAgo(2) + `"}},` +
+					`{"type":"provider-versions","attributes":{"version":"6.73.0","published-at":"` + daysAgo(10) + `"}},` +
+					`{"type":"provider-versions","attributes":{"version":"6.70.0","published-at":"` + daysAgo(30) + `"}}]}`,
+			})
+
+			c := evaluate(t.Context(), client, tool{key: providerKey, version: "6.70.0", backend: providerKey}, outdatedNow)
+
+			require.NoError(t, c.err)
+			assert.Equal(t, "6.74.0", c.latest)
+			assert.Equal(t, "6.73.0", c.eligible)
+			assert.True(t, c.actionable())
+		})
+
 		t.Run("窓を満たす最新を選び上流最新は別に持つ", func(t *testing.T) {
 			t.Parallel()
 			client := upstreamStub(t, map[string]string{
@@ -804,6 +821,7 @@ func Test_listReleases(t *testing.T) {
 				"/repos/owner/repo/releases?per_page=100": `[{"tag_name":"v1.2.0","published_at":"` +
 					aged + `","prerelease":false,"draft":false}]`,
 				"/pkg": `{"time":{"2.0.0":"` + aged + `"}}`,
+				"/v2/providers/hashicorp/aws?include=provider-versions": `{"included":[{"type":"provider-versions","attributes":{"version":"6.73.0","published-at":"` + aged + `"}}]}`,
 			})
 
 			for _, tc := range []struct {
@@ -812,6 +830,7 @@ func Test_listReleases(t *testing.T) {
 			}{
 				{backend: "aqua:owner/repo", want: "1.2.0"},
 				{backend: "npm:pkg", want: "2.0.0"},
+				{backend: providerKey, want: "6.73.0"},
 			} {
 				releases, err := listReleases(t.Context(), client, tool{backend: tc.backend})
 
