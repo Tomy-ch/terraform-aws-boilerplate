@@ -340,7 +340,7 @@ func parseTools(content []byte) ([]tool, error) {
 }
 
 func declarationPaths() []string {
-	return []string{miseFile, tflintFile, semgrepFile}
+	return []string{miseFile, tflintFile, semgrepFile, providerLockFile}
 }
 
 func readDeclarations(paths []string) ([]declaration, error) {
@@ -369,6 +369,8 @@ func parseDeclarations(decls []declaration) ([]tool, error) {
 			parse = parseTflintPlugins
 		case filepath.Base(semgrepFile):
 			parse = parseSemgrepRules
+		case filepath.Base(providerLockFile):
+			parse = parseProviderLock
 		}
 		parsed, err := parse(d.content)
 		if err != nil {
@@ -536,6 +538,8 @@ func backendKind(backend string) string {
 		return "go"
 	case "npm":
 		return "npm"
+	case providerBackend:
+		return providerBackend
 	default:
 		return ""
 	}
@@ -610,6 +614,8 @@ func publishedAt(ctx context.Context, client *http.Client, t tool) (time.Time, e
 		return goModuleAt(ctx, client, ref, t.version)
 	case "npm":
 		return npmPackageAt(ctx, client, ref, t.version)
+	case providerBackend:
+		return registryProviderAt(ctx, client, ref, t.version)
 	default:
 		return time.Time{}, xerrors.Wrap(errUnsupportedBackend, t.backend)
 	}
@@ -1014,8 +1020,8 @@ func validateBypasses(bypasses map[string]bypass, declared []tool, today time.Ti
 		default:
 			if _, ok := inDeclarations[key]; !ok {
 				violations = append(violations, violation{file: bypassFile, msg: fmt.Sprintf(
-					"%s:%d %s は %s に存在しません。不要になったエントリは消してください",
-					bypassFile, b.line, key, miseFile,
+					"%s:%d %s はどの宣言（%s）にもありません。不要になったエントリは消してください",
+					bypassFile, b.line, key, strings.Join(declarationPaths(), "・"),
 				)})
 			}
 		}
