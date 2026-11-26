@@ -494,6 +494,7 @@ truthy 側へ置く。
 | `secret-scan.yaml` | 15 | 実測は Pull Request のみ。週次は履歴全体を走査し、完了 run が無い |
 | `hygiene.yaml` の2 job、`scorecard.yaml:scorecard` | 15 | 実測できる完了 run が無い（新設） |
 | `repo-settings.yaml:repo-settings-check`、`repo-settings.yaml:deploy-source-check` | 15 | 同上（新設） |
+| `api-budget.yaml:api-budget` | 15 | 同上（新設） |
 
 限界に触れ始めた job は実測を追い越している。数字を小突かず、測り直して式を当て直す。
 再利用可能 workflow を呼ぶ job は `timeout-minutes` を持てない（キーが無効）ので、検査は除外し、
