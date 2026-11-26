@@ -15,30 +15,30 @@ import (
 
 const (
 	opsVariablesTF = `variable "env" {
-  type = string
+	type = string
 
-  validation {
-    condition     = contains(["admin", "security", "log-archive", "sandbox", "dev", "stg", "prd"], var.env)
-    error_message = "x"
-  }
+	validation {
+		condition     = contains(["admin", "security", "log-archive", "sandbox", "dev", "stg", "prd"], var.env)
+		error_message = "x"
+	}
 }
 `
 	opsMainTF = `locals {
-  name_prefix = "${var.project}-${var.env}"
-  topic_name  = "${local.name_prefix}-ops-notification"
+	name_prefix = "${var.project}-${var.env}"
+	topic_name  = "${local.name_prefix}-ops-notification"
 
-  us_east_1_topic_name = "${local.topic_name}-us-east-1"
+	us_east_1_topic_name = "${local.topic_name}-us-east-1"
 
-  chat_args = {
-    name                     = "${local.name_prefix}-ops-chat"
-    slack                    = var.chat.slack
-    permissions_boundary_arn = var.permissions_boundary_arn
-  }
+	chat_args = {
+		name                     = "${local.name_prefix}-ops-chat"
+		slack                    = var.chat.slack
+		permissions_boundary_arn = var.permissions_boundary_arn
+	}
 }
 `
 	opsChatTF = `resource "aws_chatbot_slack_channel_configuration" "this" {
-  region             = "us-west-2"
-  configuration_name = var.name
+	region             = "us-west-2"
+	configuration_name = var.name
 }
 `
 	opsTopicARN   = "arn:aws:sns:ap-northeast-1:111111111111:tabp-dev-ops-notification"
@@ -158,8 +158,8 @@ func Test_readOpsShape(t *testing.T) {
 	}
 
 	for name, tc := range map[string]struct{ file, src string }{
-		"topic_name が無ければ":          {opsMainFile, strings.Replace(opsMainTF, "  topic_name  = \"${local.name_prefix}-ops-notification\"\n", "", 1)},
-		"chat_args の name が無ければ":    {opsMainFile, strings.Replace(opsMainTF, "    name                     = \"${local.name_prefix}-ops-chat\"\n", "", 1)},
+		"topic_name が無ければ":          {opsMainFile, strings.Replace(opsMainTF, "\ttopic_name  = \"${local.name_prefix}-ops-notification\"\n", "", 1)},
+		"chat_args の name が無ければ":    {opsMainFile, strings.Replace(opsMainTF, "\t\tname                     = \"${local.name_prefix}-ops-chat\"\n", "", 1)},
 		"Chatbot の構成の region が無ければ": {opsChatFile, "resource \"aws_chatbot_slack_channel_configuration\" \"this\" {\n}\n"},
 		"Chatbot の構成が2つなら":          {opsChatFile, opsChatTF + strings.Replace(opsChatTF, "\"this\"", "\"other\"", 1)},
 		"region がリテラルでなければ":         {opsChatFile, "resource \"aws_chatbot_slack_channel_configuration\" \"this\" {\n  region = var.region\n}\n"},

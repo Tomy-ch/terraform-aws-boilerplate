@@ -20,46 +20,46 @@ import (
 
 const (
 	dnsVariablesTF = `variable "env" {
-  type = string
+	type = string
 
-  validation {
-    condition     = contains(["dev", "stg", "prd", "sandbox"], var.env)
-    error_message = "x"
-  }
+	validation {
+		condition     = contains(["dev", "stg", "prd", "sandbox"], var.env)
+		error_message = "x"
+	}
 }
 
 variable "apex_domain" {
-  type = string
+	type = string
 
-  validation {
-    condition     = can(regex("^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$", var.apex_domain)) && length(var.apex_domain) <= 240
-    error_message = "x"
-  }
+	validation {
+		condition     = can(regex("^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$", var.apex_domain)) && length(var.apex_domain) <= 240
+		error_message = "x"
+	}
 }
 
 variable "delegations" {
-  type = map(object({
-    name_servers = list(string)
-    ds_record    = optional(string)
-  }))
+	type = map(object({
+		name_servers = list(string)
+		ds_record    = optional(string)
+	}))
 
-  validation {
-    condition     = length(setsubtract(keys(var.delegations), ["dev", "stg"])) == 0
-    error_message = "x"
-  }
+	validation {
+		condition     = length(setsubtract(keys(var.delegations), ["dev", "stg"])) == 0
+		error_message = "x"
+	}
 
-  validation {
-    condition = alltrue([for d in values(var.delegations) :
-      length(d.name_servers) == 4 && length(distinct(d.name_servers)) == 4 &&
-      alltrue([for ns in d.name_servers : can(regex("^ns-[0-9]{1,4}\\.awsdns-[0-9]{2}\\.(com|net|org|co\\.uk)$", ns))])
-    ])
-    error_message = "x"
-  }
+	validation {
+		condition = alltrue([for d in values(var.delegations) :
+			length(d.name_servers) == 4 && length(distinct(d.name_servers)) == 4 &&
+			alltrue([for ns in d.name_servers : can(regex("^ns-[0-9]{1,4}\\.awsdns-[0-9]{2}\\.(com|net|org|co\\.uk)$", ns))])
+		])
+		error_message = "x"
+	}
 
-  validation {
-    condition     = alltrue([for d in values(var.delegations) : d.ds_record == null || (can(regex("^[0-9]{1,5} 13 2 [0-9A-F]{64}$", d.ds_record)) && try(tonumber(split(" ", d.ds_record)[0]) <= 65535, false))])
-    error_message = "x"
-  }
+	validation {
+		condition     = alltrue([for d in values(var.delegations) : d.ds_record == null || (can(regex("^[0-9]{1,5} 13 2 [0-9A-F]{64}$", d.ds_record)) && try(tonumber(split(" ", d.ds_record)[0]) <= 65535, false))])
+		error_message = "x"
+	}
 }
 `
 	apexZone      = "example.com"

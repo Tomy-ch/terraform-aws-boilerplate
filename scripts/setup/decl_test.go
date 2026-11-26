@@ -109,12 +109,12 @@ func Test_literalListArg(t *testing.T) {
 }
 
 const envVariableTF = `variable "env" {
-  type = string
+	type = string
 
-  validation {
-    condition     = contains(["dev", "stg", "prd"], var.env)
-    error_message = "x"
-  }
+	validation {
+		condition     = contains(["dev", "stg", "prd"], var.env)
+		error_message = "x"
+	}
 }
 `
 
@@ -170,9 +170,9 @@ func Test_evalLocals(t *testing.T) {
 	t.Parallel()
 
 	src := `locals {
-  prefix = "${var.project}-${var.env}"
-  name   = "${local.prefix}-x"
-  other  = data.x.y
+	prefix = "${var.project}-${var.env}"
+	name   = "${local.prefix}-x"
+	other  = data.x.y
 }
 `
 
@@ -239,19 +239,19 @@ func Test_localItemString(t *testing.T) {
 	t.Parallel()
 
 	src := `locals {
-  prefix = "${var.project}-dev"
-  args = {
-    name  = "${local.prefix}-chat"
-    slack = var.chat.slack
-  }
-  dup = {
-    name = "a"
-    name = "b"
-  }
-  notobj = "x"
-  num = {
-    name = 1
-  }
+	prefix = "${var.project}-dev"
+	args = {
+		name  = "${local.prefix}-chat"
+		slack = var.chat.slack
+	}
+	dup = {
+		name = "a"
+		name = "b"
+	}
+	notobj = "x"
+	num = {
+		name = 1
+	}
 }
 `
 
