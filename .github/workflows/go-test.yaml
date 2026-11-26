@@ -99,6 +99,7 @@ jobs:
               - 'docs/setup/bootstrap.md'
               - 'conftest/plan/decl.json'
               - 'mise.toml'
+              - 'mise.lock'
 
   go-test:
     needs: changes
@@ -241,7 +242,7 @@ jobs:
       # A profile written by a run that failed measures whichever packages happened to finish, so
       # both the report and the gate are read as facts about a codebase that never passed. They are
       # gated on the clean signal itself rather than on the job's state, which the recorded exit
-      # code above no longer reflects.
+      # code above does not reflect.
       - name: Report Test Coverage
         if: steps.cover-test.outputs.exit_code == '0'
         uses: k1LoW/octocov-action@a167dc0dee441b7ffc45e1b862ab55ec0d87f278 # v1
@@ -266,8 +267,7 @@ jobs:
         id: comment
         if: always() && github.event_name == 'pull_request'
         shell: bash
-        # Read as variables rather than interpolated: these values look safe today, but that is
-        # a property of their producers, not of this step. README.md の「補足」.
+        # Read as variables rather than interpolated: README.md の「補足」.
         env:
           COVER_CODE: ${{ steps.cover-test.outputs.exit_code }}
           GATE_CODE: ${{ steps.cover-gate.outputs.exit_code }}
@@ -280,7 +280,7 @@ jobs:
           cover_code="${COVER_CODE-}"
           gate_code="${GATE_CODE-}"
 
-          # The two steps above no longer fail the job themselves and every other step that can
+          # The two steps above always exit 0 and every other step that can fail
           # sits before this one, so `success` here means nothing else went wrong — octocov, a
           # `mise install`. Reading it keeps the verdict from claiming a pass on a job that is
           # already red, without enumerating steps whose only report is having failed.
@@ -340,7 +340,7 @@ jobs:
             fi
 
             # `make go-test-fails` owns the filter semantics — which lines are dropped, and why
-            # dropping them is safe — see `.makefiles/go/test.mk`. What matters here is that it
+            # dropping them is safe — see `scripts/go-test-fails`. What matters here is that it
             # writes its nothing-left notice to stderr, so this file stays empty and the
             # emptiness check below is what decides.
             local filtered=/tmp/go-test-section.log
@@ -369,7 +369,7 @@ jobs:
             # comment is posted with, which the API rejects. The comment step is
             # `continue-on-error`, so that failure would take the comment down silently — the one
             # outcome this whole path exists to prevent, on exactly the kind of run that produces
-            # a stray NUL. The same byte is why the filter above needs `grep -a`.
+            # a stray NUL.
             { head -c "$section_limit" "$filtered" | tr -d '\000' | iconv -f UTF-8 -t UTF-8 -c || true; } \
               | sed -E 's/`{10,}/[long backtick run elided]/g' >> "$out"
             if [ "$(wc -c < "$filtered")" -gt "$section_limit" ]; then

@@ -32,6 +32,8 @@ var (
 	ErrDuplicateKey = xerrors.New("mise.toml の [tools] にキーの重複があります")
 	// ErrInvalidDisableTools は `[settings]` の disable_tools を読めない場合のエラー。
 	ErrInvalidDisableTools = xerrors.New("mise.toml の [settings] の disable_tools を解釈できません")
+	// ErrInvalidLockfilePlatforms は `[settings]` の lockfile_platforms を読めない場合のエラー。
+	ErrInvalidLockfilePlatforms = xerrors.New("mise.toml の [settings] の lockfile_platforms を解釈できません")
 )
 
 var (
@@ -43,16 +45,8 @@ var (
 	tableRe = regexp.MustCompile(
 		`^(?:"([^"]+)"|(` + BareKeyPattern + `))\s*=\s*\{.*\bversion\s*=\s*"([^"]+)".*\}\s*(?:#.*)?$`,
 	)
-	// disableKeyRe は disable_tools の代入の左辺。右辺の形を問わずに当て、読めない右辺をエラーにする。
-	// 単引用符のキーも当てる —— 読めないキーを素通しすると「宣言が無い」と区別できない。
-	disableKeyRe = regexp.MustCompile(`^(?:"disable_tools"|'disable_tools'|disable_tools)\s*=`)
-	// disableOutsideRe は節の外から [settings] の disable_tools を書く形（dotted key と inline table）。
-	// 行内で閉じない inline table は中身を1行では読めないので、disable_tools の有無を問わず当てる。
-	disableOutsideRe = regexp.MustCompile(
-		`^(?:settings|"settings"|'settings')\s*(?:(?:\.|=\s*\{).*\bdisable_tools\b|=\s*\{[^}]*$)`)
-	// disableListRe は1行の配列 `disable_tools = ["a", "b"]`。
-	disableListRe = regexp.MustCompile(`^(?:"disable_tools"|disable_tools)\s*=\s*\[([^\]#]*)\]\s*(?:#.*)?$`)
-	disableItemRe = regexp.MustCompile(`^"([^"]+)"$`)
+	// settingItemRe は `[settings]` の1行の配列の要素。
+	settingItemRe = regexp.MustCompile(`^"([^"]+)"$`)
 )
 
 // Entry は `[tools]` の宣言1件です。
@@ -136,12 +130,42 @@ func Lookup(entries []Entry, key string) (string, bool) {
 
 // DisableTools は `[settings]` の disable_tools が並べる道具を、書かれた順で返します。2つ目の
 // 戻り値は宣言が在ったかどうかです。
+func DisableTools(content []byte) ([]string, bool, error) {
+	return settingList(content, "disable_tools", ErrInvalidDisableTools)
+}
+
+// DisableToolsFile は path を読んで DisableTools します。
+func DisableToolsFile(path string) ([]string, bool, error) {
+	return settingListFile(path, DisableTools)
+}
+
+// LockfilePlatforms は `[settings]` の lockfile_platforms が並べる platform を、書かれた順で返します。2つ目の
+// 戻り値は宣言が在ったかどうかです。
+func LockfilePlatforms(content []byte) ([]string, bool, error) {
+	return settingList(content, "lockfile_platforms", ErrInvalidLockfilePlatforms)
+}
+
+// LockfilePlatformsFile は path を読んで LockfilePlatforms します。
+func LockfilePlatformsFile(path string) ([]string, bool, error) {
+	return settingListFile(path, LockfilePlatforms)
+}
+
+// settingList は `[settings]` の key が並べる文字列を、書かれた順で返します。
 //
 // 受け付けるのは `[settings]` の中の1行の文字列の配列だけです。複数行の配列、重複した宣言、
-// 節の外の dotted key や inline table はエラーにします —— 読めない宣言を「無い」と返すと、
-// 呼び手は外し忘れと区別できません。
-func DisableTools(content []byte) ([]string, bool, error) {
-	var tools []string
+// 節の外の dotted key や inline table は invalid でエラーにします —— 読めない宣言を「無い」と返すと、
+// 呼び手は書き忘れと区別できません。
+func settingList(content []byte, key string, invalid error) ([]string, bool, error) {
+	q := regexp.QuoteMeta(key)
+	// 左辺は右辺の形を問わずに当て、読めない右辺をエラーにする。単引用符のキーも当てる。
+	keyRe := regexp.MustCompile(`^(?:"` + q + `"|'` + q + `'|` + q + `)\s*=`)
+	// 節の外から [settings] の key を書く形（dotted key と inline table）。行内で閉じない inline table は
+	// 中身を1行では読めないので、key の有無を問わず当てる。
+	outsideRe := regexp.MustCompile(
+		`^(?:settings|"settings"|'settings')\s*(?:(?:\.|=\s*\{).*\b` + q + `\b|=\s*\{[^}]*$)`)
+	listRe := settingListRe(key)
+
+	var items []string
 	found := false
 	section := ""
 
@@ -154,46 +178,52 @@ func DisableTools(content []byte) ([]string, bool, error) {
 			continue
 		}
 		where := strconv.Itoa(lineNo) + "行目: " + line
-		if section == "" && disableOutsideRe.MatchString(line) {
-			return nil, false, xerrors.Wrap(ErrInvalidDisableTools, "[settings] の外の宣言 "+where)
+		if section == "" && outsideRe.MatchString(line) {
+			return nil, false, xerrors.Wrap(invalid, "[settings] の外の宣言 "+where)
 		}
-		if section != "settings" || !disableKeyRe.MatchString(line) {
+		if section != "settings" || !keyRe.MatchString(line) {
 			continue
 		}
 		if found {
-			return nil, false, xerrors.Wrap(ErrInvalidDisableTools, "重複した宣言 "+where)
+			return nil, false, xerrors.Wrap(invalid, "重複した宣言 "+where)
 		}
-		items, ok := parseDisableList(line)
+		got, ok := parseSettingList(listRe, line)
 		if !ok {
-			return nil, false, xerrors.Wrap(ErrInvalidDisableTools, where)
+			return nil, false, xerrors.Wrap(invalid, where)
 		}
-		tools, found = items, true
+		items, found = got, true
 	}
 	if err := sc.Err(); err != nil {
 		return nil, false, xerrors.Wrap(err, "mise.toml の走査")
 	}
 
-	return tools, found, nil
+	return items, found, nil
 }
 
-// DisableToolsFile は path を読んで DisableTools します。
-func DisableToolsFile(path string) ([]string, bool, error) {
+func settingListFile(path string, read func([]byte) ([]string, bool, error)) ([]string, bool, error) {
 	data, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return nil, false, xerrors.Wrap(err, path)
 	}
 
-	tools, found, err := DisableTools(data)
+	items, found, err := read(data)
 	if err != nil {
 		return nil, false, xerrors.Wrap(err, path)
 	}
 
-	return tools, found, nil
+	return items, found, nil
 }
 
-// parseDisableList は disable_tools の1行を要素へ割ります。末尾のカンマは許します。
-func parseDisableList(line string) ([]string, bool) {
-	m := disableListRe.FindStringSubmatch(line)
+// settingListRe は `key = ["a", "b"]` の1行の配列。
+func settingListRe(key string) *regexp.Regexp {
+	q := regexp.QuoteMeta(key)
+
+	return regexp.MustCompile(`^(?:"` + q + `"|` + q + `)\s*=\s*\[([^\]#]*)\]\s*(?:#.*)?$`)
+}
+
+// parseSettingList は1行の配列を要素へ割ります。末尾のカンマは許します。
+func parseSettingList(listRe *regexp.Regexp, line string) ([]string, bool) {
+	m := listRe.FindStringSubmatch(line)
 	if m == nil {
 		return nil, false
 	}
@@ -204,7 +234,7 @@ func parseDisableList(line string) ([]string, bool) {
 		if part == "" && i == len(parts)-1 {
 			break
 		}
-		im := disableItemRe.FindStringSubmatch(part)
+		im := settingItemRe.FindStringSubmatch(part)
 		if im == nil {
 			return nil, false
 		}
@@ -241,7 +271,7 @@ func parseLine(line string) (key, version string, ok bool) {
 		return "", "", false
 	}
 
-	// 引用符付きなら m[1]、裸なら m[2] に入る。両方が空になる経路は正規表現が持たない。
+	// 両方の群が空になる経路は正規表現が持たない。
 	key = m[1]
 	if key == "" {
 		key = m[2]

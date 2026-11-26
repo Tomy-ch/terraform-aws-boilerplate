@@ -63,7 +63,6 @@ func Test_entries(t *testing.T) {
 			"identity-center-check":      nil,
 			"identity-center-user-check": nil,
 			"break-glass-login":          {"iam create-login-profile"},
-			"break-glass-mfa":            {"iam enable-mfa-device"},
 			"break-glass-check":          nil,
 			"break-glass-usage-check":    nil,
 			"bootstrap-contacts":         {"account put-contact-information", "account put-alternate-contact"},
@@ -158,9 +157,6 @@ func Test_entries(t *testing.T) {
 		"break-glass-login": {[]string{"-usecase", testUsecase}, func(t *testing.T) *fakeAWS {
 			return loginWorld(t, map[string]bool{bg1: true})
 		}, "tabp\n", createLogin},
-		"break-glass-mfa": {[]string{"-usecase", testUsecase}, func(t *testing.T) *fakeAWS {
-			return mfaWorld(t, map[string][]string{bg1: {hwSerial}})
-		}, "tabp\n" + hwSerial + "\n123456\n654321\n", enableMFA},
 		"break-glass-check": {[]string{"-usecase", testUsecase}, func(t *testing.T) *fakeAWS {
 			return bgWorld(t, bothLogin(), bothMFA())
 		}, "", passwordPol},
@@ -320,7 +316,6 @@ func Test_exitCode(t *testing.T) {
 		"確認コードの形の誤りは 2":     {errOTPShape, 2},
 		"読めない応答は 2":         {errAWSResponse, 2},
 		"パスワードの不一致は 2":      {errPasswordMismatch, 2},
-		"MFA の入力の形の誤りは 2":   {errMFAInput, 2},
 		"伏せて読めなければ 2":       {errNoHidden, 2},
 		"中断は 2":             {errInterrupted, 2},
 		"宣言を解釈できなければ 2":     {errDeclShape, 2},

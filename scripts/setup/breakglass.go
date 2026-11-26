@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -21,12 +20,6 @@ const (
 
 var (
 	errPasswordMismatch = xerrors.New("2回の打ち込みが一致しないので、書き込みません")
-	errMFAInput         = xerrors.New("MFA の装置のシリアルかコードの形が誤っています")
-
-	// hardwareSerial は、ハードウェアの TOTP の装置のシリアル（IAM の SerialNumber の文字と長さ）。仮想 MFA と FIDO の
-	// ARN は受けない。
-	hardwareSerial = regexp.MustCompile(`^[\w+=/:,.@-]{9,256}$`)
-	totpCode       = regexp.MustCompile(`^[0-9]{6}$`)
 )
 
 func readBreakGlass(o options) (breakGlassShape, error) {
@@ -115,19 +108,20 @@ func mfaSerials(c *client, user string) ([]string, error) {
 	return out, nil
 }
 
-// isVirtualMFA は、シリアルが仮想 MFA の ARN（arn:<partition>:iam::<account>:mfa/<name>）か。
-func isVirtualMFA(serial string) bool {
-	return strings.HasPrefix(serial, "arn:") && strings.Contains(serial, ":mfa/")
+// isFIDO は、シリアルが FIDO の装置（セキュリティキーかパスキー）の ARN（arn:<partition>:iam::<account>:u2f/...）か。
+// 仮想 MFA は :mfa/ の ARN、ハードウェアの TOTP は ARN でない装置のシリアルである。
+func isFIDO(serial string) bool {
+	return strings.HasPrefix(serial, "arn:") && strings.Contains(serial, ":u2f/")
 }
 
-// hasHardwareMFA は、仮想でない MFA の装置が1つ以上在り、仮想の MFA が無いか。
-func hasHardwareMFA(serials []string) bool {
+// hasOnlyFIDO は、MFA の装置が1つ以上在り、すべて FIDO か。TOTP（仮想もハードウェアも）が1つでも在れば偽。
+func hasOnlyFIDO(serials []string) bool {
 	if len(serials) == 0 {
 		return false
 	}
 
 	for _, s := range serials {
-		if isVirtualMFA(s) {
+		if !isFIDO(s) {
 			return false
 		}
 	}
@@ -199,96 +193,6 @@ func setBreakGlassLogin(o options, c *client, t *terminal) error {
 
 		fmt.Fprintf(t.out, "✅ %s にパスワードを置きました\n", u)
 	}
-
-	return nil
-}
-
-// setBreakGlassMFA は、3.4 手順2: ハードウェアの MFA の無い break-glass の user に、ハードウェアの TOTP の装置を登録する。
-// FIDO のセキュリティキーと passkey は API で登録できないので、コンソールで登録する（手順書）。
-func setBreakGlassMFA(o options, c *client, t *terminal) error {
-	bg, err := readBreakGlass(o)
-	if err != nil {
-		return err
-	}
-
-	if err := requireUsers(c, bg.users); err != nil {
-		return err
-	}
-
-	var missing []string
-
-	for _, u := range bg.users {
-		serials, err := mfaSerials(c, u)
-		if err != nil {
-			return err
-		}
-
-		fmt.Fprintf(t.out, "  %s: MFA %s\n", u, joinOrNone(serials))
-
-		if len(serials) == 0 {
-			missing = append(missing, u)
-		}
-	}
-
-	if len(missing) == 0 {
-		fmt.Fprintln(t.out, "✅ すべての break-glass の user に MFA が在ります。書き込みません（仮想 MFA は break-glass-check が NG にします）")
-
-		return nil
-	}
-
-	fmt.Fprintf(t.out, "ハードウェアの TOTP の装置を登録する user: %s\n", strings.Join(missing, "・"))
-
-	if err := t.confirm(o.project); err != nil {
-		return err
-	}
-
-	for _, u := range missing {
-		if err := registerTOTP(o, c, t, u); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func registerTOTP(o options, c *client, t *terminal, user string) error {
-	serial, err := t.ask(user + " の装置のシリアル（裏面の英数字）: ")
-	if err != nil {
-		return err
-	}
-
-	if !hardwareSerial.MatchString(serial) || strings.HasPrefix(serial, "arn:") {
-		return xerrors.Wrap(errMFAInput, "シリアル")
-	}
-
-	code1, err := t.ask("装置に出た6桁のコード: ")
-	if err != nil {
-		return err
-	}
-
-	code2, err := t.ask("次に出た6桁のコード: ")
-	if err != nil {
-		return err
-	}
-
-	if !totpCode.MatchString(code1) || !totpCode.MatchString(code2) || code1 == code2 {
-		return xerrors.Wrap(errMFAInput, "コードは続いて出た別の6桁の2つです")
-	}
-
-	if err := c.writeSecret(map[string]any{"UserName": user, "SerialNumber": serial, "AuthenticationCode1": code1, "AuthenticationCode2": code2},
-		"iam", "enable-mfa-device"); err != nil {
-		return err
-	}
-
-	if err := reread(o, func() (bool, error) {
-		serials, err := mfaSerials(c, user)
-
-		return slices.Contains(serials, serial), err
-	}); err != nil {
-		return xerrors.Wrap(err, "登録した後に "+user+" の MFA を読めません。break-glass-check で確かめてください")
-	}
-
-	fmt.Fprintf(t.out, "✅ %s に MFA を登録しました\n", user)
 
 	return nil
 }
@@ -384,7 +288,7 @@ func checkBreakGlassUser(c *client, r *report, u string) error {
 		return err
 	}
 
-	r.check(hasHardwareMFA(serials), fmt.Sprintf("%s にハードウェアの MFA が在り、仮想 MFA が無い（今: %s）", u, joinOrNone(serials)))
+	r.check(hasOnlyFIDO(serials), fmt.Sprintf("%s の MFA がすべて FIDO（セキュリティキーかパスキー）で、TOTP が無い（今: %s）", u, joinOrNone(serials)))
 
 	var keys struct {
 		AccessKeyMetadata *[]struct {
