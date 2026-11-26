@@ -12,6 +12,8 @@ import (
 
 const (
 	stackSetsOrgAdminRole = "AWSServiceRoleForCloudFormationStackSetsOrgAdmin"
+	ramPrincipal          = "ram.amazonaws.com"
+	ramRole               = "AWSServiceRoleForResourceAccessManager"
 	serviceQuotasRegion   = "us-east-1"
 	accountsQuotaName     = "Maximum number of accounts"
 )
@@ -188,6 +190,56 @@ func enableServiceAccess(o options, c *client, t *terminal) error {
 	}
 
 	return checkServiceAccess(c, t.out)
+}
+
+// checkRAMSharing は、3.10 の確認。RAM の組織との共有が有効で、管理アカウントにその service-linked role が在る。
+func checkRAMSharing(c *client, w io.Writer) error {
+	r := newReport(w, "RAM の組織との共有")
+
+	enabled, err := serviceAccessEnabled(c)
+	if err != nil {
+		return err
+	}
+
+	r.check(slices.Contains(enabled, ramPrincipal), ramPrincipal+" の信頼アクセスが有効である")
+
+	var resp struct{}
+
+	exists, err := c.readOptional("NoSuchEntity", &resp, "iam", "get-role", "--role-name", ramRole)
+	if err != nil {
+		return err
+	}
+
+	r.check(exists, ramRole+" が在る")
+
+	return r.result()
+}
+
+// enableRAMSharing は、3.10 の手順の実行。RAM の組織との共有を有効にする。
+func enableRAMSharing(o options, c *client, t *terminal) error {
+	enabled, err := serviceAccessEnabled(c)
+	if err != nil {
+		return err
+	}
+
+	if slices.Contains(enabled, ramPrincipal) {
+		fmt.Fprintln(t.out, "✅ RAM の組織との共有は既に有効です。書き込みません")
+
+		return nil
+	}
+
+	fmt.Fprintln(t.out, "# 書き込む差分")
+	fmt.Fprintln(t.out, "  + RAM の組織との共有を有効にする（"+ramPrincipal+" の信頼アクセスと、管理アカウントの "+ramRole+" が作られます）")
+
+	if err := t.confirm(o.project); err != nil {
+		return err
+	}
+
+	if err := c.write("ram", "enable-sharing-with-aws-organization"); err != nil {
+		return err
+	}
+
+	return checkRAMSharing(c, t.out)
 }
 
 // accountsQuota は、Organizations のアカウント数の quota の適用値。quota code は変わりうるので、名前で探す。

@@ -22,6 +22,7 @@
 - 管理アカウントに break-glass の IAM user が2つ在り、それぞれにパスワードと FIDO の MFA（セキュリティキーかパスキー）が設定されている
 - 管理アカウントの password policy が、14文字以上・24世代の再利用の禁止・4種の文字を求める
 - Security OU にメンバーアカウント security と log-archive が在り、それぞれに break-glass の role が StackSet で置かれている
+- RAM の組織との共有が有効で、アカウントの ID の一覧の parameter（`/<project>/organization-baseline/account-ids`）が組織へ読み取りだけで共有されている
 
 ## 3. 手順
 
@@ -147,3 +148,10 @@ declarative policy は、付ける前に account status report で影響を見�
 メールを変えるときは、`make setup-organization-baseline-member-email-update PROFILE=<管理アカウントの profile> MEMBER_ENV=<env>` を実行する。AWS の側で先に変え（新しいメールに届く確認コードを入力する）、その後に parameter を同じ値に合わせる。parameter だけを変えると、plan が作り直しを求め、`prevent_destroy` で止まる。`make setup-organization-baseline-member-emails` は、在るアカウントのメールを変える入力を拒む。
 
 立ち上げを終えたアカウントは、`env/admin/identity/main.tf` の `bootstrapping` から外す Pull Request で閉じる。外したアカウントには `deny-bootstrap-role` が付き、`OrganizationAccountAccessRole` が使えなくなる。
+
+### 3.10 RAM の組織との共有を有効にする
+
+アカウントの ID の一覧を組織へ共有する変更（`organization-baseline` の `account_ids_parameter_arn` を足す変更）の昇格より前に、1回行う。新しく使う管理アカウントでは、段4 の apply が組織を作った後に、3.5 と一緒に行う（[bootstrap 手順書](bootstrap.md) の段4 の手順7）。RAM の組織との共有が有効でないと、組織を共有の宛先にできない（[repository-wide/ADR-0605](../adr/0605-cross-account-values-via-shared-parameter.md)）。
+
+1. `make setup-organization-baseline-ram-sharing PROFILE=<管理アカウントの profile>` を実行する。今の状態と差分を示し、project の名前の入力を受けてから有効にし、確かめ直す。既に有効なら何もしない
+2. `make setup-organization-baseline-ram-sharing-check PROFILE=<管理アカウントの profile>` の出力を Pull Request に書く（`ram.amazonaws.com` の信頼アクセスが有効で、`AWSServiceRoleForResourceAccessManager` が在る）

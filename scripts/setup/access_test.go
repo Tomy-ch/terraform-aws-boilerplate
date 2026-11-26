@@ -336,6 +336,141 @@ func Test_enableServiceAccess(t *testing.T) {
 }
 
 const (
+	enableRAM  = "ram enable-sharing-with-aws-organization"
+	getRAMRole = "iam get-role --role-name " + ramRole
+)
+
+func ramWorld(t *testing.T, before, after string, roleBefore, roleAfter bool) *fakeAWS {
+	t.Helper()
+
+	role := func(exists bool) awsResult {
+		if exists {
+			return ok(`{"Role":{}}`)
+		}
+
+		return fail(t, noSuchRole)
+	}
+
+	f := newFakeAWS(t, map[string]awsResult{
+		"organizations list-aws-service-access-for-organization": ok(before),
+		enableRAM:  ok(""),
+		getRAMRole: role(roleBefore),
+	})
+	f.onWrite(enableRAM, map[string]awsResult{
+		"organizations list-aws-service-access-for-organization": ok(after),
+		getRAMRole: role(roleAfter),
+	})
+
+	return f
+}
+
+func Test_checkRAMSharing(t *testing.T) {
+	t.Parallel()
+
+	t.Run("信頼アクセスが有効で role が在れば nil", func(t *testing.T) {
+		t.Parallel()
+
+		var out bytes.Buffer
+		require.NoError(t, checkRAMSharing(testClient(ramWorld(t, principals("cloudtrail.amazonaws.com", ramPrincipal), "", true, true)), &out))
+		assert.Equal(t, 2, strings.Count(out.String(), "✅"))
+	})
+
+	t.Run("信頼アクセスが無効なら NG", func(t *testing.T) {
+		t.Parallel()
+
+		var out bytes.Buffer
+		require.ErrorIs(t, checkRAMSharing(testClient(ramWorld(t, principals("cloudtrail.amazonaws.com"), "", true, true)), &out), errNG)
+		assert.Contains(t, out.String(), "❌ "+ramPrincipal+" の信頼アクセスが有効である")
+	})
+
+	t.Run("role が無ければ NG", func(t *testing.T) {
+		t.Parallel()
+
+		var out bytes.Buffer
+		require.ErrorIs(t, checkRAMSharing(testClient(ramWorld(t, principals(ramPrincipal), "", false, false)), &out), errNG)
+		assert.Contains(t, out.String(), "❌ "+ramRole+" が在る")
+	})
+
+	t.Run("role の読み取りが NoSuchEntity の外の失敗なら errAWSFailed", func(t *testing.T) {
+		t.Parallel()
+
+		f := ramWorld(t, principals(ramPrincipal), "", true, true)
+		f.responses[getRAMRole] = fail(t, "denied")
+		require.ErrorIs(t, checkRAMSharing(testClient(f), &bytes.Buffer{}), errAWSFailed)
+	})
+
+	t.Run("信頼アクセスの応答が読めなければ errAWSResponse", func(t *testing.T) {
+		t.Parallel()
+
+		require.ErrorIs(t, checkRAMSharing(testClient(ramWorld(t, `{}`, "", true, true)), &bytes.Buffer{}), errAWSResponse)
+	})
+}
+
+func Test_enableRAMSharing(t *testing.T) {
+	t.Parallel()
+
+	writes := []string{enableRAM}
+
+	t.Run("無効なら、確認を受けて有効にし、確かめ直す", func(t *testing.T) {
+		t.Parallel()
+
+		f := ramWorld(t, principals(), principals(ramPrincipal), false, true)
+		term, out := tty("tabp\n")
+		require.NoError(t, enableRAMSharing(testOptions(), testClient(f, writes...), term))
+		assert.Equal(t, []string{enableRAM}, f.writes())
+		assert.Contains(t, out.String(), "  + RAM の組織との共有を有効にする")
+		assert.Contains(t, out.String(), "✅ "+ramRole+" が在る")
+	})
+
+	t.Run("有効にした後も role が無ければ errNG", func(t *testing.T) {
+		t.Parallel()
+
+		f := ramWorld(t, principals(), principals(ramPrincipal), false, false)
+		term, out := tty("tabp\n")
+		require.ErrorIs(t, enableRAMSharing(testOptions(), testClient(f, writes...), term), errNG)
+		assert.Contains(t, out.String(), "❌ "+ramRole+" が在る")
+	})
+
+	t.Run("既に有効なら書かない", func(t *testing.T) {
+		t.Parallel()
+
+		f := ramWorld(t, principals(ramPrincipal), "", true, true)
+		term, out := tty("")
+		require.NoError(t, enableRAMSharing(testOptions(), testClient(f, writes...), term))
+		assert.Empty(t, f.writes())
+		assert.Contains(t, out.String(), "既に有効です")
+	})
+
+	t.Run("確認の入力が違えば書かない", func(t *testing.T) {
+		t.Parallel()
+
+		f := ramWorld(t, principals(), "", false, false)
+		term, _ := tty("\n")
+		require.ErrorIs(t, enableRAMSharing(testOptions(), testClient(f, writes...), term), errNotConfirmed)
+		assert.Empty(t, f.writes())
+	})
+
+	t.Run("信頼アクセスの応答が読めなければ、書かずに errAWSResponse", func(t *testing.T) {
+		t.Parallel()
+
+		f := ramWorld(t, `{}`, "", false, false)
+		term, _ := tty("tabp\n")
+		require.ErrorIs(t, enableRAMSharing(testOptions(), testClient(f, writes...), term), errAWSResponse)
+		assert.Empty(t, f.writes())
+	})
+
+	t.Run("書き込みが失敗すれば errAWSFailed", func(t *testing.T) {
+		t.Parallel()
+
+		f := ramWorld(t, principals(), "", false, false)
+		f.responses[enableRAM] = fail(t, "denied")
+		term, _ := tty("tabp\n")
+		require.ErrorIs(t, enableRAMSharing(testOptions(), testClient(f, writes...), term), errAWSFailed)
+		assert.Equal(t, []string{enableRAM}, f.writes())
+	})
+}
+
+const (
 	quotaList     = `{"Quotas":[{"QuotaCode":"L-OTHER","QuotaName":"Maximum number of OUs"},{"QuotaCode":"L-ACCOUNTS","QuotaName":"Maximum number of accounts"}]}`
 	listQuotas    = "service-quotas list-service-quotas --service-code organizations"
 	getQuotaValue = "service-quotas get-service-quota --service-code organizations --quota-code L-ACCOUNTS"

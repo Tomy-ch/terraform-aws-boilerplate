@@ -21,6 +21,8 @@
 //	service-access         3.9: セキュリティのサービスの信頼アクセスを有効にする
 //	service-access-check   3.9 の確認
 //	delegated-admin-check  3.9 の昇格の後: サービスの主体のそれぞれで、委任管理者が security のアカウントだけ（-usecase）
+//	ram-sharing            3.10: RAM の組織との共有を有効にする
+//	ram-sharing-check      3.10 の確認
 //	organization-check     3.2: 組織の機能、Root の policy の種類、Root の直下の OU、IAM の組織の機能（-usecase）
 //	identity-center-check  3.3 手順1 の確認: 組織の管理アカウントのインスタンスが ACTIVE でただ1つ在る
 //	identity-center-user-check 3.3 手順4 の確認: user が在り、その ID を出す。user の名前に環境の接尾辞が無い（-usecase・-user）
@@ -188,6 +190,17 @@ var entries = map[string]entry{
 	"service-access-check": {
 		run: func(_ options, c *client, t *terminal, _ organization) error {
 			return checkServiceAccess(c, t.out)
+		},
+	},
+	"ram-sharing": {
+		writes: []string{"ram enable-sharing-with-aws-organization"},
+		run: func(o options, c *client, t *terminal, _ organization) error {
+			return enableRAMSharing(o, c, t)
+		},
+	},
+	"ram-sharing-check": {
+		run: func(_ options, c *client, t *terminal, _ organization) error {
+			return checkRAMSharing(c, t.out)
 		},
 	},
 	"delegated-admin-check": {
