@@ -54,6 +54,12 @@ func Test_command(t *testing.T) {
 			assert.Equal(t, []string{"A=1"}, c.Env)
 		})
 	}
+
+	t.Run("providers-lock は追加の引数を platform として並べる", func(t *testing.T) {
+		t.Parallel()
+		c := command(context.Background(), "/x/d", nil, stepProvidersLock, "linux_amd64", "darwin_arm64")
+		assert.Equal(t, []string{"terraform", "providers", "lock", "-platform=linux_amd64", "-platform=darwin_arm64"}, c.Args)
+	})
 }
 
 func Test_runEach(t *testing.T) {
