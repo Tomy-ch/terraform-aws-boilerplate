@@ -1,5 +1,8 @@
 # Policy Test の入力を作る（make tf-policy）。ID と ARN を与える理由は conftest/plan/README.md の「入力」。
 mock_provider "aws" {
+  mock_data "aws_ssm_parameter" {
+    defaults = { value = "{\"security\":\"security@example.com\",\"log-archive\":\"log-archive@example.com\"}" }
+  }
   override_during = plan
 
   mock_data "aws_caller_identity" {

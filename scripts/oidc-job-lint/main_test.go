@@ -128,7 +128,7 @@ var applyWorkflow = strings.Join([]string{
 	"    steps:",
 	"      - name: Refuse stale commits",
 	"        id: refuse-stale",
-	"        run: test \"$SHA\" = \"$HEAD\"",
+	"        run: head=$(git ls-remote \"https://github.com/$REPO.git\" \"refs/heads/$REF\") && test \"$SHA\" = \"$head\" || exit 1",
 	"      - uses: actions/checkout@0000000000000000000000000000000000000000",
 	"        with:",
 	"          persist-credentials: false",
@@ -1540,7 +1540,7 @@ var fullWorkloadApplyJob = strings.Join([]string{
 	"    steps:",
 	"      - name: Refuse stale commits",
 	"        id: refuse-stale",
-	"        run: test \"$SHA\" = \"$HEAD\"",
+	"        run: head=$(git ls-remote \"https://github.com/$REPO.git\" \"refs/heads/$REF\") && test \"$SHA\" = \"$head\" || exit 1",
 	"      - uses: actions/checkout@0000000000000000000000000000000000000000",
 	"        with:",
 	"          persist-credentials: false",
@@ -1868,8 +1868,8 @@ func Test_checkHidden(t *testing.T) {
 		"引用符付きの PATH は違反":                      {entry, entry + "        env:\n          \"PATH\": /tmp/evil\n", "PATH を替えない"},
 		"資格情報の step の if: は違反":                 {cred, "      - if: false\n        run: make ci-aws-credentials CI_ENV=admin CI_ROLE=apply-identity RUNNER_MODE=host\n", "資格情報を取る step と"},
 		"資格情報の step の shell: は違反":              {cred, cred + "        shell: sh -c true {0}\n", "資格情報を取る step と"},
-		"拒否の step の shell: は違反":                {"        run: test \"$SHA\" = \"$HEAD\"", "        run: test \"$SHA\" = \"$HEAD\"\n        shell: sh -c true {0}", "拒否の step に shell:"},
-		"拒否の step の working-directory: は違反":    {"        run: test \"$SHA\" = \"$HEAD\"", "        run: test \"$SHA\" = \"$HEAD\"\n        working-directory: /tmp", "拒否の step に shell:"},
+		"拒否の step の shell: は違反":                {"        run: head=$(git ls-remote \"https://github.com/$REPO.git\" \"refs/heads/$REF\") && test \"$SHA\" = \"$head\" || exit 1", "        run: head=$(git ls-remote \"https://github.com/$REPO.git\" \"refs/heads/$REF\") && test \"$SHA\" = \"$head\"\n        shell: sh -c true {0}", "拒否の step に shell:"},
+		"拒否の step の working-directory: は違反":    {"        run: head=$(git ls-remote \"https://github.com/$REPO.git\" \"refs/heads/$REF\") && test \"$SHA\" = \"$head\" || exit 1", "        run: head=$(git ls-remote \"https://github.com/$REPO.git\" \"refs/heads/$REF\") && test \"$SHA\" = \"$head\"\n        working-directory: /tmp", "拒否の step に shell:"},
 		"入口の step の continue-on-error: は違反":    {entry, entry + "        continue-on-error: true\n", "入口の step"},
 		"入口の step の if: は違反":                   {entry, "      - if: false\n        run: make ci-apply-admin-identity RUNNER_MODE=host\n", "入口の step"},
 		"入口の step の shell: は違反":                {entry, entry + "        shell: sh -c true {0}\n", "入口の step"},
@@ -1881,8 +1881,8 @@ func Test_checkHidden(t *testing.T) {
 		"入口の step のフロー形式の env: の PATH は違反":     {entry, entry + "        env: {PATH: /tmp/evil}\n", "PATH を替えない"},
 		"入口の step の env: の TF_BIN は違反":         {entry, entry + "        env:\n          TF_BIN: /bin/true\n", "env: に置けるのは"},
 		"資格情報の step の env: の BASH_ENV は違反":     {cred, cred + "        env:\n          BASH_ENV: ./x.sh\n", "env: に置けるのは"},
-		"拒否の step から GITHUB_PATH に書けば違反":       {"test \"$SHA\" = \"$HEAD\"", "echo /tmp/b >> \"$GITHUB_PATH\"", "GITHUB_PATH と GITHUB_ENV"},
-		"拒否の step から GITHUB_ENV に書けば違反":        {"test \"$SHA\" = \"$HEAD\"", "echo X=1 >> \"$GITHUB_ENV\"", "GITHUB_PATH と GITHUB_ENV"},
+		"拒否の step から GITHUB_PATH に書けば違反":       {"head=$(git ls-remote \"https://github.com/$REPO.git\" \"refs/heads/$REF\") && test \"$SHA\" = \"$head\" || exit 1", "echo /tmp/b >> \"$GITHUB_PATH\"", "GITHUB_PATH と GITHUB_ENV"},
+		"拒否の step から GITHUB_ENV に書けば違反":        {"head=$(git ls-remote \"https://github.com/$REPO.git\" \"refs/heads/$REF\") && test \"$SHA\" = \"$head\" || exit 1", "echo X=1 >> \"$GITHUB_ENV\"", "GITHUB_PATH と GITHUB_ENV"},
 		"ほかの run: の step は違反":                  {cred, "      - run: echo hi\n" + cred, "run: は、資格情報より前の拒否の step"},
 		"資格情報の後の拒否 id の step の run: は違反":       {entry, "      - id: refuse-stale\n        run: cat ~/.aws/credentials\n" + entry, "run: は、資格情報より前の拒否の step"},
 		"役割の違う拒否 id の step の run: は違反":         {cred, "      - id: refuse-untrusted\n        run: echo hi\n" + cred, "run: は、資格情報より前の拒否の step"},
@@ -2008,6 +2008,94 @@ func Test_checkRefusal(t *testing.T) {
 		assert.Contains(t, messages(checkRefusal(job, credOf(job), refuseStale, formatted)), "id が refuse-stale の step")
 	})
 
+	staleRun := "        run: head=$(git ls-remote \"https://github.com/$REPO.git\" \"refs/heads/$REF\") && test \"$SHA\" = \"$head\" || exit 1"
+	fetchAnd := func(extra string) string {
+		return "        run: |\n          head=$(git ls-remote \"https://github.com/$REPO.git\" \"refs/heads/$REF\")\n          test \"$SHA\" = \"$head\" || exit 1\n          " + extra
+	}
+	for name, run := range map[string]string{
+		"gh api":     fetchAnd(`x=$(gh api "repos/$REPO/git/ref/heads/$REF" --jq .object.sha)`),
+		"逆引用符の中の gh": fetchAnd("x=`gh api rate_limit`"),
+		"中括弧の後の gh":  fetchAnd("{ gh api rate_limit; }"),
+		"既定値の gh":    fetchAnd("${GH:-gh} api rate_limit"),
+		"代入の後の gh":   fetchAnd("G=gh"),
+		"バックスラッシュを前置した gh": fetchAnd(`\gh api rate_limit`),
+		"行を継ぐ gh":              fetchAnd("gh\\"),
+		"curl":                 fetchAnd(`curl -fsS "https://github.com/$REPO"`),
+		"wget":                 fetchAnd(`wget -qO- "https://github.com/$REPO"`),
+		"api.github.com を引く道具": fetchAnd(`python3 -c 'import urllib.request; urllib.request.urlopen("https://api.github.com/x")'`),
+		"GITHUB_API_URL を組み立てる道具": fetchAnd(`python3 -c 'import os, urllib.request; urllib.request.urlopen(os.environ["GITHUB_API_URL"])'`),
+		"github-script": fetchAnd("node github-script.js"),
+	} {
+		t.Run("refuse-stale の step で REST を呼ぶ "+name+" は違反", func(t *testing.T) {
+			t.Parallel()
+
+			job := jobOf(t, replaced(t, applyWorkflow, staleRun, run), "apply-admin-identity")
+			got := checkRefusal(job, credOf(job), refuseStale, formatted)
+			assert.Len(t, got, 1)
+			assert.Contains(t, messages(got), "REST API を呼ぶ道具を書かないでください")
+		})
+	}
+
+	for name, run := range map[string]string{
+		"先頭を取らない":               `        run: test "$SHA" = "$HEAD"`,
+		"比べない":                  `        run: head=$(git ls-remote "https://github.com/$REPO.git" "refs/heads/$REF")`,
+		"自分と比べる":                `        run: head=$(git ls-remote "https://github.com/$REPO.git" "refs/heads/$REF") && test "$SHA" = "$SHA"`,
+		"ls-remote をコメントに書く":    "        run: |\n          # git ls-remote\n          test \"$SHA\" = \"$head\"",
+		"何もしない":                 "        run: \"true\"",
+		"失敗の文にだけ ls-remote を書く": "        run: |\n          head=$SHA || { echo \"❌ git ls-remote で決められません\"; exit 1; }\n          test \"$SHA\" = \"$head\" || exit 1",
+		"比べた結果を握り潰す":            `        run: head=$(git ls-remote "https://github.com/$REPO.git" "refs/heads/$REF") && test "$SHA" = "$head" || true`,
+		"比べる文を echo する":         `        run: head=$(git ls-remote "https://github.com/$REPO.git" "refs/heads/$REF") && echo 'test "$SHA" = "$head"'`,
+	} {
+		t.Run("refuse-stale の step が "+name+"なら違反", func(t *testing.T) {
+			t.Parallel()
+
+			job := jobOf(t, replaced(t, applyWorkflow, staleRun, run), "apply-admin-identity")
+			got := checkRefusal(job, credOf(job), refuseStale, formatted)
+			assert.Len(t, got, 1)
+			assert.Contains(t, messages(got), "ls-remote ...) で取り、test")
+		})
+	}
+
+	for name, run := range map[string]string{
+		"workflow と同じ形": "        run: |\n          auth=$(printf 'x-access-token:%s' \"$GH_TOKEN\" | base64 -w0)\n          test -n \"$auth\"\n          head=$(git -c \"http.https://github.com/.extraheader=AUTHORIZATION: basic $auth\" ls-remote \"https://github.com/$REPO.git\" \"refs/heads/$REF\" \\\n            | awk '{ print $1 }') \\\n            || { echo \"❌ git ls-remote で決められません\"; exit 1; }\n          test \"$SHA\" = \"$head\" || { echo \"❌ 古い\"; exit 1; }",
+		"コメントの gh":      fetchAnd("# gh api は使わない"),
+		"gh を含む語":       fetchAnd("echo high-gh-x"),
+		"GH_TOKEN":      fetchAnd(`test -n "$GH_TOKEN"`),
+	} {
+		t.Run("refuse-stale の step の "+name+" は違反0件", func(t *testing.T) {
+			t.Parallel()
+
+			job := jobOf(t, replaced(t, applyWorkflow, staleRun, run), "apply-admin-identity")
+			assert.Empty(t, checkRefusal(job, credOf(job), refuseStale, formatted))
+		})
+	}
+
+	for name, c := range map[string]struct{ src, job string }{
+		"lock の保持": {holdWorkflow, "hold-admin-identity"},
+		"lock の解除": {unlockWorkflow, "unlock-admin-identity"},
+	} {
+		t.Run(name+"の job の refuse-stale も REST を呼べば違反", func(t *testing.T) {
+			t.Parallel()
+
+			job := jobOf(t, replaced(t, c.src, staleRun, fetchAnd("gh api rate_limit")), c.job)
+			assert.Contains(t, messages(checkRefusal(job, credOf(job), refuseStale, formatted)), "REST API を呼ぶ道具を書かないでください")
+		})
+
+		t.Run(name+"の job の refuse-stale が先頭を取らなければ違反", func(t *testing.T) {
+			t.Parallel()
+
+			job := jobOf(t, replaced(t, c.src, staleRun, `        run: test "$SHA" = "$HEAD"`), c.job)
+			assert.Contains(t, messages(checkRefusal(job, credOf(job), refuseStale, formatted)), "ls-remote ...) で取り、test")
+		})
+	}
+
+	t.Run("refuse-untrusted の step の gh は REST の検査の外", func(t *testing.T) {
+		t.Parallel()
+
+		job := planWith(t, "        run: test \"$HEAD_REPO_ID\" = \"$REPO_ID\"", "        run: gh api rate_limit")
+		assert.Empty(t, checkRefusal(job, credOf(job), refuseUntrusted, formatted))
+	})
+
 	t.Run("拒否の step の引用符付きの if: は違反", func(t *testing.T) {
 		t.Parallel()
 
@@ -2020,6 +2108,58 @@ func Test_checkRefusal(t *testing.T) {
 
 		job := planWith(t, "      - run: make ci-plan-admin-identity", "      - id: refuse-untrusted\n        run: exit 1\n      - run: make ci-plan-admin-identity")
 		assert.Contains(t, messages(checkRefusal(job, credOf(job), refuseUntrusted, formatted)), "資格情報を取る前に")
+	})
+}
+
+func Test_checkStaleBody(t *testing.T) {
+	t.Parallel()
+
+	staleRun := "        run: head=$(git ls-remote \"https://github.com/$REPO.git\" \"refs/heads/$REF\") && test \"$SHA\" = \"$head\" || exit 1"
+	stepOf := func(t *testing.T, run string) workflow.Step {
+		t.Helper()
+
+		src := applyWorkflow
+		if run != staleRun {
+			src = replaced(t, applyWorkflow, staleRun, run)
+		}
+		for _, step := range workflow.SplitSteps(jobOf(t, src, "apply-admin-identity")) {
+			if hasStepID(step, refuseStale) {
+				return step
+			}
+		}
+		require.FailNow(t, "refuse-stale の step がありません")
+
+		return workflow.Step{}
+	}
+
+	t.Run("先頭を git ls-remote で取って比べれば違反0件", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Empty(t, checkStaleBody(stepOf(t, staleRun), formatted))
+	})
+
+	t.Run("REST を呼ぶ行ごとに違反を返す", func(t *testing.T) {
+		t.Parallel()
+
+		got := checkStaleBody(stepOf(t, "        run: |\n          gh api a\n          curl b\n          head=$(git ls-remote x y)\n          test \"$SHA\" = \"$head\" || exit 1"), formatted)
+		assert.Len(t, got, 2)
+		assert.Contains(t, messages(got), "REST API を呼ぶ道具を書かないでください")
+	})
+
+	t.Run("取るだけで比べなければ違反", func(t *testing.T) {
+		t.Parallel()
+
+		got := checkStaleBody(stepOf(t, `        run: head=$(git ls-remote x y)`), formatted)
+		assert.Len(t, got, 1)
+		assert.Contains(t, messages(got), "ls-remote ...) で取り、test")
+	})
+
+	t.Run("比べるだけで取らなければ違反", func(t *testing.T) {
+		t.Parallel()
+
+		got := checkStaleBody(stepOf(t, `        run: test "$SHA" = "$head"`), formatted)
+		assert.Len(t, got, 1)
+		assert.Contains(t, messages(got), "ls-remote ...) で取り、test")
 	})
 }
 
@@ -2920,6 +3060,13 @@ func Test_checkStepEnv(t *testing.T) {
 		assert.Empty(t, checkStepEnv(step, formatted))
 	})
 
+	t.Run("git の設定を替える GIT_CONFIG_ の名前は違反", func(t *testing.T) {
+		t.Parallel()
+
+		step := stepOf(t, "      - env:", "          GIT_CONFIG_COUNT: \"1\"", "        run: make ci-apply-admin-identity RUNNER_MODE=host")
+		assert.Contains(t, messages(checkStepEnv(step, formatted)), "env: に置けるのは")
+	})
+
 	t.Run("env: の後の step のキーは名前と読まない", func(t *testing.T) {
 		t.Parallel()
 
@@ -2961,7 +3108,7 @@ func Test_stepRunLine(t *testing.T) {
 
 		l, ok := stepRunLine(steps[0])
 		require.True(t, ok)
-		assert.Contains(t, l.Text, "run: test")
+		assert.Contains(t, l.Text, "run: head=")
 	})
 
 	t.Run("run: の無い step は false", func(t *testing.T) {
@@ -3004,7 +3151,7 @@ var unlockWorkflow = strings.Join([]string{
 	"    steps:",
 	"      - name: Refuse stale commits",
 	"        id: refuse-stale",
-	"        run: test \"$SHA\" = \"$HEAD\"",
+	"        run: head=$(git ls-remote \"https://github.com/$REPO.git\" \"refs/heads/$REF\") && test \"$SHA\" = \"$head\" || exit 1",
 	"      - uses: actions/checkout@0000000000000000000000000000000000000000",
 	"        with:",
 	"          persist-credentials: false",
@@ -4649,7 +4796,7 @@ var holdWorkflow = strings.Join([]string{
 	"    steps:",
 	"      - name: Refuse stale commits",
 	"        id: refuse-stale",
-	"        run: test \"$SHA\" = \"$HEAD\"",
+	"        run: head=$(git ls-remote \"https://github.com/$REPO.git\" \"refs/heads/$REF\") && test \"$SHA\" = \"$head\" || exit 1",
 	"      - uses: actions/checkout@0000000000000000000000000000000000000000",
 	"        with:",
 	"          persist-credentials: false",

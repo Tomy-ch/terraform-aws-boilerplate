@@ -1,4 +1,7 @@
 mock_provider "aws" {
+  mock_data "aws_ssm_parameter" {
+    defaults = { value = "{\"security\":\"security@example.com\",\"log-archive\":\"log-archive@example.com\"}" }
+  }
   mock_resource "aws_organizations_organization" {
     defaults = {
       id                = "o-exampleorg1"
@@ -12,6 +15,12 @@ variables {
   project               = "tabp"
   break_glass_role_name = "tabp-break-glass"
   break_glass_role_path = "/break-glass/"
+  bootstrapping         = ["security", "log-archive"]
+}
+
+override_resource {
+  target = aws_organizations_organizational_unit.top["Security"]
+  values = { id = "ou-exam-security" }
 }
 
 override_resource {
@@ -334,4 +343,77 @@ run "baseline_scps" {
     condition     = jsondecode(aws_organizations_policy.this["deny-enable-region"].content).Statement == [{ Sid = "DenyEnableRegion", Effect = "Deny", Action = "account:EnableRegion", Resource = "*" }]
     error_message = "deny-enable-region が、例外なしに account:EnableRegion だけを拒む形になっていません。"
   }
+}
+
+run "member_accounts" {
+  command = apply
+
+  # deployment-identity の plan と apply-identity の role は、この名前の parameter だけを読める（同 permissions.tftest.hcl）。
+  assert {
+    condition     = data.aws_ssm_parameter.member_account_emails.name == "/tabp/organization-baseline/member-account-emails"
+    error_message = "メールの parameter の名前が /<project>/organization-baseline/member-account-emails ではありません。"
+  }
+
+  assert {
+    condition = { for k, a in aws_organizations_account.this : k => [a.name, a.email, a.parent_id] } == {
+      security      = ["tabp-security", "security@example.com", "ou-exam-security"]
+      "log-archive" = ["tabp-log-archive", "log-archive@example.com", "ou-exam-security"]
+    }
+    error_message = "メンバーアカウントの名前・メール・所属の OU が、対応表と parameter から組まれていません。"
+  }
+
+  assert {
+    condition     = alltrue([for a in aws_organizations_account.this : a.role_name == null && a.iam_user_access_to_billing == null && a.close_on_deletion == null])
+    error_message = "role_name・iam_user_access_to_billing・close_on_deletion は既定に任せ、書かないでください（Read が state に書かないので、書くと import の後に作り直しの差分が出る）。"
+  }
+
+  assert {
+    condition     = keys(output.account_ids) == ["log-archive", "security"] && output.bootstrapping_account_ids == output.account_ids
+    error_message = "account_ids と、すべてが立ち上げ中のときの bootstrapping_account_ids が、作ったアカウントの ID を返していません。"
+  }
+
+  assert {
+    condition     = [for k, v in local.attachments : k if v.policy == "deny-bootstrap-role"] == []
+    error_message = "立ち上げ中のアカウントに deny-bootstrap-role を付けています。"
+  }
+}
+
+run "bootstrap_finished" {
+  command = apply
+
+  variables {
+    bootstrapping = ["log-archive"]
+  }
+
+  assert {
+    condition     = { for k, v in local.attachments : k => v.target_id if v.policy == "deny-bootstrap-role" } == { "deny-bootstrap-role/security" = aws_organizations_account.this["security"].id }
+    error_message = "立ち上げを終えたアカウントにだけ、そのアカウントを付け先にして deny-bootstrap-role を付けてください。"
+  }
+
+  assert {
+    condition     = keys(output.bootstrapping_account_ids) == ["log-archive"]
+    error_message = "bootstrapping_account_ids が、立ち上げ中のアカウントだけを返していません。"
+  }
+}
+
+run "emails_must_match_accounts" {
+  command = plan
+
+  override_data {
+    target = data.aws_ssm_parameter.member_account_emails
+    values = { value = "{\"security\":\"security@example.com\"}" }
+  }
+
+  expect_failures = [aws_organizations_account.this]
+}
+
+run "emails_must_be_addresses" {
+  command = plan
+
+  override_data {
+    target = data.aws_ssm_parameter.member_account_emails
+    values = { value = "{\"security\":\"security@example.com\",\"log-archive\":\"not-an-address\"}" }
+  }
+
+  expect_failures = [aws_organizations_account.this["log-archive"]]
 }
