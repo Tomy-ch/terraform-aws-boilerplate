@@ -170,7 +170,7 @@ func Test_run(t *testing.T) {
 			root := newRepo(t, soundMise, drifted, soundGoMod)
 			var out bytes.Buffer
 
-			require.ErrorIs(t, run([]string{"check"}, root, &out), errDrift)
+			require.ErrorIs(t, run([]string{"check"}, root, &out, nil), errDrift)
 			assert.Equal(t, drifted, readAt(t, root, "docker", "tools", "Dockerfile"))
 			// 出力そのものが契約である —— CI ログを読む人が、どの写しがずれたかを知る唯一の手掛かり。
 			assert.Contains(t, out.String(), "Dockerfile")
@@ -182,7 +182,7 @@ func Test_run(t *testing.T) {
 			root := newRepo(t, soundMise, drifted, soundGoMod)
 			var out bytes.Buffer
 
-			require.NoError(t, run([]string{"apply"}, root, &out))
+			require.NoError(t, run([]string{"apply"}, root, &out, nil))
 			assert.Equal(t, soundDockerfile, readAt(t, root, "docker", "tools", "Dockerfile"))
 			assert.Contains(t, out.String(), "Dockerfile")
 		})
@@ -193,7 +193,7 @@ func Test_run(t *testing.T) {
 			root := newRepo(t, soundMise, soundDockerfile, soundGoMod, driftedHostTools)
 			var out bytes.Buffer
 
-			require.ErrorIs(t, run([]string{"check"}, root, &out), errDrift)
+			require.ErrorIs(t, run([]string{"check"}, root, &out, nil), errDrift)
 			assert.Equal(t, driftedHostTools, readAt(t, root, ".makefiles", "host-tools.mk"))
 			assert.Contains(t, out.String(), "host-tools.mk")
 		})
@@ -203,7 +203,7 @@ func Test_run(t *testing.T) {
 			root := newRepo(t, soundMise, soundDockerfile, soundGoMod, driftedHostTools)
 			var out bytes.Buffer
 
-			require.NoError(t, run([]string{"apply"}, root, &out))
+			require.NoError(t, run([]string{"apply"}, root, &out, nil))
 			assert.Equal(t, soundHostTools, readAt(t, root, ".makefiles", "host-tools.mk"))
 		})
 
@@ -219,8 +219,8 @@ func Test_run(t *testing.T) {
 			root := newRepo(t, soundMise, drifted, soundGoMod)
 			var out bytes.Buffer
 
-			require.ErrorIs(t, run([]string{"check"}, root, &out), errDrift)
-			require.NoError(t, run([]string{"apply"}, root, &out))
+			require.ErrorIs(t, run([]string{"check"}, root, &out, nil), errDrift)
+			require.NoError(t, run([]string{"apply"}, root, &out, nil))
 			assert.Equal(t, soundDockerfile, readAt(t, root, "docker", "tools", "Dockerfile"))
 		})
 
@@ -239,10 +239,10 @@ func Test_run(t *testing.T) {
 				require.NoError(t, os.WriteFile(ws, []byte(drifted), 0o600))
 				var out bytes.Buffer
 
-				require.ErrorIs(t, run([]string{"check"}, root, &out), errDrift)
+				require.ErrorIs(t, run([]string{"check"}, root, &out, nil), errDrift)
 				assert.Contains(t, out.String(), "pnpm-workspace.yaml")
 				assert.Equal(t, drifted, readAt(t, root, "docker", "tools", "node", "pnpm-workspace.yaml"))
-				require.NoError(t, run([]string{"apply"}, root, &out))
+				require.NoError(t, run([]string{"apply"}, root, &out, nil))
 				assert.Equal(t, soundWorkspace, readAt(t, root, "docker", "tools", "node", "pnpm-workspace.yaml"))
 			})
 		}
@@ -259,10 +259,10 @@ func Test_run(t *testing.T) {
 			require.NoError(t, os.WriteFile(pkg, []byte(drifted), 0o600))
 			var out bytes.Buffer
 
-			require.ErrorIs(t, run([]string{"check"}, root, &out), errDrift)
+			require.ErrorIs(t, run([]string{"check"}, root, &out, nil), errDrift)
 			assert.Equal(t, drifted, readAt(t, root, "docker", "tools", "node", "package.json"))
 			assert.Contains(t, out.String(), "package.json")
-			require.NoError(t, run([]string{"apply"}, root, &out))
+			require.NoError(t, run([]string{"apply"}, root, &out, nil))
 			assert.Equal(t, soundPackageJSON, readAt(t, root, "docker", "tools", "node", "package.json"))
 		})
 
@@ -272,7 +272,7 @@ func Test_run(t *testing.T) {
 			root := newRepo(t, soundMise, drifted, soundGoMod, driftedHostTools)
 			var out bytes.Buffer
 
-			require.NoError(t, run([]string{"apply"}, root, &out))
+			require.NoError(t, run([]string{"apply"}, root, &out, nil))
 			assert.Equal(t, soundDockerfile, readAt(t, root, "docker", "tools", "Dockerfile"))
 			assert.Equal(t, soundHostTools, readAt(t, root, ".makefiles", "host-tools.mk"))
 		})
@@ -282,14 +282,14 @@ func Test_run(t *testing.T) {
 			root := newRepo(t, soundMise, strings.ReplaceAll(soundDockerfile, "1.27.1", "1.26.0"), soundGoMod)
 			var out bytes.Buffer
 
-			require.NoError(t, run([]string{"apply"}, root, &out))
-			require.NoError(t, run([]string{"check"}, root, &out))
+			require.NoError(t, run([]string{"apply"}, root, &out, nil))
+			require.NoError(t, run([]string{"check"}, root, &out, nil))
 		})
 
 		t.Run("一致していれば宣言の値を報告する", func(t *testing.T) {
 			t.Parallel()
 			var out bytes.Buffer
-			require.NoError(t, run([]string{"check"}, newRepo(t, soundMise, soundDockerfile, soundGoMod), &out))
+			require.NoError(t, run([]string{"check"}, newRepo(t, soundMise, soundDockerfile, soundGoMod), &out, nil))
 			assert.Contains(t, out.String(), "1.27.1")
 			assert.Contains(t, out.String(), "1.16.2")
 			assert.Contains(t, out.String(), "2.36.40")
@@ -308,8 +308,8 @@ func Test_run(t *testing.T) {
 			root := newRepo(t, soundMise, soundDockerfile, soundGoMod, drifted)
 			var out bytes.Buffer
 
-			require.ErrorIs(t, run([]string{"check"}, root, &out), errDrift)
-			require.NoError(t, run([]string{"apply"}, root, &out))
+			require.ErrorIs(t, run([]string{"check"}, root, &out, nil), errDrift)
+			require.NoError(t, run([]string{"apply"}, root, &out, nil))
 			assert.Equal(t, soundHostTools, readAt(t, root, ".makefiles", "host-tools.mk"))
 		})
 	})
@@ -325,7 +325,7 @@ func Test_run(t *testing.T) {
 			t.Run(name+"ならエラーにする", func(t *testing.T) {
 				t.Parallel()
 				var out bytes.Buffer
-				require.ErrorIs(t, run(args, t.TempDir(), &out), errUsage)
+				require.ErrorIs(t, run(args, t.TempDir(), &out, nil), errUsage)
 			})
 		}
 
@@ -336,7 +336,7 @@ func Test_run(t *testing.T) {
 			root := newRepo(t, soundMise, drifted, "module example\n")
 			var out bytes.Buffer
 
-			require.Error(t, run([]string{"apply"}, root, &out))
+			require.Error(t, run([]string{"apply"}, root, &out, nil))
 			assert.Equal(t, drifted, readAt(t, root, "docker", "tools", "Dockerfile"))
 		})
 
@@ -348,8 +348,8 @@ func Test_run(t *testing.T) {
 			root := newRepo(t, mise, drifted, soundGoMod)
 			var out bytes.Buffer
 
-			require.ErrorIs(t, run([]string{"check"}, root, &out), errShape)
-			require.ErrorIs(t, run([]string{"apply"}, root, &out), errShape)
+			require.ErrorIs(t, run([]string{"check"}, root, &out, nil), errShape)
+			require.ErrorIs(t, run([]string{"apply"}, root, &out, nil), errShape)
 			assert.Equal(t, drifted, readAt(t, root, "docker", "tools", "Dockerfile"))
 		})
 
@@ -360,7 +360,7 @@ func Test_run(t *testing.T) {
 				require.NoError(t, os.Remove(filepath.Join(root, "docker", "tools", "node", name)))
 				var out bytes.Buffer
 
-				err := run([]string{"check"}, root, &out)
+				err := run([]string{"check"}, root, &out, nil)
 				require.ErrorIs(t, err, os.ErrNotExist)
 				assert.Contains(t, err.Error(), name)
 			})
@@ -387,7 +387,7 @@ func Test_run(t *testing.T) {
 				require.NoError(t, os.WriteFile(path, []byte(after), 0o600))
 				var out bytes.Buffer
 
-				require.ErrorIs(t, run([]string{"apply"}, root, &out), errShape)
+				require.ErrorIs(t, run([]string{"apply"}, root, &out, nil), errShape)
 				assert.Contains(t, readAt(t, root, "docker", "tools", "Dockerfile"), "golang:1.26.0")
 			})
 		}
@@ -426,8 +426,8 @@ func Test_goDirectiveRe(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		// 桁の並びは versionPattern が持つ。3桁だけを試していると、そこが絞られても気づけない
-		// —— 同じ理由で dockerFromRe と miseInstallRe のテストも1〜3桁を確かめる。
+		// 桁の並びは versionPattern が持つ。3桁だけを試していると、そこが絞られても気づけない。
+		// versionPattern を使う正規表現のテストは、どれも1〜3桁を確かめる。
 		t.Run("1〜3桁の版に一致する", func(t *testing.T) {
 			t.Parallel()
 			assert.Len(t, goDirectiveRe.FindAllString("go 1\ngo 1.27\ngo 1.27.1\n", -1), 3)
@@ -689,8 +689,7 @@ func Test_dockerFromRe(t *testing.T) {
 			assert.Empty(t, dockerFromRe("golang").FindAllString("FROM docker.io/library/golang:1.0.0-a\n", -1))
 		})
 
-		// 3桁だけを試すと絞られても気づけない理由は Test_goDirectiveRe の
-		// 「1〜3桁の版に一致する」ケースが持つ。
+		// 桁の並びを確かめる理由は Test_goDirectiveRe の「1〜3桁の版に一致する」ケースが持つ。
 		t.Run("1桁・2桁の版にも一致する", func(t *testing.T) {
 			t.Parallel()
 			src := "FROM golang:1-bookworm\nFROM golang:1.27-bookworm\n"
@@ -732,8 +731,7 @@ func Test_miseInstallRe(t *testing.T) {
 			assert.Empty(t, re.FindAllString("\t@mise install \"aqua:aws/aws-cli@2.36.40\"\n", -1))
 		})
 
-		// 3桁だけを試すと絞られても気づけない理由は Test_goDirectiveRe の
-		// 「1〜3桁の版に一致する」ケースが持つ。
+		// 桁の並びを確かめる理由は Test_goDirectiveRe の「1〜3桁の版に一致する」ケースが持つ。
 		t.Run("1桁・2桁の版にも一致する", func(t *testing.T) {
 			t.Parallel()
 			src := "\t@mise install \"aqua:hashicorp/terraform@1\"\n\t@mise install \"aqua:hashicorp/terraform@1.16\"\n"
@@ -1230,8 +1228,7 @@ func Test_bakedRe(t *testing.T) {
 			assert.Equal(t, "\t@v=\"1.27.1\"; \\\n", got)
 		})
 
-		// 3桁だけを試すと絞られても気づけない理由は Test_goDirectiveRe の
-		// 「1〜3桁の版に一致する」ケースが持つ。
+		// 桁の並びを確かめる理由は Test_goDirectiveRe の「1〜3桁の版に一致する」ケースが持つ。
 		t.Run("1〜3桁の版に一致する", func(t *testing.T) {
 			t.Parallel()
 			assert.Len(t, re.FindAllString("v=\"1\"\nv=\"1.27\"\nv=\"1.27.1\"\n", -1), 3)

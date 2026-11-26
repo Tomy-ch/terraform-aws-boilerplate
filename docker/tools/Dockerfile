@@ -25,7 +25,9 @@ ENV MISE_DATA_DIR=/root/.local/share/mise \
     PATH="/root/.local/bin:/root/.local/share/mise/shims:$PATH" \
     # ホスト側の MISE_DISABLE_TOOLS をコンテナへ持ち込ませない。導入する道具は [tools] の
     # 宣言だけで決まる。
-    MISE_DISABLE_TOOLS=""
+    MISE_DISABLE_TOOLS="" \
+    # 道具を mise.lock の取得元と照合値からだけ入れる（ADR-0503 決定2）。
+    MISE_LOCKED=1
 # パイプのままだとリトライ時に部分受信分が sh へ流れ込むため、ファイルへ落としてから実行する。
 RUN curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors https://mise.run -o /tmp/mise-install.sh \
     && MISE_VERSION=${MISE_VERSION} sh /tmp/mise-install.sh \
@@ -33,7 +35,7 @@ RUN curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors https://mise.run -o 
     && /root/.local/bin/mise --version
 
 WORKDIR /app
-COPY mise.toml ./
+COPY mise.toml mise.lock ./
 RUN mise trust mise.toml
 
 # ベースイメージの Go が mise.toml の宣言と一致することを強制する（ADR-0503 決定3）。
@@ -59,6 +61,7 @@ RUN --mount=type=secret,id=github_token \
     && mise install golangci-lint \
     && MISE_DISABLE_TOOLS=go mise install "go:golang.org/x/vuln/cmd/govulncheck" \
     && mise install "aqua:terraform-linters/tflint" \
+    && mise install "github:terraform-linters/tflint-ruleset-aws" \
     && mise install "aqua:aquasecurity/trivy" \
     && mise install "aqua:gitleaks/gitleaks" \
     && mise install "aqua:trufflesecurity/trufflehog" \
@@ -74,6 +77,7 @@ RUN mkdir /out \
     && cp "$(mise which golangci-lint)"  /out/ \
     && cp "$(mise which govulncheck)"    /out/ \
     && cp "$(mise which tflint)"         /out/ \
+    && cp "$(mise where github:terraform-linters/tflint-ruleset-aws)/tflint-ruleset-aws" /out/ \
     && cp "$(mise which trivy)"          /out/ \
     && cp "$(mise which gitleaks)"       /out/ \
     && cp "$(mise which trufflehog)"     /out/ \

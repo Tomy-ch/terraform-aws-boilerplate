@@ -86,6 +86,7 @@ jobs:
               - '.makefiles/go/**'
               - 'Makefile'
               - 'mise.toml'
+              - 'mise.lock'
 
   go-lint:
     needs: changes

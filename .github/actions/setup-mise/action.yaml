@@ -73,6 +73,9 @@ runs:
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
+        # 道具を mise.lock の取得元と照合値からだけ入れる。lock に無い道具と宣言と違う版は入れずに落ちる。
+        # 版と取得元を GitHub の API に問い合わせないので、API の上限に当たらない（ADR-0503 決定2）。
+        MISE_LOCKED: "1"
         TOOLS: ${{ inputs.tools }}
       run: |
         set -euo pipefail

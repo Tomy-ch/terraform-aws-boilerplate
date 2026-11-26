@@ -234,8 +234,21 @@ func Test_check(t *testing.T) {
 			lines: []int{1, 1},
 			count: 1,
 		},
-		"知らない語の印": {
+		"綴りを誤った印": {
+			body:  "// " + prefix + "disble\n",
+			lines: []int{1},
+			count: 1,
+		},
+		"dis と en で始まらない語は印として数えない": {
 			body:  "// " + prefix + "pause\n",
+			count: 0,
+		},
+		"道具の配布物の名前は印として数えない": {
+			body:  `url = "https://example.com/v1/` + prefix + `linux-amd64.tar.gz"` + "\n",
+			count: 0,
+		},
+		"配布物の名前の後ろに同じ行で置いた印を見落とさない": {
+			body:  "x " + prefix + "linux-amd64 // " + prefix + "disable-line\n",
 			lines: []int{1},
 			count: 1,
 		},
@@ -432,4 +445,32 @@ func Test_gitEnvFrom(t *testing.T) {
 		_, err := gitEnvFrom([]string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "XDG_CONFIG_HOME=" + home})
 		require.ErrorIs(t, err, gitenv.ErrNames)
 	})
+}
+
+func Test_candidateIndex(t *testing.T) {
+	t.Parallel()
+
+	for name, tt := range map[string]struct {
+		line string
+		want int
+	}{
+		"dis で始まる語の位置を返す":  {"ab " + prefix + "disable", 3},
+		"en で始まる語の位置を返す":   {prefix + "enable", 0},
+		"ほかの語だけなら -1":      {prefix + "linux-amd64", -1},
+		"ほかの語の後ろの候補の位置を返す": {prefix + "linux " + prefix + "enable", len(prefix + "linux ")},
+		"接頭辞が無ければ -1":      {"editorconfig", -1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, candidateIndex(tt.line))
+		})
+	}
+}
+
+func Test_candidateCount(t *testing.T) {
+	t.Parallel()
+
+	body := prefix + "disable " + prefix + "linux\n" + prefix + "enable " + prefix + "enable\n"
+	assert.Equal(t, 3, candidateCount(body))
+	assert.Equal(t, 0, candidateCount(prefix+"linux-amd64\n"))
 }
