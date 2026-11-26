@@ -4,10 +4,11 @@
 
 SETUP_USECASE = usecases/organization-baseline
 
-# PROFILE と MEMBER_ENV は人が渡す値なので、レシピの本文に埋めず、字面のまま環境変数で渡す。本文に埋めると、
+# PROFILE・MEMBER_ENV・IDC_USER は人が渡す値なので、レシピの本文に埋めず、字面のまま環境変数で渡す。本文に埋めると、
 # 値の中の空白や `;` が、外した資格情報の変数を足し直す引数や別のコマンドとして読まれる。
 setup-organization-baseline-%: export SETUP_PROFILE = $(call literal_value,PROFILE)
 setup-organization-baseline-%: export SETUP_MEMBER_ENV = $(call literal_value,MEMBER_ENV)
+setup-organization-baseline-%: export SETUP_IDC_USER = $(call literal_value,IDC_USER)
 
 # $(1)=入口 $(2)=入口に足す引数
 define SETUP_RUN
@@ -53,3 +54,35 @@ setup-organization-baseline-service-access:
 .PHONY: setup-organization-baseline-service-access-check ## 3.9 の確認: セキュリティのサービスの信頼アクセスがすべて有効である（PROFILE=<profile>）
 setup-organization-baseline-service-access-check:
 	$(call SETUP_RUN,service-access-check,)
+
+.PHONY: setup-organization-baseline-delegated-admin-check ## 3.9 の昇格の後: サービスの主体のそれぞれで、委任管理者が security のアカウントだけである（PROFILE=<profile>）
+setup-organization-baseline-delegated-admin-check:
+	$(call SETUP_RUN,delegated-admin-check,-usecase "$(SETUP_USECASE)")
+
+.PHONY: setup-organization-baseline-organization-check ## 3.2: 組織の機能、Root の policy の種類、Root の直下の OU、IAM の組織の機能が宣言どおりである（PROFILE=<profile>）
+setup-organization-baseline-organization-check:
+	$(call SETUP_RUN,organization-check,-usecase "$(SETUP_USECASE)")
+
+.PHONY: setup-organization-baseline-identity-center-check ## 3.3 手順1 の確認: 組織の管理アカウントの Identity Center のインスタンスが ACTIVE でただ1つ在る（PROFILE=<profile>）
+setup-organization-baseline-identity-center-check:
+	$(call SETUP_RUN,identity-center-check,)
+
+.PHONY: setup-organization-baseline-identity-center-user-check ## 3.3 手順4 の確認: user が在り、その ID を出す。user の名前に環境の接尾辞が無い（PROFILE=<profile> IDC_USER=<user 名>）
+setup-organization-baseline-identity-center-user-check:
+	$(call SETUP_RUN,identity-center-user-check,-usecase "$(SETUP_USECASE)" -user "$$SETUP_IDC_USER")
+
+.PHONY: setup-organization-baseline-break-glass-login ## 3.4 手順1: パスワードの無い break-glass の user に、伏せて打ち込んだパスワードを置く（PROFILE=<profile>）
+setup-organization-baseline-break-glass-login:
+	$(call SETUP_RUN,break-glass-login,-usecase "$(SETUP_USECASE)")
+
+.PHONY: setup-organization-baseline-break-glass-mfa ## 3.4 手順2: MFA の無い break-glass の user に、ハードウェアの TOTP の装置を登録する（PROFILE=<profile>）
+setup-organization-baseline-break-glass-mfa:
+	$(call SETUP_RUN,break-glass-mfa,-usecase "$(SETUP_USECASE)")
+
+.PHONY: setup-organization-baseline-break-glass-check ## 3.4 の確認: パスワードとハードウェアの MFA が在り、アクセスキーが無く、password policy が宣言どおりである（PROFILE=<profile>）
+setup-organization-baseline-break-glass-check:
+	$(call SETUP_RUN,break-glass-check,-usecase "$(SETUP_USECASE)")
+
+.PHONY: setup-organization-baseline-break-glass-usage-check ## 3.6 の忘れ: break-glass の user のサインインと role の引き受けが45日以内である（PROFILE=<profile>）
+setup-organization-baseline-break-glass-usage-check:
+	$(call SETUP_RUN,break-glass-usage-check,-usecase "$(SETUP_USECASE)")

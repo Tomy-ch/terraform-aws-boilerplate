@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/awsenv"
@@ -333,13 +334,40 @@ func Test_firstLine(t *testing.T) {
 func Test_client_writeSecret(t *testing.T) {
 	t.Parallel()
 
+	t.Run("起動の途中で中断のシグナルを受ければ、一時ファイルを消して errInterrupted", func(t *testing.T) {
+		t.Parallel()
+
+		var (
+			name string
+			sig  chan<- os.Signal
+		)
+
+		c := &client{region: testRegion, writes: []string{"iam create-login-profile"}}
+		c.notify = func(ch chan<- os.Signal) func() { sig = ch; return func() {} }
+		c.aws = func(args ...string) awsResult {
+			name = strings.TrimPrefix(args[3], "file://")
+
+			info, err := os.Stat(name)
+			require.NoError(t, err)
+			assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+
+			sig <- syscall.SIGINT
+
+			return ok("")
+		}
+
+		require.ErrorIs(t, c.writeSecret(map[string]any{"Password": "p"}, "iam", "create-login-profile"), errInterrupted)
+		_, err := os.Stat(name)
+		require.ErrorIs(t, err, os.ErrNotExist)
+	})
+
 	const accept = "account accept-primary-email-update --account-id 222222222222 --primary-email n@x.y"
 
 	t.Run("秘密を引数に載せず、所有者だけが読める一時ファイルで渡し、起動の後に消す", func(t *testing.T) {
 		t.Parallel()
 
 		f := newFakeAWS(t, map[string]awsResult{accept: ok("")})
-		require.NoError(t, testClient(f, "account accept-primary-email-update").writeSecret(map[string]string{"Otp": "ABC123"}, strings.Fields(accept)...))
+		require.NoError(t, testClient(f, "account accept-primary-email-update").writeSecret(map[string]any{"Otp": "ABC123"}, strings.Fields(accept)...))
 		assert.Equal(t, []string{`{"Otp":"ABC123"}`}, f.secrets)
 		assert.NotContains(t, strings.Join(f.joined(), " "), "ABC123")
 
@@ -352,7 +380,7 @@ func Test_client_writeSecret(t *testing.T) {
 		t.Parallel()
 
 		f := newFakeAWS(t, map[string]awsResult{accept: fail(t, "ValidationException")})
-		err := testClient(f, "account accept-primary-email-update").writeSecret(map[string]string{"Otp": "ABC123"}, strings.Fields(accept)...)
+		err := testClient(f, "account accept-primary-email-update").writeSecret(map[string]any{"Otp": "ABC123"}, strings.Fields(accept)...)
 		require.ErrorIs(t, err, errAWSFailed)
 
 		file := strings.TrimPrefix(f.calls[0][len(f.calls[0])-5], "file://")
@@ -364,7 +392,7 @@ func Test_client_writeSecret(t *testing.T) {
 		t.Parallel()
 
 		f := newFakeAWS(t, nil)
-		require.ErrorIs(t, testClient(f).writeSecret(map[string]string{"Otp": "x"}, strings.Fields(accept)...), errNotAllowed)
+		require.ErrorIs(t, testClient(f).writeSecret(map[string]any{"Otp": "x"}, strings.Fields(accept)...), errNotAllowed)
 		assert.Empty(t, f.calls)
 	})
 
@@ -374,5 +402,48 @@ func Test_client_writeSecret(t *testing.T) {
 		f := newFakeAWS(t, nil)
 		require.ErrorIs(t, testClient(f).writeSecret(nil, "ssm", "get-parameter"), errNotAllowed)
 		assert.Empty(t, f.calls)
+	})
+
+	t.Run("起動の前に中断のシグナルを受けていれば、aws を起動せずに errInterrupted", func(t *testing.T) {
+		t.Parallel()
+
+		c := &client{region: testRegion, writes: []string{"iam create-login-profile"}}
+		c.notify = func(ch chan<- os.Signal) func() { ch <- syscall.SIGINT; return func() {} }
+		c.aws = func(...string) awsResult { t.Error("aws を起動した"); return ok("") }
+
+		err := c.writeSecret(map[string]any{"Password": "p"}, "iam", "create-login-profile")
+		require.ErrorIs(t, err, errInterrupted)
+		assert.Contains(t, err.Error(), "書き込む前に止めました")
+	})
+
+	interrupted := func(t *testing.T, res awsResult) error {
+		t.Helper()
+
+		var sig chan<- os.Signal
+
+		c := &client{region: testRegion, writes: []string{"iam create-login-profile"}}
+		c.notify = func(ch chan<- os.Signal) func() { sig = ch; return func() {} }
+		c.aws = func(...string) awsResult { sig <- syscall.SIGINT; return res }
+
+		return c.writeSecret(map[string]any{"Password": "p"}, "iam", "create-login-profile")
+	}
+
+	t.Run("起動の途中の中断で aws が成功していれば、書き込みが終わっていることを伝える", func(t *testing.T) {
+		t.Parallel()
+
+		err := interrupted(t, ok(""))
+		require.ErrorIs(t, err, errInterrupted)
+		assert.NotErrorIs(t, err, errAWSFailed)
+		assert.Contains(t, err.Error(), "書き込みは終わっています")
+	})
+
+	t.Run("起動の途中の中断で aws が失敗していれば、その失敗も残す", func(t *testing.T) {
+		t.Parallel()
+
+		err := interrupted(t, fail(t, "An error occurred (PasswordPolicyViolation)"))
+		require.ErrorIs(t, err, errInterrupted)
+		require.ErrorIs(t, err, errAWSFailed)
+		assert.Contains(t, err.Error(), "PasswordPolicyViolation")
+		assert.Contains(t, err.Error(), "書き込まれたかは分かりません")
 	})
 }

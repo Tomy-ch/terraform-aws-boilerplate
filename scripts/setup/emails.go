@@ -17,13 +17,11 @@ var (
 
 	// errEmailShape は、入力されたメールが accounts.tf の precondition の形に合わないか、aws がファイルや
 	// オプションとして読む形（`://` を含む、`-` で始まる）であること。
-	errEmailShape     = xerrors.New("メールの形ではありません")
-	errEmailDuplicate = xerrors.New("同じメールが2つの env に在ります")
-	errEmailInUse     = xerrors.New("メールが組織のほかのアカウントで使われています")
-	// errEmailChangeNeedsUpdate は、既に在るアカウントのメールを parameter だけで変えようとしたこと。
+	errEmailShape             = xerrors.New("メールの形ではありません")
+	errEmailDuplicate         = xerrors.New("同じメールが2つの env に在ります")
+	errEmailInUse             = xerrors.New("メールが組織のほかのアカウントで使われています")
 	errEmailChangeNeedsUpdate = xerrors.New("既に在るアカウントのメールは parameter だけでは変えません。make setup-organization-baseline-member-email-update MEMBER_ENV=<env> で AWS の側から変えてください")
-	// errParameterUnreadable は、parameter の値が文字列の JSON object として読めないこと。
-	errParameterUnreadable = xerrors.New("parameter の値を、文字列の JSON object として読めません")
+	errParameterUnreadable    = xerrors.New("parameter の値を、文字列の JSON object として読めません")
 	// errPrecondition は、手順の実行の前提が崩れていること。書かずに終える。
 	errPrecondition = xerrors.New("前提が崩れているので、書き込みません")
 	errVerify       = xerrors.New("書き込んだ後の読み取りが期待と一致しません")
@@ -427,7 +425,7 @@ func changePrimaryEmail(c *client, t *terminal, accountID, next string) error {
 		return errOTPShape
 	}
 
-	if err := c.writeSecret(map[string]string{"Otp": otp}, "account", "accept-primary-email-update", "--account-id", accountID, "--primary-email", next); err != nil {
+	if err := c.writeSecret(map[string]any{"Otp": otp}, "account", "accept-primary-email-update", "--account-id", accountID, "--primary-email", next); err != nil {
 		return err
 	}
 
