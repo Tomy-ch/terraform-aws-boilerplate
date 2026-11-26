@@ -6,6 +6,7 @@ import (
 	"maps"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -93,10 +94,14 @@ func Test_requireBootstrapUser(t *testing.T) {
 	})
 
 	for name, arn := range map[string]string{
-		"root なら errPrecondition":           "arn:aws:iam::111111111111:root",
-		"role なら errPrecondition":           "arn:aws:sts::111111111111:assumed-role/x/y",
-		"federated user なら errPrecondition": "arn:aws:sts::111111111111:federated-user/x",
-		"ARN の形でなければ errPrecondition":       "user/x",
+		"root なら errPrecondition":                 "arn:aws:iam::111111111111:root",
+		"role なら errPrecondition":                 "arn:aws:sts::111111111111:assumed-role/x/y",
+		"federated user なら errPrecondition":       "arn:aws:sts::111111111111:federated-user/x",
+		"ARN の形でなければ errPrecondition":             "user/x",
+		"role の中に :user/ が在っても errPrecondition":   "arn:aws:iam::111111111111:role/x:user/y",
+		"user の名前が空なら errPrecondition":            "arn:aws:iam::111111111111:user/",
+		"末尾が / なら errPrecondition":                "arn:aws:iam::111111111111:user/ops/",
+		"ARN の account が12桁でなければ errPrecondition": "arn:aws:iam::1111:user/x",
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -106,6 +111,29 @@ func Test_requireBootstrapUser(t *testing.T) {
 			f := newFakeAWS(t, map[string]awsResult{"sts get-caller-identity": ok(`{"Account":"111111111111","Arn":"` + arn + `"}`)})
 			require.ErrorIs(t, requireBootstrapUser(testClient(f), "p", &out), errPrecondition)
 			assert.Empty(t, out.String())
+		})
+	}
+
+	t.Run("末尾4桁は ID の末尾で、12桁は出さない", func(t *testing.T) {
+		t.Parallel()
+
+		var out bytes.Buffer
+
+		f := newFakeAWS(t, map[string]awsResult{"sts get-caller-identity": ok(`{"Account":"123456789012","Arn":"arn:aws:iam::123456789012:user/temp"}`)})
+		require.NoError(t, requireBootstrapUser(testClient(f), "p", &out))
+		assert.Contains(t, out.String(), "アカウント ID の末尾 9012")
+		assert.NotContains(t, out.String(), "123456789012")
+	})
+
+	for name, arn := range map[string]string{
+		"aws-us-gov の partition": "arn:aws-us-gov:iam::111111111111:user/x",
+		"aws-cn の partition":     "arn:aws-cn:iam::111111111111:user/x",
+	} {
+		t.Run(name+"の IAM user も受ける", func(t *testing.T) {
+			t.Parallel()
+
+			f := newFakeAWS(t, map[string]awsResult{"sts get-caller-identity": ok(`{"Account":"111111111111","Arn":"` + arn + `"}`)})
+			require.NoError(t, requireBootstrapUser(testClient(f), "p", &bytes.Buffer{}))
 		})
 	}
 
@@ -275,13 +303,14 @@ func Test_askContact(t *testing.T) {
 		})
 	}
 
-	for name, idx := range map[string]int{"住所1": 2, "市区町村": 4, "郵便番号": 6, "国": 7, "電話番号": 8} {
+	for name, idx := range map[string]int{"氏名": 0, "住所1": 2, "市区町村": 4, "郵便番号": 6, "国": 7, "電話番号": 8} {
 		t.Run(name+"が空なら errContactInput", func(t *testing.T) {
 			t.Parallel()
 
 			term, _ := tty(fieldInput(idx, ""))
 			_, err := askContact(term)
 			require.ErrorIs(t, err, errContactInput)
+			assert.Contains(t, err.Error(), name)
 		})
 	}
 
@@ -351,6 +380,8 @@ func Test_askAlternate(t *testing.T) {
 	for label, tc := range map[string]struct{ ok, ng, want string }{
 		"氏名 64/65": {altInput(strings.Repeat("a", 64), "Ops", "o@x.y", "1"), altInput(strings.Repeat("a", 65), "Ops", "o@x.y", "1"), "氏名"},
 		"役職 50/51": {altInput("H", strings.Repeat("a", 50), "o@x.y", "1"), altInput("H", strings.Repeat("a", 51), "o@x.y", "1"), "役職"},
+		"電話 25/26": {altInput("H", "Ops", "o@x.y", strings.Repeat("1", 25)), altInput("H", "Ops", "o@x.y", strings.Repeat("1", 26)), "電話番号"},
+		"役職 1/0":   {altInput("H", "a", "o@x.y", "1"), altInput("H", "", "o@x.y", "1"), "役職"},
 		"メール 254/255": {
 			altInput("H", "Ops", strings.Repeat("a", 242)+"@example.com", "1"),
 			altInput("H", "Ops", strings.Repeat("a", 243)+"@example.com", "1"), "メール",
@@ -562,6 +593,42 @@ func Test_setContacts(t *testing.T) {
 			assert.NotContains(t, out.String(), v)
 		}
 	})
+
+	t.Run("書くときは、入力で問わない項目の今の値も payload に載せる", func(t *testing.T) {
+		t.Parallel()
+
+		f := contactsWorld(t)
+		cur := wantContact
+		cur.City = "Minato"
+		cur.AddressLine3, cur.DistrictOrCounty, cur.WebsiteURL = "Bldg 3", "Chiyoda-ku", "https://example.com"
+		f.responses[getContact] = contactJSON(cur)
+
+		for _, typ := range alternateTypes {
+			f.responses[getAlternate(typ)] = alternateJSON(wantAlt)
+		}
+
+		want := wantContact
+		want.AddressLine3, want.DistrictOrCounty, want.WebsiteURL = cur.AddressLine3, cur.DistrictOrCounty, cur.WebsiteURL
+		f.onWrite(putContact, map[string]awsResult{getContact: contactJSON(want)})
+
+		term, _ := tty(contactInput + alternateInput + "tabp\n")
+		require.NoError(t, setContacts(bgOptions(), testClient(f, putContact, putAlternate), term))
+		require.Len(t, f.secrets, 1)
+		assert.Contains(t, f.secrets[0], `"AddressLine3":"Bldg 3"`)
+		assert.Contains(t, f.secrets[0], `"DistrictOrCounty":"Chiyoda-ku"`)
+		assert.Contains(t, f.secrets[0], `"WebsiteUrl":"https://example.com"`)
+	})
+
+	t.Run("今の連絡先が無ければ、入力で問わない項目を payload に載せない", func(t *testing.T) {
+		t.Parallel()
+
+		f := contactsWorld(t)
+		term, _ := tty(contactInput + alternateInput + "tabp\n")
+		require.NoError(t, setContacts(bgOptions(), testClient(f, putContact, putAlternate), term))
+		assert.NotContains(t, f.secrets[0], "AddressLine3")
+		assert.NotContains(t, f.secrets[0], "DistrictOrCounty")
+		assert.NotContains(t, f.secrets[0], "WebsiteUrl")
+	})
 }
 
 func Test_verifyContacts(t *testing.T) {
@@ -634,7 +701,8 @@ func Test_verifyContacts(t *testing.T) {
 
 		err := verifyContacts(bgOptions(), testClient(newFakeAWS(t, m)), &bytes.Buffer{}, wantContact, alts)
 		require.ErrorIs(t, err, errAWSResponse)
-		assert.Contains(t, err.Error(), "SECURITY")
+		assert.Contains(t, err.Error(), "SECURITY が入力と一致しません（読めない）")
+		assert.NotContains(t, err.Error(), "Name")
 	})
 }
 
@@ -868,6 +936,35 @@ func Test_tagAnomaly(t *testing.T) {
 		assert.Equal(t, []string{tagResource(monitorARN), tagResource(subARN)}, f.writes())
 		assert.NotContains(t, out.String(), "✅ tag を付けました")
 	})
+
+	t.Run("1つ目の tag で失敗すれば、2つ目を書かずに errAWSFailed", func(t *testing.T) {
+		t.Parallel()
+
+		f := anomalyWorld(t, nil)
+		f.responses[tagResource(monitorARN)] = fail(t, "AccessDenied")
+		term, _ := tty("tabp\n")
+		require.ErrorIs(t, tagAnomaly(bgOptions(), testClient(f, tagWrite), term), errAWSFailed)
+		assert.Equal(t, []string{tagResource(monitorARN)}, f.writes())
+	})
+
+	t.Run("tag の一覧が欠けていれば無いと読んで付け、付けた後も欠けたままなら成功にしない", func(t *testing.T) {
+		t.Parallel()
+
+		f := anomalyWorld(t, map[string]bool{monitorARN: true})
+		f.responses[listCostTags(subARN)] = ok(`{}`)
+		f.after = nil
+
+		var waits int
+
+		o := bgOptions()
+		o.sleep = func(time.Duration) { waits++ }
+
+		term, out := tty("tabp\n")
+		require.ErrorIs(t, tagAnomaly(o, testClient(f, tagWrite), term), errAWSResponse)
+		assert.Equal(t, []string{tagResource(subARN)}, f.writes())
+		assert.Equal(t, rereadTries-1, waits)
+		assert.NotContains(t, out.String(), "✅ tag を付けました")
+	})
 }
 
 func Test_differingFields(t *testing.T) {
@@ -880,5 +977,18 @@ func Test_differingFields(t *testing.T) {
 		other.Title, other.PhoneNumber = "x", "y"
 		assert.Equal(t, []string{"Title", "PhoneNumber"}, differingFields(wantAlt, other))
 		assert.Empty(t, differingFields(wantAlt, wantAlt))
+	})
+}
+
+func Test_mismatch(t *testing.T) {
+	t.Parallel()
+
+	t.Run("読めたときだけ違う項目の名前を、読めなければ「読めない」を返す", func(t *testing.T) {
+		t.Parallel()
+
+		other := wantAlt
+		other.Name = "x"
+		assert.Equal(t, "（Name）", mismatch(true, other, wantAlt))
+		assert.Equal(t, "（読めない）", mismatch(false, other, wantAlt))
 	})
 }

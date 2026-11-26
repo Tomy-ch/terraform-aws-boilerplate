@@ -130,6 +130,8 @@ func Test_secretUpdated(t *testing.T) {
 		"配列でなければ errGHResponse":         `{}`,
 		"空なら errGHResponse":             ``,
 		"updatedAt が無ければ errGHResponse": `[{"name":"AWS_ACCOUNT_ID"}]`,
+		"name の無い要素は errGHResponse":     `[{"updatedAt":"2026-01-01T00:00:00Z"}]`,
+		"name が空の要素は errGHResponse":     `[{"name":"","updatedAt":"2026-01-01T00:00:00Z"}]`,
 		"日時でなければ errGHResponse":         `[{"name":"AWS_ACCOUNT_ID","updatedAt":"x"}]`,
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -232,7 +234,7 @@ func Test_setEnvSecrets(t *testing.T) {
 		assert.Equal(t, "111111111111", g.stdins[2])
 		assert.NotContains(t, strings.Join(g.calls, " "), "111111111111")
 		assert.NotContains(t, out, "111111111111")
-		assert.Contains(t, out, "admin-apply: AWS_ACCOUNT_ID 在る（更新 2026-01-01 00:00:00）。書かない（置き直すなら REPLACE=1）")
+		assert.Contains(t, out, "admin-apply: AWS_ACCOUNT_ID 在る（更新 2026-01-01 00:00:00。値は読めないので確かめていない）。書かない（置き直すなら REPLACE=1）")
 		assert.Contains(t, out, "置くもの: リポジトリ acme/infra の admin-plan に AWS_ACCOUNT_ID（アカウント ID の末尾 1111）")
 		assert.Contains(t, out, "✅ admin-plan に AWS_ACCOUNT_ID を置きました")
 		assert.NotContains(t, out, "✅ admin-apply")
@@ -245,6 +247,7 @@ func Test_setEnvSecrets(t *testing.T) {
 		out, err := run(t, secretOptions("admin-apply"), g, "")
 		require.NoError(t, err)
 		assert.Equal(t, []string{listApply}, g.calls)
+		assert.Contains(t, out, "値は読めないので確かめていません")
 		assert.Contains(t, out, "書き込みません")
 	})
 
@@ -258,6 +261,17 @@ func Test_setEnvSecrets(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, []string{listApply, setApply, listApply}, g.calls)
 		assert.Contains(t, out, "置き直す")
+	})
+
+	t.Run("-replace で、無いものは置き、在るものは置き直す", func(t *testing.T) {
+		t.Parallel()
+
+		g := ghWorld(t)
+		o := secretOptions("admin-plan,admin-apply")
+		o.replace = true
+		_, err := run(t, o, g, "tabp\n")
+		require.NoError(t, err)
+		assert.Equal(t, []string{listPlan, listApply, setPlan, listPlan, setApply, listApply}, g.calls)
 	})
 
 	t.Run("1秒でも新しくなれば置いたと読む", func(t *testing.T) {
@@ -322,8 +336,27 @@ func Test_setEnvSecrets(t *testing.T) {
 		assert.Equal(t, []string{listPlan}, g.calls)
 	})
 
+	for _, repo := range []string{"my-org/repo.name_1", "a/b"} {
+		t.Run("-repo "+repo+" は受ける", func(t *testing.T) {
+			t.Parallel()
+
+			g := &fakeGH{t: t, responses: map[string]awsResult{
+				"secret list --repo " + repo + " --env admin-plan --json name,updatedAt": ok(newUpdated),
+			}}
+			o := secretOptions("admin-plan")
+			o.repo = repo
+			_, err := run(t, o, g, "")
+			require.NoError(t, err)
+		})
+	}
+
 	for name, repo := range map[string]string{
 		"-repo が空なら errUsage":         "",
+		"-repo が3段なら errUsage":        "a/b/c",
+		"-repo の名前が空なら errUsage":      "acme/",
+		"-repo が host 付きなら errUsage":  "github.com/acme/infra",
+		"-repo が . なら errUsage":       "./..",
+		"-repo が - で始まれば errUsage":    "-a/b",
 		"-repo に / が無ければ errUsage":    "infra",
 		"-repo に空白が在れば errUsage":      "acme/in fra",
 		"-repo の owner が空なら errUsage": "/infra",

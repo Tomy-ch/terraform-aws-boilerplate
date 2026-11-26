@@ -418,6 +418,7 @@ func Test_parseArgs(t *testing.T) {
 		"bootstrap-env-secrets に -environments が無い": {[]string{"bootstrap-env-secrets", "-project", "p", "-region", "r"}, "-environments と -repo は"},
 		"ほかの入口に -environments":                      {[]string{"bootstrap-contacts", "-project", "p", "-region", "r", "-environments", "x"}, "-environments と -repo は"},
 		"bootstrap-env-secrets に -repo が無い":         {[]string{"bootstrap-env-secrets", "-project", "p", "-region", "r", "-environments", "x"}, "-environments と -repo は"},
+		"ほかの入口に -repo だけ":                           {[]string{"bootstrap-contacts", "-project", "p", "-region", "r", "-repo", "a/b"}, "-environments と -repo は"},
 		"ほかの入口に -replace":                           {[]string{"bootstrap-contacts", "-project", "p", "-region", "r", "-replace"}, "-replace は"},
 		"member-accounts-check でない入口に -ids":         {[]string{"member-emails-check", "-project", "p", "-region", "r", "-usecase", "a", "-ids"}, "-ids は"},
 	}
@@ -430,6 +431,17 @@ func Test_parseArgs(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.msg)
 		})
 	}
+
+	t.Run("bootstrap-env-secrets は -environments・-repo・-replace を受ける", func(t *testing.T) {
+		t.Parallel()
+
+		o, e, err := parseArgs([]string{"bootstrap-env-secrets", "-project", "p", "-region", "r", "-environments", "a,b", "-repo", "x/y", "-replace"})
+		require.NoError(t, err)
+		assert.Equal(t, "a,b", o.environments)
+		assert.Equal(t, "x/y", o.repo)
+		assert.True(t, o.replace)
+		assert.True(t, e.needsEnvironments)
+	})
 }
 
 func Test_run(t *testing.T) {
