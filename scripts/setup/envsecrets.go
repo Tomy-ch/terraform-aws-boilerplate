@@ -24,7 +24,7 @@ var (
 	errEnvironment = xerrors.New("environment が .github/settings/environments.json にありません")
 
 	accountID  = regexp.MustCompile(`^[0-9]{12}$`)
-	repoName   = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+	repoName   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$`)
 	errGHStart = xerrors.New("gh を起動できません")
 	// ghRepoEnv は、gh の書き込みの宛先のリポジトリを変える環境変数。
 	ghRepoEnv = []string{"GH_REPO", "GH_HOST"}
@@ -221,12 +221,12 @@ func setEnvSecrets(o options, c *client, t *terminal, gh ghFunc) error {
 
 			targets = append(targets, e)
 		default:
-			fmt.Fprintf(t.out, "  %s: %s 在る（更新 %s）。書かない（置き直すなら REPLACE=1）\n", e, accountIDName, u.UTC().Format(time.DateTime))
+			fmt.Fprintf(t.out, "  %s: %s 在る（更新 %s。値は読めないので確かめていない）。書かない（置き直すなら REPLACE=1）\n", e, accountIDName, u.UTC().Format(time.DateTime))
 		}
 	}
 
 	if len(targets) == 0 {
-		fmt.Fprintln(t.out, "✅ すべての environment に secret が在ります。書き込みません")
+		fmt.Fprintln(t.out, "✅ すべての environment に secret が在ります（値は読めないので確かめていません）。書き込みません")
 
 		return nil
 	}

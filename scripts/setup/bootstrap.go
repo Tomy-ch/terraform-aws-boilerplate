@@ -292,27 +292,33 @@ func setContacts(o options, c *client, t *terminal) error {
 }
 
 func verifyContacts(o options, c *client, w io.Writer, desired contactInformation, desiredAlt map[string]alternateContact) error {
-	var got contactInformation
+	var (
+		got      contactInformation
+		gotFound bool
+	)
 
 	if err := reread(o, func() (bool, error) {
 		g, found, err := readContact(c)
-		got = g
+		got, gotFound = g, found
 
 		return found && g == desired, err
 	}); err != nil {
-		return xerrors.Wrap(err, "書いた後の主の連絡先が入力と一致しません（"+joinOrNone(differingFields(got, desired))+"）。make bootstrap-check-account で確かめてください")
+		return xerrors.Wrap(err, "書いた後の主の連絡先が入力と一致しません"+mismatch(gotFound, got, desired)+"。make bootstrap-check-account で確かめてください")
 	}
 
 	for _, typ := range alternateTypes {
-		var gotAlt alternateContact
+		var (
+			gotAlt   alternateContact
+			gotFound bool
+		)
 
 		if err := reread(o, func() (bool, error) {
 			g, found, err := readAlternate(c, typ)
-			gotAlt = g
+			gotAlt, gotFound = g, found
 
 			return found && g == desiredAlt[typ], err
 		}); err != nil {
-			return xerrors.Wrap(err, "書いた後の代替連絡先 "+typ+" が入力と一致しません（"+joinOrNone(differingFields(gotAlt, desiredAlt[typ]))+"）。make bootstrap-check-account で確かめてください")
+			return xerrors.Wrap(err, "書いた後の代替連絡先 "+typ+" が入力と一致しません"+mismatch(gotFound, gotAlt, desiredAlt[typ])+"。make bootstrap-check-account で確かめてください")
 		}
 	}
 
@@ -350,6 +356,15 @@ func anomalyTargets(c *client) (string, string, error) {
 	}
 
 	return monitor, sub, nil
+}
+
+// mismatch は、読み直しが読めた（found）ときだけ、違う field の名前を括弧で返す。読めなければ「（読めない）」。
+func mismatch[T any](found bool, got, want T) string {
+	if !found {
+		return "（読めない）"
+	}
+
+	return "（" + joinOrNone(differingFields(got, want)) + "）"
 }
 
 // differingFields は、a と b で値の違う field の名前。値は出さない（個人の情報）。

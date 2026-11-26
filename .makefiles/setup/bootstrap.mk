@@ -21,4 +21,4 @@ setup-bootstrap-anomaly-tag:
 
 .PHONY: setup-bootstrap-env-secrets ## 段4・段5: environment に secret AWS_ACCOUNT_ID（管理アカウントの ID）を置く。在れば書かない（ENVIRONMENTS=<env>[,<env>...] REPO=<owner>/<repo>、置き直すなら REPLACE=1）
 setup-bootstrap-env-secrets:
-	$(call SETUP_BOOTSTRAP_RUN,bootstrap-env-secrets,-environments "$$SETUP_ENVIRONMENTS" -repo "$$SETUP_REPO"$(if $(filter 1,$(REPLACE)), -replace))
+	$(call SETUP_BOOTSTRAP_RUN,bootstrap-env-secrets,-environments "$$SETUP_ENVIRONMENTS" -repo "$$SETUP_REPO"$(if $(REPLACE),$(if $(filter 1,$(REPLACE)), -replace,$(error REPLACE は 1 のときだけ効きます))))
