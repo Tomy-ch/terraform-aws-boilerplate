@@ -32,7 +32,7 @@ registrar で `apex_domain` を登録する。登録は Terraform の外で、�
 
 ### 3.2 dev と stg の zone を作る
 
-dev と stg の env の値に `apex_domain` を書き、`delegations` を空の map にして apply する。apply の後に、それぞれのアカウントで次の入口を実行し、出力を控える。入口は zone の NS と、署名が `SIGNING` でただ1つの `ACTIVE` な KSK の DS を読み、prd の `delegations` に書く形で出す。NS と DS の形は `delegations` の validation と同じものを確かめる。署名がまだ `SIGNING` でなければ `ds_record` を省き、その理由を出す。DS に12桁続く数字が在れば、アカウント ID を伏せる処理が値を壊すので何も出さずに止まり、そのときは `IDS=1` を付けて出し直す（この出力は12桁の数字を伏せない）
+dev と stg の env の値に `apex_domain` を書き、`delegations` を空の map にして apply する。apply の後に、それぞれのアカウントで次の入口を実行し、出力を控える。入口は zone の NS と、署名が `SIGNING` でただ1つの `ACTIVE` な KSK の DS を読み、prd の `delegations` に書く形で出す。NS と DS の形は `delegations` の validation と同じものを確かめる。署名がまだ `SIGNING` でなければ `ds_record` を省き、その理由を出す。DS に12桁続く数字が在れば、アカウント ID を伏せる処理が値を壊すので何も出さずに止まり、そのときは `IDS=1` を付けて出し直す（この出力は、aws のエラーの文も含めて12桁の数字を伏せない）
 
 ```sh
 make setup-dns-zone-delegation-values PROFILE=<dev のアカウントの profile> ENV=dev ZONE=dev.<apex_domain>
