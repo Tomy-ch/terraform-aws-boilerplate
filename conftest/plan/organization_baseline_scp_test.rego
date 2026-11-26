@@ -411,3 +411,46 @@ test_violation_baseline_stop_other_condition if {
 	docs := baseline_with("*", object.union(apply_exception, {"StringNotEquals": {"aws:PrincipalAccount": "111111111111"}}))
 	fixture.has("[PLAN-ORG-09] deny-baseline-stop の条件 StringNotEquals", p.deny) with input as plan_with(docs, valid_attachments) with data.policy_plan as {"organization_baseline": decl}
 }
+
+# メンバーアカウント。立ち上げを終えたアカウントへの付け先は env の名前で読む。
+account_decl := object.union(decl, {
+	"organizational_units": object.union(decl.organizational_units, {"Security": "module.o.aws_organizations_organizational_unit.top[\"Security\"]"}),
+	"accounts": {"security": {"address": "module.o.aws_organizations_account.this[\"security\"]", "ou": "Security"}},
+	"policies": object.union(decl.policies, {"deny-bootstrap-role": "module.o.aws_organizations_policy.this[\"deny-bootstrap-role\"]"}),
+	"attachments": object.union(decl.attachments, {"deny-bootstrap-role": ["security"]}),
+})
+
+account_plan(parent) := fixture.plan(array.concat(
+	array.concat(array.concat(base, [ou("Security", "top", "ou-exam-security")]), [policy(k, d) | some k, d in object.union(valid_docs, {"deny-bootstrap-role": {"Type": "SERVICE_CONTROL_POLICY", "Statement": [{"Effect": "Deny", "Action": "*", "Resource": "*", "Condition": {"ArnLike": {"aws:PrincipalArn": "arn:aws:iam::*:role/OrganizationAccountAccessRole"}}}]}})]),
+	array.concat(valid_attachments, [
+		change("module.o.aws_organizations_account.this[\"security\"]", "aws_organizations_account", {"id": "123456789012", "parent_id": parent}),
+		attachment("deny-bootstrap-role", "123456789012"),
+	]),
+))
+
+test_pass_account_target_named_by_env if {
+	count(p.deny) == 0 with input as account_plan("ou-exam-security") with data.policy_plan as {"organization_baseline": account_decl}
+}
+
+test_violation_account_target_not_declared if {
+	d := object.union(account_decl, {"attachments": object.union(decl.attachments, {"deny-bootstrap-role": []})})
+	fixture.has("[PLAN-ORG-01] policy deny-bootstrap-role の付け先", p.deny) with input as account_plan("ou-exam-security") with data.policy_plan as {"organization_baseline": d}
+}
+
+test_violation_account_in_other_ou if {
+	fixture.has("[PLAN-ORG-10] アカウント security が宣言した OU Security に置かれていない", p.deny) with input as account_plan("ou-exam-workload") with data.policy_plan as {"organization_baseline": account_decl}
+}
+
+test_violation_account_parent_unknown if {
+	inp := account_plan(null)
+	fixture.has("[PLAN-ORG-10] アカウント security", p.deny) with input as inp with data.policy_plan as {"organization_baseline": account_decl}
+}
+
+test_violation_account_ou_not_declared if {
+	d := object.union(account_decl, {"accounts": {"security": {"address": "module.o.aws_organizations_account.this[\"security\"]", "ou": "Infrastructure"}}})
+	fixture.has("[PLAN-ORG-10] アカウント security の OU", p.deny) with input as account_plan("ou-exam-security") with data.policy_plan as {"organization_baseline": d}
+}
+
+test_violation_declared_account_missing if {
+	fixture.has("[PLAN-ORG-00] 宣言した module.o.aws_organizations_account.this[\"security\"]", p.deny) with input as valid with data.policy_plan as {"organization_baseline": account_decl}
+}
