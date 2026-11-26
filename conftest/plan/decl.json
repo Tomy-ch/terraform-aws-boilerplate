@@ -49,8 +49,11 @@
       "organizations:ListAWSServiceAccessForOrganization",
       "organizations:ListAccounts",
       "organizations:ListRoots",
+      "ram:GetResourceShareAssociations",
+      "ram:GetResourceShares",
       "s3:GetAccountPublicAccessBlock",
-      "s3:PutAccountPublicAccessBlock"
+      "s3:PutAccountPublicAccessBlock",
+      "ssm:DescribeParameters"
     ],
     "documents": {
       "aws_iam_role": [
@@ -674,9 +677,14 @@
           {"action": "organizations:ListRoots", "reason": "組織・OU・policy・メンバーアカウント（管理アカウントの API）"},
           {"action": "organizations:ListTagsForResource", "reason": "組織・OU・policy・メンバーアカウント（管理アカウントの API）"},
           {"action": "organizations:ListTargetsForPolicy", "reason": "組織・OU・policy・メンバーアカウント（管理アカウントの API）"},
+          {"action": "ram:GetResourceShareAssociations", "reason": "アカウントの ID の一覧の parameter と共有（管理アカウント。repository-wide/ADR-0605）"},
+          {"action": "ram:GetResourceShares", "reason": "アカウントの ID の一覧の parameter と共有（管理アカウント。repository-wide/ADR-0605）"},
+          {"action": "ram:ListResourceSharePermissions", "reason": "アカウントの ID の一覧の parameter と共有（管理アカウント。repository-wide/ADR-0605）"},
           {"action": "s3:GetObject", "reason": "state の object。立ち上げの plan は管理アカウントの state Bucket から読む（organization-baseline/ADR-0203 決定4）"},
           {"action": "s3:PutObject", "reason": "plan の出力。管理アカウントの plan の出力の Bucket に書く"},
-          {"action": "ssm:GetParameter", "reason": "メンバーアカウントのメールの parameter（管理アカウント）"},
+          {"action": "ssm:DescribeParameters", "reason": "アカウントの ID の一覧の parameter と共有（管理アカウント。repository-wide/ADR-0605）"},
+          {"action": "ssm:GetParameter", "reason": "メンバーアカウントのメールの parameter とアカウントの ID の一覧の parameter（管理アカウント）"},
+          {"action": "ssm:ListTagsForResource", "reason": "アカウントの ID の一覧の parameter と共有（管理アカウント。repository-wide/ADR-0605）"},
           {"action": "sts:AssumeRole", "reason": "管理アカウントの plan の role が、メンバーのこの role を引き受ける（deployment-identity/ADR-0201 決定22）"}
         ]
       }

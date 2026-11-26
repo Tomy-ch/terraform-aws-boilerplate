@@ -8,6 +8,11 @@ output "account_ids" {
   value       = module.organization.account_ids
 }
 
+output "account_ids_parameter_arn" {
+  description = "メンバーアカウントの env から ID への map（JSON）を持ち、RAM で組織へ共有する parameter の ARN。メンバーの root がこの ARN で読む（repository-wide/ADR-0605）。"
+  value       = module.account_ids.parameter_arn
+}
+
 output "bootstrapping_account_ids" {
   description = "`bootstrapping` に入れたメンバーアカウントの env から ID への map。管理アカウントの identity root が、立ち上げの provider の引き受け先に使う。"
   value       = module.organization.bootstrapping_account_ids

@@ -8,8 +8,8 @@ AWS Organizations の組織と OU、SCP・RCP・declarative policy、root の資
 
 ## 実行形態とネットワーク境界
 
-- AWS の上で動く処理は無い。管理アカウントの CI の apply-identity の role が、Organizations と IAM の API を呼ぶ。最初の作成だけは、bootstrap の段4 の一時 IAM user が呼ぶ（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定1・9）
-- Organizations の API は global の endpoint（`organizations.us-east-1.amazonaws.com`）を、IAM は `iam.amazonaws.com` を呼ぶ
+- AWS の上で動く処理は無い。管理アカウントの CI の apply-identity の role が、Organizations・IAM・Systems Manager・AWS RAM の API を呼ぶ。最初の作成だけは、bootstrap の段4 の一時 IAM user が呼ぶ（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定1・9）
+- Organizations の API は global の endpoint（`organizations.us-east-1.amazonaws.com`）を、IAM は `iam.amazonaws.com` を、Systems Manager と RAM は provider のリージョンの endpoint を呼ぶ
 - 外への egress は無い
 
 ## 公開契約
@@ -23,7 +23,8 @@ AWS Organizations の組織と OU、SCP・RCP・declarative policy、root の資
 | 出力 | 使う側 |
 | --- | --- |
 | `break_glass_arns` | 管理アカウントの break-glass の IAM user 2つ・group・role の ARN。管理アカウントの identity root が `deployment-identity` へ渡し、apply の role にこれらの変更を拒ませる |
-| `account_ids` | メンバーアカウントの env から ID への map。メンバーの root と、アカウントを名指す usecase が使う |
+| `account_ids` | メンバーアカウントの env から ID への map。管理アカウントの identity root の中で、アカウントを名指す usecase が使う |
+| `account_ids_parameter_arn` | `account_ids` を JSON で持つ parameter の ARN。メンバーの root は state を読めないので、この parameter を ARN で読む（[ADR-0605](../../docs/adr/0605-cross-account-values-via-shared-parameter.md)） |
 | `bootstrapping_account_ids` | `bootstrapping` に入れたメンバーアカウントの env から ID への map。管理アカウントの identity root が、立ち上げの provider の引き受け先に使い、`deployment-identity` の `bootstrap_member_account_ids` へ渡して、引き受けをこのアカウントに限る |
 | `bootstrap_read_role` | メンバーへ配る立ち上げの読み取りの role の名前と path（`object({ name, path })`）。管理アカウントの identity root が `deployment-identity` へ渡し、その role を配る StackSet の権限と、plan の role の引き受けの Resource にさせる |
 
@@ -40,6 +41,7 @@ AWS Organizations の組織と OU、SCP・RCP・declarative policy、root の資
 - 管理アカウントの break-glass の IAM user 2つ、group とその policy、break-glass の role（`AdministratorAccess`）、IAM の password policy（[organization-baseline/ADR-0201](docs/adr/0201-break-glass.md)）
 - メンバーアカウント security と log-archive（Security OU）。env と OU の対応表は `internal/organization/accounts.tf` の1つの local が持つ。`OrganizationAccountAccessRole`・請求情報への IAM の到達・閉じない削除は書かず、AWS と Provider の既定に任せる（Provider の Read はこの3つを state に書かないので、書くと import の後に作り直しの差分が出る）。名前は `<project>-<env>` で変えない
 - 立ち上げを終えたメンバーアカウントに付ける `deny-bootstrap-role`（アカウントごと）
+- アカウントの ID の一覧の parameter（`/<project>/organization-baseline/account-ids`、advanced tier の String。env から ID への JSON）と、それを組織へ読み取りだけで共有する AWS RAM の共有（`<project>-account-ids`、組織の外の principal を許さない）。RAM の組織との共有の有効化は持たず、人が行う（[`docs/setup/organization-baseline.md`](../../docs/setup/organization-baseline.md) 3.10、[ADR-0605](../../docs/adr/0605-cross-account-values-via-shared-parameter.md)）
 - メンバーアカウントの break-glass の role を配る CloudFormation の StackSet（service-managed、自動展開）と、組織の Root を対象にした stack instance（[organization-baseline/ADR-0202](docs/adr/0202-member-break-glass-via-stacksets.md)）
 - メンバーアカウントの立ち上げの読み取りの role（`<project>-bootstrap-read`、path `/bootstrap/`）を配る StackSet と stack instance（同じ形。[organization-baseline/ADR-0203](docs/adr/0203-member-bootstrap-read-role.md)）
 
@@ -82,8 +84,8 @@ unsupported:
 
 区分は「破棄すると認証や組織の構造を失う」（[scope.md 第11.1節](../../docs/v1.0-plan/scope.md)、[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定14）。sandbox での apply と destroy、残存検出を行わない。代わりに次を行う。
 
-- Unit Test（`terraform test` + `mock_provider`）: `internal/organization` が OU の木、policy の文書と付け先、文書の大きさ、メンバーアカウントの名前・メール・置く OU と立ち上げの SCP の付け先を、`internal/break-glass` が user・group・role・password policy と、メンバーの role を配る StackSet を、`internal/bootstrap-access` が立ち上げの読み取りの role を配る StackSet を固定する。`tests/` が入力の検査と出力の配線を固定する
-- Policy Test: `plan.organization_baseline_scp`（`PLAN-ORG-*`）と `plan.organization_baseline_break_glass`（`PLAN-BG-*`）と `plan.organization_baseline_bootstrap_read`（`PLAN-BR-*`）と `plan.iam_role_attachment_pairing`（`PLAN-ATTACH-*`）が、reference の mock の plan で見る。実 plan には掛けない
+- Unit Test（`terraform test` + `mock_provider`）: `internal/organization` が OU の木、policy の文書と付け先、文書の大きさ、メンバーアカウントの名前・メール・置く OU と立ち上げの SCP の付け先を、`internal/break-glass` が user・group・role・password policy と、メンバーの role を配る StackSet を、`internal/bootstrap-access` が立ち上げの読み取りの role を配る StackSet を、`internal/account-ids` がアカウントの ID の一覧の parameter と共有を固定する。`tests/` が入力の検査と出力の配線を固定する
+- Policy Test: `plan.organization_baseline_scp`（`PLAN-ORG-*`）と `plan.organization_baseline_break_glass`（`PLAN-BG-*`）と `plan.organization_baseline_bootstrap_read`（`PLAN-BR-*`）と `plan.iam_role_attachment_pairing`（`PLAN-ATTACH-*`）が、reference の mock の plan で見る。実 plan には掛けない。共有が組織の外の principal を許さないことは `plan.ram_resource_share`（`PLAN-RAM-01`）が見る
 - 拒まれるべき操作が拒まれることを人が確かめる（下の手順）。結果を Pull Request に記録し、行わなかったものは行わなかったと書く
 - drift が0であること: 昇格の後の次の plan が変更を示さないこと
 
@@ -101,6 +103,8 @@ unsupported:
 | 実 API が読み戻した policy の文書が宣言と違う | plan が毎回差分を出す | 昇格の後の plan |
 | RCP が想定しない AWS のサービスの経路を止める | 配送や連携が止まる | PolicyStaging での確認と、付けた直後の読み取りの確認 |
 | declarative policy が既存の EC2 の設定と衝突する | 起動や API が拒まれる | 付ける前の account status report |
+| RAM の組織との共有が無効なまま、共有の宛先を作る | 昇格の apply が共有の宛先の作成で落ちる（宛先は state に残らない） | 昇格の前の人の手順（[`docs/setup/organization-baseline.md`](../../docs/setup/organization-baseline.md) 3.10）と `make setup-organization-baseline-ram-sharing-check` |
+| メンバーアカウントから共有の parameter が見えない | メンバーの root の plan が parameter の読み取りで落ちる | メンバーの root の最初の CI の plan |
 
 ## 公式実装の参照（[ADR-0206](../../docs/adr/0206-official-implementations-as-reference.md) 決定7・8）
 
@@ -120,10 +124,13 @@ unsupported:
 - break-glass の role に `AdministratorAccess` を `aws_iam_role_policy_attachment` で付け、排他の resource を併用して同じ ARN を載せる（AWS Provider v6.73.0、[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定21）
 - IAM.2（group で権限を与える）、IAM.7・IAM.15・IAM.16（password policy）（Security Hub の標準）
 - `aws-ia/iam-identity-center` を permission set と割当の形の参照先とする（Registry module）
+- 共有する parameter を advanced tier にし、AWS RAM で組織を宛先に共有する。共有の宛先は読み取りだけの既定の permission を受ける（Systems Manager User Guide「Working with shared parameters」、2026-11-27 参照）
 
 採用しなかった知見と理由:
 
 - `aws_service_access_principals` の一覧: 併用で互いに上書きする
+- `PutResourcePolicy` による parameter の共有: 標準の共有への昇格の手順が別に要り、AWS も RAM を勧める（Systems Manager User Guide「Working with shared parameters」）
+- 共有の permission の明示（`permission_arns`）: 既定の permission が読み取りだけで、名前の ARN を文書で確かめられなかった
 - allow-list の SCP: [organization-baseline/ADR-0101](docs/adr/0101-organizational-units-and-policies.md) 案B
 - Infrastructure・Suspended の OU（whitepaper）: 要るまで作らない
 - Identity Center と root の中央管理の委任、Infrastructure の OU（SRA）: [organization-baseline/ADR-0001](docs/adr/0001-governance-in-management-identity-root.md)、[organization-baseline/ADR-0101](docs/adr/0101-organizational-units-and-policies.md)

@@ -100,7 +100,7 @@ resource "aws_iam_policy" "governance" {
   name = local.governance_policy_name
   policy = jsonencode({
     Version   = "2012-10-17"
-    Statement = local.governance_manage_statements
+    Statement = concat(local.governance_manage_statements, local.account_ids_read_statements)
   })
 
   # 同じ apply で、apply-identity が CreatePolicy の権限を得てから作る（決定4 と同じ順序）。

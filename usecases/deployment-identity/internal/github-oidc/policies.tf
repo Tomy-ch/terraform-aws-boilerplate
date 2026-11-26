@@ -131,6 +131,10 @@ locals {
   org_account_arns = ["${local.org_arn_prefix}:account/o-*/*"]
   # メンバーアカウントのメールは、organization-baseline が管理アカウントの parameter から読む（organization-baseline/README.md）。
   member_account_emails_parameter_arn = "arn:${data.aws_partition.current.partition}:ssm:${local.regional_arn_suffix}:parameter/${trimsuffix(var.name_prefix, "-${var.env}")}/organization-baseline/member-account-emails"
+  # アカウントの ID の一覧は、organization-baseline が parameter に書き、RAM で組織へ共有する（repository-wide/ADR-0605）。
+  account_ids_parameter_arn = "arn:${data.aws_partition.current.partition}:ssm:${local.regional_arn_suffix}:parameter/${trimsuffix(var.name_prefix, "-${var.env}")}/organization-baseline/account-ids"
+  # 共有の ARN の末尾の ID は作るまで決まらない。
+  account_ids_share_arns = ["arn:${data.aws_partition.current.partition}:ram:${local.regional_arn_suffix}:resource-share/*"]
 
   break_glass_user_arns  = [for a in var.break_glass_arns : a if strcontains(a, ":user/")]
   break_glass_group_arns = [for a in var.break_glass_arns : a if strcontains(a, ":group/")]
@@ -480,6 +484,16 @@ locals {
     ],
   ) : s if local.management]
 
+  # アカウントの ID の一覧の parameter と共有の読み（repository-wide/ADR-0605）。plan の role は inline policy に、
+  # apply-identity の role は統制の policy に置く。apply-identity の role の inline policy は入力の境界で上限を超えるからである。
+  account_ids_read_statements = [for s in concat(
+    [for a in ["ram:GetResourceShareAssociations", "ram:GetResourceShares", "ssm:DescribeParameters"] : { Sid = replace(title(replace(a, ":", " ")), " ", ""), Effect = "Allow", Action = a, Resource = "*" }],
+    [
+      { Sid = "ReadAccountIdsParameter", Effect = "Allow", Action = ["ssm:GetParameter", "ssm:ListTagsForResource"], Resource = local.account_ids_parameter_arn },
+      { Sid = "ReadAccountIdsShare", Effect = "Allow", Action = "ram:ListResourceSharePermissions", Resource = local.account_ids_share_arns },
+    ],
+  ) : s if local.management]
+
   # 立ち上げの中のメンバーアカウントへの引き受け（repository-wide/ADR-0604 決定6、deployment-identity/ADR-0201 決定22）。
   bootstrap_account_ids = sort(distinct(values(var.bootstrap_member_account_ids)))
   bootstrap_assume_arns = {
@@ -566,6 +580,19 @@ locals {
         Action    = ["iam:AttachRolePolicy", "iam:DetachRolePolicy"]
         Resource  = local.break_glass_role_arns
         Condition = { ArnEquals = { "iam:PolicyARN" = local.administrator_access } }
+      },
+      # RAM の API を呼ぶ role には、共有する parameter の resource policy の読み書きが要る（Systems Manager User Guide「Working with shared parameters」）。
+      {
+        Sid      = "ManageAccountIdsParameter"
+        Effect   = "Allow"
+        Action   = ["ssm:AddTagsToResource", "ssm:DeleteParameter", "ssm:DeleteResourcePolicy", "ssm:GetResourcePolicies", "ssm:PutParameter", "ssm:PutResourcePolicy", "ssm:RemoveTagsFromResource"]
+        Resource = local.account_ids_parameter_arn
+      },
+      {
+        Sid      = "ManageAccountIdsShare"
+        Effect   = "Allow"
+        Action   = ["ram:AssociateResourceShare", "ram:CreateResourceShare", "ram:DeleteResourceShare", "ram:DisassociateResourceShare", "ram:TagResource", "ram:UntagResource", "ram:UpdateResourceShare"]
+        Resource = local.account_ids_share_arns
       },
     ],
   )
@@ -697,6 +724,7 @@ locals {
       ],
       local.identity_read_statements,
       local.governance_read_statements,
+      local.account_ids_read_statements,
       local.bootstrap_assume_statements.plan,
       local.baseline_region_deny.plan,
     )

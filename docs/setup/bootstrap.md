@@ -363,7 +363,7 @@ Billing and Cost Management コンソール →「Cost Explorer」→「Launch C
 
    失敗したら[トラブルシューティング](#段4-の-apply-が失敗した)へ。
 
-   この apply は、StackSet（`aws_cloudformation_stack_set`）の作成で止まる。組織への信頼アクセスは組織ができた後でないと有効にできず、それが無いと StackSet を作れないためである。組織と他の resource は作られ、StackSet は state に残らない。止まったら [organization-baseline 手順書](organization-baseline.md) の 3.5 で信頼アクセスを有効にし、[トラブルシューティング](#段4-の-apply-が失敗した)に従って手順4 からやり直す。
+   この apply は、StackSet（`aws_cloudformation_stack_set`）の作成と、アカウントの ID の一覧の組織への共有（`aws_ram_principal_association`）で止まる。組織への信頼アクセスと RAM の組織との共有は組織ができた後でないと有効にできず、それが無いと StackSet を作れず、組織を共有の宛先にできないためである。組織と他の resource は作られ、StackSet と共有の宛先は state に残らない。止まったら [organization-baseline 手順書](organization-baseline.md) の 3.5 で信頼アクセスを、3.10 で RAM の組織との共有を有効にし、[トラブルシューティング](#段4-の-apply-が失敗した)に従って手順4 からやり直す。
 
 8. 作られたものを確かめる。1行目は backend の設定の控えだけを消す（state は消えない）。`TF_LOCAL_MISSING_STATE_KEY` は付けない
 
@@ -603,6 +603,7 @@ credential_process = aws configure export-credentials --profile tabp-bootstrap -
 | `MalformedPolicyDocumentException` | commit を変えずに手順4 からやり直す |
 | `EntityAlreadyExists` | 手順3 に戻る |
 | StackSet の作成が、組織への信頼アクセスが無いことで失敗した | [organization-baseline 手順書](organization-baseline.md) の 3.5 を行い、commit を変えずに手順4 からやり直す |
+| 共有の宛先（`aws_ram_principal_association`）の作成が、RAM の組織との共有が無効なことで失敗した | [organization-baseline 手順書](organization-baseline.md) の 3.10 を行い、commit を変えずに手順4 からやり直す |
 | その他のエラー | 原因を直した commit を同じ Pull Request に足し、手順4 からやり直す。記録も取り直す |
 | やり直しの手順6 で `before-apply` が NG を返す（Bucket Policy・lifecycle・state の鍵の alias・組織・break-glass の user・group・role など） | `terraform state list` で、前の apply が作ったものとして state に在るかを見る。在れば手順4 の plan の差分で確かめたことにする。無ければ、誰がなぜ置いたかを確かめるまで止まる |
 

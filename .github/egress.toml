@@ -125,6 +125,7 @@ hosts = [
   "iam.amazonaws.com",
   "kms.ap-northeast-1.amazonaws.com",
   "organizations.us-east-1.amazonaws.com",
+  "ram.ap-northeast-1.amazonaws.com",
   "*.s3-control.ap-northeast-1.amazonaws.com",
   "ssm.ap-northeast-1.amazonaws.com",
 ]
@@ -172,6 +173,9 @@ hosts = ["organizations.us-east-1.amazonaws.com"]
 
 [type.aws_partition]
 hosts = []
+
+[type.aws_ram_]
+hosts = ["ram.ap-northeast-1.amazonaws.com"]
 
 [type.aws_region]
 hosts = []

@@ -35,3 +35,11 @@ module "bootstrap_access" {
   trusted_principal_arn = var.bootstrap_read_principal_arn
   organization_root_id  = module.organization.root_id
 }
+
+module "account_ids" {
+  source = "./internal/account-ids"
+
+  project          = var.project
+  account_ids      = module.organization.account_ids
+  organization_arn = module.organization.arn
+}

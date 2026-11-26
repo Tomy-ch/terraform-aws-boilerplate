@@ -55,6 +55,14 @@ setup-organization-baseline-service-access:
 setup-organization-baseline-service-access-check:
 	$(call SETUP_RUN,service-access-check,)
 
+.PHONY: setup-organization-baseline-ram-sharing ## 3.10: RAM の組織との共有を有効にする（PROFILE=<profile>）
+setup-organization-baseline-ram-sharing:
+	$(call SETUP_RUN,ram-sharing,)
+
+.PHONY: setup-organization-baseline-ram-sharing-check ## 3.10 の確認: RAM の組織との共有が有効で、その service-linked role が在る（PROFILE=<profile>）
+setup-organization-baseline-ram-sharing-check:
+	$(call SETUP_RUN,ram-sharing-check,)
+
 .PHONY: setup-organization-baseline-delegated-admin-check ## 3.9 の昇格の後: サービスの主体のそれぞれで、委任管理者が security のアカウントだけである（PROFILE=<profile>）
 setup-organization-baseline-delegated-admin-check:
 	$(call SETUP_RUN,delegated-admin-check,-usecase "$(SETUP_USECASE)")

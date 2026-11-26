@@ -58,6 +58,8 @@ func Test_entries(t *testing.T) {
 			"stack-instances-check":      nil,
 			"service-access":             {"organizations enable-aws-service-access"},
 			"service-access-check":       nil,
+			"ram-sharing":                {"ram enable-sharing-with-aws-organization"},
+			"ram-sharing-check":          nil,
 			"delegated-admin-check":      nil,
 			"organization-check":         nil,
 			"identity-center-check":      nil,
@@ -98,7 +100,7 @@ func Test_entries(t *testing.T) {
 			}
 		}
 
-		assert.Equal(t, 16, checks)
+		assert.Equal(t, 17, checks)
 	})
 
 	// 各入口を run から起動し、入口に固有の操作が起動されることで、entries の配線を固定する。
@@ -150,6 +152,15 @@ func Test_entries(t *testing.T) {
 		"service-access-check": {nil, func(t *testing.T) *fakeAWS {
 			return serviceWorld(t, principals(securityServicePrincipals...), "")
 		}, "", "organizations list-aws-service-access-for-organization"},
+		"ram-sharing": {nil, func(t *testing.T) *fakeAWS {
+			f := ramWorld(t, principals(), principals(ramPrincipal), false, true)
+			maps.Copy(f.responses, managementWorld("111111111111", "111111111111"))
+
+			return f
+		}, "tabp\n", enableRAM},
+		"ram-sharing-check": {nil, func(t *testing.T) *fakeAWS {
+			return ramWorld(t, principals(ramPrincipal), "", true, true)
+		}, "", getRAMRole},
 		"delegated-admin-check": {[]string{"-usecase", testUsecase}, func(t *testing.T) *fakeAWS {
 			return delegatedWorld(t, `{"Id":"222222222222","Name":"tabp-security","State":"ACTIVE"}`,
 				map[string]string{"cloudtrail.amazonaws.com": `{"Id":"222222222222"}`, "config.amazonaws.com": `{"Id":"222222222222"}`})
