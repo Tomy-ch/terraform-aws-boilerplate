@@ -56,6 +56,7 @@ CI の権限については循環の性質が異なる。backend さえあれば
    - root の資格情報の中央管理
    - break-glass の IAM user と role（ADR-0301 決定19）
    - IAM Identity Center の permission set とその割当
+   - メンバーアカウントを立ち上げる間の、`OrganizationAccountAccessRole` と立ち上げ用の読み取りの role の引き受けの許可と拒否（ADR-0604 決定6）
    - セキュリティのサービス（GuardDuty、CloudTrail、AWS Config、IAM Access Analyzer、Amazon Inspector、Security Hub）の委任管理者の指定と、その信頼アクセスの前提
 
    統制の構成物は bootstrap の構成物ではない。CI が Terraform を実行できるようになるまでに要らないからである。ただし管理アカウントの identity root は、統制の構成物も持つ（ADR-0604 決定3）。そのため、管理アカウントで初めて CI 実行基盤を用意するときの段4 の apply（決定9 の1つ目の契機）に限り、その root が宣言する統制の構成物も作る。回復の契機（決定9 の2つ目）の apply では、統制の構成物を変更しない。それ以外の統制の構成物の変更は、常に ADR-0601 の経路で行う。
@@ -124,7 +125,8 @@ CI の権限については循環の性質が異なる。backend さえあれば
 
 12. CI から AWS への認証を、OIDC による role の assume とする。長期のアクセスキーを CI の secret として保持しない。
 13. plan を行う role と apply を行う role を分ける。plan の role に変更系の権限を与えない。ただし、plan の
-    出力を置く Bucket への `s3:PutObject` だけは与える。この Bucket は state Bucket と分け、plan の role に
+    出力を置く Bucket への `s3:PutObject` だけは与える。立ち上げの中のメンバーアカウントの、変更系の権限を
+    持たない読み取りの role への `sts:AssumeRole` も与える（ADR-0604 決定6）。この Bucket は state Bucket と分け、plan の role に
     object の削除の権限を与えず、版管理を有効にする。plan の出力の全文は、公開されるログ・Pull Request の
     コメント・artifact に出さない。apply の出力の全文も同じ扱いとし、同じ Bucket の、plan の role が書けない
     key へ apply-identity の role が書く。apply-identity の role に、その Bucket の object の削除の権限を

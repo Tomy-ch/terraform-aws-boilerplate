@@ -592,7 +592,7 @@ func permissiveHandler(args []string) (awsResult, bool) {
 	case slices.Contains(args, "simulate-principal-policy"):
 		return simResult(simActions(args), "allowed"), true
 	case strings.Contains(joined, "list-attached-role-policies --role-name tabp-admin-ci-apply-identity "):
-		return okResult(`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-governance"}]}`), true
+		return okResult(`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-governance"},{"PolicyName":"tabp-admin-ci-apply-identity-members"}]}`), true
 	case strings.Contains(joined, "list-attached-role-policies --role-name tabp-admin-ci-apply "):
 		return okResult(`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-workload"},{"PolicyName":"tabp-admin-ci-apply-workload-2"},{"PolicyName":"tabp-admin-ci-apply-workload-read"}]}`), true
 	case strings.Contains(joined, "describe-key"):
@@ -733,10 +733,10 @@ func Test_checkVerify(t *testing.T) {
 		result string
 	}{
 		{verifyOptions{stage: "stage1"}, "# 結果: 4 件のうち NG 4 件"},
-		{verifyOptions{stage: "before-apply"}, "# 結果: 23 件のうち NG 23 件"},
+		{verifyOptions{stage: "before-apply"}, "# 結果: 25 件のうち NG 25 件"},
 		{verifyOptions{stage: "stage4"}, "# 結果: 25 件のうち NG 23 件"},
 		{verifyOptions{stage: "stage4", executor: "bob"}, "# 結果: 25 件のうち NG 24 件"},
-		{verifyOptions{stage: "permissions"}, "# 結果: 175 件のうち NG 97 件（確かめていない区分 1）"},
+		{verifyOptions{stage: "permissions"}, "# 結果: 189 件のうち NG 105 件（確かめていない区分 1）"},
 		{verifyOptions{stage: "stage5"}, "# 結果: 5 件のうち NG 4 件"},
 		{verifyOptions{stage: "output-policy", policySource: "live"}, "# 結果: 13 件のうち NG 7 件"},
 		{verifyOptions{stage: "output-policy", policySource: "reference", referenceDir: testReferenceDir}, "# 結果: 13 件のうち NG 7 件"},

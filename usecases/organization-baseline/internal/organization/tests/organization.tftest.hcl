@@ -16,11 +16,13 @@ mock_provider "aws" {
 }
 
 variables {
-  project                 = "tabp"
-  break_glass_role_name   = "tabp-break-glass"
-  break_glass_role_path   = "/break-glass/"
-  bootstrapping           = ["security", "log-archive"]
-  delegated_admin_regions = ["ap-northeast-1"]
+  project                  = "tabp"
+  break_glass_role_name    = "tabp-break-glass"
+  break_glass_role_path    = "/break-glass/"
+  bootstrap_read_role_name = "tabp-bootstrap-read"
+  bootstrap_read_role_path = "/bootstrap/"
+  bootstrapping            = ["security", "log-archive"]
+  delegated_admin_regions  = ["ap-northeast-1"]
 }
 
 override_resource {
@@ -164,6 +166,18 @@ run "policies" {
     error_message = "例外にした StackSet の実行の role の名前を、メンバーの主体が作ったり変えたりすることを拒んでください。"
   }
 
+  # 立ち上げの読み取りの role も StackSet の実行の role のほかには変えさせない（organization-baseline/ADR-0203）。
+  assert {
+    condition = jsondecode(aws_organizations_policy.this["protect-governance-roles"].content).Statement[2] == {
+      Sid       = "DenyBootstrapReadRoleChange"
+      Effect    = "Deny"
+      Action    = ["iam:Attach*", "iam:Create*", "iam:Delete*", "iam:Detach*", "iam:PassRole", "iam:Put*", "iam:Tag*", "iam:Untag*", "iam:Update*"]
+      Resource  = "arn:aws:iam::*:role/bootstrap/tabp-bootstrap-read"
+      Condition = { ArnNotLike = { "aws:PrincipalArn" = "arn:aws:iam::*:role/stacksets-exec-*" } }
+    }
+    error_message = "立ち上げの読み取りの role の変更を、StackSet の実行の role のほかに拒んでください。"
+  }
+
   assert {
     condition     = output.root_id == "r-exam"
     error_message = "root_id は組織の Root の ID です。"
@@ -208,7 +222,7 @@ run "policies" {
       Effect    = "Deny"
       Action    = "*"
       Resource  = "*"
-      Condition = { ArnLike = { "aws:PrincipalArn" = "arn:aws:iam::*:role/OrganizationAccountAccessRole" } }
+      Condition = { ArnLike = { "aws:PrincipalArn" = ["arn:aws:iam::*:role/OrganizationAccountAccessRole", "arn:aws:iam::*:role/bootstrap/tabp-bootstrap-read"] } }
     }]
     error_message = "立ち上げの role の拒否の文書が違います。"
   }

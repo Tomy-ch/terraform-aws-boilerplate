@@ -11,26 +11,30 @@ mock_provider "aws" {
 }
 
 variables {
-  project                 = "tabp"
-  env                     = "admin"
-  github                  = { owner = "octo-org", owner_id = "123456", repository = "octo-repo", repository_id = "456789" }
-  state_bucket_arn        = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an"
-  state_key_arn           = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
-  plan_output_bucket_arn  = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an"
-  apply_output_bucket_arn = "arn:aws:s3:::tabp-admin-tfapply-123456789012-ap-northeast-1-an"
-  break_glass_arns        = ["arn:aws:iam::123456789012:user/break-glass/break-glass-1", "arn:aws:iam::123456789012:user/break-glass/break-glass-2", "arn:aws:iam::123456789012:group/break-glass/break-glass", "arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
+  project                      = "tabp"
+  env                          = "admin"
+  github                       = { owner = "octo-org", owner_id = "123456", repository = "octo-repo", repository_id = "456789" }
+  state_bucket_arn             = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an"
+  state_key_arn                = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+  plan_output_bucket_arn       = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an"
+  apply_output_bucket_arn      = "arn:aws:s3:::tabp-admin-tfapply-123456789012-ap-northeast-1-an"
+  break_glass_arns             = ["arn:aws:iam::123456789012:user/break-glass/break-glass-1", "arn:aws:iam::123456789012:user/break-glass/break-glass-2", "arn:aws:iam::123456789012:group/break-glass/break-glass", "arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
+  bootstrap_read_role          = { name = "tabp-bootstrap-read", path = "/bootstrap/" }
+  bootstrap_member_account_ids = { dev = "111111111111" }
 }
 
 run "accepts_boundary_inputs" {
   command = plan
 
   variables {
-    project                 = "abcdefghijklmnopqrstuvwxyz0123456"
-    env                     = "log-archive"
-    github                  = { owner = "abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbc", owner_id = "1", repository = "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr", repository_id = "1" }
-    state_bucket_arn        = "arn:aws-cn:s3:::tabp-log-archive-tfstate-123456789012-cn-north-1-an"
-    plan_output_bucket_arn  = "arn:aws-cn:s3:::tabp-log-archive-tfplan-123456789012-cn-north-1-an"
-    apply_output_bucket_arn = "arn:aws-cn:s3:::tabp-log-archive-tfapply-123456789012-cn-north-1-an"
+    project                      = "abcdefghijklmnopqrstuvwxyz0123456"
+    env                          = "log-archive"
+    bootstrap_read_role          = null
+    bootstrap_member_account_ids = {}
+    github                       = { owner = "abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbc", owner_id = "1", repository = "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr", repository_id = "1" }
+    state_bucket_arn             = "arn:aws-cn:s3:::tabp-log-archive-tfstate-123456789012-cn-north-1-an"
+    plan_output_bucket_arn       = "arn:aws-cn:s3:::tabp-log-archive-tfplan-123456789012-cn-north-1-an"
+    apply_output_bucket_arn      = "arn:aws-cn:s3:::tabp-log-archive-tfapply-123456789012-cn-north-1-an"
   }
 
   assert {
@@ -43,7 +47,9 @@ run "accepts_dev" {
   command = plan
 
   variables {
-    env = "dev"
+    env                          = "dev"
+    bootstrap_read_role          = null
+    bootstrap_member_account_ids = {}
   }
 }
 
@@ -51,7 +57,9 @@ run "accepts_stg" {
   command = plan
 
   variables {
-    env = "stg"
+    env                          = "stg"
+    bootstrap_read_role          = null
+    bootstrap_member_account_ids = {}
   }
 }
 
@@ -59,7 +67,9 @@ run "accepts_prd" {
   command = plan
 
   variables {
-    env = "prd"
+    env                          = "prd"
+    bootstrap_read_role          = null
+    bootstrap_member_account_ids = {}
   }
 }
 
@@ -358,7 +368,9 @@ run "accepts_security" {
   command = plan
 
   variables {
-    env = "security"
+    env                          = "security"
+    bootstrap_read_role          = null
+    bootstrap_member_account_ids = {}
   }
 
   assert {
@@ -371,7 +383,9 @@ run "accepts_log_archive" {
   command = plan
 
   variables {
-    env = "log-archive"
+    env                          = "log-archive"
+    bootstrap_read_role          = null
+    bootstrap_member_account_ids = {}
   }
 
   assert {
@@ -384,7 +398,9 @@ run "accepts_sandbox" {
   command = plan
 
   variables {
-    env = "sandbox"
+    env                          = "sandbox"
+    bootstrap_read_role          = null
+    bootstrap_member_account_ids = {}
   }
 
   assert {
@@ -616,4 +632,162 @@ run "rejects_empty_key_arn" {
   }
 
   expect_failures = [var.state_key_arn]
+}
+
+run "accepts_bootstrap_read_role_at_limits" {
+  command = plan
+
+  variables {
+    bootstrap_read_role = { name = format("b%063d", 1), path = format("/%064d/", 2) }
+  }
+}
+
+run "rejects_bootstrap_read_role_name_with_underscore" {
+  command = plan
+
+  variables {
+    bootstrap_read_role = { name = "tabp_bootstrap_read", path = "/bootstrap/" }
+  }
+
+  expect_failures = [var.bootstrap_read_role]
+}
+
+run "rejects_bootstrap_read_role_name_over_64_chars" {
+  command = plan
+
+  variables {
+    bootstrap_read_role = { name = format("b%064d", 1), path = "/bootstrap/" }
+  }
+
+  expect_failures = [var.bootstrap_read_role]
+}
+
+run "rejects_bootstrap_read_role_nested_path" {
+  command = plan
+
+  variables {
+    bootstrap_read_role = { name = "tabp-bootstrap-read", path = "/bootstrap/read/" }
+  }
+
+  expect_failures = [var.bootstrap_read_role]
+}
+
+run "rejects_bootstrap_read_role_root_path" {
+  command = plan
+
+  variables {
+    bootstrap_read_role = { name = "tabp-bootstrap-read", path = "/" }
+  }
+
+  expect_failures = [var.bootstrap_read_role]
+}
+
+run "rejects_bootstrap_account_id_11_digits" {
+  command = plan
+
+  variables {
+    bootstrap_member_account_ids = { dev = "11111111111" }
+  }
+
+  expect_failures = [var.bootstrap_member_account_ids]
+}
+
+run "rejects_bootstrap_account_for_admin" {
+  command = plan
+
+  variables {
+    bootstrap_member_account_ids = { admin = "111111111111" }
+  }
+
+  expect_failures = [var.bootstrap_member_account_ids]
+}
+
+run "rejects_bootstrap_read_role_name_leading_digit" {
+  command = plan
+
+  variables {
+    bootstrap_read_role = { name = "1tabp-bootstrap-read", path = "/bootstrap/" }
+  }
+
+  expect_failures = [var.bootstrap_read_role]
+}
+
+run "rejects_bootstrap_read_role_path_over_64_chars" {
+  command = plan
+
+  variables {
+    bootstrap_read_role = { name = "tabp-bootstrap-read", path = format("/%065d/", 1) }
+  }
+
+  expect_failures = [var.bootstrap_read_role]
+}
+
+run "rejects_bootstrap_read_role_path_without_trailing_slash" {
+  command = plan
+
+  variables {
+    bootstrap_read_role = { name = "tabp-bootstrap-read", path = "/bootstrap" }
+  }
+
+  expect_failures = [var.bootstrap_read_role]
+}
+
+run "rejects_bootstrap_account_id_13_digits" {
+  command = plan
+
+  variables {
+    bootstrap_member_account_ids = { dev = "1111111111111" }
+  }
+
+  expect_failures = [var.bootstrap_member_account_ids]
+}
+
+run "rejects_bootstrap_account_id_non_digit" {
+  command = plan
+
+  variables {
+    bootstrap_member_account_ids = { dev = "11111111111a" }
+  }
+
+  expect_failures = [var.bootstrap_member_account_ids]
+}
+
+run "rejects_bootstrap_account_unknown_env" {
+  command = plan
+
+  variables {
+    bootstrap_member_account_ids = { prod = "111111111111" }
+  }
+
+  expect_failures = [var.bootstrap_member_account_ids]
+}
+
+run "rejects_bootstrap_read_role_path_with_wildcard" {
+  command = plan
+
+  variables {
+    bootstrap_read_role = { name = "tabp-bootstrap-read", path = "/boot*/" }
+  }
+
+  expect_failures = [var.bootstrap_read_role]
+}
+
+run "rejects_bootstrap_read_role_path_without_leading_slash" {
+  command = plan
+
+  variables {
+    bootstrap_read_role = { name = "tabp-bootstrap-read", path = "bootstrap/" }
+  }
+
+  expect_failures = [var.bootstrap_read_role]
+}
+
+run "rejects_empty_bootstrap_read_role_name" {
+  command = plan
+
+  variables {
+    bootstrap_read_role = { name = "", path = "/bootstrap/" }
+  }
+
+  expect_failures = [var.bootstrap_read_role]
 }

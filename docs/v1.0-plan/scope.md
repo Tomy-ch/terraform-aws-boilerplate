@@ -272,7 +272,7 @@ AWSサービスへの到達はVPC Endpointを使い、NATを要しない（第9.
 | Network | `dns-zone` | 環境ごとのサブドメインのRoute53 Hosted Zone。prdは親のzoneとdev / stgへの委任を持つ。zoneの置換をplanで止める。レコードは、それが指す先を持つusecaseが書く。公開DNSのクエリログとDNSSECの署名を持ち、Log Group・鍵・alarmはus-east-1に置く。常駐層（#94） |
 | Security | `organization-baseline` | AWS Organizations、SCP、IAM Identity Center（人間のSSOログイン）。第10.1節のアカウント構成を構築する |
 | Security | `account-baseline` | アカウント単位の安全側の設定。S3 Public Access Block、EBS既定暗号化、VPC Block Public Access、EMRのblock public access、SSM documentの公開共有のブロックとAutomationのログ、IAM Access Analyzer（外部アクセス）、AWS Configの記録、セキュリティの代替連絡先、メンバーのpassword policy。全アカウントのworkload rootから呼ぶ |
-| Security | `security-tooling` | 委任管理者（securityのアカウント）で持つ組織の検知。組織のCloudTrail、GuardDuty、Configの集約、Access Analyzer（組織）、Inspector、Security Hub、検知の通知（#473） |
+| Security | `security-tooling` | 委任管理者（securityのアカウント）で持つ組織の検知。組織のCloudTrail（CloudWatch Logsへの配送を含む）、GuardDuty、Configの集約、Access Analyzer（組織）、Inspector、Security Hub、検知の通知（#473）。break-glassのサインインとroleの引き受け、rootの使用、`sts:AssumeRoot`の通知は、組織のtrailのLog Groupのmetric filterとalarmで、securityのアカウントの`ops-notification`のTopicへ送る（ADR-0301 決定19、#610） |
 | Security | `audit-evidence` | 監査証跡（CloudTrail等）の改ざん防止保管。S3 Object Lock、長期保持、アクセス記録 |
 | Access | `operator-access` | SSM Session Managerのポートフォワーディング、ECS Exec。インバウンドを開けずに人間がprivate資源へ到達 |
 | Data | `data-refresh` | 本番（prd）→stgへの一方向のデータ同期。DBはBE提供のマスキングJobを必須とし、公開画像はコピー、非公開画像は同期しない（第9.6節）。既定は無効 |
@@ -410,7 +410,7 @@ AWS Backup、Glue Catalogは独立したusecaseにせず、関係するusecase�
 
 **アラート:** AWS基盤系（ECS Task停止、SQS DLQ、Schedulerの起動失敗）のアラームは、モードに関係なくtabpがCloudWatchとEventBridgeで持つ。通知先のTopicは各アカウントの`ops-notification`が、providerのregionとus-east-1に1つずつ持ち、送れるのは同じアカウントのCloudWatch・EventBridge・Budgets・Cost Anomaly Detection（us-east-1のTopicはCloudWatchだけ）とする（越境しない。#97。us-east-1のTopicは、us-east-1にしか出ないmetricのalarmの通知先である。#421）。基盤系のアラームは平常時に1通も来ないため、すべてのアカウントでEventBridge Schedulerから自アカウントの2つのTopicへ毎日1回ずつ心拍を送り、来なくなったことに人が気づく形で通知経路の死活を見る。アプリ系のアラートの経路（Grafana Alerting）の死活はobp側が持つ。
 
-**アラームの置き場:** 通知のためのCloudWatchのmetric alarmは、そのmetricを出すresourceを持つmodule（一般moduleか、usecaseの`internal/`）が持つ。alarmだけを集めた一般moduleは設けない。alarmが鳴るかはmetricを出す側の仕様（報告される条件、inactiveでの送信の停止、前提の機能の有効化）で決まるので、その知識をresourceと同じmoduleに置く。dimensionはresourceへの参照で渡すので、存在しないresourceを指すdimensionはplanで失敗する。scalingなど、Topic以外へactionを送るalarmはこの節の対象外とする。
+**アラームの置き場:** 通知のためのCloudWatchのmetric alarmは、そのmetricを出すresourceを持つmodule（一般moduleか、usecaseの`internal/`）が持つ。alarmだけを集めた一般moduleは設けない。alarmが鳴るかはmetricを出す側の仕様（報告される条件、inactiveでの送信の停止、前提の機能の有効化）で決まるので、その知識をresourceと同じmoduleに置く。dimensionはresourceへの参照で渡すので、存在しないresourceを指すdimensionはplanで失敗する。scalingなど、Topic以外へactionを送るalarmはこの節の対象外とする。CloudWatch Logsのmetric filterが出すmetricは、そのfilterを持つmoduleが出すmetricとして扱い、filterとalarmをLog Groupと同じmoduleに置く。
 
 - alarmを持つmoduleは、同じアカウントの通知先のTopicのARNを入力で受ける。`alarm_actions`・`ok_actions`・`insufficient_data_actions`のすべてにそのTopicだけを入れ、`actions_enabled`と`treat_missing_data`を明示する。
 - `treat_missing_data`の値はmetricごとにそのmoduleが決め、Unit Testで固定する。途絶が異常なmetricは`breaching`か`missing`にして、途絶を通知に変える。途絶が平常なmetric（異常のときだけ出るmetric、inactiveで送信が止まるqueue）は`notBreaching`か`ignore`にし、途絶を検知しない。`AWS/DynamoDB`のmetricは、何を指定しても`ignore`として扱われる。

@@ -172,5 +172,5 @@ KICS の e592a0c5（IAM Access Analyzer）は、analyzer を宣言しない `int
 
 ## 版
 
-- AWS Provider は `>= 6.68.0, < 7.0.0`。reference の lock は 6.73.0。引数名は 6.70.0 の schema で確かめた
+- AWS Provider は `>= 6.68.0, < 7.0.0`。reference の lock の版は `providers/` の正本が持つ。引数名は 6.70.0 の schema で確かめた
 - Terraform は `>= 1.7.0, < 2.0.0`

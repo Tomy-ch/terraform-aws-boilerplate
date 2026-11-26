@@ -15,14 +15,16 @@ mock_provider "aws" {
 }
 
 variables {
-  name_prefix             = "tabp-admin"
-  env                     = "admin"
-  github                  = { owner = "octo-org", owner_id = "123456", repository = "octo-repo", repository_id = "456789" }
-  state_bucket_arn        = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an"
-  state_key_arn           = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
-  plan_output_bucket_arn  = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an"
-  apply_output_bucket_arn = "arn:aws:s3:::tabp-admin-tfapply-123456789012-ap-northeast-1-an"
-  break_glass_arns        = ["arn:aws:iam::123456789012:user/break-glass/break-glass-1", "arn:aws:iam::123456789012:user/break-glass/break-glass-2", "arn:aws:iam::123456789012:group/break-glass/break-glass", "arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
+  name_prefix                  = "tabp-admin"
+  env                          = "admin"
+  github                       = { owner = "octo-org", owner_id = "123456", repository = "octo-repo", repository_id = "456789" }
+  state_bucket_arn             = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an"
+  state_key_arn                = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+  plan_output_bucket_arn       = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an"
+  apply_output_bucket_arn      = "arn:aws:s3:::tabp-admin-tfapply-123456789012-ap-northeast-1-an"
+  break_glass_arns             = ["arn:aws:iam::123456789012:user/break-glass/break-glass-1", "arn:aws:iam::123456789012:user/break-glass/break-glass-2", "arn:aws:iam::123456789012:group/break-glass/break-glass", "arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
+  bootstrap_read_role          = { name = "tabp-bootstrap-read", path = "/bootstrap/" }
+  bootstrap_member_account_ids = { dev = "111111111111" }
   # policy_length の境界が選ぶ partition と region の候補。provider が partition を解決する一覧（aws-sdk-go-base の
   # endpoints）の写しである。module は宣言しない。上流とのずれは `make partitions-drift` が報告する。
   aws_partitions = {
@@ -50,7 +52,7 @@ run "policies" {
 
   variables {
     # Service Authorization Reference「Actions, resources, and condition keys for AWS IAM Identity Center」で Access level が
-    # Read か List の Action（2026-11-24 の写し）。決定5 の sso: の wildcard がどれにも当たらないことを確かめる。
+    # Read か List の Action の写し。決定5 の sso: の wildcard がどれにも当たらないことを確かめる。
     sso_read_actions = [
       "sso:DescribeAccountAssignmentCreationStatus",
       "sso:DescribeAccountAssignmentDeletionStatus",
@@ -132,6 +134,10 @@ run "policies" {
   override_resource {
     target = aws_iam_policy.governance_2[0]
     values = { arn = "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance-2" }
+  }
+  override_resource {
+    target = aws_iam_policy.members[0]
+    values = { arn = "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-members" }
   }
   override_resource {
     target = aws_iam_policy.manage
@@ -304,7 +310,7 @@ run "policies" {
         Resource = ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
       },
       {
-        Sid    = "ReadBreakGlassStackSet"
+        Sid    = "ReadMemberRoleStackSets"
         Effect = "Allow"
         Action = [
           "cloudformation:DescribeStackInstance",
@@ -313,7 +319,16 @@ run "policies" {
           "cloudformation:ListStackInstances",
           "cloudformation:ListStackSetOperationResults",
         ]
-        Resource = ["arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-break-glass:*"]
+        Resource = [
+          "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-break-glass:*",
+          "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-bootstrap-read:*",
+        ]
+      },
+      {
+        Sid      = "AssumeBootstrapReadRoles"
+        Effect   = "Allow"
+        Action   = "sts:AssumeRole"
+        Resource = ["arn:aws:iam::111111111111:role/bootstrap/tabp-bootstrap-read"]
       },
       { Sid = "OrganizationsListDelegatedAdministrators", Effect = "Allow", Action = "organizations:ListDelegatedAdministrators", Resource = "*" },
       {
@@ -739,7 +754,7 @@ run "policies" {
         Resource = ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
       },
       {
-        Sid    = "ReadBreakGlassStackSet"
+        Sid    = "ReadMemberRoleStackSets"
         Effect = "Allow"
         Action = [
           "cloudformation:DescribeStackInstance",
@@ -748,7 +763,10 @@ run "policies" {
           "cloudformation:ListStackInstances",
           "cloudformation:ListStackSetOperationResults",
         ]
-        Resource = ["arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-break-glass:*"]
+        Resource = [
+          "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-break-glass:*",
+          "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-bootstrap-read:*",
+        ]
       },
       {
         Sid    = "ManageCiPolicies"
@@ -764,6 +782,7 @@ run "policies" {
           "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-manage",
           "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance",
           "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance-2",
+          "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-members",
           "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload",
           "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read",
           "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-2",
@@ -790,7 +809,7 @@ run "policies" {
         Action   = "iam:AttachRolePolicy"
         Resource = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
         Condition = {
-          ArnEquals = { "iam:PolicyARN" = ["arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-manage", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance-2"] }
+          ArnEquals = { "iam:PolicyARN" = ["arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-manage", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance-2", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-members"] }
         }
       },
       {
@@ -942,7 +961,7 @@ run "policies" {
       ]) == jsonencode([
       [aws_iam_role.this["plan"].name, ["arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read"]],
       [aws_iam_role.this["apply"].name, ["arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-2", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read"]],
-      [aws_iam_role.apply_identity.name, ["arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance-2", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-manage"]],
+      [aws_iam_role.apply_identity.name, ["arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance-2", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-manage", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-members"]],
       [aws_iam_role.this["unlock"].name, []],
       [aws_iam_role.this["unlock_identity"].name, []],
     ])
@@ -958,6 +977,7 @@ run "policies" {
       [aws_iam_role_policy_attachment.manage.role, aws_iam_role_policy_attachment.manage.policy_arn],
       [aws_iam_role_policy_attachment.governance[0].role, aws_iam_role_policy_attachment.governance[0].policy_arn],
       [aws_iam_role_policy_attachment.governance_2[0].role, aws_iam_role_policy_attachment.governance_2[0].policy_arn],
+      [aws_iam_role_policy_attachment.members[0].role, aws_iam_role_policy_attachment.members[0].policy_arn],
       ]) == jsonencode([
       [aws_iam_role.this["apply"].name, "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload"],
       [aws_iam_role.this["apply"].name, "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read"],
@@ -966,6 +986,7 @@ run "policies" {
       [aws_iam_role.apply_identity.name, "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-manage"],
       [aws_iam_role.apply_identity.name, "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance"],
       [aws_iam_role.apply_identity.name, "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance-2"],
+      [aws_iam_role.apply_identity.name, "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-members"],
     ])
     error_message = "workload の3つの policy と plan の role の読み取りの policy と manage と統制の policy を付けるのが、それぞれの role への attachment になっていません。"
   }
@@ -1388,6 +1409,11 @@ run "policies" {
   }
 
   assert {
+    condition     = aws_iam_policy.members[0].name == "tabp-admin-ci-apply-identity-members"
+    error_message = "メンバーの role の StackSet と立ち上げの引き受けの customer managed policy の名前が <name_prefix>-ci-apply-identity-members になっていません。"
+  }
+
+  assert {
     condition = jsondecode(aws_iam_policy.governance[0].policy).Statement == [
       { Sid = "IamDeleteAccountPasswordPolicy", Effect = "Allow", Action = "iam:DeleteAccountPasswordPolicy", Resource = "*" },
       {
@@ -1407,13 +1433,6 @@ run "policies" {
       { Sid = "IamUpdateAccountPasswordPolicy", Effect = "Allow", Action = "iam:UpdateAccountPasswordPolicy", Resource = "*" },
       { Sid = "OrganizationsCreateAccount", Effect = "Allow", Action = "organizations:CreateAccount", Resource = "*" },
       { Sid = "OrganizationsCreateOrganization", Effect = "Allow", Action = "organizations:CreateOrganization", Resource = "*" },
-      {
-        Sid       = "CloudformationCreateStackSet"
-        Effect    = "Allow"
-        Action    = "cloudformation:CreateStackSet"
-        Resource  = "*"
-        Condition = { Null = { "aws:TagKeys" = "true" } }
-      },
       {
         Sid       = "OrganizationsDisableAWSServiceAccess"
         Effect    = "Allow"
@@ -1520,27 +1539,44 @@ run "policies" {
         Resource  = ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
         Condition = { ArnEquals = { "iam:PolicyARN" = "arn:aws:iam::aws:policy/AdministratorAccess" } }
       },
+    ]
+    error_message = "統制の customer managed policy の文書が、統制の構成物の作成と設定だけになっていません。"
+  }
+
+  assert {
+    condition = jsondecode(aws_iam_policy.members[0].policy).Statement == [
       {
-        Sid    = "UpdateBreakGlassStackSet"
+        Sid       = "CloudformationCreateStackSet"
+        Effect    = "Allow"
+        Action    = "cloudformation:CreateStackSet"
+        Resource  = "*"
+        Condition = { Null = { "aws:TagKeys" = "true" } }
+      },
+      {
+        Sid    = "UpdateMemberRoleStackSets"
         Effect = "Allow"
         Action = "cloudformation:UpdateStackSet"
         Resource = [
           "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-break-glass:*",
+          "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-bootstrap-read:*",
           "arn:aws:cloudformation::123456789012:stackset-target/tabp-break-glass:*",
+          "arn:aws:cloudformation::123456789012:stackset-target/tabp-bootstrap-read:*",
           "arn:aws:cloudformation:*:*:type/resource/AWS-IAM-Role",
         ]
       },
       {
-        Sid    = "ManageBreakGlassStackInstances"
+        Sid    = "ManageMemberRoleStackInstances"
         Effect = "Allow"
         Action = ["cloudformation:CreateStackInstances", "cloudformation:UpdateStackInstances"]
         Resource = [
           "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-break-glass:*",
+          "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-bootstrap-read:*",
           "arn:aws:cloudformation::123456789012:stackset-target/tabp-break-glass:*",
+          "arn:aws:cloudformation::123456789012:stackset-target/tabp-bootstrap-read:*",
         ]
       },
       {
-        Sid      = "LimitBreakGlassStackInstanceRegions"
+        Sid      = "LimitMemberRoleStackInstanceRegions"
         Effect   = "Allow"
         Action   = ["cloudformation:CreateStackInstances", "cloudformation:UpdateStackInstances"]
         Resource = ["arn:aws:cloudformation:*:*:type/resource/AWS-IAM-Role"]
@@ -1549,8 +1585,14 @@ run "policies" {
           Null                        = { "cloudformation:TargetRegion" = "false" }
         }
       },
+      {
+        Sid      = "AssumeBootstrapAccessRoles"
+        Effect   = "Allow"
+        Action   = "sts:AssumeRole"
+        Resource = ["arn:aws:iam::111111111111:role/OrganizationAccountAccessRole"]
+      },
     ]
-    error_message = "統制の customer managed policy の文書が、統制の構成物の作成と設定だけになっていません。"
+    error_message = "メンバーの role の StackSet と立ち上げの引き受けの customer managed policy の文書が、StackSet の作成と更新、stack instance の操作、立ち上げの中のメンバーの OrganizationAccountAccessRole の引き受けだけになっていません。"
   }
 
   # deployment-identity/ADR-0201 決定20 と「与えないもの」。
@@ -1708,9 +1750,11 @@ run "accepts_break_glass_role_name_with_underscore_outside_admin" {
   command = plan
 
   variables {
-    env              = "dev"
-    name_prefix      = "tabp-dev"
-    break_glass_arns = ["arn:aws:iam::123456789012:role/break-glass/tabp_break_glass"]
+    env                          = "dev"
+    bootstrap_read_role          = null
+    bootstrap_member_account_ids = {}
+    name_prefix                  = "tabp-dev"
+    break_glass_arns             = ["arn:aws:iam::123456789012:role/break-glass/tabp_break_glass"]
   }
 }
 
@@ -1736,12 +1780,15 @@ run "policy_length" {
   state_key = "policy_length"
 
   variables {
-    env                     = "admin"
-    name_prefix             = "abcdefghijklmnopqrstuvwxyz0123456-log-archive"
-    state_bucket_arn        = format("arn:aws-us-gov:s3:::%063d", 1)
-    state_key_arn           = "arn:aws-us-gov:kms:us-isof-south-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
-    plan_output_bucket_arn  = format("arn:aws-us-gov:s3:::%063d", 2)
-    apply_output_bucket_arn = format("arn:aws-us-gov:s3:::%063d", 3)
+    env                 = "admin"
+    name_prefix         = "abcdefghijklmnopqrstuvwxyz0123456-log-archive"
+    bootstrap_read_role = { name = format("b%063d", 5), path = format("/%064d/", 6) }
+    # 引き受けの Resource はアカウントごとなので、6つの env に別の ID を置く。
+    bootstrap_member_account_ids = { for i, e in ["dev", "stg", "prd", "sandbox", "security", "log-archive"] : e => format("%012d", i + 1) }
+    state_bucket_arn             = format("arn:aws-us-gov:s3:::%063d", 1)
+    state_key_arn                = "arn:aws-us-gov:kms:us-isof-south-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+    plan_output_bucket_arn       = format("arn:aws-us-gov:s3:::%063d", 2)
+    apply_output_bucket_arn      = format("arn:aws-us-gov:s3:::%063d", 3)
     break_glass_arns = [
       format("arn:aws-us-gov:iam::123456789012:user/break-glass/%064d", 1),
       format("arn:aws-us-gov:iam::123456789012:group/break-glass/%0128d", 2),
@@ -1807,7 +1854,16 @@ run "policy_length" {
 
   assert {
     condition = (
-      strcontains(aws_iam_policy.governance[0].policy, format("stackset-target/r%063d:*", 4)) &&
+      length(var.bootstrap_member_account_ids) == 6 && length(var.bootstrap_read_role.name) == 64 && length(var.bootstrap_read_role.path) == 66 &&
+      length(one([for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Resource if s.Sid == "AssumeBootstrapReadRoles"])) == 6 &&
+      length(one([for s in jsondecode(aws_iam_policy.members[0].policy).Statement : s.Resource if s.Sid == "AssumeBootstrapAccessRoles"])) == 6
+    )
+    error_message = "境界の入力の立ち上げが、6つのメンバーの env の別々のアカウントと、上限の長さの読み取りの role の名前と path になっていないか、引き受けの Resource が6つではありません。"
+  }
+
+  assert {
+    condition = (
+      strcontains(aws_iam_policy.members[0].policy, format("stackset-target/r%063d:*", 4)) &&
       strcontains(aws_iam_role_policy.apply_identity.policy, format("stackset/r%063d:*", 4))
     )
     error_message = "長さを測る文書に、break-glass の StackSet の文が入っていません。"
@@ -1849,13 +1905,13 @@ run "policy_length" {
   }
 
   assert {
-    condition     = length(aws_iam_policy.governance) == 1
-    error_message = "admin の統制の customer managed policy の数が1つではありません。測る policy を見直してください。"
+    condition     = length(aws_iam_policy.governance) == 1 && length(aws_iam_policy.members) == 1
+    error_message = "admin の統制とメンバーの role の customer managed policy の数が、それぞれ1つではありません。測る policy を見直してください。"
   }
 
   assert {
-    condition     = alltrue([for p in aws_iam_policy.governance : length(p.policy) <= 6144])
-    error_message = "統制の customer managed policy が 6,144 文字を超えています。"
+    condition     = alltrue([for p in concat(aws_iam_policy.governance, aws_iam_policy.members) : length(p.policy) <= 6144])
+    error_message = "統制かメンバーの role の customer managed policy が 6,144 文字を超えています。"
   }
 
   assert {
@@ -1863,6 +1919,7 @@ run "policy_length" {
       for m in [{
         governance    = aws_iam_policy.governance
         governance_2  = aws_iam_policy.governance_2
+        members       = aws_iam_policy.members
         manage        = [aws_iam_policy.manage]
         workload      = [aws_iam_policy.workload]
         workload_read = [aws_iam_policy.workload_read]
@@ -1883,13 +1940,15 @@ run "policy_length_outside_admin" {
   state_key = "policy_length_outside_admin"
 
   variables {
-    env                     = "log-archive"
-    name_prefix             = "abcdefghijklmnopqrstuvwxyz0123456-log-archive"
-    state_bucket_arn        = format("arn:aws-us-gov:s3:::%063d", 1)
-    state_key_arn           = "arn:aws-us-gov:kms:us-isof-south-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
-    plan_output_bucket_arn  = format("arn:aws-us-gov:s3:::%063d", 2)
-    apply_output_bucket_arn = format("arn:aws-us-gov:s3:::%063d", 3)
-    break_glass_arns        = [for i in range(4) : format("arn:aws-us-gov:iam::123456789012:group/break-glass/%0128d", i)]
+    env                          = "log-archive"
+    bootstrap_read_role          = null
+    bootstrap_member_account_ids = {}
+    name_prefix                  = "abcdefghijklmnopqrstuvwxyz0123456-log-archive"
+    state_bucket_arn             = format("arn:aws-us-gov:s3:::%063d", 1)
+    state_key_arn                = "arn:aws-us-gov:kms:us-isof-south-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+    plan_output_bucket_arn       = format("arn:aws-us-gov:s3:::%063d", 2)
+    apply_output_bucket_arn      = format("arn:aws-us-gov:s3:::%063d", 3)
+    break_glass_arns             = [for i in range(4) : format("arn:aws-us-gov:iam::123456789012:group/break-glass/%0128d", i)]
   }
 
   override_data {
@@ -1985,6 +2044,7 @@ run "policy_length_outside_admin" {
       for m in [{
         governance    = aws_iam_policy.governance
         governance_2  = aws_iam_policy.governance_2
+        members       = aws_iam_policy.members
         manage        = [aws_iam_policy.manage]
         workload      = [aws_iam_policy.workload]
         workload_read = [aws_iam_policy.workload_read]
@@ -2006,12 +2066,15 @@ run "policy_length_aws" {
   state_key = "policy_length_aws"
 
   variables {
-    env                     = "admin"
-    name_prefix             = "abcdefghijklmnopqrstuvwxyz0123456-log-archive"
-    state_bucket_arn        = format("arn:aws:s3:::%063d", 1)
-    state_key_arn           = "arn:aws:kms:ap-southeast-5:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
-    plan_output_bucket_arn  = format("arn:aws:s3:::%063d", 2)
-    apply_output_bucket_arn = format("arn:aws:s3:::%063d", 3)
+    env                 = "admin"
+    name_prefix         = "abcdefghijklmnopqrstuvwxyz0123456-log-archive"
+    bootstrap_read_role = { name = format("b%063d", 5), path = format("/%064d/", 6) }
+    # 引き受けの Resource はアカウントごとなので、6つの env に別の ID を置く。
+    bootstrap_member_account_ids = { for i, e in ["dev", "stg", "prd", "sandbox", "security", "log-archive"] : e => format("%012d", i + 1) }
+    state_bucket_arn             = format("arn:aws:s3:::%063d", 1)
+    state_key_arn                = "arn:aws:kms:ap-southeast-5:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+    plan_output_bucket_arn       = format("arn:aws:s3:::%063d", 2)
+    apply_output_bucket_arn      = format("arn:aws:s3:::%063d", 3)
     break_glass_arns = [
       format("arn:aws:iam::123456789012:user/break-glass/%064d", 1),
       format("arn:aws:iam::123456789012:group/break-glass/%0128d", 2),
@@ -2076,7 +2139,16 @@ run "policy_length_aws" {
 
   assert {
     condition = (
-      strcontains(aws_iam_policy.governance[0].policy, format("stackset-target/r%063d:*", 4)) &&
+      length(var.bootstrap_member_account_ids) == 6 && length(var.bootstrap_read_role.name) == 64 && length(var.bootstrap_read_role.path) == 66 &&
+      length(one([for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Resource if s.Sid == "AssumeBootstrapReadRoles"])) == 6 &&
+      length(one([for s in jsondecode(aws_iam_policy.members[0].policy).Statement : s.Resource if s.Sid == "AssumeBootstrapAccessRoles"])) == 6
+    )
+    error_message = "境界の入力の立ち上げが、6つのメンバーの env の別々のアカウントと、上限の長さの読み取りの role の名前と path になっていないか、引き受けの Resource が6つではありません。"
+  }
+
+  assert {
+    condition = (
+      strcontains(aws_iam_policy.members[0].policy, format("stackset-target/r%063d:*", 4)) &&
       strcontains(aws_iam_role_policy.apply_identity.policy, format("stackset/r%063d:*", 4))
     )
     error_message = "長さを測る文書に、break-glass の StackSet の文が入っていません。"
@@ -2118,13 +2190,13 @@ run "policy_length_aws" {
   }
 
   assert {
-    condition     = length(aws_iam_policy.governance) == 1
-    error_message = "admin の統制の customer managed policy の数が1つではありません。測る policy を見直してください。"
+    condition     = length(aws_iam_policy.governance) == 1 && length(aws_iam_policy.members) == 1
+    error_message = "admin の統制とメンバーの role の customer managed policy の数が、それぞれ1つではありません。測る policy を見直してください。"
   }
 
   assert {
-    condition     = alltrue([for p in aws_iam_policy.governance : length(p.policy) <= 6144])
-    error_message = "統制の customer managed policy が 6,144 文字を超えています。"
+    condition     = alltrue([for p in concat(aws_iam_policy.governance, aws_iam_policy.members) : length(p.policy) <= 6144])
+    error_message = "統制かメンバーの role の customer managed policy が 6,144 文字を超えています。"
   }
 
   assert {
@@ -2154,6 +2226,7 @@ run "policy_length_aws" {
       for m in [{
         governance    = aws_iam_policy.governance
         governance_2  = aws_iam_policy.governance_2
+        members       = aws_iam_policy.members
         manage        = [aws_iam_policy.manage]
         workload      = [aws_iam_policy.workload]
         workload_read = [aws_iam_policy.workload_read]
@@ -2184,13 +2257,15 @@ run "policy_length_outside_admin_aws" {
   state_key = "policy_length_outside_admin_aws"
 
   variables {
-    env                     = "log-archive"
-    name_prefix             = "abcdefghijklmnopqrstuvwxyz0123456-log-archive"
-    state_bucket_arn        = format("arn:aws:s3:::%063d", 1)
-    state_key_arn           = "arn:aws:kms:ap-southeast-5:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
-    plan_output_bucket_arn  = format("arn:aws:s3:::%063d", 2)
-    apply_output_bucket_arn = format("arn:aws:s3:::%063d", 3)
-    break_glass_arns        = [for i in range(4) : format("arn:aws:iam::123456789012:group/break-glass/%0128d", i)]
+    env                          = "log-archive"
+    bootstrap_read_role          = null
+    bootstrap_member_account_ids = {}
+    name_prefix                  = "abcdefghijklmnopqrstuvwxyz0123456-log-archive"
+    state_bucket_arn             = format("arn:aws:s3:::%063d", 1)
+    state_key_arn                = "arn:aws:kms:ap-southeast-5:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+    plan_output_bucket_arn       = format("arn:aws:s3:::%063d", 2)
+    apply_output_bucket_arn      = format("arn:aws:s3:::%063d", 3)
+    break_glass_arns             = [for i in range(4) : format("arn:aws:iam::123456789012:group/break-glass/%0128d", i)]
   }
 
   override_data {
@@ -2299,6 +2374,7 @@ run "policy_length_outside_admin_aws" {
       for m in [{
         governance    = aws_iam_policy.governance
         governance_2  = aws_iam_policy.governance_2
+        members       = aws_iam_policy.members
         manage        = [aws_iam_policy.manage]
         workload      = [aws_iam_policy.workload]
         workload_read = [aws_iam_policy.workload_read]
@@ -2377,13 +2453,14 @@ run "role_arns_follow_data_sources" {
         "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-identity-manage",
         "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-identity-governance",
         "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-identity-governance-2",
+        "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-identity-members",
         "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-workload",
         "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-workload-read",
         "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-workload-2",
         "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-boundary-ops-notification",
       ],
     ]
-    error_message = "apply-identity の role の CI の policy の読み取りが name_prefix の CI の policy の pattern に、管理が apply-identity の role の2つの policy・apply の role の workload の policy・boundary の、partition・アカウント・name_prefix から組んだ ARN になっていません。"
+    error_message = "apply-identity の role の CI の policy の読み取りが name_prefix の CI の policy の pattern に、管理が apply-identity の role の3つの policy・apply の role の workload の policy・boundary の、partition・アカウント・name_prefix から組んだ ARN になっていません。"
   }
 
   assert {
@@ -2636,9 +2713,11 @@ run "no_governance_in_dev" {
   command = apply
 
   variables {
-    name_prefix      = "tabp-dev"
-    env              = "dev"
-    break_glass_arns = ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
+    name_prefix                  = "tabp-dev"
+    env                          = "dev"
+    bootstrap_read_role          = null
+    bootstrap_member_account_ids = {}
+    break_glass_arns             = ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
   }
 
   assert {
@@ -2736,7 +2815,7 @@ run "no_governance_in_dev" {
   }
 
   assert {
-    condition     = length(aws_iam_policy.governance) == 0 && length(aws_iam_policy.governance_2) == 0
+    condition     = length(aws_iam_policy.governance) == 0 && length(aws_iam_policy.governance_2) == 0 && length(aws_iam_policy.members) == 0
     error_message = "dev に、統制の customer managed policy が作られています。"
   }
 
@@ -2768,9 +2847,11 @@ run "no_governance_in_security" {
   command = apply
 
   variables {
-    name_prefix      = "tabp-security"
-    env              = "security"
-    break_glass_arns = ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
+    name_prefix                  = "tabp-security"
+    env                          = "security"
+    bootstrap_read_role          = null
+    bootstrap_member_account_ids = {}
+    break_glass_arns             = ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
   }
 
   assert {
@@ -2868,7 +2949,7 @@ run "no_governance_in_security" {
   }
 
   assert {
-    condition     = length(aws_iam_policy.governance) == 0 && length(aws_iam_policy.governance_2) == 0
+    condition     = length(aws_iam_policy.governance) == 0 && length(aws_iam_policy.governance_2) == 0 && length(aws_iam_policy.members) == 0
     error_message = "security に、統制の customer managed policy が作られています。"
   }
 
@@ -2882,9 +2963,11 @@ run "no_governance_in_log_archive" {
   command = apply
 
   variables {
-    name_prefix      = "tabp-log-archive"
-    env              = "log-archive"
-    break_glass_arns = ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
+    name_prefix                  = "tabp-log-archive"
+    env                          = "log-archive"
+    bootstrap_read_role          = null
+    bootstrap_member_account_ids = {}
+    break_glass_arns             = ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
   }
 
   assert {
@@ -2982,7 +3065,7 @@ run "no_governance_in_log_archive" {
   }
 
   assert {
-    condition     = length(aws_iam_policy.governance) == 0 && length(aws_iam_policy.governance_2) == 0
+    condition     = length(aws_iam_policy.governance) == 0 && length(aws_iam_policy.governance_2) == 0 && length(aws_iam_policy.members) == 0
     error_message = "log-archive に、統制の customer managed policy が作られています。"
   }
 
@@ -3088,9 +3171,11 @@ run "member_break_glass_empty" {
   command = plan
 
   variables {
-    name_prefix      = "tabp-dev"
-    env              = "dev"
-    break_glass_arns = []
+    name_prefix                  = "tabp-dev"
+    env                          = "dev"
+    bootstrap_read_role          = null
+    bootstrap_member_account_ids = {}
+    break_glass_arns             = []
   }
 
   expect_failures = [aws_iam_role_policy.apply_identity]
@@ -3117,7 +3202,9 @@ run "governance_follows_data_sources" {
       "arn:aws-us-gov:iam::210987654321:group/break-glass/break-glass",
       "arn:aws-us-gov:iam::210987654321:role/break-glass/t4bp-break-glass",
     ]
-    state_key_arn = "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/abcdef01-2345-6789-abcd-ef0123456789"
+    state_key_arn                = "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/abcdef01-2345-6789-abcd-ef0123456789"
+    bootstrap_read_role          = { name = "t4bp-bootstrap-read", path = "/bootstrap/" }
+    bootstrap_member_account_ids = { dev = "111111111111" }
   }
 
   override_data {
@@ -3134,8 +3221,8 @@ run "governance_follows_data_sources" {
   }
 
   assert {
-    condition     = jsonencode(sort(tolist(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns))) == jsonencode(["arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-governance", "arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-governance-2", "arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-manage"])
-    error_message = "apply-identity の role に付く manage と統制の policy の ARN が、partition・アカウント・name_prefix から組まれていません。"
+    condition     = jsonencode(sort(tolist(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns))) == jsonencode(["arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-governance", "arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-governance-2", "arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-manage", "arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-members"])
+    error_message = "apply-identity の role に付く manage と統制とメンバーの role の policy の ARN が、partition・アカウント・name_prefix から組まれていません。"
   }
 
   assert {
@@ -3155,14 +3242,15 @@ run "governance_follows_data_sources" {
   assert {
     condition = (
       contains(one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Resource if s.Sid == "ManageCiPolicies"]), "arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-governance") &&
+      contains(one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Resource if s.Sid == "ManageCiPolicies"]), "arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-members") &&
       one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Resource if s.Sid == "ReadCiPolicies"]) == "arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-*"
     )
     error_message = "apply-identity の統制の policy の読み取りと管理の Resource が、partition・アカウント・name_prefix から組まれていません。"
   }
 
   assert {
-    condition     = one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Condition if s.Sid == "AttachApplyIdentityPolicies"]) == { ArnEquals = { "iam:PolicyARN" = ["arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-manage", "arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-governance", "arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-governance-2"] } }
-    error_message = "apply-identity が自分の role に付けてよい policy の ARN が、partition・アカウント・name_prefix から組んだ manage と統制の policy になっていません。"
+    condition     = one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Condition if s.Sid == "AttachApplyIdentityPolicies"]) == { ArnEquals = { "iam:PolicyARN" = ["arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-manage", "arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-governance", "arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-governance-2", "arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-members"] } }
+    error_message = "apply-identity が自分の role に付けてよい policy の ARN が、partition・アカウント・name_prefix から組んだ manage と統制とメンバーの role の policy になっていません。"
   }
 
   assert {
@@ -3187,24 +3275,34 @@ run "governance_follows_data_sources" {
   }
 
   assert {
-    condition = [for s in jsondecode(aws_iam_policy.governance[0].policy).Statement : [s.Resource, try(s.Condition, null)] if contains(["UpdateBreakGlassStackSet", "ManageBreakGlassStackInstances", "LimitBreakGlassStackInstanceRegions"], s.Sid)] == [
+    condition = [for s in jsondecode(aws_iam_policy.members[0].policy).Statement : [s.Resource, try(s.Condition, null)] if contains(["UpdateMemberRoleStackSets", "ManageMemberRoleStackInstances", "LimitMemberRoleStackInstanceRegions", "AssumeBootstrapAccessRoles"], s.Sid)] == [
       [[
         "arn:aws-us-gov:cloudformation:us-gov-west-1:210987654321:stackset/t4bp-break-glass:*",
+        "arn:aws-us-gov:cloudformation:us-gov-west-1:210987654321:stackset/t4bp-bootstrap-read:*",
         "arn:aws-us-gov:cloudformation::210987654321:stackset-target/t4bp-break-glass:*",
+        "arn:aws-us-gov:cloudformation::210987654321:stackset-target/t4bp-bootstrap-read:*",
         "arn:aws-us-gov:cloudformation:*:*:type/resource/AWS-IAM-Role",
       ], null],
       [[
         "arn:aws-us-gov:cloudformation:us-gov-west-1:210987654321:stackset/t4bp-break-glass:*",
+        "arn:aws-us-gov:cloudformation:us-gov-west-1:210987654321:stackset/t4bp-bootstrap-read:*",
         "arn:aws-us-gov:cloudformation::210987654321:stackset-target/t4bp-break-glass:*",
+        "arn:aws-us-gov:cloudformation::210987654321:stackset-target/t4bp-bootstrap-read:*",
       ], null],
       [["arn:aws-us-gov:cloudformation:*:*:type/resource/AWS-IAM-Role"], { "ForAllValues:StringEquals" = { "cloudformation:TargetRegion" = "us-gov-west-1" }, Null = { "cloudformation:TargetRegion" = "false" } }],
+      [["arn:aws-us-gov:iam::111111111111:role/OrganizationAccountAccessRole"], null],
     ]
-    error_message = "break-glass の StackSet の書き込みの Resource と条件が、partition・region・アカウントと role の名前から組まれていません（stackset-target は region を空、type は region を `*` にする）。"
+    error_message = "メンバーの role の StackSet の書き込みと、立ち上げの中のメンバーの引き受けの Resource と条件が、partition・region・アカウントと role の名前から組まれていません（stackset-target は region を空、type は region を `*` にする）。"
   }
 
   assert {
-    condition     = alltrue([for p in [aws_iam_role_policy.this["plan"].policy, aws_iam_role_policy.apply_identity.policy] : one([for s in jsondecode(p).Statement : s.Resource if s.Sid == "ReadBreakGlassStackSet"]) == ["arn:aws-us-gov:cloudformation:us-gov-west-1:210987654321:stackset/t4bp-break-glass:*"]])
-    error_message = "plan と apply-identity の break-glass の StackSet の読み取りの Resource が、partition・region・アカウントと role の名前から組まれていません。"
+    condition     = alltrue([for p in [aws_iam_role_policy.this["plan"].policy, aws_iam_role_policy.apply_identity.policy] : one([for s in jsondecode(p).Statement : s.Resource if s.Sid == "ReadMemberRoleStackSets"]) == ["arn:aws-us-gov:cloudformation:us-gov-west-1:210987654321:stackset/t4bp-break-glass:*", "arn:aws-us-gov:cloudformation:us-gov-west-1:210987654321:stackset/t4bp-bootstrap-read:*"]])
+    error_message = "plan と apply-identity のメンバーの role の StackSet の読み取りの Resource が、partition・region・アカウントと role の名前から組まれていません。"
+  }
+
+  assert {
+    condition     = one([for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Resource if s.Sid == "AssumeBootstrapReadRoles"]) == ["arn:aws-us-gov:iam::111111111111:role/bootstrap/t4bp-bootstrap-read"]
+    error_message = "plan の role の立ち上げの読み取りの role の引き受けの Resource が、partition と入力のアカウント・path・名前から組まれていません。"
   }
 }
 
@@ -3417,9 +3515,11 @@ run "baseline_partition_unsupported_member" {
   command = apply
 
   variables {
-    name_prefix   = "t4bp-dev"
-    env           = "dev"
-    state_key_arn = "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/abcdef01-2345-6789-abcd-ef0123456789"
+    name_prefix                  = "t4bp-dev"
+    env                          = "dev"
+    bootstrap_read_role          = null
+    bootstrap_member_account_ids = {}
+    state_key_arn                = "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/abcdef01-2345-6789-abcd-ef0123456789"
     break_glass_arns = [
       "arn:aws-us-gov:iam::210987654321:user/break-glass/break-glass-1",
       "arn:aws-us-gov:iam::210987654321:user/break-glass/break-glass-2",
@@ -3445,4 +3545,90 @@ run "baseline_partition_unsupported_member" {
     condition     = [for st in jsondecode(aws_iam_policy.workload_2.policy).Statement : st.Sid] == ["PutAlternateContact", "CreateConfigServiceLinkedRole", "CreateAnalyzerServiceLinkedRole", "PassConfigServiceLinkedRole", "PutAccountPublicAccessBlock", "UpdatePasswordPolicy"]
     error_message = "集合を持たない partition のメンバーの workload-2 が、アカウントに1つの設定の文（password policy の更新を含む）だけになっていません。"
   }
+}
+
+# 立ち上げの読み取りの role を配る StackSet は管理アカウントにだけ在り、メンバーの引き受けも管理アカウントの CI だけが行う。
+run "rejects_admin_without_bootstrap_read_role" {
+  command = plan
+
+  variables {
+    bootstrap_read_role = null
+  }
+
+  expect_failures = [aws_iam_role_policy.apply_identity]
+}
+
+run "rejects_bootstrap_read_role_outside_admin" {
+  command = plan
+
+  variables {
+    name_prefix                  = "tabp-dev"
+    env                          = "dev"
+    bootstrap_member_account_ids = {}
+  }
+
+  expect_failures = [aws_iam_role_policy.apply_identity]
+}
+
+run "rejects_bootstrap_accounts_outside_admin" {
+  command = plan
+
+  variables {
+    name_prefix         = "tabp-dev"
+    env                 = "dev"
+    bootstrap_read_role = null
+  }
+
+  expect_failures = [aws_iam_role_policy.apply_identity]
+}
+
+run "no_bootstrap_assume_without_accounts" {
+  command = plan
+
+  variables {
+    bootstrap_member_account_ids = {}
+  }
+
+  assert {
+    condition = alltrue([
+      for p in [aws_iam_role_policy.this["plan"].policy, aws_iam_role_policy.apply_identity.policy, aws_iam_policy.members[0].policy, aws_iam_policy.governance[0].policy, aws_iam_policy.manage.policy] :
+      !strcontains(p, "sts:AssumeRole\"")
+    ])
+    error_message = "立ち上げの中のアカウントが無いのに、CI の role の権限に sts:AssumeRole があります。"
+  }
+
+  assert {
+    condition     = one([for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Resource if s.Sid == "ReadMemberRoleStackSets"]) == ["arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-break-glass:*", "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-bootstrap-read:*"]
+    error_message = "立ち上げの中のアカウントが無くても、plan の role は立ち上げの読み取りの StackSet を読めなければなりません。"
+  }
+}
+
+# 同じ ID が2つの env に在っても、引き受けの Resource は1つにする。
+run "bootstrap_assume_per_account" {
+  command = plan
+
+  variables {
+    bootstrap_member_account_ids = { dev = "111111111111", stg = "111111111111" }
+  }
+
+  assert {
+    condition     = one([for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Resource if s.Sid == "AssumeBootstrapReadRoles"]) == ["arn:aws:iam::111111111111:role/bootstrap/tabp-bootstrap-read"]
+    error_message = "plan の role の引き受けの Resource が、アカウントごとの読み取りの role の ARN 1つずつになっていません。"
+  }
+
+  assert {
+    condition     = one([for s in jsondecode(aws_iam_policy.members[0].policy).Statement : s.Resource if s.Sid == "AssumeBootstrapAccessRoles"]) == ["arn:aws:iam::111111111111:role/OrganizationAccountAccessRole"]
+    error_message = "apply-identity の引き受けの Resource が、アカウントごとの OrganizationAccountAccessRole の ARN 1つずつになっていません。"
+  }
+}
+
+# 内部の module は名前を検証しない。StackSet の名前の precondition が、root の validation が緩んだときの守りになる。
+run "rejects_bootstrap_read_role_name_with_underscore_in_admin" {
+  command = plan
+
+  variables {
+    bootstrap_read_role = { name = "tabp_bootstrap_read", path = "/bootstrap/" }
+  }
+
+  expect_failures = [aws_iam_role_policy.apply_identity]
 }

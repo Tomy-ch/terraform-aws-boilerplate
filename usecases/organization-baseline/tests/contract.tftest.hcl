@@ -30,7 +30,8 @@ mock_provider "aws" {
 }
 
 variables {
-  project = "tabp"
+  project                      = "tabp"
+  bootstrap_read_principal_arn = "arn:aws:iam::111111111111:role/tabp-admin-ci-plan"
 }
 
 override_resource {
@@ -69,5 +70,10 @@ run "outputs" {
   assert {
     condition     = output.bootstrapping_account_ids == {}
     error_message = "bootstrapping の既定（空）で、bootstrapping_account_ids が空になっていません。"
+  }
+
+  assert {
+    condition     = output.bootstrap_read_role == { name = "${var.project}-bootstrap-read", path = "/bootstrap/" }
+    error_message = "bootstrap_read_role が、メンバーへ配る読み取りの role の名前と path を返していません。"
   }
 }

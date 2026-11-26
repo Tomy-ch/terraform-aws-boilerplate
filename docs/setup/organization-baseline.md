@@ -95,14 +95,14 @@
 
 StackSet か stack instance の作成で昇格の apply が失敗したときは、失敗した resource が state に残ったかで直し方が分かれる。`prevent_destroy` を持つ resource が tainted で残ると、次の plan は作り直しを求めて止まる。CI の role は削除の権限を持たないので、tainted は人が外す。apply は人が行わず、CI の経路でやり直す。
 
-1. 原因を見る。作成の API が拒まれたなら CloudTrail に `AccessDenied` が残り、resource は state に入らない。API が通って操作が失敗したなら、CloudFormation の「StackSets」で `<project>-break-glass` の「オペレーション」に失敗した操作とアカウントの理由が残り、resource は tainted で state に残る
+1. 原因を見る。作成の API が拒まれたなら CloudTrail に `AccessDenied` が残り、resource は state に入らない。API が通って操作が失敗したなら、CloudFormation の「StackSets」で失敗した StackSet の「オペレーション」に失敗した操作とアカウントの理由が残り、resource は tainted で state に残る
 2. 作成の API が拒まれたとき（resource は state に無い）
    1. 拒否が、同じ apply の権限の更新の直後なら、IAM の反映の遅れである。失敗した job を走らせ直す（[bootstrap 手順書](bootstrap.md#段5-の-ci-の-apply-が失敗した) の `AccessDenied` の行）
    2. 走らせ直しも拒まれるなら、権限の不足である。権限を直す Pull Request を昇格する。resource は state に無いので、同じ apply で作られる
 3. 操作が失敗したとき（tainted で残る）: 先に tainted を外してから直す
-   1. `organization_admin` の資格情報で `env/admin/identity` を `terraform init` し、失敗した resource の tainted を外す（`terraform untaint 'module.organization_baseline.module.break_glass.aws_cloudformation_stack_instances.this'`。StackSet が失敗したなら `aws_cloudformation_stack_set.this` も）
+   1. `organization_admin` の資格情報で `env/admin/identity` を `terraform init` し、失敗した resource の tainted を外す（`terraform untaint 'module.organization_baseline.module.break_glass.aws_cloudformation_stack_instances.this'`。StackSet が失敗したなら `aws_cloudformation_stack_set.this` も。立ち上げの読み取りの StackSet なら `module.bootstrap_access` の同じ2つ）
    2. 原因を Pull Request で直して昇格する。コードの変更が要らなければ、この手順は無い
-   3. 失敗したアカウントへ配り直す。tainted を外した state は作成が済んだ形で残るので、昇格の apply は配り直さない。`organization_admin` の資格情報で CloudFormation の「StackSets」の `<project>-break-glass` を開き、「アクション」の「StackSet の詳細を編集」を、テンプレートとパラメータを変えずに最後まで進めて送る。失敗の後の instance の状態は `OUTDATED` で、この操作がその作成をやり直す（[Retrying failed stack creation or update operations](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stacksets-troubleshooting.html)）。テンプレートを変えないので、Terraform の宣言とずれない
+   3. 失敗したアカウントへ配り直す。tainted を外した state は作成が済んだ形で残るので、昇格の apply は配り直さない。`organization_admin` の資格情報で CloudFormation の「StackSets」の失敗した StackSet（`<project>-break-glass` か `<project>-bootstrap-read`）を開き、「アクション」の「StackSet の詳細を編集」を、テンプレートとパラメータを変えずに最後まで進めて送る。失敗の後の instance の状態は `OUTDATED` で、この操作がその作成をやり直す（[Retrying failed stack creation or update operations](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stacksets-troubleshooting.html)）。テンプレートを変えないので、Terraform の宣言とずれない
    4. すべてのメンバーアカウントの stack instance が `CURRENT` であることを、`make setup-organization-baseline-stack-instances-check PROFILE=<管理アカウントの profile>` で確かめる。残っていれば、原因を見て手順3.3 を繰り返す。role の用意に失敗したアカウントの instance は、失敗ではなく飛ばされた（skipped）として残る
 4. どちらも、昇格の前に CI の plan が作り直しを示さないことを確かめる
 

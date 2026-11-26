@@ -18,6 +18,16 @@ variable "bootstrapping" {
   type        = set(string)
 }
 
+variable "bootstrap_read_role_name" {
+  description = "メンバーの立ち上げの読み取りの role の名前。SCP がこの role を守り、立ち上げの外のアカウントでその使用を拒む。"
+  type        = string
+}
+
+variable "bootstrap_read_role_path" {
+  description = "メンバーの立ち上げの読み取りの role の IAM の path。`/` で始まり `/` で終わる。"
+  type        = string
+}
+
 variable "delegated_admin_regions" {
   description = "GuardDuty・Inspector・Security Hub の委任管理者を指定するリージョンの集合（repository-wide/ADR-0209）。"
   type        = set(string)

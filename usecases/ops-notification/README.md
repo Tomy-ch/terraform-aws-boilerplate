@@ -27,7 +27,7 @@
 
 | 出力 | 使う側 |
 | --- | --- |
-| `topic_arn` | 同じアカウントの送り手を持つユースケース（alarm を持つ module、`security-tooling` の検知の rule、`finops` の Budgets と Cost Anomaly Detection）。env の root が渡す |
+| `topic_arn` | 同じアカウントの送り手を持つユースケース（alarm を持つ module、`security-tooling` の検知の rule と alarm、`finops` の Budgets と Cost Anomaly Detection）。env の root が渡す |
 | `us_east_1_topic_arn` | us-east-1 にしか出ない metric の CloudWatch の alarm を持つユースケース（Route 53 の DNSSEC の alarm など）。送り手は CloudWatch だけ。env の root が渡す |
 
 - ログの所在: このユースケースはログを持たない。Chatbot の `logging_level` は `NONE`、SNS の配送状況のログ（delivery status logging）も持たない。API の呼び出しの記録は CloudTrail が持つ
@@ -213,5 +213,5 @@ role を CLI やコンソールで作らない。identity root の apply が名�
 
 ## 版
 
-- AWS Provider は `>= 6.68.0, < 7.0.0`。引数は v6.70.0 の Provider の文書で確かめた。`reference/.terraform.lock.hcl` は `terraform init` が選んだ v6.73.0 で、テストを実行したのもこの版である
+- AWS Provider は `>= 6.68.0, < 7.0.0`。引数は v6.70.0 の Provider の文書で確かめた。テストは v6.73.0 で実行した。`reference/.terraform.lock.hcl` の版は `providers/` の正本が持つ
 - Terraform は `>= 1.7.0, < 2.0.0`。下限はテストが使う `mock_provider` の要求である

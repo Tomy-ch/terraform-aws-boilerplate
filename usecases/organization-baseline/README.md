@@ -18,13 +18,15 @@ AWS Organizations の組織と OU、SCP・RCP・declarative policy、root の資
 | 入力 | 型 | 意味 |
 | --- | --- | --- |
 | `project` | `string`（英小文字と数字、38文字以内） | policy の名前 `<project>-<policy>` と break-glass の role の名前 `<project>-break-glass` の先頭。SCP はメンバーの state Bucket と CI の role を `deployment-identity`・`state-backend` と同じ token で名指すので、それらと同じ値を渡す。最も長いアカウント名 `<project>-log-archive` を Organizations の上限の50文字に収める |
-| `bootstrapping` | `set(string)`（`security`・`log-archive` のいずれか。既定 `[]`） | 立ち上げ中のメンバーアカウントの env。ここに無いアカウントでは、`OrganizationAccountAccessRole` の使用を SCP（`deny-bootstrap-role`）が拒む。管理アカウントの identity root が、メンバーの `state-backend`・`deployment-identity` を作り終えるまで入れておき、外す PR で立ち上げを閉じる |
+| `bootstrapping` | `set(string)`（`security`・`log-archive` のいずれか。既定 `[]`） | 立ち上げ中のメンバーアカウントの env。ここに無いアカウントでは、`OrganizationAccountAccessRole` と立ち上げの読み取りの role の使用を SCP（`deny-bootstrap-role`）が拒む。管理アカウントの identity root が、メンバーの `state-backend`・`deployment-identity` を作り終えるまで入れておき、外す PR で立ち上げを閉じる |
+| `bootstrap_read_principal_arn` | `string`（wildcard を含まない IAM role の ARN） | メンバーの立ち上げの読み取りの role（`<project>-bootstrap-read`）を引き受けてよい、管理アカウントの role。管理アカウントの identity root が `deployment-identity` の plan の role の ARN を渡す（[organization-baseline/ADR-0203](docs/adr/0203-member-bootstrap-read-role.md)） |
 
 | 出力 | 使う側 |
 | --- | --- |
 | `break_glass_arns` | 管理アカウントの break-glass の IAM user 2つ・group・role の ARN。管理アカウントの identity root が `deployment-identity` へ渡し、apply の role にこれらの変更を拒ませる |
 | `account_ids` | メンバーアカウントの env から ID への map。メンバーの root と、アカウントを名指す usecase が使う |
-| `bootstrapping_account_ids` | `bootstrapping` に入れたメンバーアカウントの env から ID への map。管理アカウントの identity root が、立ち上げの provider の引き受け先に使う |
+| `bootstrapping_account_ids` | `bootstrapping` に入れたメンバーアカウントの env から ID への map。管理アカウントの identity root が、立ち上げの provider の引き受け先に使い、`deployment-identity` の `bootstrap_member_account_ids` へ渡して、引き受けをこのアカウントに限る |
+| `bootstrap_read_role` | メンバーへ配る立ち上げの読み取りの role の名前と path（`object({ name, path })`）。管理アカウントの identity root が `deployment-identity` へ渡し、その role を配る StackSet の権限と、plan の role の引き受けの Resource にさせる |
 
 - メンバーアカウントのメールは入力に取らない。管理アカウントの SSM の String の parameter `/<project>/organization-baseline/member-account-emails`（JSON の object。env からメールへ）を読む。人が置く（[`docs/setup/organization-baseline.md`](../../docs/setup/organization-baseline.md)）。key の集合が対応表と一致しないか、値がメールの形でなければ plan が落ちる
 
@@ -41,6 +43,7 @@ AWS Organizations の組織と OU、SCP・RCP・declarative policy、root の資
 - 立ち上げを終えたメンバーアカウントに付ける `deny-bootstrap-role`（アカウントごと）
 - セキュリティのサービス（GuardDuty・Inspector・Security Hub・CloudTrail・AWS Config・IAM Access Analyzer）の委任管理者を security のアカウントにする指定（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定1）。GuardDuty・Inspector・Security Hub はリージョンごとで、[repository-wide/ADR-0209](../../docs/adr/0209-default-regions-for-regional-controls.md) の集合の各リージョンに置く。CloudTrail は CloudTrail の API で、Config と Access Analyzer は Organizations の API で登録する。委任管理者の側の設定（組織の trail、GuardDuty の組織の設定など）は `security-tooling`（#473）が持つ
 - メンバーアカウントの break-glass の role を配る CloudFormation の StackSet（service-managed、自動展開）と、組織の Root を対象にした stack instance（[organization-baseline/ADR-0202](docs/adr/0202-member-break-glass-via-stacksets.md)）
+- メンバーアカウントの立ち上げの読み取りの role（`<project>-bootstrap-read`、path `/bootstrap/`）を配る StackSet と stack instance（同じ形。[organization-baseline/ADR-0203](docs/adr/0203-member-bootstrap-read-role.md)）
 
 組織、OU、メンバーアカウント、break-glass の IAM user と role、StackSet と stack instance に `prevent_destroy` を付ける。組織、OU、メンバーアカウント、IAM user、StackSet と stack instance は `conftest/plan/decl.json` の `stateful_protection.protected_types` に載り、CI の plan と apply が削除・置換・管理からの除外を落とす（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定11）。
 
@@ -82,8 +85,8 @@ unsupported:
 
 区分は「破棄すると認証や組織の構造を失う」（[scope.md 第11.1節](../../docs/v1.0-plan/scope.md)、[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定14）。sandbox での apply と destroy、残存検出を行わない。代わりに次を行う。
 
-- Unit Test（`terraform test` + `mock_provider`）: `internal/organization` が OU の木、policy の文書と付け先、文書の大きさ、メンバーアカウントの名前・メール・置く OU と立ち上げの SCP の付け先を、`internal/break-glass` が user・group・role・password policy と、メンバーの role を配る StackSet を固定する。`tests/` が入力の検査と出力の配線を固定する
-- Policy Test: `plan.organization_baseline_scp`（`PLAN-ORG-*`）と `plan.organization_baseline_break_glass`（`PLAN-BG-*`）と `plan.iam_role_attachment_pairing`（`PLAN-ATTACH-*`）が、reference の mock の plan で見る。実 plan には掛けない
+- Unit Test（`terraform test` + `mock_provider`）: `internal/organization` が OU の木、policy の文書と付け先、文書の大きさ、メンバーアカウントの名前・メール・置く OU と立ち上げの SCP の付け先を、`internal/break-glass` が user・group・role・password policy と、メンバーの role を配る StackSet を、`internal/bootstrap-access` が立ち上げの読み取りの role を配る StackSet を固定する。`tests/` が入力の検査と出力の配線を固定する
+- Policy Test: `plan.organization_baseline_scp`（`PLAN-ORG-*`）と `plan.organization_baseline_break_glass`（`PLAN-BG-*`）と `plan.organization_baseline_bootstrap_read`（`PLAN-BR-*`）と `plan.iam_role_attachment_pairing`（`PLAN-ATTACH-*`）が、reference の mock の plan で見る。実 plan には掛けない
 - 拒まれるべき操作が拒まれることを人が確かめる（下の手順）。結果を Pull Request に記録し、行わなかったものは行わなかったと書く
 - drift が0であること: 昇格の後の次の plan が変更を示さないこと
 
@@ -96,6 +99,7 @@ unsupported:
 | root の中央管理の有効化が、アカウントの作成より後になる | 既存のメンバーに root の資格情報が残る | `depends_on` と、人の確認（`aws iam list-organizations-features`） |
 | アカウントの作成が途中で失敗し、アカウントは在るが state に無い | 再実行がメールの重複で落ちる | 人が手順書の回復（`import` block の Pull Request）で取り込む |
 | 新しいアカウントへの break-glass の StackSet の自動展開が失敗する | 新しいアカウントへ break-glass で入れない | 昇格の後の人の確認（stack instance が `CURRENT`、引き受け） |
+| 立ち上げの読み取りの role の読み取りが、立ち上げの plan に足りない | 立ち上げの CI の plan が `AccessDenied` で落ちる（書き込みには広がらない） | `PLAN-BR-04`（plan の role の読みとの突き合わせ）と、最初の立ち上げの CI の plan |
 | `aws:PrincipalArn` の条件が、assumed-role のセッションや root のセッションに一致しない | SCP が拒まない、または回復の経路を拒む | Policy Test は文書の形までしか見ない。PolicyStaging での人の確認 |
 | 実 API が読み戻した policy の文書が宣言と違う | plan が毎回差分を出す | 昇格の後の plan |
 | RCP が想定しない AWS のサービスの経路を止める | 配送や連携が止まる | PolicyStaging での確認と、付けた直後の読み取りの確認 |
@@ -139,8 +143,9 @@ unsupported:
 | AWS Organizations: 信頼アクセスをサービスの側で有効化する（IAM だけ Terraform で持つ） | [organization-baseline/ADR-0001](docs/adr/0001-governance-in-management-identity-root.md) 決定5 |
 | SRA: Infrastructure の OU。allow-list の SCP の併用 | [organization-baseline/ADR-0101](docs/adr/0101-organizational-units-and-policies.md) |
 | Well-Architected FND05-BP02: 専用の非常用アカウント。SRA: IAM user を使わない | [organization-baseline/ADR-0201](docs/adr/0201-break-glass.md) |
+| FSBP CloudFormation.4: 立ち上げの読み取りの role の StackSet の stack が service role を持たない | [organization-baseline/ADR-0203](docs/adr/0203-member-bootstrap-read-role.md) 決定7 |
 
 ## 版
 
 - Terraform: `>= 1.7.0, < 2.0.0`
-- AWS Provider: `>= 6.68.0, < 7.0.0`（reference の lock は 6.70.0）
+- AWS Provider: `>= 6.68.0, < 7.0.0`（reference の lock の版は `providers/` の正本が持つ）

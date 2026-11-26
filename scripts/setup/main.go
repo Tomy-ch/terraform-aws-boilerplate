@@ -1,10 +1,11 @@
 // Package main は、手順書の手順のうち人が実行するものの、確認と手順の実行を持つツール（ADR-0702 決定1・26・27）。
 // 起動する道具は aws と、environment の secret を置く入口に限り gh で、資格情報を変える環境変数の外し方と
 // AWS_PROFILE は make が整える。
-// 手順の実行は、資格情報が組織の管理アカウント（bootstrap の手順では一時 IAM user）のものであることと前提と現状を
-// 読み取りで確かめ、差分を示し、project の名前の打ち込みを受けてから書き込み、読み直して確かめる。
+// 手順の実行は、資格情報が組織の管理アカウント（bootstrap の手順では一時 IAM user、ops-notification と dns-zone の
+// 手順では IAM user か role で、そのアカウントを出すだけ）のものであることと前提と現状を読み取りで確かめ、差分を示し、
+// project の名前の打ち込みを受けてから書き込み、読み直して確かめる。
 //
-//	setup <入口> -project <project> -region <region> [-usecase <dir>] [-env <env>] [-user <user>] [-ids]
+//	setup <入口> -project <project> -region <region> [-usecase <dir>] [-env <env>] [-user <user>] [-zone <zone>] [-ids]
 //	      [-environments <env>[,<env>...] -repo <owner>/<repo> [-replace]]
 //
 // 入口（organization-baseline の手順書。-usecase は usecases/organization-baseline）:
@@ -33,12 +34,30 @@
 //	bootstrap-anomaly-tag  2-4: AWS services monitor とその subscription に tag <project>:bootstrap を付ける
 //	bootstrap-env-secrets  段4・段5: environment に secret AWS_ACCOUNT_ID を gh で置く（-environments・-repo。在れば -replace のときだけ置き直す）
 //
-// env の一覧、OU の階層、メールの形、break-glass の user と role と password policy、委任管理者のサービスの主体は、
-// -usecase の Terraform から毎回読む。
+// 入口（ops-notification の手順書。-env はそのアカウントの env、-region はその workload root の provider の region、
+// -usecase は usecases/ops-notification）:
 //
-// 終了コードは、0 が完了か確認の一致、1 が確認の NG か、組織の状態が前提に合わず書かなかったこと（OU や
-// Root が決まらない、同じ名前のアカウント、使われているメール、在るアカウントのメールの変更）、2 がそれ以外
-// （引数の誤り、入力したメールや確認コードの形の誤り、確認の入力の不一致、aws の失敗、読めない応答）。-ids を付けない限り、12桁の数字（アカウント ID）は伏せる。
+//	ops-chatbot-role-check   1 の前提: Chatbot の service-linked role が在る
+//	ops-workspace-check      3.2 手順4・3.3 手順1: ENABLED の Slack の workspace が在り、その team ID を出す（-usecase）
+//	ops-subscriptions-check  3.4 手順1: 2つの Topic のそれぞれに Chatbot の購読がちょうど1つ在る（-usecase）
+//	ops-resubscribe          3.4 手順2: 購読の無い Topic を Chatbot の構成から外して保存し、足し直して保存する（-usecase）
+//
+// 入口（dns-zone の手順書。-env は zone を置くアカウントの env、-zone は zone の名前、-usecase は usecases/dns-zone）:
+//
+//	dns-delegation-values  3.2: 子の zone の NS と DS を、prd の delegations に書く形で出す（-env は dev か stg。DS に12桁続く数字が在れば -ids）
+//	dns-signing-check      3.5・4 の確認: 署名が SIGNING で、KSK がただ1つ ACTIVE で、その KMS の鍵が要件に合う
+//	dns-ksk-activate       4 手順3: ACTION_NEEDED の KSK を有効に戻す
+//	dns-registrar-ns       3.4: Route 53 Domains の registrar の NS を zone の NS に替える（-env prd）
+//	dns-registrar-ds       3.4: Route 53 Domains の registrar に zone の KSK の DS を足す（-env prd。NS の後）
+//
+// env の一覧、OU の階層、メールの形、break-glass の user と role と password policy、委任管理者のサービスの主体、
+// ops-notification の Topic と Chatbot の構成の名前と Chatbot の region、dns-zone の env の一覧と zone の名前と
+// 委任の NS と DS の形は、-usecase の Terraform から毎回読む。
+//
+// 終了コードは、0 が完了か確認の一致、1 が確認の NG か、実環境の状態が前提に合わず書かなかったこと（OU や
+// Root が決まらない、同じ名前のアカウント、使われているメール、在るアカウントのメールの変更、Chatbot の構成や
+// zone や KSK や registrar の状態）、2 がそれ以外（引数の誤り、宣言に無い env や zone の名前、入力したメールや
+// 確認コードの形の誤り、確認の入力の不一致、aws の失敗、読めない応答）。-ids を付けない限り、12桁の数字（アカウント ID）は伏せる。
 package main
 
 import (
@@ -57,7 +76,7 @@ import (
 var (
 	accountPattern = regexp.MustCompile(`[0-9]{12}`)
 
-	errUsage = xerrors.New("使い方: setup <入口> -project <project> -region <region> [-usecase <dir>] [-env <env>] [-user <user>] [-ids]（入口は scripts/setup/main.go の冒頭）")
+	errUsage = xerrors.New("使い方: setup <入口> -project <project> -region <region> [-usecase <dir>] [-env <env>] [-user <user>] [-zone <zone>] [-ids]（入口は scripts/setup/main.go の冒頭）")
 )
 
 type deps struct {
@@ -80,6 +99,7 @@ type options struct {
 	usecase string
 	env     string
 	user    string
+	zone    string
 	showIDs bool
 
 	environments string
@@ -94,16 +114,24 @@ type options struct {
 }
 
 // entry は、1つの入口。writes はその入口が起動してよい書き込みの操作（"<service> <operation>"）で、確認は空。
-// usecase は、その入口が organization-baseline の Terraform を読むか。
+// usecase は、その入口が organization-baseline の Terraform を読むか。terraform は、その入口がほかのユースケースの
+// Terraform を -usecase から自分で読むか（run は読まない）。
 type entry struct {
 	writes            []string
 	usecase           bool
+	terraform         bool
 	needsEnv          bool
 	needsUser         bool
+	needsZone         bool
 	needsEnvironments bool
+	// ids は、その入口が -ids（12桁の数字を伏せない）を受けるか。
+	ids bool
 	// bootstrap は、組織より前の bootstrap の手順で、資格情報が一時 IAM user であることを書き込みの前提にするか。
 	bootstrap bool
-	run       func(o options, c *client, t *terminal, org organization) error
+	// account は、各アカウントで行う手順で、資格情報の主体とアカウントを出すことだけを書き込みの前提にするか
+	// （組織の管理アカウントであることを求めない）。
+	account bool
+	run     func(o options, c *client, t *terminal, org organization) error
 }
 
 var entries = map[string]entry{
@@ -129,7 +157,7 @@ var entries = map[string]entry{
 		},
 	},
 	"member-accounts-check": {
-		usecase: true,
+		usecase: true, ids: true,
 		run: func(o options, c *client, t *terminal, org organization) error {
 			return checkMemberAccounts(o, c, t.out, org)
 		},
@@ -220,6 +248,60 @@ var entries = map[string]entry{
 		usecase: true,
 		run: func(o options, c *client, t *terminal, _ organization) error {
 			return checkBreakGlassUsage(o, c, t.out)
+		},
+	},
+	"ops-chatbot-role-check": {
+		needsEnv: true,
+		run: func(o options, c *client, t *terminal, _ organization) error {
+			return checkChatbotRole(o, c, t.out)
+		},
+	},
+	"ops-workspace-check": {
+		terraform: true, needsEnv: true,
+		run: func(o options, c *client, t *terminal, _ organization) error {
+			return checkSlackWorkspaces(o, c, t.out)
+		},
+	},
+	"ops-subscriptions-check": {
+		terraform: true, needsEnv: true,
+		run: func(o options, c *client, t *terminal, _ organization) error {
+			return checkChatbotSubscriptions(o, c, t.out)
+		},
+	},
+	"ops-resubscribe": {
+		writes: []string{"chatbot update-slack-channel-configuration"}, terraform: true, needsEnv: true, account: true,
+		run: func(o options, c *client, t *terminal, _ organization) error {
+			return resubscribeChatbot(o, c, t)
+		},
+	},
+	"dns-delegation-values": {
+		terraform: true, needsEnv: true, needsZone: true, ids: true,
+		run: func(o options, c *client, t *terminal, _ organization) error {
+			return printDelegationValues(o, c, t.out)
+		},
+	},
+	"dns-signing-check": {
+		terraform: true, needsEnv: true, needsZone: true,
+		run: func(o options, c *client, t *terminal, _ organization) error {
+			return checkSigning(o, c, t.out)
+		},
+	},
+	"dns-ksk-activate": {
+		writes: []string{"route53 activate-key-signing-key"}, terraform: true, needsEnv: true, needsZone: true, account: true,
+		run: func(o options, c *client, t *terminal, _ organization) error {
+			return activateKSK(o, c, t)
+		},
+	},
+	"dns-registrar-ns": {
+		writes: []string{"route53domains update-domain-nameservers"}, terraform: true, needsEnv: true, needsZone: true, account: true,
+		run: func(o options, c *client, t *terminal, _ organization) error {
+			return updateRegistrarNS(o, c, t)
+		},
+	},
+	"dns-registrar-ds": {
+		writes: []string{"route53domains associate-delegation-signer-to-domain"}, terraform: true, needsEnv: true, needsZone: true, account: true,
+		run: func(o options, c *client, t *terminal, _ organization) error {
+			return associateRegistrarDS(o, c, t)
 		},
 	},
 }
@@ -373,6 +455,7 @@ func parseArgs(args []string) (options, entry, error) {
 	fs.StringVar(&o.usecase, "usecase", "", "")
 	fs.StringVar(&o.env, "env", "", "")
 	fs.StringVar(&o.user, "user", "", "")
+	fs.StringVar(&o.zone, "zone", "", "")
 	fs.StringVar(&o.environments, "environments", "", "")
 	fs.StringVar(&o.repo, "repo", "", "")
 	fs.BoolVar(&o.replace, "replace", false, "")
@@ -387,18 +470,20 @@ func parseArgs(args []string) (options, entry, error) {
 		return options{}, entry{}, xerrors.Wrap(errUsage, "余分な引数があります")
 	case o.project == "", o.region == "":
 		return options{}, entry{}, xerrors.Wrap(errUsage, "-project と -region は必須です")
-	case e.usecase != (o.usecase != ""):
-		return options{}, entry{}, xerrors.Wrap(errUsage, "-usecase は organization-baseline の Terraform を読む入口にだけ渡します")
+	case (e.usecase || e.terraform) != (o.usecase != ""):
+		return options{}, entry{}, xerrors.Wrap(errUsage, "-usecase は Terraform を読む入口にだけ渡します")
 	case e.needsEnv != (o.env != ""):
-		return options{}, entry{}, xerrors.Wrap(errUsage, "-env は member-email-update にだけ渡します")
+		return options{}, entry{}, xerrors.Wrap(errUsage, "-env は member-email-update と ops-・dns- の入口にだけ渡します")
 	case e.needsUser != (o.user != ""):
 		return options{}, entry{}, xerrors.Wrap(errUsage, "-user は identity-center-user-check にだけ渡します")
+	case e.needsZone != (o.zone != ""):
+		return options{}, entry{}, xerrors.Wrap(errUsage, "-zone は dns- の入口にだけ渡します")
 	case e.needsEnvironments != (o.environments != ""), e.needsEnvironments != (o.repo != ""):
 		return options{}, entry{}, xerrors.Wrap(errUsage, "-environments と -repo は bootstrap-env-secrets にだけ、両方を渡します")
 	case o.replace && !e.needsEnvironments:
 		return options{}, entry{}, xerrors.Wrap(errUsage, "-replace は bootstrap-env-secrets にだけ渡します")
-	case o.showIDs && o.entry != "member-accounts-check":
-		return options{}, entry{}, xerrors.Wrap(errUsage, "-ids は member-accounts-check にだけ渡します")
+	case o.showIDs && !e.ids:
+		return options{}, entry{}, xerrors.Wrap(errUsage, "-ids は member-accounts-check と dns-delegation-values にだけ渡します")
 	}
 
 	return o, e, nil
@@ -431,8 +516,12 @@ func run(args []string, out io.Writer, d deps) error {
 
 	if len(e.writes) > 0 {
 		check := requireManagementAccount
-		if e.bootstrap {
+
+		switch {
+		case e.bootstrap:
 			check = requireBootstrapUser
+		case e.account:
+			check = requireAccountCaller
 		}
 
 		if err := check(c, profile, out); err != nil {

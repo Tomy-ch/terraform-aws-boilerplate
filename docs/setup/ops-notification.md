@@ -12,7 +12,13 @@
 
 7つのアカウント（admin・security・log-archive・sandbox・dev・stg・prd）のそれぞれで、そのアカウントの workload root が ops-notification を呼ぶ変更の merge より前に行う。認可の前に apply すると、Chatbot の構成の作成が失敗する見込みである（確かめていない）。
 
-そのアカウントの identity root が、workload root より先に apply されていること。Chatbot の service-linked role（`AWSServiceRoleForAWSChatbot`）は identity root の `deployment-identity` が作り、workload root はそれを名前で読む。無ければ workload root の plan が落ちる（[`usecases/ops-notification/README.md`](../../usecases/ops-notification/README.md) の「plan で落ちたときに見るもの」）。sandbox のアカウントでも、role は sandbox の identity root の apply で作る（sandbox の apply の経路は #331 が配線する）。role を CLI やコンソールで作らない。identity root の apply が名前の重複で落ちる
+そのアカウントの identity root が、workload root より先に apply されていること。Chatbot の service-linked role（`AWSServiceRoleForAWSChatbot`）は identity root の `deployment-identity` が作り、workload root はそれを名前で読む。無ければ workload root の plan が落ちる（[`usecases/ops-notification/README.md`](../../usecases/ops-notification/README.md) の「plan で落ちたときに見るもの」）。sandbox のアカウントでも、role は sandbox の identity root の apply で作る（sandbox の apply の経路は #331 が配線する）。role を CLI やコンソールで作らない。identity root の apply が名前の重複で落ちる。role が在ることは、そのアカウントの profile で確かめる（`ENV` は env の名前）
+
+```sh
+make setup-ops-notification-chatbot-role-check PROFILE=<そのアカウントの profile> ENV=<env>
+```
+
+この手順書の make の入口は、region を `ENV` の workload root（`env/<ENV>`）の provider の region から読む。その root が無い env では動かない
 
 ## 2. 設定完了後の状態
 
@@ -42,20 +48,31 @@
 
 ### 3.3 ID を控えて env の値に書く
 
-1. workspace の ID（`T` で始まる英数字）を控える。コンソールの workspace の詳細か、ブラウザで Slack を開いたときの URL（`https://app.slack.com/client/T…/C…`）の `T` で始まる部分で見られる
+1. workspace の ID（`T` で始まる英数字）を控える。次の入口が、Chatbot に認可された ENABLED の workspace と、その team ID を出す。ENABLED の workspace が無ければ NG で終わるので、3.2 をやり直す
+
+   ```sh
+   make setup-ops-notification-workspace-check PROFILE=<そのアカウントの profile> ENV=<env>
+   ```
+
 2. channel の ID（`C` で始まる英数字）を控える。Slack で channel の名前を押し、開いた詳細の一番下に表示される
 3. 非公開の channel なら、channel に Amazon Q のアプリを招待する（`/invite` か、channel の詳細の「インテグレーション」→「アプリを追加する」）
 4. 2つの ID を、そのアカウントの env の root が ops-notification に渡す `chat.slack` の `team_id`・`channel_id` に書く。ID は秘密ではないが、公開のリポジトリなら workspace と channel を指す値が公開される
 
 ### 3.4 apply の後に確かめる
 
-1. apply の直後に、2つの Topic のそれぞれに Chatbot の購読が1つずつあることを確かめる。apply の成功は、Chatbot が Topic を購読したことを保証しない。購読は Chatbot の service-linked role が構成の作成と更新の中で作り、作れなかったときも構成の作成は成功で返る。`<region>` に provider の region と `us-east-1` を入れて2回実行し、どちらも `https  https://global.sns-api.chatbot.amazonaws.com` の1行が出ればよい
+1. apply の直後に、2つの Topic のそれぞれに Chatbot の購読が1つずつあることを確かめる。apply の成功は、Chatbot が Topic を購読したことを保証しない。購読は Chatbot の service-linked role が構成の作成と更新の中で作り、作れなかったときも構成の作成は成功で返る。次の入口が、provider の region の Topic と us-east-1 の Topic のそれぞれで、Chatbot の https の購読がちょうど1つであることを確かめる
 
    ```sh
-   aws sns list-subscriptions --region <region> --query 'Subscriptions[?ends_with(TopicArn, `:<project>-<env>-ops-notification`) || ends_with(TopicArn, `:<project>-<env>-ops-notification-us-east-1`)].[Protocol,Endpoint]' --output text
+   make setup-ops-notification-subscriptions-check PROFILE=<そのアカウントの profile> ENV=<env>
    ```
 
-2. 購読が無い Topic があれば、Amazon Q Developer in chat applications のコンソールで、構成 `<project>-<env>-ops-chat` の SNS topics からその Topic だけを外して保存し、もう一度足して保存する。Chatbot は、構成に足された Topic を購読し直す。最後の状態は Terraform の宣言と同じなので、次の plan に差分は出ない。そのあと 1 をやり直す
+2. 購読が無い Topic があれば、次の入口で、構成 `<project>-<env>-ops-chat` の SNS topics からその Topic だけを外して保存し、もう一度足して保存する。保存の前に、購読の無い Topic を示して project の名前の入力を求める。guardrail・role・logging・user の認可は今の値のまま渡し直す。最後の状態は Terraform の宣言と同じなので、次の plan に差分は出ない。保存の後に購読を読み直し、見えなければ失敗で終わる
+
+   ```sh
+   make setup-ops-notification-resubscribe PROFILE=<そのアカウントの profile> ENV=<env>
+   ```
+
+   API で保存し直したときに Chatbot が購読し直すかは文書に無い。入口が購読を確かめられずに終わったときは、Amazon Q Developer in chat applications のコンソールで、構成 `<project>-<env>-ops-chat` の SNS topics からその Topic だけを外して保存し、もう一度足して保存する。そのあと 1 をやり直す
 3. 次の 9時（Asia/Tokyo）に、channel に心拍が2通届くことを確かめ、結果を Pull Request に書く。title の region が provider の region のものと `us-east-1` のものが1通ずつ来る
 4. 2通とも届かなければ、3.2 の認可と、3.3 の ID と招待を見直す
 5. 片方だけ届かなければ、届かない region の Topic・鍵・schedule を見る。手順は [`usecases/ops-notification/README.md`](../../usecases/ops-notification/README.md) の「心拍が来なかったときに見るもの」
