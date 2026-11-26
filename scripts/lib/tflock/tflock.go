@@ -1,4 +1,4 @@
-// Package tflock は、provider の版の正本（ADR-0205 決定9）の読み手です。正本は2つのファイルから成ります。
+// Package tflock は、provider の版の正本の読み手です。正本は2つのファイルから成ります。
 // providers/providers.toml は各 provider の版を1つに固定する宣言で、人が書きます。providers/.terraform.lock.hcl は
 // そこから `terraform providers lock` が書く生成物です。
 //
@@ -258,7 +258,7 @@ var terraformPlatforms = map[string]string{
 }
 
 // Platforms は、mise の lockfile_platforms を terraform の platform へ写します。道具の platform の宣言を1か所
-// （mise.toml）に保つためです。空と、写せない名前はエラーです。
+// （mise.toml）に保つためです。空と、写せない名前と、重複はエラーです。
 func Platforms(mise []string) ([]string, error) {
 	if len(mise) == 0 {
 		return nil, xerrors.Wrap(ErrInvalidPlatform, "lockfile_platforms が空です")
@@ -269,6 +269,9 @@ func Platforms(mise []string) ([]string, error) {
 		if !ok {
 			return nil, xerrors.Wrapf(ErrInvalidPlatform, "%q", m)
 		}
+		if slices.Contains(out, p) {
+			return nil, xerrors.Wrapf(ErrInvalidPlatform, "%q の重複", m)
+		}
 		out = append(out, p)
 	}
 
@@ -276,9 +279,13 @@ func Platforms(mise []string) ([]string, error) {
 }
 
 // Check は、正本の lock が宣言と同じ provider の集合と版を持ち、各 provider が platform ごとの `h1:` と1つ以上の
-// `zh:` を持つことを確かめ、食い違いを返します。`h1:` は重複を除いて数えます —— 素の `terraform init` は自分の
-// platform の1つだけを書くので、数が platform の数と違えば `providers lock -platform` で作った形ではありません。
+// `zh:` を持ち、照合値がどれも決まった形であることを確かめ、食い違いを返します。`h1:` は重複を除いて数えます ——
+// 素の `terraform init` は自分の platform の1つだけを書くので、数が platform の数と違えば
+// `providers lock -platform` で作った形ではありません。
 func Check(decls []Decl, providers []Provider, platforms int) []string {
+	if platforms <= 0 {
+		return []string{"platform が0件です"}
+	}
 	var problems []string
 	want := map[string]Decl{}
 	for _, d := range decls {
@@ -301,7 +308,10 @@ func Check(decls []Decl, providers []Provider, platforms int) []string {
 		if _, ok := want[addr]; !ok {
 			problems = append(problems, addr+" は providers.toml にありません")
 		}
-		h1, zh := hashCounts(got[addr].Hashes)
+		h1, zh, bad := hashCounts(got[addr].Hashes)
+		for _, h := range bad {
+			problems = append(problems, fmt.Sprintf("%s の照合値 %q の形が h1: でも zh: でもありません", addr, h))
+		}
 		if h1 != platforms {
 			problems = append(problems, fmt.Sprintf("%s の h1: が %d 種で、platform の %d と合いません（make tf-providers-lock で作り直す）", addr, h1, platforms))
 		}
@@ -313,7 +323,13 @@ func Check(decls []Decl, providers []Provider, platforms int) []string {
 	return problems
 }
 
-func hashCounts(hashes []string) (h1, zh int) {
+var (
+	// h1Re は zip を展開した中身の SHA-256 の base64、zhRe は zip そのものの SHA-256 の16進（terraform の lock の形）。
+	h1Re = regexp.MustCompile(`^h1:[A-Za-z0-9+/]{43}=$`)
+	zhRe = regexp.MustCompile(`^zh:[0-9a-f]{64}$`)
+)
+
+func hashCounts(hashes []string) (h1, zh int, bad []string) {
 	seen := map[string]bool{}
 	for _, h := range hashes {
 		if seen[h] {
@@ -321,14 +337,16 @@ func hashCounts(hashes []string) (h1, zh int) {
 		}
 		seen[h] = true
 		switch {
-		case strings.HasPrefix(h, "h1:"):
+		case h1Re.MatchString(h):
 			h1++
-		case strings.HasPrefix(h, "zh:"):
+		case zhRe.MatchString(h):
 			zh++
+		default:
+			bad = append(bad, h)
 		}
 	}
 
-	return h1, zh
+	return h1, zh, bad
 }
 
 func sortedKeys[V any](m map[string]V) []string {

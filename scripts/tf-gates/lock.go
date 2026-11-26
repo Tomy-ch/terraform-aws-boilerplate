@@ -146,8 +146,8 @@ func runLockCheck(args []string, w io.Writer, lsFiles lsFilesFunc) error {
 }
 
 // runLockSync は、走査の root の下の root（[isRoot]）の lock を正本と比べます。write なら違うものを正本で書き換え、
-// そうでなければ違うものを名指して落とします。どちらも、git が追跡する lock が root と正本に限られることを先に
-// 確かめます —— root でないディレクトリの lock は init が正本から写すもので、追跡すると正本とずれていきます。
+// そうでなければ違うものを名指して落とします。どちらも、走査の root の下で git が追跡する lock が root のものに
+// 限られ、どの root の lock も追跡されていることを先に確かめます。追跡されていない写しは、CI の checkout に届きません。
 func runLockSync(name string, write bool, args []string, w io.Writer, lsFiles lsFilesFunc) error {
 	var providersDir, misePath string
 	s, err := parseCommon(name, args, w, func(f *flag.FlagSet) {
@@ -177,7 +177,7 @@ func runLockSync(name string, write bool, args []string, w io.Writer, lsFiles ls
 	if len(roots) == 0 {
 		return xerrors.Wrapf(errNoTargets, "lock を持つ root が0件です（走査: %s）", strings.Join(s.roots, " "))
 	}
-	if err := checkTracked(s, roots, lsFiles); err != nil {
+	if err := checkTracked(s, roots, lsFiles, !write); err != nil {
 		return err
 	}
 	changes, drifted, err := diffRoots(roots, c.content)
@@ -221,30 +221,50 @@ func diffRoots(roots []target, content []byte) (map[string]string, []string, err
 }
 
 // checkTracked は、走査の root の下で git が追跡する lock のディレクトリが、すべて root であることを確かめます。
-func checkTracked(s scan, roots []target, lsFiles lsFilesFunc) error {
+// requireRoots なら、どの root の lock も追跡されていることも確かめます（lock-apply は写した後に人が追跡するので
+// 求めません）。追跡しているファイルが0件なら、base の取り違えとして落とします。
+func checkTracked(s scan, roots []target, lsFiles lsFilesFunc, requireRoots bool) error {
 	files, err := lsFiles(s.base)
 	if err != nil {
 		return err
+	}
+	if len(files) == 0 {
+		return xerrors.Wrapf(errLock, "%s で git が追跡するファイルが0件です", s.base)
 	}
 	isRootDir := map[string]bool{}
 	for _, r := range roots {
 		isRootDir[r.rel] = true
 	}
+	tracked := map[string]bool{}
 	var stray []string
 	for _, f := range files {
 		if path.Base(f) != tflock.LockFile {
 			continue
 		}
 		dir := path.Dir(f)
-		if !underRoots(dir, s.roots) || isRootDir[dir] {
-			continue
+		switch {
+		case isRootDir[dir]:
+			tracked[dir] = true
+		case underRoots(dir, s.roots):
+			stray = append(stray, dir)
 		}
-		stray = append(stray, dir)
 	}
 	if len(stray) > 0 {
 		slices.Sort(stray)
 
-		return xerrors.Wrapf(errLock, "root でないディレクトリの lock が追跡されています: %s（init が正本から写すもので、追跡しない）", strings.Join(stray, " "))
+		return xerrors.Wrapf(errLock, "root でないディレクトリの lock が追跡されています: %s（root でないディレクトリの lock は追跡しない）", strings.Join(stray, " "))
+	}
+	if !requireRoots {
+		return nil
+	}
+	var untracked []string
+	for _, r := range roots {
+		if !tracked[r.rel] {
+			untracked = append(untracked, r.rel)
+		}
+	}
+	if len(untracked) > 0 {
+		return xerrors.Wrapf(errLock, "lock が追跡されていない root: %s（make tf-lock-apply の後に git add する）", strings.Join(untracked, " "))
 	}
 
 	return nil

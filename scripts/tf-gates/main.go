@@ -21,7 +21,7 @@
 // 資格情報を持つ手元でも、持たない CI と同じ条件で走らせます（ADR-0401 決定6）。
 //
 // lock-generate は provider の版の正本（providers/）の lock を作り直し、lock-apply はそれを root の lock へ写し、
-// lock-check は写しのずれと、root でないディレクトリの lock の追跡を落とします（ADR-0205 決定9）。
+// lock-check は写しのずれと、root でないディレクトリの lock の追跡を落とします。
 //
 // validate は、本走査の前に同じ起動の中で canary を走らせ、canary が落ちれば本走査を行いません（ADR-0702 決定25）。
 //

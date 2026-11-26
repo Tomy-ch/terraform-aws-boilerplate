@@ -1,6 +1,7 @@
 package tflock
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/hcl/v2"
@@ -72,9 +73,12 @@ func Test_stringList(t *testing.T) {
 func Test_hashCounts(t *testing.T) {
 	t.Parallel()
 
-	h1, zh := hashCounts([]string{"h1:a", "h1:a", "h1:b", "zh:1", "zh:1", "x:1"})
+	a, b := "h1:"+strings.Repeat("a", 43)+"=", "h1:"+strings.Repeat("b", 43)+"="
+	z := "zh:" + strings.Repeat("0", 64)
+	h1, zh, bad := hashCounts([]string{a, a, b, z, z, "x:1", "x:1"})
 	assert.Equal(t, 2, h1, "重複は数えない")
 	assert.Equal(t, 1, zh)
+	assert.Equal(t, []string{"x:1"}, bad, "形の違うものは重複を除いて返す")
 }
 
 func Test_sortedKeys(t *testing.T) {
