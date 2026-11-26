@@ -48,9 +48,26 @@ tf-fmt-check:
 	@$(call TF_GATES,fmt,-check)
 
 .PHONY: tf-init
-tf-init:
+tf-init: tf-lock-check
 	@mkdir -p "$$TF_PLUGIN_CACHE_DIR"
 	@$(call TF_GATES,init,-data "$(TF_GATES_DATA)")
+
+# provider の版の正本（providers/）。root の lock はその写しで、写しとずれの判定は tf-gates が持つ。
+TF_LOCK_FLAGS = -providers "$(TF_BASE)/providers" -mise "$(TF_BASE)/mise.toml"
+
+.PHONY: tf-lock-check ## root の lock が provider の版の正本（providers/）と同じかを検査
+tf-lock-check:
+	@$(call TF_GATES,lock-check,$(TF_LOCK_FLAGS))
+
+.PHONY: tf-lock-apply ## provider の版の正本（providers/）を root の lock へ写す
+tf-lock-apply:
+	@$(call TF_GATES,lock-apply,$(TF_LOCK_FLAGS))
+
+.PHONY: tf-providers-lock ## providers/providers.toml から正本の lock を作り直し、root の lock へ写す（Terraform Registry から取得する）
+tf-providers-lock:
+	@mkdir -p "$$TF_PLUGIN_CACHE_DIR"
+	@$(call RUN_SCRIPT_HOST,tf-gates,lock-generate $(TF_LOCK_FLAGS) -work tmp/tf-providers-lock)
+	@$(call TF_GATES,lock-apply,$(TF_LOCK_FLAGS))
 
 .PHONY: tf-validate ## Terraform の構成を検査し、エラーと抑止されない警告で落とす（provider の取得を伴う）
 tf-validate: tf-init
