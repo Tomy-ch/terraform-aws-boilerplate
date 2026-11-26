@@ -9,7 +9,7 @@
 //	tf-gates validate -base <dir> -data <dir> -out <dir> -canary-data <dir> -canary-work <tmp/ の下の相対パス> -canary-reference <dir> <root>...
 //	tf-gates result -base <dir> -manifest <tsv> -ignore <yaml>
 //	tf-gates test -base <dir> -data <dir> <root>...
-//	tf-gates lint -base <dir> -config <file> -plugin-dir <dir> <root>...
+//	tf-gates lint -base <dir> -config <file> -ruleset <file> -mise <file> <root>...
 //
 // 対象のディレクトリは、走査の root の下の `.tf` を持つディレクトリで、段に `tests` か `.terraform` を持つものを
 // 除きます（tests の下の setup module は親の terraform test が読む）。宣言した root が1つでも無いときと、対象が
@@ -40,6 +40,7 @@ var (
 	errCanary      = xerrors.New("canary が期待どおりではありません")
 	errTool        = toolrun.ErrTool
 	errToolFailed  = xerrors.New("道具が検査を成り立たせられませんでした")
+	errRuleset     = xerrors.New("TFLint の AWS ruleset が宣言と合いません")
 )
 
 func main() {
