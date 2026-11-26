@@ -504,6 +504,16 @@ type registrarDomain struct {
 	keys        []registrarKey
 }
 
+// rereadRegistrar は、書いた後の readRegistrar。書いた後なので、errPrecondition（書かずに止める）を errAWSFailed で返す。
+func rereadRegistrar(c *client, domain string) (registrarDomain, error) {
+	got, err := readRegistrar(c, domain)
+	if xerrors.Is(err, errPrecondition) {
+		return registrarDomain{}, xerrors.Wrap(errAWSFailed, err.Error())
+	}
+
+	return got, err
+}
+
 // readRegistrar は、このアカウントの Route 53 Domains の domain の NS と DS。InvalidInput（登録されていないか、名前が
 // 正しくない）なら、aws のエラーの文を添えて errPrecondition。
 func readRegistrar(c *client, domain string) (registrarDomain, error) {
@@ -633,7 +643,7 @@ func updateRegistrarNS(o options, c *client, t *terminal) error {
 	}
 
 	if err := reread(o, func() (bool, error) {
-		got, err := readRegistrar(c, o.zone)
+		got, err := rereadRegistrar(c, o.zone)
 		if err != nil {
 			return false, err
 		}
@@ -720,7 +730,7 @@ func associateRegistrarDS(o options, c *client, t *terminal) error {
 	}
 
 	if err := reread(o, func() (bool, error) {
-		got, err := readRegistrar(c, o.zone)
+		got, err := rereadRegistrar(c, o.zone)
 		if err != nil {
 			return false, err
 		}

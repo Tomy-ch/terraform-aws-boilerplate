@@ -101,7 +101,7 @@ func realDNSZoneFile(t *testing.T, file string) ([]byte, *hclsyntax.Body) {
 }
 
 // realComparisons は、実物の dns-zone の file の二項演算のうち、左辺の字面が lhs のものの、右辺のリテラルを文字列にした並び。
-func realComparisons(t *testing.T, file, lhs string) []string {
+func realComparisons(t *testing.T, file, lhs string, op *hclsyntax.Operation) []string {
 	t.Helper()
 
 	src, body := realDNSZoneFile(t, file)
@@ -112,6 +112,10 @@ func realComparisons(t *testing.T, file, lhs string) []string {
 		e, ok := n.(*hclsyntax.BinaryOpExpr)
 		if !ok || string(e.LHS.Range().SliceBytes(src)) != lhs {
 			return nil
+		}
+
+		if e.Op != op {
+			return hcl.Diagnostics{{Severity: hcl.DiagError, Summary: lhs + " の比較の演算子が写しの前提と違います"}}
 		}
 
 		v, diags := e.RHS.Value(nil)
@@ -325,8 +329,8 @@ func Test_readDNSShape(t *testing.T) {
 	t.Run("apex の zone の env は、実物の main.tf と outputs.tf が var.env と比べる値と同じ", func(t *testing.T) {
 		t.Parallel()
 
-		assert.Equal(t, []string{apexEnv}, realComparisons(t, "main.tf", "var.env"))
-		assert.Equal(t, []string{apexEnv}, realComparisons(t, "outputs.tf", "var.env"))
+		assert.Equal(t, []string{apexEnv}, realComparisons(t, "main.tf", "var.env", hclsyntax.OpEqual))
+		assert.Equal(t, []string{apexEnv}, realComparisons(t, "outputs.tf", "var.env", hclsyntax.OpEqual))
 	})
 }
 
@@ -413,8 +417,8 @@ func Test_dnsShape_validNameServers(t *testing.T) {
 		t.Parallel()
 
 		want := []string{strconv.Itoa(delegationNameServers)}
-		assert.Equal(t, want, realComparisons(t, dnsVariablesFile, "length(d.name_servers)"))
-		assert.Equal(t, want, realComparisons(t, dnsVariablesFile, "length(distinct(d.name_servers))"))
+		assert.Equal(t, want, realComparisons(t, dnsVariablesFile, "length(d.name_servers)", hclsyntax.OpEqual))
+		assert.Equal(t, want, realComparisons(t, dnsVariablesFile, "length(distinct(d.name_servers))", hclsyntax.OpEqual))
 	})
 }
 
@@ -446,7 +450,7 @@ func Test_dnsShape_validDS(t *testing.T) {
 	t.Run("key tag の上限は、実物の variables.tf の delegations の validation の上限と同じ", func(t *testing.T) {
 		t.Parallel()
 
-		assert.Equal(t, []string{strconv.Itoa(maxKeyTag)}, realComparisons(t, dnsVariablesFile, `tonumber(split(" ", d.ds_record)[0])`))
+		assert.Equal(t, []string{strconv.Itoa(maxKeyTag)}, realComparisons(t, dnsVariablesFile, `tonumber(split(" ", d.ds_record)[0])`, hclsyntax.OpLessThanOrEqual))
 	})
 }
 
@@ -1103,6 +1107,35 @@ func Test_readRegistrar(t *testing.T) {
 
 		_, err := readRegistrar(testClient(newFakeAWS(t, map[string]awsResult{domainDetail(apexZone): fail(t, "AccessDenied")})), apexZone)
 		require.ErrorIs(t, err, errAWSFailed)
+	})
+}
+
+func Test_rereadRegistrar(t *testing.T) {
+	t.Parallel()
+
+	t.Run("書いた後に InvalidInput なら、書かずに止める errPrecondition でなく errAWSFailed", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeAWS(t, map[string]awsResult{domainDetail(apexZone): fail(t, "An error occurred (InvalidInput) when calling the GetDomainDetail operation: Domain example.com not found")})
+		_, err := rereadRegistrar(testClient(f), apexZone)
+		require.ErrorIs(t, err, errAWSFailed)
+		assert.NotErrorIs(t, err, errPrecondition)
+	})
+
+	t.Run("読めれば readRegistrar と同じ値を返す", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeAWS(t, map[string]awsResult{domainDetail(apexZone): registrarJSON(zoneNS)})
+		got, err := rereadRegistrar(testClient(f), apexZone)
+		require.NoError(t, err)
+		assert.Equal(t, registrarDomain{nameServers: zoneNS}, got)
+	})
+
+	t.Run("ほかの失敗はそのまま返す", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := rereadRegistrar(testClient(newFakeAWS(t, map[string]awsResult{domainDetail(apexZone): ok(`{"DnssecKeys":[]}`)})), apexZone)
+		require.ErrorIs(t, err, errAWSResponse)
 	})
 }
 
