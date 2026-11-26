@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"html"
 	"io"
 	"io/fs"
 	"os"
@@ -97,8 +98,10 @@ type ciState struct {
 	Established bool   `json:"established"`
 	Applied     bool   `json:"applied"`
 	Summary     string `json:"summary"`
-	SHA         string `json:"sha"`
-	Version     string `json:"version"`
+	// Changes は、変わる resource の address と操作の一覧。値は持たない（planChanges）。
+	Changes []string `json:"changes"`
+	SHA     string   `json:"sha"`
+	Version string   `json:"version"`
 }
 
 func loadCIState(path string) (ciState, error) {
@@ -502,9 +505,26 @@ func ciRunPlan(s *ciState, d deps, stdout io.Writer) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	changes, err := planChanges(data, out)
+	if err != nil {
+		return "", err
+	}
+	if _, err := io.WriteString(stdout, changeList(changes)); err != nil {
+		return "", err
+	}
+	s.Changes = changes
 	s.Stage = ""
 
 	return summary, nil
+}
+
+// changeList は、変わる resource の一覧をログに出す形にします。
+func changeList(changes []string) string {
+	if len(changes) == 0 {
+		return "変わる resource はありません\n"
+	}
+
+	return fmt.Sprintf("変わる resource（%d 件）:\n  %s\n", len(changes), strings.Join(changes, "\n  "))
 }
 
 // ciPolicyStep は ci-policy です。入口の名前空間の Policy を1つずつ plan に掛け、違反か評価の欠けがあれば失敗します。
@@ -887,7 +907,11 @@ func ciFinishStep(args []string, d deps) (string, error) {
 	if s.Mode == ciModeApply {
 		done = "apply が終わりました\n\n"
 	}
-	summary := fmt.Sprintf("### %s\n\n%s\n\n%s- key: `%s`\n- sha256: `%s`\n- 版 ID: `%s`\n", s.Root, s.Summary, done, s.Key, s.SHA, s.Version)
+	list := ""
+	if len(s.Changes) > 0 {
+		list = "<pre>\n" + html.EscapeString(strings.Join(s.Changes, "\n")) + "\n</pre>\n\n"
+	}
+	summary := fmt.Sprintf("### %s\n\n%s\n\n%s%s- key: `%s`\n- sha256: `%s`\n- 版 ID: `%s`\n", s.Root, s.Summary, list, done, s.Key, s.SHA, s.Version)
 	err = appendGitHub(envValue(d.environ, "GITHUB_STEP_SUMMARY"), summary)
 	if s.Mode == ciModeApply {
 		err = errors.Join(err, appendGitHub(envValue(d.environ, "GITHUB_OUTPUT"), "plan="+s.Summary+"\n"))
