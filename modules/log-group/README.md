@@ -52,7 +52,7 @@ CloudWatch Logs の Log Group を、保持日数と鍵による暗号化を必�
 
 ## 版
 
-- AWS Provider は `>= 6.68.0, < 7.0.0`。使う引数が v6.68.0 の Provider の文書に在ること、引数と許容値が v6.70.0 の文書のとおりであることを確かめた。`terraform test` を走らせたのは、lock の無いこの module で init が選んだ 6.73.0 だけである
+- AWS Provider は `>= 6.68.0, < 7.0.0`。使う引数が v6.68.0 の Provider の文書に在ること、引数と許容値が v6.70.0 の文書のとおりであることを確かめた。`terraform test` を走らせたのは 6.73.0 だけである
 - Terraform は `>= 1.7.0, < 2.0.0`。下限はテストが使う `mock_provider` の要求である
 
 ## 公式実装の参照（ADR-0206 決定7・8）

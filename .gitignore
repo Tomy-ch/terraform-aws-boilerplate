@@ -35,8 +35,8 @@ override.tf.json
 .terraformrc
 terraform.rc
 
-# lock file は env と reference の root でのみ管理する。
-# root でない module のディレクトリでは持たない（ADR-0205 決定9）。
+# lock file は env と reference の root と providers/ の正本でだけ管理する。root でない module のディレクトリの
+# lock は tf-gates の init が正本から写すもので、追跡しない（ADR-0205 決定9）。
 modules/**/.terraform.lock.hcl
 usecases/**/.terraform.lock.hcl
 !usecases/*/reference/.terraform.lock.hcl
