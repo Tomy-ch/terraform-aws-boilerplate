@@ -32,9 +32,11 @@ const (
 	stepTest         = "test"
 	stepLintVersion  = "lint-version"
 	stepLint         = "lint"
+	// stepProvidersLock は、追加の引数を platform として受けます。
+	stepProvidersLock = "providers-lock"
 )
 
-func command(ctx context.Context, dir string, env []string, step string, _ ...string) *exec.Cmd {
+func command(ctx context.Context, dir string, env []string, step string, extra ...string) *exec.Cmd {
 	var cmd *exec.Cmd
 	switch step {
 	case stepFmt:
@@ -50,6 +52,13 @@ func command(ctx context.Context, dir string, env []string, step string, _ ...st
 		cmd = exec.CommandContext(ctx, "terraform", "validate", "-json")
 	case stepTest:
 		cmd = exec.CommandContext(ctx, "terraform", "test")
+	case stepProvidersLock:
+		args := make([]string, 0, 2+len(extra))
+		args = append(args, "providers", "lock")
+		for _, p := range extra {
+			args = append(args, "-platform="+p)
+		}
+		cmd = exec.CommandContext(ctx, "terraform", args...) //nolint:gosec // G204: platform は tflock.Platforms の閉じた表の値だけ。道具と option はリテラル。gosec が option の値を区別できるようになれば外す
 	case stepLintVersion:
 		cmd = exec.CommandContext(ctx, "tflint", "--version")
 	default:

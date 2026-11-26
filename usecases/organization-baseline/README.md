@@ -145,4 +145,4 @@ unsupported:
 ## 版
 
 - Terraform: `>= 1.7.0, < 2.0.0`
-- AWS Provider: `>= 6.68.0, < 7.0.0`（reference の lock は 6.70.0）
+- AWS Provider: `>= 6.68.0, < 7.0.0`（reference の lock の版は `providers/` の正本が持つ）

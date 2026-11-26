@@ -141,4 +141,4 @@ Security の道具の抑止（[ADR-0501](../../docs/adr/0501-development-tooling
 ## 版
 
 - Terraform は `>= 1.7.0, < 2.0.0`。下限はテストが使う `mock_provider` と `override_resource` の要求であり、実行して確かめるのは `mise.toml` の版だけである
-- AWS Provider は `>= 6.68.0, < 7.0.0`。reference の lock は 6.70.0 を固定する
+- AWS Provider は `>= 6.68.0, < 7.0.0`。reference の lock の版は `providers/` の正本が持つ

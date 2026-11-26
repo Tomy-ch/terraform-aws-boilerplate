@@ -80,7 +80,8 @@ git diff --name-only --diff-filter=U
 | 保護設定 | `.github/settings/branch-protection.json` | **和集合にしない。** 片方が required から外した検査を、機械的な和集合は黙って戻す。宣言の意図を人へ返す |
 | 追記専用の索引 | `docs/adr/README.md` の表、`usecases/<use-case>/docs/adr/README.md` の表 | 両側のエントリの和集合 —— **ただし同じ scope の中で同じ番号が両側に現れたら Step 5 へ渡す** |
 | ADR の本文 | `docs/adr/*.md` | **両側が同じ決定を変えている。** v1.0.0 までは Accepted ADR の本文を直接書き換えるため（ADR-0001 決定2）、決定の変更どうしが衝突する。どちらを採るかは決定の変更であり停止点なので、人へ返す。v1.0.0 以後の衝突は immutable の違反を示す <!-- v1.0.0 で削除: #141 --> |
-| Terraform の lockfile | `.terraform.lock.hcl` | **まだ存在しない。** 入ったら `terraform providers lock` が持ち主で、行を選ばない |
+| provider の版の宣言 | `providers/providers.toml` | **機械的でない。** どちらの版を採るかは provider の更新の決定なので、人へ返す |
+| Terraform の lockfile | `providers/.terraform.lock.hcl`、root の `.terraform.lock.hcl` | 行を選ばない。`providers/providers.toml` を先に解決し、`make tf-providers-lock`（正本を作り直して root へ写す）。宣言が衝突していなければ、root の lock は `make tf-lock-apply` |
 | 実装 | それ以外すべて | **機械的でない。** マーカーを残して手渡す |
 
 分類を先に終える。**どの行にも当たらないパスは、既定で実装である** —— 安全な向きだからである。
@@ -110,6 +111,7 @@ make versions-check || make versions-apply
 make egress-check   || make egress-apply
 make pin-actions-check
 make pin-images-check
+make tf-lock-check   || make tf-lock-apply
 ```
 
 `check` を先に出すのは、`resolve` が網へ出てクールダウンに当たるためである —— ずれていないのに

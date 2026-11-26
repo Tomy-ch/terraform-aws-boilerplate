@@ -10,12 +10,18 @@
 //	tf-gates result -base <dir> -manifest <tsv> -ignore <yaml>
 //	tf-gates test -base <dir> -data <dir> <root>...
 //	tf-gates lint -base <dir> -config <file> -ruleset <file> -mise <file> <root>...
+//	tf-gates lock-generate -providers <dir> -work <tmp/ の下の相対パス> -mise <file>
+//	tf-gates lock-apply -base <dir> -providers <dir> -mise <file> <root>...
+//	tf-gates lock-check -base <dir> -providers <dir> -mise <file> <root>...
 //
 // 対象のディレクトリは、走査の root の下の `.tf` を持つディレクトリで、段に `tests` か `.terraform` を持つものを
 // 除きます（tests の下の setup module は親の terraform test が読む）。宣言した root が1つでも無いときと、対象が
 // 0件のときは成功させません（ADR-0702 決定13）。-allow-missing-roots を渡したときだけ、無い root を名指して
 // 飛ばします（root の一部だけを持つ canary の fixture のため）。terraform と TFLint には AWS_ で始まる環境変数を渡さず、
 // 資格情報を持つ手元でも、持たない CI と同じ条件で走らせます（ADR-0401 決定6）。
+//
+// lock-generate は provider の版の正本（providers/）の lock を作り直し、lock-apply はそれを root の lock へ写し、
+// lock-check は写しのずれと、root でないディレクトリの lock の追跡を落とします。
 //
 // validate は、本走査の前に同じ起動の中で canary を走らせ、canary が落ちれば本走査を行いません（ADR-0702 決定25）。
 //
@@ -41,6 +47,7 @@ var (
 	errTool        = toolrun.ErrTool
 	errToolFailed  = xerrors.New("道具が検査を成り立たせられませんでした")
 	errRuleset     = xerrors.New("TFLint の AWS ruleset が宣言と合いません")
+	errLock        = xerrors.New("provider の lock が正本と合いません")
 )
 
 func main() {
@@ -70,6 +77,12 @@ func run(args []string, w io.Writer, tool toolFunc, root string) error {
 		return runTest(rest, w, tool)
 	case "lint":
 		return runLint(rest, w, tool)
+	case "lock-generate":
+		return runLockGenerate(rest, w, tool, root)
+	case "lock-apply":
+		return runLockApply(rest, w, gitLsFiles)
+	case "lock-check":
+		return runLockCheck(rest, w, gitLsFiles)
 	default:
 		return xerrors.Wrapf(errUsage, "知らないサブコマンド %q", args[0])
 	}
@@ -88,5 +101,5 @@ func report(err error, w io.Writer) int {
 }
 
 func exitCode(err error) int {
-	return toolrun.ExitCode(err, errFailed, errDirsFailed, errTargets, errCanary)
+	return toolrun.ExitCode(err, errFailed, errDirsFailed, errTargets, errCanary, errLock)
 }
