@@ -114,6 +114,44 @@ func fixtureFiles(usecaseMain, ouMain, accounts string) map[string]string {
 		path.Join(testUsecase, breakGlassFile): breakGlassTF,
 		path.Join(testUsecase, delegatedFile):  delegatedTF,
 		path.Join(testUsecase, outputsFile):    outputsTF,
+		environmentsFile:                       environmentsJSON,
+	}
+}
+
+const environmentsJSON = `[{"name":"admin-plan"},{"name":"admin-apply"},{"name":"admin-unlock"}]`
+
+// fakeGH は、gh の偽物。応答は引数を空白で繋いだもので引き、標準入力を stdins に覚える。after は secret set の
+// 引数の列ごとの、成功した後の応答。引けない呼び出しはテストを落とす。
+type fakeGH struct {
+	t         *testing.T
+	mu        sync.Mutex
+	responses map[string]awsResult
+	after     map[string]map[string]awsResult
+	calls     []string
+	stdins    []string
+}
+
+func (g *fakeGH) fn() ghFunc {
+	return func(stdin []byte, args ...string) awsResult {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+
+		key := strings.Join(args, " ")
+		g.calls = append(g.calls, key)
+		g.stdins = append(g.stdins, string(stdin))
+
+		r, ok := g.responses[key]
+		if !ok {
+			g.t.Errorf("想定していない gh の呼び出し: %s", key)
+
+			return awsResult{err: exitError(g.t), stderr: "unexpected"}
+		}
+
+		if m, ok := g.after[key]; ok && r.err == nil {
+			maps.Copy(g.responses, m)
+		}
+
+		return r
 	}
 }
 
@@ -195,7 +233,6 @@ type fakeAWS struct {
 	secrets []string
 }
 
-// onWrite は、書き込み w が成功した後の応答 m を置く。
 func (f *fakeAWS) onWrite(w string, m map[string]awsResult) {
 	if f.after == nil {
 		f.after = map[string]map[string]awsResult{}

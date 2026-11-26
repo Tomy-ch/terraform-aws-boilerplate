@@ -447,3 +447,24 @@ func Test_client_writeSecret(t *testing.T) {
 		assert.Contains(t, err.Error(), "書き込まれたかは分かりません")
 	})
 }
+
+func Test_client_writeIn(t *testing.T) {
+	t.Parallel()
+
+	t.Run("渡した region で書き込みを起動する", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeAWS(t, map[string]awsResult{"ce tag-resource --resource-arn a": ok("")})
+		require.NoError(t, testClient(f, "ce tag-resource").writeIn("us-east-1", "ce", "tag-resource", "--resource-arn", "a"))
+		require.Len(t, f.calls, 1)
+		assert.Equal(t, "us-east-1", f.calls[0][len(f.calls[0])-1])
+	})
+
+	t.Run("読み取りの操作は errNotAllowed", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeAWS(t, nil)
+		require.ErrorIs(t, testClient(f).writeIn("us-east-1", "ce", "get-anomaly-monitors"), errNotAllowed)
+		assert.Empty(t, f.calls)
+	})
+}

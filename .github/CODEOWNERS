@@ -44,6 +44,7 @@ scripts/oidc-job-lint/                @Tomy-ch
 scripts/setup/                        @Tomy-ch
 # 管理アカウントの資格情報で aws を起動する道具が、profile を迂回する資格情報を見つけて止める一覧。
 scripts/lib/awsenv/                   @Tomy-ch
+scripts/lib/anomaly/                  @Tomy-ch
 
 # apply の失敗を戻す revert のブランチの経路。リポジトリへ書き込める token がどの job に届き、何を push するかを決める。
 .makefiles/github/operation/apply-revert.mk @Tomy-ch

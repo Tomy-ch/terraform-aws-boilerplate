@@ -1,7 +1,8 @@
 // Package main は、手順書の手順のうち人が実行するものの、確認と手順の実行を持つツール（ADR-0702 決定1・26・27）。
-// 起動する道具は aws だけで、資格情報を変える環境変数の外し方と AWS_PROFILE は make が整える。
-// 手順の実行は、資格情報が組織の管理アカウントのものであることと前提と現状を読み取りで確かめ、差分を示し、
-// project の名前の打ち込みを受けてから書き込み、読み直して確かめる。
+// 起動する道具は aws と、environment の secret を置く入口に限り gh で、資格情報を変える環境変数の外し方と
+// AWS_PROFILE は make が整える。
+// 手順の実行は、資格情報が組織の管理アカウント（bootstrap の手順では一時 IAM user）のものであることと前提と現状を
+// 読み取りで確かめ、差分を示し、project の名前の打ち込みを受けてから書き込み、読み直して確かめる。
 //
 //	setup <入口> -project <project> -region <region> [-usecase <dir>] [-env <env>] [-user <user>] [-ids]
 //
@@ -25,6 +26,12 @@
 //	break-glass-mfa        3.4 手順2: MFA の無い break-glass の user に、ハードウェアの TOTP の装置を登録する（-usecase）
 //	break-glass-check      3.4 の確認: パスワードとハードウェアの MFA が在り、アクセスキーが無く、password policy が宣言どおり（-usecase）
 //	break-glass-usage-check 3.6 の忘れ: break-glass の user のサインインと role の引き受けが45日以内（-usecase）
+//
+// 入口（bootstrap の手順書。資格情報は bootstrap の一時 IAM user）:
+//
+//	bootstrap-contacts     2-1: 主の連絡先と、BILLING・OPERATIONS・SECURITY の代替連絡先を置く
+//	bootstrap-anomaly-tag  2-4: AWS services monitor とその subscription に tag <project>:bootstrap を付ける
+//	bootstrap-env-secrets  段4・段5: environment に secret AWS_ACCOUNT_ID を gh で置く（-environments）
 //
 // env の一覧、OU の階層、メールの形、break-glass の user と role と password policy、委任管理者のサービスの主体は、
 // -usecase の Terraform から毎回読む。
@@ -61,6 +68,7 @@ type deps struct {
 	isTTY    bool
 	hidden   func() ([]byte, error)
 	begin    func() (func(), error)
+	gh       ghFunc
 	now      func() time.Time
 	sleep    func(time.Duration)
 }
@@ -74,7 +82,11 @@ type options struct {
 	user    string
 	showIDs bool
 
+	environments string
+
 	readFile func(string) ([]byte, error)
+	getenv   func(string) string
+	gh       ghFunc
 	now      func() time.Time
 	sleep    func(time.Duration)
 }
@@ -82,10 +94,13 @@ type options struct {
 // entry は、1つの入口。writes はその入口が起動してよい書き込みの操作（"<service> <operation>"）で、確認は空。
 // usecase は、その入口が organization-baseline の Terraform を読むか。
 type entry struct {
-	writes    []string
-	usecase   bool
-	needsEnv  bool
-	needsUser bool
+	writes            []string
+	usecase           bool
+	needsEnv          bool
+	needsUser         bool
+	needsEnvironments bool
+	// bootstrap は、組織より前の bootstrap の手順で、資格情報が一時 IAM user であることを書き込みの前提にするか。
+	bootstrap bool
 	run       func(o options, c *client, t *terminal, org organization) error
 }
 
@@ -186,6 +201,24 @@ var entries = map[string]entry{
 			return checkBreakGlass(o, c, t.out)
 		},
 	},
+	"bootstrap-contacts": {
+		writes: []string{"account put-contact-information", "account put-alternate-contact"}, bootstrap: true,
+		run: func(o options, c *client, t *terminal, _ organization) error {
+			return setContacts(o, c, t)
+		},
+	},
+	"bootstrap-anomaly-tag": {
+		writes: []string{"ce tag-resource"}, bootstrap: true,
+		run: func(o options, c *client, t *terminal, _ organization) error {
+			return tagAnomaly(o, c, t)
+		},
+	},
+	"bootstrap-env-secrets": {
+		writes: []string{"gh secret set"}, bootstrap: true, needsEnvironments: true,
+		run: func(o options, c *client, t *terminal, _ organization) error {
+			return setEnvSecrets(o, c, t, o.gh)
+		},
+	},
 	"break-glass-usage-check": {
 		usecase: true,
 		run: func(o options, c *client, t *terminal, _ organization) error {
@@ -199,14 +232,12 @@ func main() {
 
 	os.Exit(execute(os.Args[1:], os.Stdout, deps{
 		aws: hostAWS("aws"), getenv: os.Getenv, readFile: os.ReadFile, stdin: os.Stdin, isTTY: isTerminal(os.Stdin),
-		hidden: hidden, begin: begin, now: time.Now, sleep: time.Sleep,
+		hidden: hidden, begin: begin, now: time.Now, sleep: time.Sleep, gh: hostGH("gh"),
 	}))
 }
 
-// errTerminalState は、端末の状態を読めないこと。
 var errTerminalState = xerrors.New("端末の状態を読めません")
 
-// passwordReader は、f の端末について newHiddenReader を組む。
 func passwordReader(f *os.File) (func() (func(), error), func() ([]byte, error)) {
 	fd := int(f.Fd())
 
@@ -345,6 +376,7 @@ func parseArgs(args []string) (options, entry, error) {
 	fs.StringVar(&o.usecase, "usecase", "", "")
 	fs.StringVar(&o.env, "env", "", "")
 	fs.StringVar(&o.user, "user", "", "")
+	fs.StringVar(&o.environments, "environments", "", "")
 	fs.BoolVar(&o.showIDs, "ids", false, "")
 
 	if err := fs.Parse(args[1:]); err != nil {
@@ -362,6 +394,8 @@ func parseArgs(args []string) (options, entry, error) {
 		return options{}, entry{}, xerrors.Wrap(errUsage, "-env は member-email-update にだけ渡します")
 	case e.needsUser != (o.user != ""):
 		return options{}, entry{}, xerrors.Wrap(errUsage, "-user は identity-center-user-check にだけ渡します")
+	case e.needsEnvironments != (o.environments != ""):
+		return options{}, entry{}, xerrors.Wrap(errUsage, "-environments は bootstrap-env-secrets にだけ渡します")
 	case o.showIDs && o.entry != "member-accounts-check":
 		return options{}, entry{}, xerrors.Wrap(errUsage, "-ids は member-accounts-check にだけ渡します")
 	}
@@ -380,7 +414,7 @@ func run(args []string, out io.Writer, d deps) error {
 		return err
 	}
 
-	o.readFile, o.now, o.sleep = d.readFile, d.now, d.sleep
+	o.readFile, o.getenv, o.gh, o.now, o.sleep = d.readFile, d.getenv, d.gh, d.now, d.sleep
 
 	var org organization
 
@@ -395,7 +429,12 @@ func run(args []string, out io.Writer, d deps) error {
 	t.hidden, t.begin = d.hidden, d.begin
 
 	if len(e.writes) > 0 {
-		if err := requireManagementAccount(c, profile, out); err != nil {
+		check := requireManagementAccount
+		if e.bootstrap {
+			check = requireBootstrapUser
+		}
+
+		if err := check(c, profile, out); err != nil {
 			return err
 		}
 	}

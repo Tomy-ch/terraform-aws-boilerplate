@@ -16,10 +16,9 @@ var (
 	// errNoProfile: 資格情報を変える環境変数を外し、profile を渡すのは make である。
 	errNoProfile         = xerrors.New("AWS_PROFILE が空です。make の setup- の入口から起動してください")
 	errStaticCredentials = xerrors.New("環境に profile を迂回する資格情報の指定が在ります。make の setup- の入口から起動してください（make が外します）")
-	// errAWSStart は、aws を起動できないこと（PATH に無いなど）。
-	errAWSStart    = xerrors.New("aws を起動できません")
-	errAWSFailed   = xerrors.New("aws の呼び出しが失敗しました")
-	errAWSResponse = xerrors.New("aws の応答を読めません")
+	errAWSStart          = xerrors.New("aws を起動できません")
+	errAWSFailed         = xerrors.New("aws の呼び出しが失敗しました")
+	errAWSResponse       = xerrors.New("aws の応答を読めません")
 	// errNotAllowed は、入口の一覧に無い書き込みの操作か、読み取りでも書き込みでもない操作を起動しようとしたこと。
 	errNotAllowed = xerrors.New("この入口が起動してよい aws の操作ではありません")
 
@@ -114,7 +113,6 @@ func (c *client) call(region string, args ...string) (awsResult, error) {
 	}
 }
 
-// read は、読み取りの操作を起動し、応答の JSON を v へ読む。
 func (c *client) read(v any, args ...string) error {
 	return c.readIn("", v, args...)
 }
@@ -157,11 +155,16 @@ func (c *client) readOptional(notFound string, v any, args ...string) (bool, err
 
 // write は、書き込みの操作を起動する。応答は読まない（確かめは後の読み取りが持つ）。
 func (c *client) write(args ...string) error {
+	return c.writeIn("", args...)
+}
+
+// writeIn は write と同じだが、region が空でなければ client の region の代わりに使う。
+func (c *client) writeIn(region string, args ...string) error {
 	if isRead(args) {
 		return xerrors.Wrap(errNotAllowed, "aws "+op(args))
 	}
 
-	_, err := c.call("", args...)
+	_, err := c.call(region, args...)
 
 	return err
 }
