@@ -30,7 +30,7 @@ func emailsWorld(t *testing.T, current, written string) *fakeAWS {
 		"organizations list-accounts":           ok(accountsJSON),
 		putParam(written):                       ok(`{"Version":1}`),
 	})
-	f.afterWrite = map[string]awsResult{"ssm get-parameter --name " + paramName: paramResponse(written)}
+	f.onWrite(putParam(written), map[string]awsResult{"ssm get-parameter --name " + paramName: paramResponse(written)})
 
 	return f
 }
@@ -114,6 +114,7 @@ func Test_readEmails(t *testing.T) {
 		"JSON でなければ errParameterUnreadable":            paramResponse("a@b.c"),
 		"値が文字列でなければ errParameterUnreadable":            paramResponse(`{"a":1}`),
 		"null なら errParameterUnreadable":               paramResponse("null"),
+		"値が null の key があれば errParameterUnreadable":    paramResponse(`{"security":null}`),
 		"object でなければ errParameterUnreadable":          paramResponse(`["a@b.c"]`),
 		"Parameter.Value が無ければ errParameterUnreadable": ok(`{"Parameter":{}}`),
 	} {
@@ -146,7 +147,7 @@ func Test_writeEmails(t *testing.T) {
 		t.Parallel()
 
 		f := emailsWorld(t, "", desiredValue)
-		f.afterWrite["ssm get-parameter --name "+paramName] = paramResponse(`{"security":"sec@x.y"}`)
+		f.after[putParam(desiredValue)]["ssm get-parameter --name "+paramName] = paramResponse(`{"security":"sec@x.y"}`)
 		require.ErrorIs(t, writeEmails(testClient(f, "ssm put-parameter"), testProject, desired), errVerify)
 	})
 
@@ -154,7 +155,7 @@ func Test_writeEmails(t *testing.T) {
 		t.Parallel()
 
 		f := emailsWorld(t, "", desiredValue)
-		f.afterWrite["ssm get-parameter --name "+paramName] = fail(t, notFound)
+		f.after[putParam(desiredValue)]["ssm get-parameter --name "+paramName] = fail(t, notFound)
 		require.ErrorIs(t, writeEmails(testClient(f, "ssm put-parameter"), testProject, desired), errVerify)
 	})
 
@@ -162,7 +163,7 @@ func Test_writeEmails(t *testing.T) {
 		t.Parallel()
 
 		f := emailsWorld(t, "", desiredValue)
-		f.afterWrite["ssm get-parameter --name "+paramName] = paramResponse("broken")
+		f.after[putParam(desiredValue)]["ssm get-parameter --name "+paramName] = paramResponse("broken")
 		require.ErrorIs(t, writeEmails(testClient(f, "ssm put-parameter"), testProject, desired), errParameterUnreadable)
 	})
 
@@ -301,7 +302,7 @@ func Test_putMemberEmails(t *testing.T) {
 		t.Parallel()
 
 		f := emailsWorld(t, "", desiredValue)
-		f.responses["organizations list-accounts"] = ok(`{"Accounts":[{"Id":"1","Name":"tabp-security","State":"SUSPENDED"},{"Id":"2","Name":"tabp-security","State":"ACTIVE"}]}`)
+		f.responses["organizations list-accounts"] = ok(`{"Accounts":[{"Id":"1","Name":"tabp-security","State":"ACTIVE"},{"Id":"2","Name":"tabp-security","State":"PENDING_ACTIVATION"}]}`)
 		_, err := put(t, f, "la@x.y\nsec@x.y\ntabp\n")
 		require.ErrorIs(t, err, errAccountName)
 		assert.Empty(t, f.writes())
@@ -344,6 +345,26 @@ func Test_putMemberEmails(t *testing.T) {
 			assert.Empty(t, f.writes())
 		})
 	}
+
+	t.Run("parameter の書き込みが落ちれば、置いたと出さずに errAWSFailed", func(t *testing.T) {
+		t.Parallel()
+
+		f := emailsWorld(t, "", desiredValue)
+		f.responses[putParam(desiredValue)] = fail(t, "denied")
+		out, err := put(t, f, "la@x.y\nsec@x.y\ntabp\n")
+		require.ErrorIs(t, err, errAWSFailed)
+		assert.NotContains(t, out, "✅")
+	})
+
+	t.Run("読み直した parameter が違えば、置いたと出さずに errVerify", func(t *testing.T) {
+		t.Parallel()
+
+		f := emailsWorld(t, "", desiredValue)
+		f.after[putParam(desiredValue)]["ssm get-parameter --name "+paramName] = paramResponse(`{"security":"sec@x.y"}`)
+		out, err := put(t, f, "la@x.y\nsec@x.y\ntabp\n")
+		require.ErrorIs(t, err, errVerify)
+		assert.NotContains(t, out, "✅")
+	})
 
 	t.Run("アカウントが0件の組織は読めない応答として、書かない", func(t *testing.T) {
 		t.Parallel()
@@ -465,10 +486,8 @@ func updateWorld(t *testing.T, before, after string, trusted bool) *fakeAWS {
 		acceptUpdate:           ok(`{"Status":"ACCEPTED"}`),
 		putParam(updatedValue): ok(`{"Version":2}`),
 	})
-	f.afterWrite = map[string]awsResult{
-		"ssm get-parameter --name " + paramName: paramResponse(updatedValue),
-		getPrimary:                              ok(`{"PrimaryEmail":"` + after + `"}`),
-	}
+	f.onWrite(acceptUpdate, map[string]awsResult{getPrimary: ok(`{"PrimaryEmail":"` + after + `"}`)})
+	f.onWrite(putParam(updatedValue), map[string]awsResult{"ssm get-parameter --name " + paramName: paramResponse(updatedValue)})
 
 	return f
 }
@@ -537,10 +556,12 @@ func Test_updateMemberEmail(t *testing.T) {
 		t.Parallel()
 
 		f := updateWorld(t, "SEC@x.y", "sec@x.y", true)
+		const acceptSec = "account accept-primary-email-update --account-id 222222222222 --primary-email sec@x.y"
 		f.responses[putParam(desiredValue)] = ok("")
 		f.responses["account start-primary-email-update --account-id 222222222222 --primary-email sec@x.y"] = ok("")
-		f.responses["account accept-primary-email-update --account-id 222222222222 --primary-email sec@x.y"] = ok("")
-		f.afterWrite["ssm get-parameter --name "+paramName] = paramResponse(desiredValue)
+		f.responses[acceptSec] = ok("")
+		f.onWrite(acceptSec, map[string]awsResult{getPrimary: ok(`{"PrimaryEmail":"sec@x.y"}`)})
+		f.onWrite(putParam(desiredValue), map[string]awsResult{"ssm get-parameter --name " + paramName: paramResponse(desiredValue)})
 		_, err := update(t, f, "security", "sec@x.y\ntabp\nABC123\n")
 		require.NoError(t, err)
 		assert.Contains(t, f.writes(), "account start-primary-email-update --account-id 222222222222 --primary-email sec@x.y")
@@ -628,7 +649,7 @@ func Test_updateMemberEmail(t *testing.T) {
 		}, errAWSFailed},
 		"同じ名前のアカウントが2つなら errAccountName": {func(t *testing.T) *fakeAWS {
 			f := updateWorld(t, "sec@x.y", "new@x.y", true)
-			f.responses["organizations list-accounts"] = ok(`{"Accounts":[{"Id":"1","Name":"tabp-security","State":"SUSPENDED"},{"Id":"2","Name":"tabp-security","State":"ACTIVE"}]}`)
+			f.responses["organizations list-accounts"] = ok(`{"Accounts":[{"Id":"1","Name":"tabp-security","State":"ACTIVE"},{"Id":"2","Name":"tabp-security","State":"PENDING_ACTIVATION"}]}`)
 
 			return f
 		}, errAccountName},
@@ -724,7 +745,7 @@ func Test_changePrimaryEmail(t *testing.T) {
 		t.Helper()
 
 		f := newFakeAWS(t, map[string]awsResult{startUpdate: ok(""), acceptUpdate: ok("")})
-		f.afterWrite = map[string]awsResult{getPrimary: ok(`{"PrimaryEmail":"new@x.y"}`)}
+		f.onWrite(acceptUpdate, map[string]awsResult{getPrimary: ok(`{"PrimaryEmail":"new@x.y"}`)})
 
 		return f
 	}
@@ -795,11 +816,29 @@ func Test_changePrimaryEmail(t *testing.T) {
 		assert.Equal(t, []string{startUpdate}, f.writes())
 	})
 
+	t.Run("主のメールは確定の後に読み直す", func(t *testing.T) {
+		t.Parallel()
+
+		f := world(t)
+		_, err := change(t, f, "ABC123\n")
+		require.NoError(t, err)
+		assert.Equal(t, []string{"account start-primary-email-update", "account accept-primary-email-update", "account get-primary-email"}, f.ops())
+	})
+
+	t.Run("確定の後の読み直しが落ちれば errAWSFailed", func(t *testing.T) {
+		t.Parallel()
+
+		f := world(t)
+		f.after[acceptUpdate][getPrimary] = fail(t, "denied")
+		_, err := change(t, f, "ABC123\n")
+		require.ErrorIs(t, err, errAWSFailed)
+	})
+
 	t.Run("確定の後に読み直した主のメールが大文字小文字だけ違っても errVerify", func(t *testing.T) {
 		t.Parallel()
 
 		f := world(t)
-		f.afterWrite[getPrimary] = ok(`{"PrimaryEmail":"NEW@x.y"}`)
+		f.after[acceptUpdate][getPrimary] = ok(`{"PrimaryEmail":"NEW@x.y"}`)
 		_, err := change(t, f, "ABC123\n")
 		require.ErrorIs(t, err, errVerify)
 	})

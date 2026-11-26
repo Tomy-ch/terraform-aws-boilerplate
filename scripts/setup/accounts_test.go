@@ -2,6 +2,9 @@ package main
 
 import (
 	"os"
+	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -9,6 +12,7 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zclconf/go-cty/cty"
 )
 
 func parseBody(t *testing.T, src string) *hclsyntax.Body {
@@ -46,6 +50,66 @@ func Test_readOrganization(t *testing.T) {
 		assert.Equal(t, "tabp-break-glass", org.breakGlass)
 		assert.True(t, org.emailPattern.MatchString("a@b.c"))
 		assert.False(t, org.emailPattern.MatchString("a@b"))
+	})
+
+	// 写しと正本のずれを落とす検査なので、リポジトリの実物を読む（ADR-0702 決定17 の但し書き）。
+	t.Run("実際の organization-baseline を読め、parameter とアカウントと break-glass の名前が Go の組み方と一致する", func(t *testing.T) {
+		t.Parallel()
+
+		_, self, _, ok := runtime.Caller(0)
+		require.True(t, ok)
+
+		dir := filepath.Join(filepath.Dir(self), "..", "..", "usecases", "organization-baseline")
+		org, err := readOrganization(os.ReadFile, dir, testProject)
+		require.NoError(t, err)
+		assert.NotEmpty(t, org.members)
+		assert.Equal(t, testProject+"-break-glass", org.breakGlass)
+
+		ctx := &hcl.EvalContext{Variables: map[string]cty.Value{
+			"var":  cty.ObjectVal(map[string]cty.Value{"project": cty.StringVal(testProject)}),
+			"each": cty.ObjectVal(map[string]cty.Value{"key": cty.StringVal("security")}),
+		}}
+		eval := func(t *testing.T, body *hclsyntax.Body, typ string, labels ...string) string {
+			t.Helper()
+
+			for _, b := range body.Blocks {
+				if b.Type == typ && slices.Equal(b.Labels, labels) {
+					v, diags := b.Body.Attributes["name"].Expr.Value(ctx)
+					require.False(t, diags.HasErrors(), diags.Error())
+
+					return v.AsString()
+				}
+			}
+
+			require.Failf(t, "block が無い", "%s %v", typ, labels)
+
+			return ""
+		}
+
+		src, err := os.ReadFile(filepath.Join(dir, accountsFile))
+		require.NoError(t, err)
+
+		accounts := parseBody(t, string(src))
+		assert.Equal(t, emailsParameter(testProject), eval(t, accounts, "data", "aws_ssm_parameter", "member_account_emails"))
+		assert.Equal(t, accountName(testProject, "security"), eval(t, accounts, "resource", "aws_organizations_account", "this"))
+
+		main, err := os.ReadFile(filepath.Join(dir, usecaseFile))
+		require.NoError(t, err)
+
+		var roleName hcl.Traversal
+
+		for _, b := range parseBody(t, string(main)).Blocks {
+			if b.Type == "module" && slices.Equal(b.Labels, []string{"break_glass"}) {
+				st, ok := b.Body.Attributes["role_name"].Expr.(*hclsyntax.ScopeTraversalExpr)
+				require.True(t, ok)
+
+				roleName = st.Traversal
+			}
+		}
+
+		require.Len(t, roleName, 2)
+		assert.Equal(t, "local", roleName.RootName())
+		assert.Equal(t, hcl.TraverseAttr{Name: breakGlassNameLocal, SrcRange: roleName[1].SourceRange()}, roleName[1])
 	})
 
 	missing := map[string]string{

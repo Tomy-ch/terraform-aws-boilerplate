@@ -20,8 +20,9 @@
 //
 // env の一覧、OU の階層、メールの形、break-glass の StackSet の名前は、-usecase の Terraform から毎回読む。
 //
-// 終了コードは、0 が完了か確認の一致、1 が確認の NG か前提が崩れていて書かなかったこと、2 がそれ以外
-// （引数の誤り、aws の失敗、確認の入力の不一致を含む）。-ids を付けない限り、12桁の数字（アカウント ID）は伏せる。
+// 終了コードは、0 が完了か確認の一致、1 が確認の NG か、組織の状態が前提に合わず書かなかったこと（OU や
+// Root が決まらない、同じ名前のアカウント、使われているメール、在るアカウントのメールの変更）、2 がそれ以外
+// （引数の誤り、入力したメールや確認コードの形の誤り、確認の入力の不一致、aws の失敗、読めない応答）。-ids を付けない限り、12桁の数字（アカウント ID）は伏せる。
 package main
 
 import (
@@ -124,12 +125,22 @@ var entries = map[string]entry{
 }
 
 func main() {
-	stat, err := os.Stdin.Stat()
-	isTTY := err == nil && stat.Mode()&os.ModeCharDevice != 0
-
 	os.Exit(execute(os.Args[1:], os.Stdout, deps{
-		aws: hostAWS("aws"), getenv: os.Getenv, readFile: os.ReadFile, stdin: os.Stdin, isTTY: isTTY,
+		aws: hostAWS("aws"), getenv: os.Getenv, readFile: os.ReadFile, stdin: os.Stdin, isTTY: isTerminal(os.Stdin),
 	}))
+}
+
+// isTerminal は、f が端末か。文字デバイスでも /dev/null は端末として扱わない（< /dev/null で起動した書き込みを
+// 端末からの入力と取り違えない）。
+func isTerminal(f *os.File) bool {
+	stat, err := f.Stat()
+	if err != nil || stat.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+
+	null, err := os.Stat(os.DevNull)
+
+	return err == nil && !os.SameFile(stat, null)
 }
 
 // execute は、出力を伏せて stdout へ書き、終了コードを返す。問いは入力を待つ前に人へ見えるよう、
@@ -150,7 +161,8 @@ func exitCode(err error) int {
 	switch {
 	case err == nil:
 		return 0
-	case xerrors.Is(err, errNG), xerrors.Is(err, errPrecondition):
+	case xerrors.Is(err, errNG), xerrors.Is(err, errPrecondition), xerrors.Is(err, errEmailInUse), xerrors.Is(err, errEmailChangeNeedsUpdate),
+		xerrors.Is(err, errAccountName), xerrors.Is(err, errOUNotFound), xerrors.Is(err, errNoRoot):
 		return 1
 	default:
 		return 2

@@ -31,10 +31,10 @@ func stackSetsWorld(t *testing.T, before, after string, roleBefore, roleAfter bo
 		activate: ok(""),
 		getRole:  role(roleBefore),
 	})
-	f.afterWrite = map[string]awsResult{
+	f.onWrite(activate, map[string]awsResult{
 		"cloudformation describe-organizations-access": ok(`{"Status":"` + after + `"}`),
 		getRole: role(roleAfter),
-	}
+	})
 
 	return f
 }
@@ -207,7 +207,9 @@ func serviceWorld(t *testing.T, before, after string) *fakeAWS {
 		f.responses[enablePrincipal(p)] = ok("")
 	}
 
-	f.afterWrite = map[string]awsResult{"organizations list-aws-service-access-for-organization": ok(after)}
+	for _, p := range securityServicePrincipals {
+		f.onWrite(enablePrincipal(p), map[string]awsResult{"organizations list-aws-service-access-for-organization": ok(after)})
+	}
 
 	return f
 }
@@ -636,6 +638,16 @@ func Test_checkStackInstances(t *testing.T) {
 		out, err := check(t, stackInstancesWorld(t, glass, instance("222222222222", "CURRENT")+","+instance("333333333333", "OUTDATED")))
 		require.ErrorIs(t, err, errNG)
 		assert.Contains(t, out, "❌ tabp-break-glass の 333333333333・ap-northeast-1 が CURRENT である（OUTDATED、d、r）")
+	})
+
+	t.Run("閉鎖済みのアカウントの instance は、CURRENT でなくても確かめない", func(t *testing.T) {
+		t.Parallel()
+
+		f := stackInstancesWorld(t, glass, allCurrent+","+instance("555555555555", "INOPERABLE"))
+		f.responses["organizations list-accounts"] = ok(`{"Accounts":[` + securityAccount + `,` + logArchive + `,{"Id":"555555555555","Name":"tabp-old","State":"SUSPENDED"}]}`)
+		out, err := check(t, f)
+		require.NoError(t, err)
+		assert.Contains(t, out, "   tabp-break-glass の 555555555555・ap-northeast-1 は閉鎖済みのアカウントなので確かめない（INOPERABLE）")
 	})
 
 	t.Run("メンバーのアカウントが組織に無ければ NG", func(t *testing.T) {

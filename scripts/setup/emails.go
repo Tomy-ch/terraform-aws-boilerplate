@@ -55,9 +55,21 @@ func readEmails(c *client, project string) (map[string]string, bool, error) {
 		return nil, found, err
 	}
 
-	var emails map[string]string
-	if err := json.Unmarshal([]byte(resp.Parameter.Value), &emails); err != nil || emails == nil {
+	// 値を any で読むのは、null の値を空文字に変えて読み通さないためである。
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(resp.Parameter.Value), &raw); err != nil || raw == nil {
 		return nil, true, errParameterUnreadable
+	}
+
+	emails := make(map[string]string, len(raw))
+
+	for k, v := range raw {
+		s, ok := v.(string)
+		if !ok {
+			return nil, true, errParameterUnreadable
+		}
+
+		emails[k] = s
 	}
 
 	return emails, true, nil

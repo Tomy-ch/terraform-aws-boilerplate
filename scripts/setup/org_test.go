@@ -89,12 +89,47 @@ func Test_accountNamed(t *testing.T) {
 		assert.False(t, found)
 	})
 
-	t.Run("同じ名前が2つ在れば、State に依らず errAccountName", func(t *testing.T) {
+	t.Run("閉鎖済みと閉鎖済みでない同じ名前が在れば、閉鎖済みでないほうを返す", func(t *testing.T) {
 		t.Parallel()
 
-		_, _, err := accountNamed(accounts, "c")
-		require.ErrorIs(t, err, errAccountName)
+		a, found, err := accountNamed(accounts, "c")
+		require.NoError(t, err)
+		assert.True(t, found)
+		assert.Equal(t, "4", a.ID)
 	})
+
+	t.Run("閉鎖済みだけが1つ在れば、それを返す", func(t *testing.T) {
+		t.Parallel()
+
+		a, found, err := accountNamed([]orgAccount{{Name: "c", ID: "3", State: "PENDING_CLOSURE"}}, "c")
+		require.NoError(t, err)
+		assert.True(t, found)
+		assert.Equal(t, "PENDING_CLOSURE", a.State)
+	})
+
+	for name, accounts := range map[string][]orgAccount{
+		"閉鎖済みでない同じ名前が2つ在れば errAccountName": {{Name: "c", State: "ACTIVE"}, {Name: "c", State: "PENDING_ACTIVATION"}},
+		"閉鎖済みだけが2つ在れば errAccountName":      {{Name: "c", State: "SUSPENDED"}, {Name: "c", State: "CLOSED"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, _, err := accountNamed(accounts, "c")
+			require.ErrorIs(t, err, errAccountName)
+		})
+	}
+}
+
+func Test_isClosed(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]bool{"SUSPENDED": true, "PENDING_CLOSURE": true, "CLOSED": true, "ACTIVE": false, "PENDING_ACTIVATION": false}
+	for state, want := range cases {
+		t.Run(state+" の判定", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, want, isClosed(orgAccount{State: state}))
+		})
+	}
 }
 
 func Test_accountName(t *testing.T) {
@@ -262,6 +297,27 @@ func Test_requireManagementAccount(t *testing.T) {
 			require.ErrorIs(t, err, errAWSResponse)
 		})
 	}
+
+	t.Run("資格情報を読めなければ、組織を読まずに errAWSFailed で書き込む先を出さない", func(t *testing.T) {
+		t.Parallel()
+
+		world := managementWorld("1", "1")
+		world["sts get-caller-identity"] = fail(t, "ExpiredToken")
+		f := newFakeAWS(t, world)
+
+		var out bytes.Buffer
+		require.ErrorIs(t, requireManagementAccount(testClient(f), "admin", &out), errAWSFailed)
+		assert.Equal(t, []string{"sts get-caller-identity"}, f.joined())
+		assert.Empty(t, out.String())
+	})
+
+	t.Run("Account の無い応答は errAWSResponse", func(t *testing.T) {
+		t.Parallel()
+
+		world := managementWorld("1", "1")
+		world["sts get-caller-identity"] = ok(`{}`)
+		require.ErrorIs(t, requireManagementAccount(testClient(newFakeAWS(t, world)), "admin", &bytes.Buffer{}), errAWSResponse)
+	})
 
 	t.Run("組織を読めなければ errAWSFailed", func(t *testing.T) {
 		t.Parallel()

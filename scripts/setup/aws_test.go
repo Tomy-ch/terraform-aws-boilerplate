@@ -310,9 +310,9 @@ func Test_client_write(t *testing.T) {
 
 		f := newFakeAWS(t, map[string]awsResult{"ssm put-parameter": fail(t, "boom")})
 		err := testClient(f, "ssm put-parameter").write("ssm", "put-parameter")
-		assert.False(t, f.written)
 		require.ErrorIs(t, err, errAWSFailed)
 		assert.False(t, xerrors.Is(err, errNotAllowed))
+		assert.Equal(t, []string{"ssm put-parameter"}, f.writes())
 	})
 }
 

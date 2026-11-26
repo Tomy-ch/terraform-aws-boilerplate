@@ -56,22 +56,40 @@ func validAccounts(accounts []orgAccount) error {
 }
 
 // accountNamed は、accounts のうち name のアカウント。無ければ false、2つ以上在れば errAccountName。
+// 閉鎖した後に同じ名前で作り直したアカウントがあれば、閉鎖済みではないものを選ぶ。閉鎖済みのアカウントは
+// 閉鎖から約90日、組織の一覧に残る。
 func accountNamed(accounts []orgAccount, name string) (orgAccount, bool, error) {
-	var found []orgAccount
+	var open, closed []orgAccount
 
 	for _, a := range accounts {
-		if a.Name == name {
-			found = append(found, a)
+		switch {
+		case a.Name != name:
+		case isClosed(a):
+			closed = append(closed, a)
+		default:
+			open = append(open, a)
 		}
 	}
 
-	switch len(found) {
-	case 0:
-		return orgAccount{}, false, nil
-	case 1:
-		return found[0], true, nil
-	default:
+	switch {
+	case len(open) == 1:
+		return open[0], true, nil
+	case len(open) > 1, len(closed) > 1:
 		return orgAccount{}, false, xerrors.Wrap(errAccountName, name)
+	case len(closed) == 1:
+		return closed[0], true, nil
+	default:
+		return orgAccount{}, false, nil
+	}
+}
+
+// isClosed は、アカウントが閉鎖の途中か閉鎖済みか（SUSPENDED・PENDING_CLOSURE・CLOSED）。
+func isClosed(a orgAccount) bool {
+	switch a.State {
+	case "SUSPENDED", "PENDING_CLOSURE", "CLOSED":
+		return true
+	default:
+		return false
 	}
 }
 

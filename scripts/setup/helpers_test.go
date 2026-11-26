@@ -89,15 +89,25 @@ func testOrg(t *testing.T) organization {
 // fakeAWS は、aws の偽物。応答は、--output と --region を除いた引数を空白で繋いだもので引く。
 // 読み取りに限り "<service> <operation>" でも引ける。書き込みは引数の列ごとに応答を置かなければ落ちるので、
 // 組んだ引数の誤りが黙って通らない。--cli-input-json の一時ファイルの中身は secrets に覚える。
-// 書き込みが1度でも成功した後は、afterWrite を先に引く。引けない呼び出しはテストを落とす。
+// after は書き込みの引数の列ごとの、その書き込みが成功した後の応答で、成功した順に重ね、新しいものから引く。
+// 書き込みごとに世界が進むので、読み直しが書き込みより前に動けば古い応答を読む。引けない呼び出しはテストを落とす。
 type fakeAWS struct {
-	t          *testing.T
-	mu         sync.Mutex
-	responses  map[string]awsResult
-	afterWrite map[string]awsResult
-	written    bool
-	calls      [][]string
-	secrets    []string
+	t         *testing.T
+	mu        sync.Mutex
+	responses map[string]awsResult
+	after     map[string]map[string]awsResult
+	overlays  []map[string]awsResult
+	calls     [][]string
+	secrets   []string
+}
+
+// onWrite は、書き込み w が成功した後の応答 m を置く。
+func (f *fakeAWS) onWrite(w string, m map[string]awsResult) {
+	if f.after == nil {
+		f.after = map[string]map[string]awsResult{}
+	}
+
+	f.after[w] = m
 }
 
 func newFakeAWS(t *testing.T, responses map[string]awsResult) *fakeAWS {
@@ -140,8 +150,8 @@ func (f *fakeAWS) fn() awsFunc {
 			return awsResult{err: exitError(f.t), stderr: "unexpected"}
 		}
 
-		if !isRead(bare) && r.err == nil {
-			f.written = true
+		if m, ok := f.after[strings.Join(bare, " ")]; ok && !isRead(bare) && r.err == nil {
+			f.overlays = append(f.overlays, m)
 		}
 
 		return r
@@ -157,12 +167,12 @@ func stripCommon(args []string) []string {
 }
 
 func (f *fakeAWS) lookup(bare []string) (awsResult, bool) {
-	tables := []map[string]awsResult{f.responses}
-	if f.written {
-		tables = []map[string]awsResult{f.afterWrite, f.responses}
+	tables := make([]map[string]awsResult, 0, len(f.overlays)+1)
+	for i := len(f.overlays) - 1; i >= 0; i-- {
+		tables = append(tables, f.overlays[i])
 	}
 
-	for _, m := range tables {
+	for _, m := range append(tables, f.responses) {
 		if r, ok := m[strings.Join(bare, " ")]; ok {
 			return r, true
 		}

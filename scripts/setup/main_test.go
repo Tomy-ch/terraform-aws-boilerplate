@@ -196,8 +196,49 @@ func Test_execute(t *testing.T) {
 		t.Parallel()
 
 		var out bytes.Buffer
-		assert.Equal(t, 2, execute([]string{"nope", "123456789012", "-ids"}, &out, testDeps(newFakeAWS(t, nil), "", nil)))
-		assert.Contains(t, out.String(), "入口 nope はありません")
+		assert.Equal(t, 2, execute([]string{"123456789012", "-ids"}, &out, testDeps(newFakeAWS(t, nil), "", nil)))
+		assert.Contains(t, out.String(), "入口 <account> はありません")
+		assert.NotContains(t, out.String(), "123456789012")
+	})
+}
+
+func Test_isTerminal(t *testing.T) {
+	t.Parallel()
+
+	t.Run("pipe は端末でない", func(t *testing.T) {
+		t.Parallel()
+
+		r, w, err := os.Pipe()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = r.Close(); _ = w.Close() })
+		assert.False(t, isTerminal(r))
+	})
+
+	t.Run("/dev/null は文字デバイスでも端末でない", func(t *testing.T) {
+		t.Parallel()
+
+		f, err := os.Open(os.DevNull)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = f.Close() })
+		assert.False(t, isTerminal(f))
+	})
+
+	t.Run("通常のファイルは端末でない", func(t *testing.T) {
+		t.Parallel()
+
+		f, err := os.CreateTemp(t.TempDir(), "x")
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = f.Close() })
+		assert.False(t, isTerminal(f))
+	})
+
+	t.Run("閉じたファイルは端末でない", func(t *testing.T) {
+		t.Parallel()
+
+		f, err := os.CreateTemp(t.TempDir(), "x")
+		require.NoError(t, err)
+		require.NoError(t, f.Close())
+		assert.False(t, isTerminal(f))
 	})
 }
 
@@ -208,12 +249,20 @@ func Test_exitCode(t *testing.T) {
 		err  error
 		want int
 	}{
-		"nil は 0":      {nil, 0},
-		"確認の NG は 1":   {xerrors.Wrap(errNG, "x"), 1},
-		"前提が崩れていれば 1":  {xerrors.Wrap(errPrecondition, "x"), 1},
-		"確認の入力の不一致は 2": {errNotConfirmed, 2},
-		"aws の失敗は 2":   {errAWSFailed, 2},
-		"読めない応答は 2":    {errAWSResponse, 2},
+		"nil は 0":           {nil, 0},
+		"確認の NG は 1":        {xerrors.Wrap(errNG, "x"), 1},
+		"前提が崩れていれば 1":       {xerrors.Wrap(errPrecondition, "x"), 1},
+		"確認の入力の不一致は 2":      {errNotConfirmed, 2},
+		"aws の失敗は 2":        {errAWSFailed, 2},
+		"使われているメールは 1":      {xerrors.Wrap(errEmailInUse, "x"), 1},
+		"在るアカウントのメールの変更は 1": {xerrors.Wrap(errEmailChangeNeedsUpdate, "x"), 1},
+		"同じ名前のアカウントは 1":     {xerrors.Wrap(errAccountName, "x"), 1},
+		"OU が決まらなければ 1":     {xerrors.Wrap(errOUNotFound, "x"), 1},
+		"Root が決まらなければ 1":   {errNoRoot, 1},
+		"メールの形の誤りは 2":       {errEmailShape, 2},
+		"メールの重複は 2":         {errEmailDuplicate, 2},
+		"確認コードの形の誤りは 2":     {errOTPShape, 2},
+		"読めない応答は 2":         {errAWSResponse, 2},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

@@ -9,7 +9,13 @@ import (
 func TestFound(t *testing.T) {
 	t.Parallel()
 
-	for _, k := range StaticCredentials {
+	// 一覧から名前が消えたことを落とすため、期待の一覧は StaticCredentials から作らない。
+	want := []string{
+		"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_ROLE_ARN", "AWS_WEB_IDENTITY_TOKEN_FILE",
+		"AWS_CONTAINER_CREDENTIALS_FULL_URI", "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE",
+	}
+
+	for _, k := range want {
 		t.Run(k+" が在れば見つける", func(t *testing.T) {
 			t.Parallel()
 
@@ -24,6 +30,12 @@ func TestFound(t *testing.T) {
 		})
 	}
 
+	t.Run("すべて在れば、一覧の順ですべてを返す", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Equal(t, want, Found(func(string) string { return "x" }))
+	})
+
 	t.Run("AWS_PROFILE だけなら何も見つけない", func(t *testing.T) {
 		t.Parallel()
 
@@ -36,16 +48,9 @@ func TestFound(t *testing.T) {
 		}))
 	})
 
-	t.Run("一覧の順で返す", func(t *testing.T) {
+	t.Run("空の値は在るとみなさない", func(t *testing.T) {
 		t.Parallel()
 
-		got := Found(func(name string) string {
-			if name == "AWS_CONFIG_FILE" || name == "AWS_ACCESS_KEY_ID" {
-				return "x"
-			}
-
-			return ""
-		})
-		assert.Equal(t, []string{"AWS_ACCESS_KEY_ID", "AWS_CONFIG_FILE"}, got)
+		assert.Empty(t, Found(func(string) string { return "" }))
 	})
 }

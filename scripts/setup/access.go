@@ -418,6 +418,12 @@ func checkStackSetInstances(c *client, r *report, name, project string, accounts
 	}
 
 	for _, i := range *instances.Summaries {
+		if slices.ContainsFunc(accounts, func(a orgAccount) bool { return a.ID == i.Account && isClosed(a) }) {
+			fmt.Fprintf(r.w, "   %s の %s・%s は閉鎖済みのアカウントなので確かめない（%s）\n", name, i.Account, i.Region, i.Status)
+
+			continue
+		}
+
 		what := fmt.Sprintf("%s の %s・%s が CURRENT である（%s", name, i.Account, i.Region, i.Status)
 		if i.Status != "CURRENT" {
 			what += fmt.Sprintf("、%s、%s", i.StackInstanceStatus.DetailedStatus, i.StatusReason)
