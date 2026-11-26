@@ -16,7 +16,7 @@ var (
 	errNotConfirmed = xerrors.New("確認の入力が project の名前と一致しないので、書き込みません")
 )
 
-// terminal は、人への問いと答えの読み取り。isTTY は標準入力が端末であるか。
+// terminal は、人への問いと答えの読み取り。
 type terminal struct {
 	in    *bufio.Reader
 	out   io.Writer

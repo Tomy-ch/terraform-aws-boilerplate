@@ -23,7 +23,6 @@ func newReport(w io.Writer, title string) *report {
 	return &report{w: w}
 }
 
-// check は、ok なら ✅、そうでなければ ❌ を付けて what を出す。
 func (r *report) check(ok bool, what string) {
 	r.count++
 

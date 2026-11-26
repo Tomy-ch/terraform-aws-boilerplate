@@ -13,11 +13,10 @@ import (
 )
 
 var (
-	// emailPattern は、accounts.tf の precondition がメールに課す形と同じもの。
-	emailPattern = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
-	otpPattern   = regexp.MustCompile(`^[A-Za-z0-9]{6,8}$`)
+	otpPattern = regexp.MustCompile(`^[A-Za-z0-9]{6,8}$`)
 
-	// errEmailShape は、入力されたメールが precondition の形に合わないこと。
+	// errEmailShape は、入力されたメールが accounts.tf の precondition の形に合わないか、aws がファイルや
+	// オプションとして読む形（`://` を含む、`-` で始まる）であること。
 	errEmailShape     = xerrors.New("メールの形ではありません")
 	errEmailDuplicate = xerrors.New("同じメールが2つの env に在ります")
 	errEmailInUse     = xerrors.New("メールが組織のほかのアカウントで使われています")
@@ -36,6 +35,11 @@ var (
 // emailsParameter は、メンバーアカウントのメールを置く parameter の名前（accounts.tf の data source と同じ）。
 func emailsParameter(project string) string {
 	return "/" + project + "/organization-baseline/member-account-emails"
+}
+
+// validEmail は、v が accounts.tf の precondition の形に合い、aws がファイルやオプションとして読む形でないか。
+func validEmail(org organization, v string) bool {
+	return org.emailPattern.MatchString(v) && !strings.Contains(v, "://") && !strings.HasPrefix(v, "-")
 }
 
 // readEmails は、parameter を読む。無ければ found が false。値が読めなければ errParameterUnreadable。
@@ -83,6 +87,7 @@ func writeEmails(c *client, project string, emails map[string]string) error {
 }
 
 // checkEmailUse は、env のメールが、ほかの env と、組織の env 以外のアカウントで使われていないことを確かめる。
+// メールの受信は大文字小文字を区別しないので、ここは区別せずに比べる。
 func checkEmailUse(project string, emails map[string]string, accounts []orgAccount) error {
 	seen := map[string]string{}
 	keys := slices.Sorted(maps.Keys(emails))
@@ -108,7 +113,8 @@ func checkEmailUse(project string, emails map[string]string, accounts []orgAccou
 }
 
 // putMemberEmails は、3.8 手順3 の手順の実行。env の一覧を対応表から取り、メールを端末から受けて parameter を置く。
-func putMemberEmails(o options, c *client, t *terminal, members []memberAccount) error {
+// 在るアカウントのメールとは、大文字小文字まで一致させる（Terraform の email は文字列で比べ、違えば作り直しになる）。
+func putMemberEmails(o options, c *client, t *terminal, org organization) error {
 	current, found, err := readEmails(c, o.project)
 	if err != nil && !xerrors.Is(err, errParameterUnreadable) {
 		return err
@@ -131,7 +137,7 @@ func putMemberEmails(o options, c *client, t *terminal, members []memberAccount)
 
 	desired := map[string]string{}
 
-	for _, m := range members {
+	for _, m := range org.members {
 		prompt := m.env + " のメール: "
 		if cur := current[m.env]; cur != "" {
 			prompt = fmt.Sprintf("%s のメール（空なら今の %s）: ", m.env, cur)
@@ -146,11 +152,16 @@ func putMemberEmails(o options, c *client, t *terminal, members []memberAccount)
 			v = current[m.env]
 		}
 
-		if !emailPattern.MatchString(v) {
+		if !validEmail(org, v) {
 			return xerrors.Wrap(errEmailShape, m.env+": "+v)
 		}
 
-		if a, ok := accountNamed(accounts, accountName(o.project, m.env)); ok && !strings.EqualFold(a.Email, v) {
+		a, ok, err := accountNamed(accounts, accountName(o.project, m.env))
+		if err != nil {
+			return err
+		}
+
+		if ok && a.Email != v {
 			return xerrors.Wrap(errEmailChangeNeedsUpdate, m.env)
 		}
 
@@ -212,8 +223,8 @@ func printEmailDiff(w io.Writer, name string, current, desired map[string]string
 }
 
 // checkMemberEmails は、3.8 手順3 の確認。parameter の key が対応表の env と一致し、値がメールの形で、
-// 既に在るアカウントのメールと一致することを確かめる。
-func checkMemberEmails(o options, c *client, w io.Writer, members []memberAccount) error {
+// 既に在るアカウントのメールと大文字小文字まで一致することを確かめる。
+func checkMemberEmails(o options, c *client, w io.Writer, org organization) error {
 	r := newReport(w, "メンバーアカウントのメールの parameter（"+emailsParameter(o.project)+"）")
 
 	emails, found, err := readEmails(c, o.project)
@@ -236,16 +247,21 @@ func checkMemberEmails(o options, c *client, w io.Writer, members []memberAccoun
 		return err
 	}
 
-	want := envs(members)
+	want := envs(org.members)
 	got := slices.Sorted(maps.Keys(emails))
 
 	r.check(slices.Equal(want, got), fmt.Sprintf("key が対応表の env と一致する（対応表: %s、parameter: %s）", strings.Join(want, "・"), strings.Join(got, "・")))
 
 	for _, env := range got {
-		r.check(emailPattern.MatchString(emails[env]), env+" の値がメールの形である")
+		r.check(validEmail(org, emails[env]), env+" の値がメールの形である")
 
-		if a, ok := accountNamed(accounts, accountName(o.project, env)); ok {
-			r.check(strings.EqualFold(a.Email, emails[env]), env+" の値が、既に在るアカウントのメールと一致する")
+		a, ok, err := accountNamed(accounts, accountName(o.project, env))
+		if err != nil {
+			return err
+		}
+
+		if ok {
+			r.check(a.Email == emails[env], env+" の値が、既に在るアカウントのメールと大文字小文字まで一致する")
 		}
 	}
 
@@ -255,8 +271,9 @@ func checkMemberEmails(o options, c *client, w io.Writer, members []memberAccoun
 }
 
 // updateMemberEmail は、3.8 末尾の手順の実行。env のアカウントのメールを AWS の側で変え、その後に parameter を合わせる。
-func updateMemberEmail(o options, c *client, t *terminal, members []memberAccount) error {
-	if !slices.Contains(envs(members), o.env) {
+// 主のメールの読み書きは Account Management の信頼アクセスを要するので、それを先に確かめ、無ければ最初に有効にする。
+func updateMemberEmail(o options, c *client, t *terminal, org organization) error {
+	if !slices.Contains(envs(org.members), o.env) {
 		return xerrors.Wrap(errPrecondition, "env "+o.env+" は対応表に在りません")
 	}
 
@@ -269,34 +286,48 @@ func updateMemberEmail(o options, c *client, t *terminal, members []memberAccoun
 		return xerrors.Wrap(errPrecondition, emailsParameter(o.project)+" が在りません")
 	}
 
+	if !slices.Equal(slices.Sorted(maps.Keys(emails)), envs(org.members)) {
+		return xerrors.Wrap(errPrecondition, emailsParameter(o.project)+" の key が対応表の env と一致しません。先に make setup-organization-baseline-member-emails で合わせてください")
+	}
+
 	accounts, err := listAccounts(c)
 	if err != nil {
 		return err
 	}
 
-	account, ok := accountNamed(accounts, accountName(o.project, o.env))
+	account, ok, err := accountNamed(accounts, accountName(o.project, o.env))
+	if err != nil {
+		return err
+	}
+
 	if !ok || account.State != "ACTIVE" {
 		return xerrors.Wrap(errPrecondition, accountName(o.project, o.env)+" が ACTIVE で在りません")
 	}
 
-	var primary struct {
-		PrimaryEmail string `json:"PrimaryEmail"`
+	trustedPrincipals, err := serviceAccessEnabled(c)
+	if err != nil {
+		return err
 	}
 
-	if err := c.read(&primary, "account", "get-primary-email", "--account-id", account.ID); err != nil {
-		return err
+	trusted := slices.Contains(trustedPrincipals, accountManagementPrincipal)
+	current := "（Account Management の信頼アクセスが無いので読めません）"
+
+	if trusted {
+		if current, err = primaryEmail(c, account.ID); err != nil {
+			return err
+		}
 	}
 
 	if err := t.requireTTY(); err != nil {
 		return err
 	}
 
-	next, err := t.ask(fmt.Sprintf("%s の新しいメール（今は %s）: ", o.env, primary.PrimaryEmail))
+	next, err := t.ask(fmt.Sprintf("%s の新しいメール（今は %s）: ", o.env, current))
 	if err != nil {
 		return err
 	}
 
-	if !emailPattern.MatchString(next) {
+	if !validEmail(org, next) {
 		return xerrors.Wrap(errEmailShape, o.env+": "+next)
 	}
 
@@ -307,28 +338,21 @@ func updateMemberEmail(o options, c *client, t *terminal, members []memberAccoun
 		return err
 	}
 
-	awsDone := strings.EqualFold(primary.PrimaryEmail, next)
+	awsDone := trusted && current == next
 	if awsDone && maps.Equal(emails, desired) {
 		fmt.Fprintf(t.out, "✅ %s のメールは AWS の側も parameter も既に %s です。書き込みません\n", o.env, next)
 
 		return nil
 	}
 
-	trusted, err := serviceAccessEnabled(c)
-	if err != nil {
-		return err
-	}
-
-	needTrust := !awsDone && !slices.Contains(trusted, accountManagementPrincipal)
-
 	fmt.Fprintln(t.out, "# 書き込む順")
 
-	if needTrust {
+	if !trusted {
 		fmt.Fprintf(t.out, "  1. Organizations の信頼アクセスを %s に有効にする\n", accountManagementPrincipal)
 	}
 
 	if !awsDone {
-		fmt.Fprintf(t.out, "  2. %s の主のメールを %s → %s に変える（新しいメールに届く確認コードを入力する）\n", account.Name, primary.PrimaryEmail, next)
+		fmt.Fprintf(t.out, "  2. %s の主のメールを %s → %s に変える（新しいメールに届く確認コードを入力する）\n", account.Name, current, next)
 	}
 
 	printEmailDiff(t.out, "  3. "+emailsParameter(o.project), emails, desired)
@@ -337,7 +361,7 @@ func updateMemberEmail(o options, c *client, t *terminal, members []memberAccoun
 		return err
 	}
 
-	if needTrust {
+	if !trusted {
 		if err := c.write("organizations", "enable-aws-service-access", "--service-principal", accountManagementPrincipal); err != nil {
 			return err
 		}
@@ -358,7 +382,25 @@ func updateMemberEmail(o options, c *client, t *terminal, members []memberAccoun
 	return nil
 }
 
+// primaryEmail は、アカウントの主のメール。空なら読めない応答として扱う。
+func primaryEmail(c *client, accountID string) (string, error) {
+	var resp struct {
+		PrimaryEmail string `json:"PrimaryEmail"`
+	}
+
+	if err := c.read(&resp, "account", "get-primary-email", "--account-id", accountID); err != nil {
+		return "", err
+	}
+
+	if resp.PrimaryEmail == "" {
+		return "", xerrors.Wrap(errAWSResponse, "account get-primary-email: PrimaryEmail がありません")
+	}
+
+	return resp.PrimaryEmail, nil
+}
+
 // changePrimaryEmail は、主のメールの変更を始め、確認コードを受けて確定し、読み直して確かめる。
+// 確認コードは引数に載せず、一時ファイルで渡す（ADR-0702 決定27）。
 func changePrimaryEmail(c *client, t *terminal, accountID, next string) error {
 	if err := c.write("account", "start-primary-email-update", "--account-id", accountID, "--primary-email", next); err != nil {
 		return err
@@ -373,20 +415,17 @@ func changePrimaryEmail(c *client, t *terminal, accountID, next string) error {
 		return errOTPShape
 	}
 
-	if err := c.write("account", "accept-primary-email-update", "--account-id", accountID, "--primary-email", next, "--otp", otp); err != nil {
+	if err := c.writeSecret(map[string]string{"Otp": otp}, "account", "accept-primary-email-update", "--account-id", accountID, "--primary-email", next); err != nil {
 		return err
 	}
 
-	var primary struct {
-		PrimaryEmail string `json:"PrimaryEmail"`
-	}
-
-	if err := c.read(&primary, "account", "get-primary-email", "--account-id", accountID); err != nil {
+	got, err := primaryEmail(c, accountID)
+	if err != nil {
 		return err
 	}
 
-	if !strings.EqualFold(primary.PrimaryEmail, next) {
-		return xerrors.Wrap(errVerify, "主のメールが "+primary.PrimaryEmail+" のままです（反映を待ってから同じ入口をやり直すと、parameter だけを合わせます）")
+	if got != next {
+		return xerrors.Wrap(errVerify, "主のメールが "+got+" のままです（反映を待ってから同じ入口をやり直すと、parameter だけを合わせます）")
 	}
 
 	return nil

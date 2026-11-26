@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,6 +28,21 @@ func Test_listAccounts(t *testing.T) {
 		}, got)
 	})
 
+	for name, stdout := range map[string]string{
+		"アカウントが0件なら errAWSResponse":         `{"Accounts":[]}`,
+		"Accounts が無ければ errAWSResponse":     `{}`,
+		"State が無いアカウントがあれば errAWSResponse": `{"Accounts":[{"Id":"111111111111","Name":"a","Status":"ACTIVE"}]}`,
+		"Id が無いアカウントがあれば errAWSResponse":    `{"Accounts":[{"Name":"a","State":"ACTIVE"}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			f := newFakeAWS(t, map[string]awsResult{"organizations list-accounts": ok(stdout)})
+			_, err := listAccounts(testClient(f))
+			require.ErrorIs(t, err, errAWSResponse)
+		})
+	}
+
 	t.Run("失敗はそのまま返す", func(t *testing.T) {
 		t.Parallel()
 
@@ -36,15 +52,31 @@ func Test_listAccounts(t *testing.T) {
 	})
 }
 
+func Test_validAccounts(t *testing.T) {
+	t.Parallel()
+
+	t.Run("欠けが無ければ nil、空の並びも nil", func(t *testing.T) {
+		t.Parallel()
+		require.NoError(t, validAccounts([]orgAccount{{ID: "1", Name: "a", State: "ACTIVE"}}))
+		require.NoError(t, validAccounts(nil))
+	})
+
+	t.Run("Name が欠ければ errAWSResponse", func(t *testing.T) {
+		t.Parallel()
+		require.ErrorIs(t, validAccounts([]orgAccount{{ID: "1", State: "ACTIVE"}}), errAWSResponse)
+	})
+}
+
 func Test_accountNamed(t *testing.T) {
 	t.Parallel()
 
-	accounts := []orgAccount{{Name: "a", ID: "1"}, {Name: "b", ID: "2"}}
+	accounts := []orgAccount{{Name: "a", ID: "1"}, {Name: "b", ID: "2"}, {Name: "c", ID: "3", State: "SUSPENDED"}, {Name: "c", ID: "4", State: "ACTIVE"}}
 
 	t.Run("名前の一致するアカウントを返す", func(t *testing.T) {
 		t.Parallel()
 
-		a, found := accountNamed(accounts, "b")
+		a, found, err := accountNamed(accounts, "b")
+		require.NoError(t, err)
 		assert.True(t, found)
 		assert.Equal(t, "2", a.ID)
 	})
@@ -52,8 +84,16 @@ func Test_accountNamed(t *testing.T) {
 	t.Run("無ければ false", func(t *testing.T) {
 		t.Parallel()
 
-		_, found := accountNamed(accounts, "c")
+		_, found, err := accountNamed(accounts, "x")
+		require.NoError(t, err)
 		assert.False(t, found)
+	})
+
+	t.Run("同じ名前が2つ在れば、State に依らず errAccountName", func(t *testing.T) {
+		t.Parallel()
+
+		_, _, err := accountNamed(accounts, "c")
+		require.ErrorIs(t, err, errAccountName)
 	})
 }
 
@@ -84,6 +124,7 @@ func Test_resolveOU(t *testing.T) {
 		got, err := resolveOU(testClient(f), []string{"Workloads", "NonProd"})
 		require.NoError(t, err)
 		assert.Equal(t, "ou-np", got)
+		assert.Contains(t, f.joined(), "organizations list-organizational-units-for-parent --parent-id ou-wl")
 	})
 
 	t.Run("OU が無ければ errOUNotFound", func(t *testing.T) {
@@ -104,12 +145,47 @@ func Test_resolveOU(t *testing.T) {
 		require.ErrorIs(t, err, errOUNotFound)
 	})
 
-	t.Run("Root が1つでなければ errNoRoot", func(t *testing.T) {
+	t.Run("OU の Id が空なら errAWSResponse", func(t *testing.T) {
 		t.Parallel()
 
-		f := newFakeAWS(t, map[string]awsResult{"organizations list-roots": ok(`{"Roots":[]}`)})
+		tree := orgTree()
+		tree["organizations list-organizational-units-for-parent --parent-id r-1"] = ok(`{"OrganizationalUnits":[{"Name":"Security"}]}`)
+		f := newFakeAWS(t, tree)
 		_, err := resolveOU(testClient(f), []string{"Security"})
-		require.ErrorIs(t, err, errNoRoot)
+		require.ErrorIs(t, err, errAWSResponse)
+	})
+
+	for name, roots := range map[string]string{
+		"Root が0件なら errNoRoot":     `{"Roots":[]}`,
+		"Root が2件なら errNoRoot":     `{"Roots":[{"Id":"r-1"},{"Id":"r-2"}]}`,
+		"Roots が無ければ errNoRoot":    `{}`,
+		"Root の Id が空なら errNoRoot": `{"Roots":[{}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			f := newFakeAWS(t, map[string]awsResult{"organizations list-roots": ok(roots)})
+			_, err := resolveOU(testClient(f), []string{"Security"})
+			require.ErrorIs(t, err, errNoRoot)
+		})
+	}
+
+	t.Run("Root を読めなければ errAWSFailed", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeAWS(t, map[string]awsResult{"organizations list-roots": fail(t, "denied")})
+		_, err := resolveOU(testClient(f), []string{"Security"})
+		require.ErrorIs(t, err, errAWSFailed)
+	})
+
+	t.Run("2段目の OU を読めなければ errAWSFailed", func(t *testing.T) {
+		t.Parallel()
+
+		tree := orgTree()
+		tree["organizations list-organizational-units-for-parent --parent-id ou-wl"] = fail(t, "denied")
+		f := newFakeAWS(t, tree)
+		_, err := resolveOU(testClient(f), []string{"Workloads", "NonProd"})
+		require.ErrorIs(t, err, errAWSFailed)
 	})
 }
 
@@ -123,5 +199,76 @@ func Test_listAccountsForParent(t *testing.T) {
 		got, err := listAccountsForParent(testClient(f), "ou-sec")
 		require.NoError(t, err)
 		assert.Equal(t, []orgAccount{{ID: "222222222222", Name: "tabp-security", State: "ACTIVE"}}, got)
+	})
+
+	t.Run("0件は直下にアカウントが無いことなので、そのまま返す", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeAWS(t, map[string]awsResult{"organizations list-accounts-for-parent": ok(`{"Accounts":[]}`)})
+		got, err := listAccountsForParent(testClient(f), "ou-sec")
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+
+	t.Run("失敗は errAWSFailed、欠けたアカウントは errAWSResponse", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeAWS(t, map[string]awsResult{"organizations list-accounts-for-parent": fail(t, "denied")})
+		_, err := listAccountsForParent(testClient(f), "ou-sec")
+		require.ErrorIs(t, err, errAWSFailed)
+
+		g := newFakeAWS(t, map[string]awsResult{"organizations list-accounts-for-parent": ok(`{"Accounts":[{"Name":"a"}]}`)})
+		_, err = listAccountsForParent(testClient(g), "ou-sec")
+		require.ErrorIs(t, err, errAWSResponse)
+	})
+}
+
+// managementWorld は、資格情報のアカウントが caller で、組織の管理アカウントが master の状態。
+func managementWorld(caller, master string) map[string]awsResult {
+	return map[string]awsResult{
+		"sts get-caller-identity":             ok(`{"Account":"` + caller + `"}`),
+		"organizations describe-organization": ok(`{"Organization":{"MasterAccountId":"` + master + `"}}`),
+	}
+}
+
+func Test_requireManagementAccount(t *testing.T) {
+	t.Parallel()
+
+	t.Run("管理アカウントなら、書き込む先の profile と region を出す", func(t *testing.T) {
+		t.Parallel()
+
+		var out bytes.Buffer
+		require.NoError(t, requireManagementAccount(testClient(newFakeAWS(t, managementWorld("111111111111", "111111111111"))), "admin", &out))
+		assert.Equal(t, "# 書き込む先: profile admin、region ap-northeast-1、組織の管理アカウント\n", out.String())
+	})
+
+	t.Run("管理アカウントでなければ errPrecondition で、書き込む先を出さない", func(t *testing.T) {
+		t.Parallel()
+
+		var out bytes.Buffer
+		err := requireManagementAccount(testClient(newFakeAWS(t, managementWorld("222222222222", "111111111111"))), "admin", &out)
+		require.ErrorIs(t, err, errPrecondition)
+		assert.Empty(t, out.String())
+	})
+
+	for name, world := range map[string]map[string]awsResult{
+		"資格情報のアカウントが空なら errAWSResponse":   managementWorld("", "111111111111"),
+		"管理アカウントの ID が空なら errAWSResponse": managementWorld("111111111111", ""),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			err := requireManagementAccount(testClient(newFakeAWS(t, world)), "admin", &bytes.Buffer{})
+			require.ErrorIs(t, err, errAWSResponse)
+		})
+	}
+
+	t.Run("組織を読めなければ errAWSFailed", func(t *testing.T) {
+		t.Parallel()
+
+		world := managementWorld("1", "1")
+		world["organizations describe-organization"] = fail(t, "AWSOrganizationsNotInUseException")
+		err := requireManagementAccount(testClient(newFakeAWS(t, world)), "admin", &bytes.Buffer{})
+		require.ErrorIs(t, err, errAWSFailed)
 	})
 }
