@@ -254,11 +254,15 @@ func run(args []string, client *http.Client, now time.Time, launch toolFunc) err
 		if err != nil {
 			return xerrors.Wrap(err, "❌ base との差分")
 		}
+		gone, err := removed(opt.base, paths, declared, launch)
+		if err != nil {
+			return xerrors.Wrap(err, "❌ base との差分")
+		}
 		baseBypasses, err := bypassesAt(opt.base, launch)
 		if err != nil {
 			return xerrors.Wrap(err, "❌ base の "+bypassFile)
 		}
-		policyViolations = introduced(policyViolations, targets, bypasses, baseBypasses)
+		policyViolations = introduced(policyViolations, append(append([]tool{}, targets...), gone...), bypasses, baseBypasses)
 	}
 
 	ctx := context.Background()
@@ -401,6 +405,21 @@ func countFrom(tools []tool, path string) int {
 		}
 	}
 	return n
+}
+
+// removed は、base の宣言に在り現在の宣言に無い版を返します。その版に掛かるバイパスが宣言の無いエントリになるのは、
+// この変更のせいです。
+func removed(base string, paths []string, current []tool, launch toolFunc) ([]tool, error) {
+	decls, err := baseDeclarations(base, paths, launch)
+	if err != nil {
+		return nil, err
+	}
+	before, err := parseDeclarations(decls)
+	if err != nil {
+		return nil, xerrors.Wrap(err, "base の宣言")
+	}
+
+	return diffAdded(current, before), nil
 }
 
 func added(base string, paths []string, current []tool, launch toolFunc) ([]tool, error) {
@@ -1064,12 +1083,12 @@ func bypassesAt(base string, launch toolFunc) (map[string]bypass, error) {
 	return parseBypasses(strings.NewReader(res.Stdout))
 }
 
-// introduced は、バイパスの違反のうち変更が持ち込んだものだけを返します。変更が足した道具の版に掛かるものと、
-// base から足されたか変わったエントリのものです。期限切れのように時間の経過だけで生じた違反は、変更の事実ではないので
+// introduced は、バイパスの違反のうち変更が持ち込んだものだけを返します。変更が足したか消した道具の版（changed）に
+// 掛かるものと、base から足されたか変わったエントリのものです。期限切れのように時間の経過だけで生じた違反は、変更の事実ではないので
 // gate では数えず、audit が落とします（ADR-0603 決定11）。
-func introduced(violations []violation, targets []tool, current, base map[string]bypass) []violation {
-	added := make(map[string]bool, len(targets))
-	for _, t := range targets {
+func introduced(violations []violation, changedTools []tool, current, base map[string]bypass) []violation {
+	added := make(map[string]bool, len(changedTools))
+	for _, t := range changedTools {
 		added[t.id()] = true
 	}
 	var out []violation

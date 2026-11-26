@@ -265,6 +265,16 @@ func Test_run_providerとバイパスのgate(t *testing.T) { //nolint:parallelte
 		assert.Contains(t, out, "期限 2026-01-01 が切れています")
 	})
 
+	t.Run("gate は、この変更が版を消して宣言の無くなったバイパスで落とす", func(t *testing.T) {
+		orphan := `"aqua:owner/repo@1.2.3" = { expires = 2026-09-01, issue = 1, reason = "x" }` + "\n"
+		useBypassGateRepo(t, orphan, orphan)
+		require.NoError(t, os.WriteFile(miseFile, []byte("[tools]\n\"aqua:owner/repo\" = \"1.0.0\"\n"), 0o600))
+		client := fakeUpstream(t, respondJSON("/repos/owner/repo/releases/tags/v1.0.0", `{"published_at":"2020-01-01T00:00:00Z"}`))
+		out, err := runCaptured(t, []string{"gate", "--base=HEAD"}, client, now, command)
+		require.ErrorIs(t, err, errBlocking)
+		assert.Contains(t, out, "はどの宣言")
+	})
+
 	t.Run("gate は、base に provider の正本の lock が無ければ、今の版を足されたものとして窓に掛ける", func(t *testing.T) {
 		useGateRepo(t, miseOneAquaTool, miseOneAquaTool, miseFile, semgrepFile)
 		client := fakeUpstream(t, respondJSON("/v1/providers/hashicorp/aws/6.73.0", `{"published_at":"2026-08-05T00:00:00Z"}`))
@@ -272,4 +282,16 @@ func Test_run_providerとバイパスのgate(t *testing.T) { //nolint:parallelte
 		require.ErrorIs(t, err, errBlocking)
 		assert.Contains(t, out, "::error file="+providerLockFile+"::"+providerKey+"@6.73.0")
 	})
+}
+
+func Test_removed(t *testing.T) { //nolint:paralleltest // t.Chdir を使う
+	useMiseGateRepo(t, miseOneAquaTool, "[tools]\n")
+	got, err := removed("HEAD", declarationPaths(), nil, command)
+	require.NoError(t, err)
+	var ids []string
+	for _, tl := range got {
+		ids = append(ids, tl.id())
+	}
+	assert.Contains(t, ids, providerKey+"@6.73.0", "現在の宣言に無い base の版を返す")
+	assert.Contains(t, ids, "aqua:owner/repo@1.2.3")
 }
