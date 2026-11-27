@@ -548,11 +548,11 @@ jobs:
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
-          tools: aqua:hashicorp/terraform aqua:open-policy-agent/conftest go
+          tools: aqua:hashicorp/terraform aqua:open-policy-agent/conftest aqua:open-policy-agent/opa go
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      # go: Policy Test の段（scripts/tf-policy・provider-schema・tf-local）を scripts/ からビルドする。conftest と terraform:
-      # tf-policy plan が本走査の前に走らせる canary は、ホストの PATH のものを起動する。落ちえないゲートは reference の
+      # go: Policy Test の段（scripts/tf-policy・provider-schema・tf-local）を scripts/ からビルドする。opa は Rego のテストを
+      # 走らせる。opa・conftest と terraform: tf-policy plan が本走査の前に走らせる canary は、ホストの PATH のものを起動する。落ちえないゲートは reference の
       # root について何も言わないので、canary が落ちれば本走査を行わない。
       # この step に secret を渡さない: plan は資格情報なしに mock_provider で走る。
       - name: Run the Policy Test

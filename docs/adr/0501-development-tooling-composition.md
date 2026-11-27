@@ -48,7 +48,7 @@ Security は事情が違う。誤設定の規則は道具ごとに独立に書�
    | Security | Trivy / Checkov / KICS / Semgrep CE（決定6） | 不要 |
    | Unit | `terraform test`（mock provider。`command = plan` を基本とし、plan で値が決まらない値の検査に限って `command = apply` を用いる） | 不要 |
    | Contract | `terraform test` | 不要 |
-   | Policy | Conftest / OPA（入力は plan の JSON 表現の `resource_changes`。決定8） | 不要 |
+   | Policy | Conftest / OPA（入力は plan の JSON 表現の `resource_changes`。決定8。Policy のテストは OPA の CLI（`opa test`）が、適用は Conftest が持ち、OPA の版は Conftest の内蔵に揃える） | 不要 |
    | Integration | `terraform test`（実 provider） | 必要 |
    | E2E | Terratest（Go） | 必要 |
    | Cost | Infracost | 不要 |
