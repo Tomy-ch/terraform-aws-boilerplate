@@ -284,10 +284,12 @@ test_member_decl_drops_management_only_policies_and_instances if {
 	d := object.union(inst_decl, {"deployment_identity": {
 		"management_only_policies": ["module.d.aws_iam_policy.governance[0]"],
 		"apply_identity_role": {"managed_policies": ["module.d.aws_iam_policy.manage", "module.d.aws_iam_policy.governance[0]"]},
+		"plan_role": {"managed_policies": ["module.d.aws_iam_policy.workload_read", "module.d.aws_iam_policy.governance[0]"]},
 		"customer_managed_policies": ["module.d.aws_iam_policy.manage", "module.d.aws_iam_policy.governance"],
 	}})
 	got := lib.member_decl with data.policy_plan as d
 	got.deployment_identity.apply_identity_role.managed_policies == ["module.d.aws_iam_policy.manage"]
+	got.deployment_identity.plan_role.managed_policies == ["module.d.aws_iam_policy.workload_read"]
 	got.deployment_identity.apply_identity_role.role == inst_decl.deployment_identity.apply_identity_role.role
 	got.deployment_identity.customer_managed_policies == ["module.d.aws_iam_policy.manage"]
 	not "instances" in object.keys(got.state_backend)
