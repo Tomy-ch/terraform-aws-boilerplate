@@ -62,6 +62,7 @@ var (
 // provider の region に依らずこの宛先を呼ぶので、region の突き合わせから外す。
 var globalEndpoints = map[string]bool{
 	"organizations.us-east-1.amazonaws.com": true,
+	"ce.us-east-1.amazonaws.com":            true,
 }
 
 // typeRegions は型ごとの、その型のブロックを置く region の集合。region 引数を持たないブロックは空文字列で

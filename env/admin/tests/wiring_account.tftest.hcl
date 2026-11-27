@@ -16,6 +16,11 @@ override_module {
   target = module.ops_notification
 }
 
+# finops は ops_notification の Topic の ARN を受ける。上の override は出力を持たないので、finops も配線の外に置く。
+override_module {
+  target = module.finops
+}
+
 run "boundary_arn_is_built_from_the_account_and_partition" {
   command = plan
 
