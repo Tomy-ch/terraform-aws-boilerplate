@@ -1,7 +1,7 @@
 ---
 name: tools-upgrade
 description: >-
-  Audit the tool versions pinned in `mise.toml` `[tools]` against upstream latest and apply the ones the user approves. The classification is not re-derived here — `make tool-cooldown-outdated` already resolves each tool's backend through `mise registry`, applies the window that backend deserves (14 days for GitHub Releases, 7 for package registries), and reports 今すぐ上げられる / 窓待ち / 上流を確認できず. This skill reads that verdict, hands every 窓待ち entry to `/supply-chain-triage` when the answer would change what the user does, confirms the set, edits `mise.toml`, and re-runs the gates. Use on a routine cadence or after a security advisory. Do NOT use it to upgrade the Go runtime (`/go-upgrade` — the downstream propagation differs), to pin GitHub Actions or Docker images (`/actions-pin`, `/images-pin`), or to patch one advisory-named dependency.
+  Audit the tool versions pinned in `mise.toml` `[tools]` (and the Terraform provider versions pinned in `providers/providers.toml`) against upstream latest and apply the ones the user approves. The classification is not re-derived here — `make tool-cooldown-outdated` already resolves each tool's backend through `mise registry`, applies the window that backend deserves (14 days for GitHub Releases, 7 for package registries), and reports 今すぐ上げられる / 窓待ち / 上流を確認できず. This skill reads that verdict, hands every 窓待ち entry to `/supply-chain-triage` when the answer would change what the user does, confirms the set, edits `mise.toml`, and re-runs the gates. Use on a routine cadence or after a security advisory. Do NOT use it to upgrade the Go runtime (`/go-upgrade` — the downstream propagation differs), to pin GitHub Actions or Docker images (`/actions-pin`, `/images-pin`), or to patch one advisory-named dependency.
 ---
 
 # Tool Version Upgrade
@@ -12,6 +12,10 @@ description: >-
 `mise registry` に尋ねて解決し、そのバックエンドに応じた窓（GitHub Release 経由は14日、
 パッケージレジストリ経由は7日）を当て、分類まで出す。**表をここへ写すと、mise が変わった次の瞬間に
 ずれる**（`scripts/README.md` の `tool-cooldown/` の行がその理由を述べている）。
+
+**Terraform の provider の版も同じ棚卸しに出る。** `providers/.terraform.lock.hcl` の provider を Terraform Registry の
+公開時刻でレジストリの窓に照らす。上げるときは `providers/providers.toml` の版を変え、`make tf-providers-lock` で
+正本と root の lock を作り直す（`providers/README.md`）。
 
 ## 窓がツールではなくバックエンドで決まる理由
 
@@ -46,6 +50,7 @@ Do NOT use it for:
 `AGENTS.md` *v1.0.0 までの暫定* がリポジトリ直下の設定ファイルの編集を解除している。触れてよいのは次だけ。 <!-- v1.0.0 で削除: #141 -->
 
 - `mise.toml` の `[tools]` —— **ユーザーが明示的に承認したエントリだけ**
+- `providers/providers.toml` —— 同じく承認した provider だけ。lock は `make tf-providers-lock` の出力としてのみ
 - `.github/tool-cooldown-bypass.toml` —— 理由と失効期限を書けるときだけ（ADR-0702 決定18）
 - `scripts/go.mod` / `docker/tools/Dockerfile` —— `make versions-apply` の出力としてのみ
 - `docker/tools/node/package.json` / `docker/tools/node/pnpm-workspace.yaml` / `docker/tools/node/pnpm-lock.yaml` —— `make versions-apply` と `make node-tools-lock` の出力としてのみ

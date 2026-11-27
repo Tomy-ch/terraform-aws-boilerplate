@@ -50,7 +50,7 @@ tf-fmt-check:
 .PHONY: tf-init
 tf-init: tf-lock-check
 	@mkdir -p "$$TF_PLUGIN_CACHE_DIR"
-	@$(call TF_GATES,init,-data "$(TF_GATES_DATA)")
+	@$(call TF_GATES,init,-data "$(TF_GATES_DATA)" $(TF_LOCK_FLAGS))
 
 # provider の版の正本（providers/）。root の lock はその写しで、写しとずれの判定は tf-gates が持つ。
 TF_LOCK_FLAGS = -providers "$(TF_BASE)/providers" -mise "$(TF_BASE)/mise.toml"

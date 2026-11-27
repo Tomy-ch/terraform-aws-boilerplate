@@ -27,3 +27,14 @@ variable "bootstrap_read_role_path" {
   description = "メンバーの立ち上げの読み取りの role の IAM の path。`/` で始まり `/` で終わる。"
   type        = string
 }
+
+variable "delegated_admin_regions" {
+  description = "GuardDuty・Inspector・Security Hub の委任管理者を指定するリージョンの集合（repository-wide/ADR-0209）。"
+  type        = set(string)
+  nullable    = false
+
+  validation {
+    condition     = length(var.delegated_admin_regions) > 0
+    error_message = "delegated_admin_regions は空にできません。"
+  }
+}

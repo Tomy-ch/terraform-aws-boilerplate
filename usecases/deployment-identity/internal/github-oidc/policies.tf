@@ -151,9 +151,12 @@ locals {
   stack_set_write_arns   = concat(local.stack_instance_arns, [local.stack_set_type_arn])
   stack_instance_actions = ["cloudformation:CreateStackInstances", "cloudformation:UpdateStackInstances"]
 
-  governance_policy_name     = "${var.name_prefix}-ci-apply-identity-governance"
-  governance_policy_arn      = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/${local.governance_policy_name}"
-  governance_policy_arns     = [for a in [local.governance_policy_arn] : a if local.management]
+  governance_policy_name = "${var.name_prefix}-ci-apply-identity-governance"
+  governance_policy_arn  = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/${local.governance_policy_name}"
+  # 委任管理者の指定と解除は2つ目の policy に置く（決定21）。
+  governance_2_policy_name   = "${var.name_prefix}-ci-apply-identity-governance-2"
+  governance_2_policy_arn    = "${local.iam_arn_prefix}:policy/${local.governance_2_policy_name}"
+  governance_policy_arns     = [for a in [local.governance_policy_arn, local.governance_2_policy_arn] : a if local.management]
   manage_policy_name         = "${var.name_prefix}-ci-apply-identity-manage"
   manage_policy_arn          = "${local.iam_arn_prefix}:policy/${local.manage_policy_name}"
   members_policy_name        = "${var.name_prefix}-ci-apply-identity-members"
@@ -593,6 +596,71 @@ locals {
     local.bootstrap_assume_statements.apply_identity,
   ) : s if local.management]
 
+  # 委任管理者の指定（organization-baseline の internal/delegated-admin。deployment-identity/ADR-0201 決定7）。
+  # 指定するサービスの主体。Config と Access Analyzer は Organizations の API で、ほかはサービスの API で指定する。
+  delegated_admin_service_principals = ["access-analyzer.amazonaws.com", "cloudtrail.amazonaws.com", "config.amazonaws.com", "guardduty.amazonaws.com", "inspector2.amazonaws.com", "securityhub.amazonaws.com"]
+  cloudtrail_slr_arns = {
+    "cloudtrail.amazonaws.com"         = "${local.iam_arn_prefix}:role/aws-service-role/cloudtrail.amazonaws.com/AWSServiceRoleForCloudTrail"
+    "context.cloudtrail.amazonaws.com" = "${local.iam_arn_prefix}:role/aws-service-role/context.cloudtrail.amazonaws.com/AWSServiceRoleForCloudTrailEventContext"
+  }
+  # GuardDuty・Inspector・Security Hub の指定はリージョンごとで、ADR-0209 の集合のすべてに置く。Security Hub の Action は
+  # 管理アカウントの hub を resource に取る（Service Authorization Reference）。
+  delegated_admin_regional_read_actions   = ["guardduty:ListOrganizationAdminAccounts", "inspector2:ListDelegatedAdminAccounts"]
+  delegated_admin_regional_manage_actions = ["guardduty:DisableOrganizationAdminAccount", "guardduty:EnableOrganizationAdminAccount", "inspector2:DisableDelegatedAdminAccount", "inspector2:EnableDelegatedAdminAccount"]
+  securityhub_hub_arn                     = "arn:${data.aws_partition.current.partition}:securityhub:${local.baseline_arn_suffix}:hub/default"
+  securityhub_read_actions                = ["securityhub:ListOrganizationAdminAccounts"]
+  securityhub_manage_actions              = ["securityhub:DisableOrganizationAdminAccount", "securityhub:EnableOrganizationAdminAccount"]
+  delegated_admin_read_statements = [for s in concat(
+    [
+      { Sid = "OrganizationsListDelegatedAdministrators", Effect = "Allow", Action = "organizations:ListDelegatedAdministrators", Resource = "*" },
+      { Sid = "ReadCloudTrailServiceLinkedRoles", Effect = "Allow", Action = "iam:GetRole", Resource = values(local.cloudtrail_slr_arns) },
+    ],
+    [for a in local.delegated_admin_regional_read_actions : { Sid = replace(title(replace(a, ":", " ")), " ", ""), Effect = "Allow", Action = a, Resource = "*" } if local.baseline_supported],
+    [for s in [{ Sid = "ReadSecurityHubAdminAccounts", Effect = "Allow", Action = local.securityhub_read_actions, Resource = local.securityhub_hub_arn }] : s if local.baseline_supported],
+  ) : s if local.management]
+  delegated_admin_manage_statements = concat(
+    [
+      {
+        Sid       = "RegisterDelegatedAdministrators"
+        Effect    = "Allow"
+        Action    = ["organizations:DeregisterDelegatedAdministrator", "organizations:RegisterDelegatedAdministrator"]
+        Resource  = local.org_account_arns
+        Condition = { StringEquals = { "organizations:ServicePrincipal" = local.delegated_admin_service_principals } }
+      },
+      # GuardDuty・Inspector・Security Hub の指定は、呼び手の権限で信頼アクセスを有効にする（各サービスの文書）。指定先のアカウントの読み取りは ReadMemberAccounts。
+      {
+        Sid       = "EnableSecurityServiceAccess"
+        Effect    = "Allow"
+        Action    = "organizations:EnableAWSServiceAccess"
+        Resource  = "*"
+        Condition = { StringEquals = { "organizations:ServicePrincipal" = ["guardduty.amazonaws.com", "inspector2.amazonaws.com", "securityhub.amazonaws.com"] } }
+      },
+      { Sid = "CloudtrailRegisterOrganizationDelegatedAdmin", Effect = "Allow", Action = "cloudtrail:RegisterOrganizationDelegatedAdmin", Resource = "*" },
+      { Sid = "CloudtrailDeregisterOrganizationDelegatedAdmin", Effect = "Allow", Action = "cloudtrail:DeregisterOrganizationDelegatedAdmin", Resource = "*" },
+    ],
+    # CloudTrail の指定は、CloudTrail の SLR が無ければ呼び手の権限で作る（CloudTrail の文書）。
+    [for svc, arn in local.cloudtrail_slr_arns : {
+      Sid       = svc == "cloudtrail.amazonaws.com" ? "CreateCloudTrailServiceLinkedRole" : "CreateCloudTrailEventContextServiceLinkedRole"
+      Effect    = "Allow"
+      Action    = "iam:CreateServiceLinkedRole"
+      Resource  = arn
+      Condition = { StringEquals = { "iam:AWSServiceName" = svc } }
+    }],
+    [for a in local.delegated_admin_regional_manage_actions : { Sid = replace(title(replace(a, ":", " ")), " ", ""), Effect = "Allow", Action = a, Resource = "*" } if local.baseline_supported],
+    [for s in [{ Sid = "ManageSecurityHubAdminAccounts", Effect = "Allow", Action = local.securityhub_manage_actions, Resource = local.securityhub_hub_arn }] : s if local.baseline_supported],
+  )
+  # リージョンごとの Action は ADR-0209 の集合の外を拒む（ADR-0209 決定4）。
+  delegated_admin_region_deny = { for role, actions in {
+    plan  = concat(local.delegated_admin_regional_read_actions, local.securityhub_read_actions)
+    apply = concat(local.delegated_admin_regional_read_actions, local.delegated_admin_regional_manage_actions, local.securityhub_read_actions, local.securityhub_manage_actions)
+    } : role => [for s in [{
+      Sid       = "DenyDelegatedAdminOutsideRegions"
+      Effect    = "Deny"
+      Action    = sort(actions)
+      Resource  = "*"
+      Condition = { StringNotEquals = { "aws:RequestedRegion" = local.baseline_regions } }
+  }] : s if local.baseline_supported && local.management] }
+
   ci_policy_management_statements = [
     {
       Sid      = "ManageCiPolicies"
@@ -692,11 +760,15 @@ locals {
         { Sid = "ReadState", Effect = "Allow", Action = "s3:GetObject", Resource = [local.identity_state_key, local.workload_state_key] },
         { Sid = "WritePlanOutput", Effect = "Allow", Action = "s3:PutObject", Resource = local.plan_output_keys },
         { Sid = "ReadStateKey", Effect = "Allow", Action = local.state_key_read_actions, Resource = var.state_key_arn },
+        # 決定8。resource type を持たない global の Action なので、DenyBaselineOutsideRegions の列挙に入れない。
+        { Sid = "SimulatePolicyDocuments", Effect = "Allow", Action = "iam:SimulateCustomPolicy", Resource = "*" },
       ],
       local.identity_read_statements,
       local.governance_read_statements,
       local.bootstrap_assume_statements.plan,
+      local.delegated_admin_read_statements,
       local.baseline_region_deny.plan,
+      local.delegated_admin_region_deny.plan,
     )
 
     apply = concat([

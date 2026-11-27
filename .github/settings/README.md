@@ -96,14 +96,13 @@ GitHub の案内は、ruleset に Code Quality の閾値を宣言する**前に*
 
 宣言する required context は、その赤が変更そのものについての事実であるものに限ります
 （ADR-0603 決定9-11）。継承した状態を報告するチェックはこの一覧に入れません。固定した版の道具の
-取得（TFLint の ruleset を含む）は、取得先の障害で赤になっても再実行で消え、判定を変えません。
-`tf-validate-test` はそれと違い、root でない module の provider を実行時点の最新で解決するので、
-checkout だけでは再現しない部分を持ちます。これは ADR-0603 決定10 が認めた例外です。
+取得（TFLint の ruleset と、`providers/` の正本が固定する provider を含む）は、取得先の障害で赤になっても
+再実行で消え、判定を変えません。
 
 | 群 | context |
 | --- | --- |
 | 検査の設定と定義 | `actions-lint`、`adr-lint`、`commitlint`、`docker-lint`、`egress-check`、`md-lint`、`ref-record-lint`、`zizmor` |
-| 宣言と実体のずれ | `mod-tidy-check`、`pin-actions-check`、`pin-images-check`、`pin-runners-check`、`repo-settings-check`、`skill-lint`、`versions-check` |
+| 宣言と実体のずれ | `mod-tidy-check`、`pin-actions-check`、`pin-images-check`、`pin-runners-check`、`repo-settings-check`、`skill-lint`、`tool-cooldown`、`versions-check` |
 | サンプルの除去 | `sample-remove-check` <!-- sample:line --> |
 | コードと構成 | `go-lint`、`go-fmt-check`、`go-test`、`test-mapping`、`tf-fmt-check`、`tf-lint`、`tf-validate-test`、`infra-code-gate`、`tf-policy`、`trivy-config`、`checkov`、`kics`、`semgrep`、`secret-scan`、`trufflehog`、`typos`、`editorconfig-check` |
 | デプロイブランチへの経路（ADR-0603 決定32 の例外） | `deploy-source-check`。デフォルトブランチの名前と到達性、デプロイブランチの今の木に依り、変更に誤りが無くても赤になりうる。デプロイブランチ宛でない Pull Request では対象外として成功する。検査のコードと宣言は Pull Request の base の commit のものを使う |

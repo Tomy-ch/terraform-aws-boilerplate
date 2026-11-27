@@ -10,6 +10,7 @@ AWS Organizations の組織と OU、SCP・RCP・declarative policy、root の資
 
 - AWS の上で動く処理は無い。管理アカウントの CI の apply-identity の role が、Organizations と IAM の API を呼ぶ。最初の作成だけは、bootstrap の段4 の一時 IAM user が呼ぶ（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定1・9）
 - Organizations の API は global の endpoint（`organizations.us-east-1.amazonaws.com`）を、IAM は `iam.amazonaws.com` を呼ぶ
+- 委任管理者の指定は、GuardDuty・Inspector・Security Hub の API を [repository-wide/ADR-0209](../../docs/adr/0209-default-regions-for-regional-controls.md) の集合の各リージョンの endpoint で、CloudTrail の API を provider のリージョンの endpoint で呼ぶ。宛先は `.github/egress.toml` の `aws-governance` が持つ
 - 外への egress は無い
 
 ## 公開契約
@@ -41,6 +42,7 @@ AWS Organizations の組織と OU、SCP・RCP・declarative policy、root の資
 - 管理アカウントの break-glass の IAM user 2つ、group とその policy、break-glass の role（`AdministratorAccess`）、IAM の password policy（[organization-baseline/ADR-0201](docs/adr/0201-break-glass.md)）
 - メンバーアカウント security と log-archive（Security OU）。env と OU の対応表は `internal/organization/accounts.tf` の1つの local が持つ。`OrganizationAccountAccessRole`・請求情報への IAM の到達・閉じない削除は書かず、AWS と Provider の既定に任せる（Provider の Read はこの3つを state に書かないので、書くと import の後に作り直しの差分が出る）。名前は `<project>-<env>` で変えない
 - 立ち上げを終えたメンバーアカウントに付ける `deny-bootstrap-role`（アカウントごと）
+- セキュリティのサービス（GuardDuty・Inspector・Security Hub・CloudTrail・AWS Config・IAM Access Analyzer）の委任管理者を security のアカウントにする指定（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定1）。GuardDuty・Inspector・Security Hub はリージョンごとで、[repository-wide/ADR-0209](../../docs/adr/0209-default-regions-for-regional-controls.md) の集合の各リージョンに置く。CloudTrail は CloudTrail の API で、Config と Access Analyzer は Organizations の API で登録する。委任管理者の側の設定（組織の trail、GuardDuty の組織の設定など）は `security-tooling`（#473）が持つ
 - メンバーアカウントの break-glass の role を配る CloudFormation の StackSet（service-managed、自動展開）と、組織の Root を対象にした stack instance（[organization-baseline/ADR-0202](docs/adr/0202-member-break-glass-via-stacksets.md)）
 - メンバーアカウントの立ち上げの読み取りの role（`<project>-bootstrap-read`、path `/bootstrap/`）を配る StackSet と stack instance（同じ形。[organization-baseline/ADR-0203](docs/adr/0203-member-bootstrap-read-role.md)）
 
@@ -60,7 +62,8 @@ unsupported:
 - IAM Identity Center を provider のリージョン（`ap-northeast-1`）のほかで有効にした組織
 - Identity Center の管理、root の資格情報の中央管理の委任（[organization-baseline/ADR-0001](docs/adr/0001-governance-in-management-identity-root.md)）
 - 利用者が SCP・RCP・declarative policy の中身や付け先を入力で変えること
-- 信頼アクセスの一覧を Terraform で持つこと。各サービスの側で有効化する
+- 信頼アクセスの一覧を Terraform で持つこと。各サービスの側で有効化する。CloudTrail・Config・Access Analyzer の信頼アクセスは、委任管理者の指定より前に人が有効にする（[`docs/setup/organization-baseline.md`](../../docs/setup/organization-baseline.md) の 3.9）
+- `aws` のほかの partition。委任管理者を置くリージョンの集合（repository-wide/ADR-0209）を持たないので、plan を止める
 - ユーザーとグループを Terraform で持つこと。IdP か Identity Center の directory が持つ
 - 管理アカウントの root による変更。SCP が効かない（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定11）
 - メンバーアカウントの名前の変更。apply-identity の role に `account:PutAccountName` を与えないので、名前が変わる変更は apply で拒まれる

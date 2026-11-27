@@ -110,7 +110,7 @@ Key Policy の文書が 32768 文字（KMS の `PutKeyPolicy`）を超えると�
 
 ## 版
 
-- AWS Provider は `>= 6.68.0, < 7.0.0`。引数と既定値は v6.68.0 の Provider の文書で確かめた。`terraform test` を走らせたのは、lock の無いこの module で init が選んだ 6.72.0 だけである
+- AWS Provider は `>= 6.68.0, < 7.0.0`。引数と既定値は v6.68.0 の Provider の文書で確かめた。`terraform test` を走らせたのは 6.72.0 だけである
 - Terraform は `>= 1.7.0, < 2.0.0`。下限はテストが使う `mock_provider` の要求であり、実行して確かめたのは 1.17.2（`mise.toml`）だけである
 
 ## 公式実装の参照（ADR-0206 決定7・8）

@@ -163,6 +163,8 @@ func listReleases(ctx context.Context, client *http.Client, t tool) ([]release, 
 		return goModuleReleases(ctx, client, ref)
 	case "npm":
 		return npmReleases(ctx, client, ref)
+	case providerBackend:
+		return registryProviderReleases(ctx, client, ref)
 	default:
 		return nil, xerrors.Wrap(errUnsupportedBackend, t.backend)
 	}

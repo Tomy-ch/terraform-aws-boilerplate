@@ -44,7 +44,7 @@ Terraformには、AWS公式・HashiCorp公式・community製の再利用module�
 
 7. 各moduleは `required_providers` にversion制約を宣言する。制約は、検証済みの下限versionを起点とし、互換性を破壊し得るmajor更新を除外する形とする。上限を過度に固定しない。
 8. `required_version`（Terraform本体）も同様に、検証済みの下限を宣言する。
-9. lock fileは、envとreferenceのroot（apply の起点、またはテストのfixtureとして `terraform init` を行う単位）で管理する。referenceはテストのfixtureを兼ねる（ADR-0401 決定12）。root でない module のディレクトリではlock fileを管理しない。テストのために root でない module で行う init は、lock を持たずに provider を解決し、その版は決定7 の制約だけが縛る。
+9. lock fileは、envとreferenceのroot（apply の起点、またはテストのfixtureとして `terraform init` を行う単位）で管理する。referenceはテストのfixtureを兼ねる（ADR-0401 決定12）。root でない module のディレクトリではlock fileを管理しない。provider の版の正本は `providers/.terraform.lock.hcl` の1つとし、各 provider の版を `providers/providers.toml` が1つに固定する。root の lock は正本と同じ内容とする。テストのために root でない module で行う init は、正本をそのディレクトリへ写し、`-lockfile=readonly` で行う。正本が固定する版は、公開からの待機期間に照らす（ADR-0702）。
 10. providerのversion更新は、ADR-0401の各テストレイヤーを通過することを条件とする。
 
 ### 重複の扱い
@@ -95,12 +95,15 @@ resourceを生成しないため影響は小さいように見えるが、依存
 - Static Analysis: `required_providers` および `required_version` の宣言が存在することを検査する。
 - Contract Test: provider version更新時に、公開契約のsnapshotが変化しないことを検証する。
 - Integration / E2E Test: provider version更新時の実挙動を検証する（ADR-0401）。
+- Static Analysis: root の lock が正本と同じ内容であること、走査の root の下で git が追跡する lock が root のものに限られ、正本とどの root の lock も追跡されていること、正本の provider と版が `providers/providers.toml` の固定と一致することを検査する（`make tf-lock-check`。`make tf-init` が先に走らせる）。
+- 供給網の待機期間: 正本が固定する provider の版の公開時刻を Terraform Registry から取り、待機期間に照らす（`make tool-cooldown-gate`）。
 
 ## 影響
 
 - 実装コストは外部module採用時より高い。これはADR-0101の優先順位に基づく受容済みのコストである。
 - 外部moduleの知見は、参照実装として取り込む（ADR-0206）。
 - 依存管理の対象はprovider とTerraform本体に限定される。
+- provider の版の更新は、`providers/providers.toml` の固定を変え、正本と root の lock を作り直す変更として行う。root でない module のテストも、その変更が入るまで新しい版を使わない。
 
 ## 見直し条件
 

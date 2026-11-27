@@ -169,7 +169,6 @@ resource である。親と引数の組で同一性が決まり、自前の名�
 - 決定18 の宣言の正しさ。同じ設定を書く親の引数（`parent_arguments`）は resource の NOTE が告げるものを選び、
   文書全体を置き換えるか（`whole_document`）は Provider の docs と AWS の API の docs で判定する。どちらも機械判定
   できないので、宣言を変える Pull Request のレビュー観点とする（ADR-0102 検証方法）
-- lock を持たない一般 module が init で選ぶ Provider の版の schema。`layer-schema` は追跡している lock の版の和だけを読む
 - 参照の直後の添字の中の参照で選ぶ親。`aws_s3_bucket.this[module.x.key]` は `aws_s3_bucket.this` を親として通す
 - `dynamic` の `content` の中の反復変数（`protected_resource.value`）を `for_each` へ辿ること。反復変数は辿れない参照として違反になる
 - 入れ子の block と属性の数。独立の数えと突き合わせるのはファイルの集合とトップレベルの block の数だけで、入れ子の

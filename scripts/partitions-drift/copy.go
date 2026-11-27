@@ -9,21 +9,22 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/tflock"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
 const (
 	copyVariable   = "aws_partitions"
-	providerName   = "aws"
+	providerAddr   = tflock.Registry + "/hashicorp/aws"
 	variablesBlock = "variables"
 )
 
 var (
-	errRead       = xerrors.New("ファイルを読めません")
-	errSyntax     = xerrors.New("HCL の構文の誤りがあります")
-	errConstraint = xerrors.New("versions.tf から provider の source と版の制約を読めません")
-	errCopy       = xerrors.New("写しを読めません")
-	errCopyCount  = xerrors.New("写しを宣言する属性がちょうど1つではありません")
+	errRead      = xerrors.New("ファイルを読めません")
+	errSyntax    = xerrors.New("HCL の構文の誤りがあります")
+	errLocked    = xerrors.New("provider の版の正本の lock から hashicorp/aws の版を読めません")
+	errCopy      = xerrors.New("写しを読めません")
+	errCopyCount = xerrors.New("写しを宣言する属性がちょうど1つではありません")
 )
 
 func parseHCL(path string) (*hclsyntax.Body, error) {
@@ -40,56 +41,24 @@ func parseHCL(path string) (*hclsyntax.Body, error) {
 	return f.Body.(*hclsyntax.Body), nil
 }
 
-// readConstraint は、`terraform` の `required_providers` の `aws` から source と version を返します。
-// 該当する宣言がちょうど1つでなければ失敗します。
-func readConstraint(path string) (string, string, error) {
-	body, err := parseHCL(path)
+// readLockedVersion は、provider の版の正本の lock から hashicorp/aws の版を返します。CI の `terraform test` は、
+// root でない module でもこの版で走ります。
+func readLockedVersion(path string) (string, error) {
+	src, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
-		return "", "", err
+		return "", xerrors.Wrapf(errRead, "%s: %v", path, err)
 	}
-	var found []*hclsyntax.Attribute
-	for _, tb := range body.Blocks {
-		if tb.Type != "terraform" {
-			continue
-		}
-		for _, rp := range tb.Body.Blocks {
-			if rp.Type != "required_providers" {
-				continue
-			}
-			if attr, ok := rp.Body.Attributes[providerName]; ok {
-				found = append(found, attr)
-			}
+	providers, err := tflock.ParseLock(src, path)
+	if err != nil {
+		return "", xerrors.Wrapf(errLocked, "%v", err)
+	}
+	for _, p := range providers {
+		if p.Addr == providerAddr {
+			return p.Version, nil
 		}
 	}
-	if len(found) != 1 {
-		return "", "", xerrors.Wrapf(errConstraint, "required_providers の %s が %d 件です", providerName, len(found))
-	}
-	value, diags := found[0].Expr.Value(nil)
-	if diags.HasErrors() || !value.Type().IsObjectType() {
-		return "", "", xerrors.Wrapf(errConstraint, "%s がリテラルのオブジェクトではありません", providerName)
-	}
-	source, err := stringAttr(value, "source")
-	if err != nil {
-		return "", "", err
-	}
-	constraint, err := stringAttr(value, "version")
-	if err != nil {
-		return "", "", err
-	}
 
-	return source, constraint, nil
-}
-
-func stringAttr(obj cty.Value, name string) (string, error) {
-	if !obj.Type().HasAttribute(name) {
-		return "", xerrors.Wrapf(errConstraint, "%s がありません", name)
-	}
-	v := obj.GetAttr(name)
-	if v.IsNull() || !v.IsKnown() || v.Type() != cty.String || v.AsString() == "" {
-		return "", xerrors.Wrapf(errConstraint, "%s が空でない文字列ではありません", name)
-	}
-
-	return v.AsString(), nil
+	return "", xerrors.Wrapf(errLocked, "%s に %s がありません", path, providerAddr)
 }
 
 // readCopy は、ファイルのどの深さの `variables` の block も見て、写しの属性がちょうど1つであることを

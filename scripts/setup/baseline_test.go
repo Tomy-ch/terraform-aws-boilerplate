@@ -374,6 +374,21 @@ func Test_readDelegatedShape(t *testing.T) {
 		assert.Equal(t, delegatedShape{env: "security", principals: []string{"cloudtrail.amazonaws.com", "config.amazonaws.com"}}, s)
 	})
 
+	t.Run("実物の宣言を読め、委任先が security で、主体が6つ", func(t *testing.T) {
+		t.Parallel()
+
+		s, err := readDelegatedShape(os.ReadFile, "../../usecases/organization-baseline")
+		require.NoError(t, err)
+		assert.Equal(t, delegatedShape{env: "security", principals: []string{
+			"access-analyzer.amazonaws.com",
+			"cloudtrail.amazonaws.com",
+			"config.amazonaws.com",
+			"guardduty.amazonaws.com",
+			"inspector2.amazonaws.com",
+			"securityhub.amazonaws.com",
+		}}, s)
+	})
+
 	t.Run("委任管理者の宣言が無ければ errHCL", func(t *testing.T) {
 		t.Parallel()
 
