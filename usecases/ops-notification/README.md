@@ -119,7 +119,7 @@ destroy の失敗と残存（Chatbot の構成の削除で外れない SNS の�
 | schedule の停止、心拍の role の権限の欠落 | publish されず、届かない |
 | us-east-1 の Topic・鍵・Key Policy・schedule の同じ故障と、Chatbot の us-east-1 の Topic の購読の解除 | us-east-1 の心拍（本文の region が `us-east-1`）だけが届かない |
 
-心拍が見ない故障: 4つのサービスの経路（Topic Policy と Key Policy の各送り手の文）だけが壊れること、Chatbot が alarm や GuardDuty の event を描けないこと、Topic Policy の TLS の Deny の欠落。これらは Policy Test が宣言を、sandbox の Integration Test が作った時点を見る。実行時の変化は、定期の plan（未配線）まで見えない。
+心拍が見ない故障: 4つのサービスの経路（Topic Policy と Key Policy の各送り手の文）だけが壊れること、Chatbot が alarm や GuardDuty の event を描けないこと、Topic Policy の TLS の Deny の欠落。これらは Policy Test が宣言を、sandbox の Integration Test が作った時点を見る。実行時の変化は、`terraform-drift.yaml` の定期の plan（管理アカウントの workload root）が見る。
 
 ### 心拍が来なかったときに見るもの
 

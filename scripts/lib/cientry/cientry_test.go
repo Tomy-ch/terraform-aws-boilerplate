@@ -72,6 +72,7 @@ func TestKinds(t *testing.T) {
 				{Name: Apply, Terraform: true, Lock: LockRelease, Events: []string{EventPush, EventWorkflowDispatch}, IdentityRole: "apply-identity", WorkloadRole: "apply"},
 				{Name: Unlock, Terraform: false, Lock: LockRemove, Events: []string{EventWorkflowDispatch}, IdentityRole: "unlock-identity", WorkloadRole: "unlock"},
 				{Name: Hold, Terraform: true, Lock: LockKeep, Events: []string{EventWorkflowDispatch}, IdentityRole: "apply-identity", WorkloadRole: "apply"},
+				{Name: Drift, Terraform: true, Lock: LockSkip, Events: []string{EventSchedule, EventWorkflowDispatch}, IdentityRole: "plan", WorkloadRole: "plan"},
 			}, Kinds())
 		})
 
@@ -107,7 +108,7 @@ func TestLookup(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		for _, name := range []string{Plan, Apply, Unlock, Hold} {
+		for _, name := range []string{Plan, Apply, Unlock, Hold, Drift} {
 			t.Run(name+" を引ける", func(t *testing.T) {
 				t.Parallel()
 				k, ok := Lookup(name)
@@ -162,6 +163,15 @@ func TestDeniedRoles(t *testing.T) {
 		t.Run("pull_request で起動する plan の role を除き、ほかの role を登録簿の順で返す", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, []string{"apply-identity", "apply", "unlock-identity", "unlock"}, DeniedRoles())
+		})
+
+		t.Run("pull_request で起動しない drift が plan の role を取っても、plan の role は拒否の対象に入らない", func(t *testing.T) {
+			t.Parallel()
+			k, ok := Lookup(Drift)
+			require.True(t, ok)
+			require.NotContains(t, k.Events, EventPullRequest)
+			assert.NotContains(t, DeniedRoles(), k.IdentityRole)
+			assert.NotContains(t, DeniedRoles(), k.WorkloadRole)
 		})
 	})
 }
@@ -335,7 +345,7 @@ func TestParse(t *testing.T) {
 			data := fixture(allEntries("t")...)
 			got, err := Parse(data)
 			require.NoError(t, err)
-			require.Len(t, got, 8)
+			require.Len(t, got, 2*len(Kinds()))
 			lines := strings.Split(data, "\n")
 			for i, want := range allEntries("t") {
 				k, _ := Lookup(want[0])
@@ -343,6 +353,17 @@ func TestParse(t *testing.T) {
 				target := "ci-" + want[0] + "-t-" + want[2]
 				assert.Equal(t, Entry{Target: target, Kind: k, Env: "t", Root: root, Role: k.Role(root), Line: slices.Index(lines, target+":") + 1}, got[i])
 			}
+		})
+
+		t.Run("drift の入口でないターゲット（ci-target-drift・ci-report-drift）を入口として読まない", func(t *testing.T) {
+			t.Parallel()
+			extra := ".PHONY: ci-target-drift ## x\nci-target-drift:\n\t@$(call TF_LOCAL,ci-drift-target -env $(CI_ENV))\n" +
+				".PHONY: ci-report-drift ## x\nci-report-drift:\n\t@$(call TF_LOCAL,ci-drift-report)\n"
+			got, err := Parse(fixture([3]string{Drift, "t", "identity"}) + extra)
+			require.NoError(t, err)
+			require.Len(t, got, 1)
+			assert.Equal(t, "ci-drift-t-identity", got[0].Target)
+			assert.Equal(t, "plan", got[0].Role)
 		})
 
 		t.Run("ハイフンを含む env を読む", func(t *testing.T) {
@@ -561,6 +582,14 @@ func Test_newRegistry(t *testing.T) {
 			assert.NoError(t, err)
 		})
 
+		t.Run("schedule を起動のイベントに持てる", func(t *testing.T) {
+			t.Parallel()
+			k := valid()
+			k.Events = []string{EventSchedule, EventWorkflowDispatch}
+			_, err := newRegistry(k)
+			assert.NoError(t, err)
+		})
+
 		t.Run("種別をまたいで同じ role を持てる", func(t *testing.T) {
 			t.Parallel()
 			b := valid()
@@ -581,7 +610,7 @@ func Test_newRegistry(t *testing.T) {
 			"lock の扱いが範囲の外":           func(k *Kind) { k.Lock = LockRemove + 1 },
 			"起動のイベントが無い":              func(k *Kind) { k.Events = nil },
 			"起動のイベントが重複する":            func(k *Kind) { k.Events = []string{EventPush, EventPush} },
-			"起動のイベントを知らない":            func(k *Kind) { k.Events = []string{"schedule"} },
+			"起動のイベントを知らない":            func(k *Kind) { k.Events = []string{"merge_group"} },
 			"identity root の role が空": func(k *Kind) { k.IdentityRole = "" },
 			"workload root の role が空": func(k *Kind) { k.WorkloadRole = "" },
 			"role の形が違う":              func(k *Kind) { k.WorkloadRole = "A_b" },
@@ -593,6 +622,17 @@ func Test_newRegistry(t *testing.T) {
 				mutate(&k)
 				_, err := newRegistry(k)
 				require.ErrorIs(t, err, errRegistry)
+			})
+		}
+
+		for _, name := range []string{"target", "aws", "assume"} {
+			t.Run("入口でないターゲットが種別 "+name+" の入口の接頭辞で始まれば弾く", func(t *testing.T) {
+				t.Parallel()
+				k := valid()
+				k.Name = name
+				_, err := newRegistry(k)
+				require.ErrorIs(t, err, errRegistry)
+				assert.Contains(t, err.Error(), "入口の接頭辞")
 			})
 		}
 

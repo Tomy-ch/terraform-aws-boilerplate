@@ -42,6 +42,8 @@ scripts/repo-settings/                @Tomy-ch
 .makefiles/terraform/operation/ci.mk  @Tomy-ch
 scripts/tf-local/                     @Tomy-ch
 scripts/oidc-job-lint/                @Tomy-ch
+# drift の判定が resource_drift から外す組（ADR-0601 決定20 の一覧）の読み方。読み違えると、外すべきでない変化が drift から消える。
+scripts/lib/ownedattrs/               @Tomy-ch
 
 # 手順書の人の手順の入口。管理アカウントか bootstrap の一時 IAM user の資格情報で、どの aws・gh の書き込みをどの確かめの
 # 後に起動するかを決める（ADR-0702 決定26・27）。
@@ -96,6 +98,7 @@ scripts/tf-job-lint/                       @Tomy-ch
 .github/workflows/terraform-apply.yaml     @Tomy-ch
 .github/workflows/terraform-unlock.yaml    @Tomy-ch
 .github/workflows/terraform-lock-hold.yaml @Tomy-ch
+.github/workflows/terraform-drift.yaml     @Tomy-ch
 .github/settings/branch-protection.json    @Tomy-ch
 .github/CODEOWNERS                         @Tomy-ch
 usecases/organization-baseline/internal/break-glass/templates/member-break-glass-role.json.tftpl @Tomy-ch

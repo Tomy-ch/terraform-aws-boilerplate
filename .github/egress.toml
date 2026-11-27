@@ -164,10 +164,10 @@ regions = [
 
 # CI が Terraform を実行する root と、その root に触れるジョブ（scripts/README.md の egress/ の行）。
 [root."env/admin/identity"]
-jobs = ["terraform-gates.yaml:plan-admin-identity", "terraform-apply.yaml:apply-admin-identity", "terraform-unlock.yaml:unlock-admin-identity", "terraform-lock-hold.yaml:hold-admin-identity"]
+jobs = ["terraform-gates.yaml:plan-admin-identity", "terraform-apply.yaml:apply-admin-identity", "terraform-unlock.yaml:unlock-admin-identity", "terraform-lock-hold.yaml:hold-admin-identity", "terraform-drift.yaml:drift-admin-identity"]
 
 [root."env/admin"]
-jobs = ["terraform-gates.yaml:plan-admin-workload", "terraform-apply.yaml:apply-admin-workload", "terraform-unlock.yaml:unlock-admin-workload", "terraform-lock-hold.yaml:hold-admin-workload"]
+jobs = ["terraform-gates.yaml:plan-admin-workload", "terraform-apply.yaml:apply-admin-workload", "terraform-unlock.yaml:unlock-admin-workload", "terraform-lock-hold.yaml:hold-admin-workload", "terraform-drift.yaml:drift-admin-workload"]
 
 # resource / data source の型が呼ぶ宛先。名前の形と当たり方は scripts/README.md の egress/ の行（make egress-check が拒む）。
 # API を呼ばない型は、型名そのもので hosts を空にする。
@@ -435,6 +435,28 @@ classes = ["terraform", "aws-governance"]
 
 [job."terraform-lock-hold.yaml:hold-admin-workload"]
 classes = ["terraform", "aws-notify"]
+
+# tf-local は scripts/ から go で建てる。デプロイブランチの先頭は git で github.com から取り、base が許す。
+[job."terraform-drift.yaml:drift-target-admin"]
+classes = ["mise"]
+
+[job."terraform-drift.yaml:drift-infra-code-gate-admin"]
+classes = ["mise"]
+
+# 2つの drift の job は、plan の job と同じ root を同じ role で plan する。
+[job."terraform-drift.yaml:drift-admin-identity"]
+classes = ["terraform", "aws-governance"]
+
+[job."terraform-drift.yaml:drift-admin-workload"]
+classes = ["terraform", "aws-notify"]
+
+# tf-local は scripts/ から go で建てる。issue の読み書きは GitHub API で、base が許す。
+[job."terraform-drift.yaml:report"]
+classes = ["mise"]
+
+# 道具を導入しない。issue の書き込みは GitHub API で、base が許す。
+[job."terraform-drift.yaml:mark-report"]
+classes = []
 
 [job."terraform-unlock.yaml:unlock-infra-code-gate"]
 classes = ["mise"]

@@ -29,6 +29,7 @@ const (
 	Apply  = "apply"
 	Unlock = "unlock"
 	Hold   = "hold"
+	Drift  = "drift"
 )
 
 // 種別の起動として許すイベント。
@@ -36,7 +37,10 @@ const (
 	EventPullRequest      = "pull_request"
 	EventPush             = "push"
 	EventWorkflowDispatch = "workflow_dispatch"
+	EventSchedule         = "schedule"
 )
+
+var events = []string{EventPullRequest, EventPush, EventWorkflowDispatch, EventSchedule}
 
 // Root は入口が触れる root の種類です（ADR-0604 決定5）。
 type Root string
@@ -134,8 +138,9 @@ var (
 // callPrefix は入口の呼び出しの行の字面。読めた入口の件数と突き合わせる（ADR-0702 決定15）。
 const callPrefix = "\t@$(call CI_"
 
-// nonEntries は ci- で始まるが入口ではないターゲット。root を持たない。
-var nonEntries = []string{"ci-aws-credentials", "ci-assume-denied"}
+// nonEntries は ci- で始まるが入口ではないターゲット。root を持たない。名前は種別の入口の接頭辞
+// （ci-<種別>-）で始めない —— workflow の検査は、その接頭辞で始まる語を入口として数える。
+var nonEntries = []string{"ci-aws-credentials", "ci-assume-denied", "ci-target-drift", "ci-report-drift"}
 
 type registry []Kind
 
@@ -149,6 +154,8 @@ var std = func() registry {
 			IdentityRole: "unlock-identity", WorkloadRole: "unlock"},
 		Kind{Name: Hold, Terraform: true, Lock: LockKeep, Events: []string{EventWorkflowDispatch},
 			IdentityRole: "apply-identity", WorkloadRole: "apply"},
+		Kind{Name: Drift, Terraform: true, Lock: LockSkip, Events: []string{EventSchedule, EventWorkflowDispatch},
+			IdentityRole: "plan", WorkloadRole: "plan"},
 	)
 	if err != nil {
 		panic(err)
@@ -176,11 +183,16 @@ func newRegistry(kinds ...Kind) (registry, error) {
 			return nil, xerrors.Wrapf(errRegistry, "種別 %s: 起動のイベントがありません", k.Name)
 		}
 		for j, e := range k.Events {
-			if e != EventPullRequest && e != EventPush && e != EventWorkflowDispatch {
+			if !slices.Contains(events, e) {
 				return nil, xerrors.Wrapf(errRegistry, "種別 %s: 起動のイベント %q を知りません", k.Name, e)
 			}
 			if slices.Contains(k.Events[:j], e) {
 				return nil, xerrors.Wrapf(errRegistry, "種別 %s: 起動のイベント %s が重複しています", k.Name, e)
+			}
+		}
+		for _, n := range nonEntries {
+			if strings.HasPrefix(n, "ci-"+k.Name+"-") {
+				return nil, xerrors.Wrapf(errRegistry, "種別 %s: 入口でないターゲット %s が入口の接頭辞で始まります", k.Name, n)
 			}
 		}
 		for _, role := range []string{k.IdentityRole, k.WorkloadRole} {
@@ -295,7 +307,7 @@ func MustPattern(prefix, suffix string, kinds ...Kind) *regexp.Regexp {
 
 // Parse は ci.mk の入口を、書かれた順で返します。
 //
-// ci- で始まるターゲットは、入口か、入口でないと名指したもの（ci-aws-credentials・ci-assume-denied）の
+// ci- で始まるターゲットは、入口か、入口でないと名指したもの（nonEntries）の
 // どちらかでなければなりません。入口は、`.PHONY` の行・`TF_LOCAL_PROFILE` の行・ルール行を1つずつ持ち、
 // ルール行の次の行が `$(call CI_<種別>,<env>,<identity|workload>)` で、その種別の define を持ちます。
 // 形を読めなければ [ErrParse]、種別が登録簿に無ければ [ErrKindUnknown]、TF_LOCAL_PROFILE の role が
