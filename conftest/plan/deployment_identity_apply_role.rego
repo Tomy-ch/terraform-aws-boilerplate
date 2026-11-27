@@ -932,7 +932,14 @@ prerequisites contains p if {
 	p.service in prerequisite_set
 }
 
-in_prerequisite_module(address) if startswith(address, prerequisite_module)
+# instance ごとの deployment-identity の module の下に置く（lib/instances.rego）。件数は正規の接頭辞で数える。ほかの
+# instance の件数は、付け替えた入力で評価し直す plan.deployment_identity_instances が見る。
+in_prerequisite_module(address) if {
+	some m in prerequisite_prefixes
+	startswith(address, m)
+}
+
+prerequisite_prefixes := {prerequisite_module} | {lib.rebase(prerequisite_module, i) | some i in lib.instances}
 
 deny contains msg if {
 	well_formed_bootstrap
@@ -960,7 +967,7 @@ deny contains msg if {
 deny contains msg if {
 	well_formed_bootstrap
 	some service in prerequisite_set
-	n := count({p | some p in prerequisites; p.service == service; in_prerequisite_module(p.address)})
+	n := count({p | some p in prerequisites; p.service == service; startswith(p.address, prerequisite_module)})
 	n != 1
 	msg := sprintf("[PLAN-APPLY-07] 宣言した前提の service-linked role（%s）が、%s の下に %d 件です（1件を期待）", [service, prerequisite_module, n])
 }

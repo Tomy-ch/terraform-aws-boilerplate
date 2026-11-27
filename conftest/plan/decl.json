@@ -427,6 +427,14 @@
             "state_backend": "module.state_backend_log_archive.",
             "deployment_identity": "module.deployment_identity_log_archive."
           }
+        ],
+        "state-backend": [
+          {
+            "name": "security",
+            "state_backend": "module.state_backend_security.",
+            "deployment_identity": "module.deployment_identity_security.",
+            "deployment_identity_root": "deployment-identity"
+          }
         ]
       }
     },

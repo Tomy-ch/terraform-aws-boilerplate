@@ -185,3 +185,40 @@ test_pass_delete_only_change if {
 	gone := {"address": "module.x.aws_iam_role_policy.old", "type": "aws_iam_role_policy", "change": {"actions": ["delete"], "after": null, "before": {"policy": json.marshal({"Statement": [fixture.allow("*")]})}, "after_unknown": {}}}
 	count(p.deny) == 0 with input as fixture.plan([fixture.role_policy([fixture.allow("s3:GetObject")]), gone]) with data.policy_plan.resource_wildcard_actions as []
 }
+
+# boundary は instance ごとの接頭辞へ付け替えて読む（lib/instances.rego）。宣言した instance の boundary は通り、宣言の外の
+# 接頭辞の同じ文は落ちる。
+member_boundary_decl := {
+	"deployment_identity": {
+		"module": "module.deployment_identity.",
+		"apply_role": {"bootstrap": {"modules": ["module.state_backend.", "module.deployment_identity."]}},
+		"workload": {"boundaries": {"ops-notification": boundary_address}},
+	},
+	"state_backend": {
+		"module": "module.state_backend.",
+		"instances": {"sb": [{"name": "m", "state_backend": "module.state_backend_m.", "deployment_identity": "module.deployment_identity_m.", "deployment_identity_root": "di"}]},
+	},
+}
+
+member_boundary(address) := fixture.doc("aws_iam_policy", address, "policy", {"Statement": [via_sns]})
+
+member_files(rcs) := [
+	{"path": "sb.json", "contents": {"plan_format_version": "1.2", "resource_changes": []}},
+	{"path": "di.json", "contents": {"plan_format_version": "1.2", "resource_changes": rcs}},
+]
+
+test_pass_crypto_via_service_in_member_instance_boundary if {
+	rc := member_boundary("module.deployment_identity_m.module.github_oidc.aws_iam_policy.boundary[\"ops-notification\"]")
+	count(p.deny) == 0 with input as member_files([rc]) with data.policy_plan as object.union(data.policy_plan, member_boundary_decl) with data.policy_plan.resource_wildcard_actions as []
+}
+
+test_violation_crypto_via_service_in_undeclared_instance_boundary if {
+	rc := member_boundary("module.deployment_identity_x.module.github_oidc.aws_iam_policy.boundary[\"ops-notification\"]")
+	fixture.has("[PLAN-IAM-04]", p.deny) with input as member_files([rc]) with data.policy_plan as object.union(data.policy_plan, member_boundary_decl) with data.policy_plan.resource_wildcard_actions as []
+}
+
+# instance の root のファイルが入力に無ければ、その instance の boundary は宣言の boundary として数えない。
+test_violation_crypto_via_service_in_member_boundary_without_its_roots if {
+	rc := member_boundary("module.deployment_identity_m.module.github_oidc.aws_iam_policy.boundary[\"ops-notification\"]")
+	fixture.has("[PLAN-IAM-04]", p.deny) with input as fixture.plan([rc]) with data.policy_plan as object.union(data.policy_plan, member_boundary_decl) with data.policy_plan.resource_wildcard_actions as []
+}

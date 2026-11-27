@@ -13,6 +13,22 @@ mock_provider "aws" {
   }
 }
 
+
+mock_provider "aws" {
+  alias           = "security"
+  override_during = plan
+
+  mock_data "aws_caller_identity" {
+    defaults = { account_id = "111111111111" }
+  }
+  mock_data "aws_region" {
+    defaults = { region = "ap-northeast-1" }
+  }
+  mock_data "aws_partition" {
+    defaults = { partition = "aws" }
+  }
+}
+
 override_resource {
   target          = module.state_backend.module.s3.aws_s3_bucket.this
   override_during = plan
@@ -55,6 +71,51 @@ override_resource {
   override_during = plan
   values = {
     arn    = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+    policy = null
+  }
+}
+
+override_resource {
+  target          = module.state_backend_security.module.s3.aws_s3_bucket.this
+  override_during = plan
+  values = {
+    arn                 = "arn:aws:s3:::tabp-security-tfstate-111111111111-ap-northeast-1-an"
+    acceleration_status = null
+    acl                 = null
+    policy              = null
+    request_payer       = null
+  }
+}
+
+override_resource {
+  target          = module.state_backend_security.module.plan_output.aws_s3_bucket.this
+  override_during = plan
+  values = {
+    arn                 = "arn:aws:s3:::tabp-security-tfplan-111111111111-ap-northeast-1-an"
+    acceleration_status = null
+    acl                 = null
+    policy              = null
+    request_payer       = null
+  }
+}
+
+override_resource {
+  target          = module.state_backend_security.module.apply_output.aws_s3_bucket.this
+  override_during = plan
+  values = {
+    arn                 = "arn:aws:s3:::tabp-security-tfapply-111111111111-ap-northeast-1-an"
+    acceleration_status = null
+    acl                 = null
+    policy              = null
+    request_payer       = null
+  }
+}
+
+override_resource {
+  target          = module.state_backend_security.module.kms.aws_kms_key.this
+  override_during = plan
+  values = {
+    arn    = "arn:aws:kms:ap-northeast-1:111111111111:key/1234abcd-12ab-34cd-56ef-1234567890ab"
     policy = null
   }
 }

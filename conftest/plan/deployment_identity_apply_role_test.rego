@@ -1396,6 +1396,31 @@ test_violation_prerequisite_only_outside_one_denied if {
 	fixture.has(sprintf("[PLAN-APPLY-07] p.json: %s が", [outside_address]), msgs)
 }
 
+# 宣言した instance の deployment-identity の module の下は置き場に当たる（lib/instances.rego）。件数は正規の接頭辞で数え、
+# instance の件数は plan.deployment_identity_instances が付け替えた入力で見る。
+member_slr_address := "module.deployment_identity_m.module.service_linked_roles.aws_iam_service_linked_role.chatbot[0]"
+
+member_slr_decl := json.patch(slr_decl, [
+	{"op": "add", "path": "/state_backend/module", "value": "module.state_backend."},
+	{"op": "add", "path": "/deployment_identity/module", "value": "module.deployment_identity."},
+	{"op": "add", "path": "/state_backend/instances", "value": {"p": [{"name": "m", "state_backend": "module.state_backend_m.", "deployment_identity": "module.deployment_identity_m."}]}},
+])
+
+test_pass_prerequisite_in_member_instance if {
+	count(messages_for(slr_world([], [slr_create], [slr_read], [boundary_allow], [slr(slr_address), slr(member_slr_address)]), member_slr_decl)) == 0
+}
+
+test_violation_prerequisite_in_undeclared_instance if {
+	address := "module.deployment_identity_x.module.service_linked_roles.aws_iam_service_linked_role.chatbot[0]"
+	msgs := messages_for(slr_world([], [slr_create], [slr_read], [boundary_allow], [slr(slr_address), slr(address)]), member_slr_decl)
+	fixture.has(sprintf("[PLAN-APPLY-07] p.json: %s が、宣言した前提の service-linked role（%s）を module.deployment_identity. の外で作っています", [address, slr_service]), msgs)
+}
+
+test_violation_prerequisite_count_ignores_member_instance if {
+	msgs := messages_for(slr_world([], [slr_create], [slr_read], [boundary_allow], [slr(member_slr_address)]), member_slr_decl)
+	fixture.has(sprintf("[PLAN-APPLY-07] 宣言した前提の service-linked role（%s）が、module.deployment_identity. の下に 0 件です（1件を期待）", [slr_service]), msgs)
+}
+
 test_violation_service_linked_role_service_unknown if {
 	every after in [{"arn": slr_arn}, {"arn": slr_arn, "aws_service_name": null}, {"arn": slr_arn, "aws_service_name": 1}] {
 		rcs := with_after(slr_world([], [slr_create], [slr_read], [boundary_allow], [slr(slr_address)]), slr_address, after)
