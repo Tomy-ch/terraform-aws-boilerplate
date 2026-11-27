@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -96,13 +97,48 @@ func Test_hasLinePrefix(t *testing.T) {
 	})
 }
 
+func Test_strayData(t *testing.T) {
+	t.Parallel()
+
+	t.Run("木の直下の decl.json と、data でないファイルは返さない", func(t *testing.T) {
+		t.Parallel()
+		dir := tree(t, map[string]string{"decl.json": "{}", "p.rego": policyOK, "README.md": "", "lib/x.rego": ""})
+		got, err := strayData(dir)
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+
+	t.Run("opa test が data に読むほかのファイルを、相対パスの順に返す", func(t *testing.T) {
+		t.Parallel()
+		dir := tree(t, map[string]string{"decl.json": "{}", "z.yaml": "", "lib/decl.json": "{}", "a.yml": "", "fixtures/f.json": "{}"})
+		got, err := strayData(dir)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"a.yml", "fixtures/f.json", "lib/decl.json", "z.yaml"}, got, "直下でない decl.json も data の下の別の位置に載る")
+	})
+
+	t.Run("木が無ければ errRead", func(t *testing.T) {
+		t.Parallel()
+		_, err := strayData(filepath.Join(t.TempDir(), "none"))
+		require.ErrorIs(t, err, errRead)
+	})
+}
+
 func Test_runRegoCheck(t *testing.T) {
 	t.Parallel()
 
 	t.Run("形が整っていれば成功する", func(t *testing.T) {
 		t.Parallel()
-		dir := tree(t, map[string]string{"p.rego": policyOK, "p_test.rego": policyTestOK})
+		dir := tree(t, map[string]string{"p.rego": policyOK, "p_test.rego": policyTestOK, "decl.json": "{}"})
 		require.NoError(t, runRegoCheck([]string{"-policy", dir}, &bytes.Buffer{}))
+	})
+
+	t.Run("適用が読まない data のファイルがあれば名指して errFailed", func(t *testing.T) {
+		t.Parallel()
+		dir := tree(t, map[string]string{"p.rego": policyOK, "p_test.rego": policyTestOK, "decl.json": "{}", "fixtures/extra.json": "{}"})
+		var out bytes.Buffer
+		require.ErrorIs(t, runRegoCheck([]string{"-policy", dir}, &out), errFailed)
+		assert.Contains(t, out.String(), "適用の conftest test は読まないファイル")
+		assert.Contains(t, out.String(), "fixtures/extra.json")
 	})
 
 	t.Run("違反を出して errFailed", func(t *testing.T) {

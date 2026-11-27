@@ -24,10 +24,11 @@ func Test_command(t *testing.T) {
 	t.Parallel()
 
 	for step, want := range map[string][]string{
-		stepInit:     {"terraform", "init", "-backend=false", "-input=false", "-lockfile=readonly"},
-		stepPlan:     {"terraform", "test", "-filter=tests/policy-input.tftest.hcl", "-json", "-verbose"},
-		stepVerify:   {"conftest", "verify", "--policy", "rego", "--data", "decl.json", "--data", "layer-decl.json", "-o", "json"},
-		stepConftest: {"conftest", "test", "--combine", "--all-namespaces", "--no-color", "-o", "json", "--policy", "rego", "--data", "data.json", "--data", "layer.json", "--data", "out/provider-schema.json", "out/inputs"},
+		stepInit:          {"terraform", "init", "-backend=false", "-input=false", "-lockfile=readonly"},
+		stepPlan:          {"terraform", "test", "-filter=tests/policy-input.tftest.hcl", "-json", "-verbose"},
+		stepVerify:        {"opa", "test", "rego", "layer-decl.json", "-f", "json", "--timeout", "60s"},
+		stepVerifyTimeout: {"opa", "test", "rego", "layer-decl.json", "-f", "json", "--timeout", "1ns"},
+		stepConftest:      {"conftest", "test", "--combine", "--all-namespaces", "--no-color", "-o", "json", "--policy", "rego", "--data", "data.json", "--data", "layer.json", "--data", "out/provider-schema.json", "out/inputs"},
 	} {
 		t.Run(step, func(t *testing.T) {
 			t.Parallel()
@@ -336,8 +337,6 @@ func Test_runPlan(t *testing.T) {
 		assert.Empty(t, calls())
 	})
 
-	// bad は、-out か -canary-work の一方だけを誤った値にした引数で runPlan を呼び、canary も道具も起動せず、world が
-	// 前後で変わらないことを確かめる。
 	bad := func(t *testing.T, flag, value string, mk func(root, outside string) []string) {
 		t.Helper()
 		world, root, outside := workWorld(t)

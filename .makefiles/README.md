@@ -107,7 +107,7 @@ secret scan、脆弱性・設定の走査、供給網のクールダウン。
 ### `terraform/`
 
 Terraform 側の検査（fmt / validate / TFLint / `terraform test` / Policy Test、インフラ内コードの検出、
-bootstrap の plan の期待値と identity root の一致）と、その検査自体の検査。Policy Test の conftest は
+bootstrap の plan の期待値と identity root の一致）と、その検査自体の検査。Policy Test の opa と conftest は
 `$(GO_TOOL)` を経由する。
 
 ### `terraform/operation/`
