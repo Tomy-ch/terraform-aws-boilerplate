@@ -10,7 +10,7 @@ plan_policy := object.get(object.get(di, "plan_role", {}), "policy", "")
 
 apply_identity_policy := object.get(object.get(di, "bootstrap_assume", {}), "apply_identity_policy", "")
 
-# plan の role が引き受けてよいのは、メンバーの立ち上げの読み取りの role だけである（organization-baseline/ADR-0203 決定1）。
+# plan の role が引き受けてよいのは、メンバーの立ち上げの読み取りの role だけである（deployment-identity/ADR-0201 決定22）。
 bootstrap_read_role_arn := `^arn:aws:iam::([0-9]{12}):role/bootstrap/[a-z0-9]+-bootstrap-read$`
 
 access_role_arn := `^arn:aws:iam::([0-9]{12}):role/OrganizationAccountAccessRole$`
