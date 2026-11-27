@@ -612,7 +612,7 @@ credential_process = aws configure export-credentials --profile tabp-bootstrap -
 
 ### 段5 の CI の apply が失敗した
 
-失敗は critical の deploy の通知（`notify.yaml`）で届く。原因は run の失敗した step のログから読む（人は state と plan の出力の全文を読めない）。
+失敗は critical の deploy の通知（`notify.yaml`）で届く。原因は、run の失敗した step のログと job summary の診断の行（AWS の service・operation・error code・拒否された Action、条件の失敗のファイルと行）から読む（人は state と plan の出力の全文を読めない）。
 
 | 症状 | 対処 |
 | --- | --- |
