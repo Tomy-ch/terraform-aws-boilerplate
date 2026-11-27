@@ -16,12 +16,6 @@ override_resource {
   values = { arn = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab" }
 }
 
-# unlock_identity の復号を限る lock file の ARN（modules/kms の objects の validation）を通すため、state Bucket の ARN も形のある値にする。
-override_resource {
-  target = module.s3.aws_s3_bucket.this
-  values = { arn = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an" }
-}
-
 variables {
   project                                 = "tabp"
   env                                     = "admin"
@@ -569,17 +563,11 @@ run "ci_role_arns_unlock_user" {
   expect_failures = [var.ci_role_arns]
 }
 
-# Key Policy の割当は state-backend/ADR-0201 決定9。state Bucket の ARN が plan で決まらないと文書も決まらない。
+# Key Policy の割当は state-backend/ADR-0201 決定9。state Bucket の ARN は名前から組むので、Bucket を作る plan でも文書が決まる。
 # 出力の2つの Bucket の ARN は override しない。その ARN を待つと、apply の出力の Bucket を CI が作る plan で文書が決まらない。
 # object の key は backend.tf の key と lock file、scripts/tf-local の planKey・applyKey が組む key の接頭辞と同じ文字列である。
 run "key_policy_apply_and_unlock" {
   command = plan
-
-  override_resource {
-    target          = module.s3.aws_s3_bucket.this
-    override_during = plan
-    values          = { arn = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an" }
-  }
 
   assert {
     condition = [for s in jsondecode(module.kms.key_policy).Statement : s.Sid] == [
