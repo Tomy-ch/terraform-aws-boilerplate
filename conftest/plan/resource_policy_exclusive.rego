@@ -15,17 +15,20 @@ specs := [
 ]
 
 # 宣言が欠けた組は作らず、PLAN-RPE-00 で落とす。CI の実 plan は宣言の欠けを見るほかの package を掛けない。
-pairs contains {"type": spec.type, "attr": spec.attr, "target": target, "policy": policy, "refs": spec.refs, "statements": object.get(spec, "statements", [])} if {
+# 組は instance ごとに作る（lib/instances.rego）。宣言の address を instance の prefix へ付け替える。
+pairs contains {"type": spec.type, "attr": spec.attr, "target": lib.rebase(target, i), "policy": lib.rebase(policy, i), "refs": spec.refs, "statements": object.get(spec, "statements", []), "instance": i} if {
 	some spec in specs
 	target := object.get(data.policy_plan, spec.target, null)
 	policy := object.get(data.policy_plan, spec.policy, null)
 	is_string(target)
 	is_string(policy)
+	some i in lib.instances
 }
 
 target_after(p) := c.rc.change.after if {
 	some c in lib.changes
 	c.rc.address == p.target
+	lib.in_root(c.path, p.instance)
 	is_object(c.rc.change.after)
 }
 
@@ -78,6 +81,7 @@ created_together(c, p) if {
 	unknown_ref(c, p)
 	some t in lib.changes
 	t.rc.address == p.target
+	lib.in_root(t.path, p.instance)
 	some a in p.refs
 	object.get(object.get(t.rc.change, "after_unknown", {}), a, false) == true
 }
@@ -96,18 +100,33 @@ deny contains msg if {
 	msg := sprintf("[PLAN-RPE-00] 宣言の policy_plan.%s が、空でない文字列ではありません", [concat(".", path)])
 }
 
-in_input(address) if {
-	some f in input
-	some rc in f.contents.resource_changes
-	rc.address == address
+deny contains msg if {
+	some e in lib.instance_shape_errors
+	msg := sprintf("[PLAN-RPE-00] %s", [e])
 }
 
 deny contains msg if {
 	some path in declared_keys
 	declared_string(path)
-	address := object.get(data.policy_plan, path, null)
-	not in_input(address)
-	msg := sprintf("[PLAN-RPE-00] 宣言の policy_plan.%s の %s が入力にありません。address が変わったなら宣言を直してください", [concat(".", path), address])
+	not lib.rebasable(object.get(data.policy_plan, path, null))
+	msg := sprintf("[PLAN-RPE-00] 宣言の policy_plan.%s が state_backend.module か deployment_identity.module で始まりません", [concat(".", path)])
+}
+
+deny contains msg if {
+	some path in declared_keys
+	declared_string(path)
+	some i in lib.instances
+	address := lib.rebase(object.get(data.policy_plan, path, null), i)
+	not lib.present(address, i)
+	msg := sprintf("[PLAN-RPE-00] %s宣言の policy_plan.%s の %s が入力にありません。address が変わったなら宣言を直してください", [lib.instance_tag(i), concat(".", path), address])
+}
+
+kind_name := {"state_backend": "state-backend", "deployment_identity": "deployment-identity"}
+
+# 宣言に無い instance の policy は、宣言した resource の唯一の policy として読まれない。
+deny contains msg if {
+	some u in lib.undeclared_instances
+	msg := sprintf("[PLAN-RPE-00] %s: %s の instance（prefix %q）が宣言にありません。data.policy_plan.state_backend.instances[%q] に足してください", [u.path, kind_name[u.kind], u.prefix, lib.root_name(u.path)])
 }
 
 statement_count(path) := n if {
@@ -128,6 +147,7 @@ deny contains msg if {
 counted_documents(p) := {d |
 	some d in lib.documents
 	d.address == p.policy
+	lib.in_root(d.path, p.instance)
 	is_object(d.change.after)
 }
 
@@ -135,8 +155,8 @@ counted_documents(p) := {d |
 deny contains msg if {
 	some p in pairs
 	count(p.statements) > 0
-	in_input(p.policy)
-	count({d | some d in lib.documents; d.address == p.policy}) == 0
+	lib.present(p.policy, p.instance)
+	count({d | some d in lib.documents; d.address == p.policy; lib.in_root(d.path, p.instance)}) == 0
 	msg := sprintf("[PLAN-RPE-03] 文の数を宣言した %s が入力に在るのに、policy の文書として読まれていません（data.policy_plan.documents の %s）", [p.policy, p.type])
 }
 

@@ -23,8 +23,11 @@ account_root(arn) if regex.match(`^arn:aws[a-z-]*:iam::[0-9]{12}:root$`, arn)
 
 roots(body) := [a | some s in allows(body); some a in aws_principals(s); account_root(a)]
 
-# Key Policy が無いことと読めないことは、ほかの規則が何も見ずに黙る形なのでここで落とす。
+# Key Policy が無いことと読めないことは、ほかの規則が何も見ずに黙る形なのでここで落とす。instance ごとに見る
+# （lib/instances.rego）。
 declared_key_policy := data.policy_plan.state_backend.key_policy if is_string(data.policy_plan.state_backend.key_policy)
+
+declared_key_policies := {lib.rebase(declared_key_policy, i) | some i in lib.instances}
 
 deny contains msg if {
 	not declared_key_policy
@@ -32,9 +35,20 @@ deny contains msg if {
 }
 
 deny contains msg if {
-	address := declared_key_policy
-	count({d | some d in lib.documents; d.type == "aws_kms_key_policy"; d.address == address; d.change.actions != ["forget"]}) == 0
-	msg := sprintf("[PLAN-KMS-00] 宣言した state の鍵の Key Policy %s が入力にありません", [address])
+	some e in lib.instance_shape_errors
+	msg := sprintf("[PLAN-KMS-00] %s", [e])
+}
+
+deny contains msg if {
+	not lib.rebasable(declared_key_policy)
+	msg := sprintf("[PLAN-KMS-00] 宣言 state_backend.key_policy %q が state_backend.module か deployment_identity.module で始まりません", [declared_key_policy])
+}
+
+deny contains msg if {
+	some i in lib.instances
+	address := lib.rebase(declared_key_policy, i)
+	count({d | some d in lib.documents; d.type == "aws_kms_key_policy"; d.address == address; lib.in_root(d.path, i); d.change.actions != ["forget"]}) == 0
+	msg := sprintf("[PLAN-KMS-00] %s宣言した state の鍵の Key Policy %s が入力にありません", [lib.instance_tag(i), address])
 }
 
 deny contains msg if {
@@ -65,7 +79,7 @@ rewritten(d) if not d.change.before.policy == d.change.after.policy
 
 deny contains msg if {
 	some r in key_policies
-	r.document.address == declared_key_policy
+	r.document.address in declared_key_policies
 	not rewritten(r.document)
 	some rc in created_roles
 	suffix := role_suffix(rc)
@@ -77,7 +91,7 @@ deny contains msg if {
 
 deny contains msg if {
 	some r in key_policies
-	r.document.address == declared_key_policy
+	r.document.address in declared_key_policies
 	not rewritten(r.document)
 	some rc in created_roles
 	not role_suffix(rc)

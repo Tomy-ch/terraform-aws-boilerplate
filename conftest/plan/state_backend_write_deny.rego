@@ -1,6 +1,7 @@
 # state Bucket の object の書き込みを、Bucket Policy で CI の role と key と操作の組に限ること（ADR-0602 決定11、
 # ADR-0604 決定9、state-backend/ADR-0104）。role の ARN（deployment-identity）と Bucket Policy・Key Policy（state-backend）は
 # 別の root の plan に在るので、結合した入力で突き合わせる。役割は宣言した address から引き、role の名前で判定しない（ADR-0402 決定13）。
+# 宣言の形は1回、入力の突き合わせは instance ごとに見る（lib/instances.rego）。
 package plan.state_backend_write_deny
 
 import data.plan.lib
@@ -9,26 +10,38 @@ di := object.get(data.policy_plan, "deployment_identity", {})
 
 cfg := object.get(data.policy_plan, "state_backend", {})
 
-declared(name) := object.get(cfg, name, "")
+declared_raw(name) := object.get(cfg, name, "")
 
-role_address(name) := object.get(object.get(di, name, {}), "role", "")
+# 宣言の address を instance の prefix へ付け替える。付け替えられない address はそのまま引き、00 で落とす。
+at(raw, i) := lib.rebase(raw, i) if lib.rebasable(raw)
 
-after(address) := c.rc.change.after if {
+at(raw, _) := raw if not lib.rebasable(raw)
+
+declared(i, name) := at(declared_raw(name), i)
+
+role_address_raw(name) := object.get(object.get(di, name, {}), "role", "")
+
+role_address(i, name) := at(role_address_raw(name), i)
+
+after(i, address) := c.rc.change.after if {
 	some c in lib.changes
 	c.rc.address == address
+	lib.in_root(c.path, i)
 }
 
-role_arn(name) := after(role_address(name)).arn
+role_arn(i, name) := after(i, role_address(i, name)).arn
 
-bucket_arn := after(declared("bucket")).arn
+bucket_arn(i) := after(i, declared(i, "bucket")).arn
 
-state_key_arn := after(declared("state_key")).arn
+state_key_arn(i) := after(i, declared(i, "state_key")).arn
 
-object_arn(key) := sprintf("%s/%s", [bucket_arn, key])
+object_arn(i, key) := sprintf("%s/%s", [bucket_arn(i), key])
 
 lock_key(name) := object.get(object.get(di, name, {}), "lock_key", "")
 
-root_keys(root) := {object_arn(k) | some k in [root.state, sprintf("%s.tflock", [root.state])]}
+state_keys_of(root) := {root.state, sprintf("%s.tflock", [root.state])}
+
+root_keys(i, root) := {object_arn(i, k) | some k in state_keys_of(root)}
 
 object_write_actions := {"s3:deleteobject", "s3:deleteobjectversion", "s3:putobject", "s3:replicatedelete", "s3:replicateobject"}
 
@@ -37,17 +50,20 @@ writer_names := array.concat([root.writer | some root in object.get(cfg, "roots"
 # 同じ role を2つの役割に宣言すると writers の key が重なり、評価そのものが落ちる。先に SBW-00 で止める。
 distinct_writers if count({n | some n in writer_names}) == count(writer_names)
 
-writers[arn] := {"keys": root_keys(root), "denied": {"s3:deleteobjectversion", "s3:replicatedelete", "s3:replicateobject"}} if {
-	distinct_writers
-	some root in object.get(cfg, "roots", [])
-	arn := role_arn(root.writer)
-}
+writer_entries(i) := array.concat(
+	[{"arn": arn, "keys": root_keys(i, root), "denied": {"s3:deleteobjectversion", "s3:replicatedelete", "s3:replicateobject"}} |
+		distinct_writers
+		some root in object.get(cfg, "roots", [])
+		arn := role_arn(i, root.writer)
+	],
+	[{"arn": arn, "keys": {object_arn(i, lock_key(root.unlocker))}, "denied": {"s3:deleteobjectversion", "s3:putobject", "s3:replicatedelete", "s3:replicateobject"}} |
+		distinct_writers
+		some root in object.get(cfg, "roots", [])
+		arn := role_arn(i, root.unlocker)
+	],
+)
 
-writers[arn] := {"keys": {object_arn(lock_key(root.unlocker))}, "denied": {"s3:deleteobjectversion", "s3:putobject", "s3:replicatedelete", "s3:replicateobject"}} if {
-	distinct_writers
-	some root in object.get(cfg, "roots", [])
-	arn := role_arn(root.unlocker)
-}
+writers(i) := {e.arn: {"keys": e.keys, "denied": e.denied} | some e in writer_entries(i)}
 
 well_formed_root(root) if {
 	is_string(root.writer)
@@ -86,18 +102,27 @@ deny contains msg if {
 	msg := sprintf("[PLAN-SBW-00] root の writer と lock を外す role（data.policy_plan.state_backend.roots の writer・unlocker）に同じ role %v が重なっています", [writer_names])
 }
 
-bucket_policies contains r if {
-	some r in lib.readable
-	r.document.address == declared("bucket_policy")
+deny contains msg if {
+	some e in lib.instance_shape_errors
+	msg := sprintf("[PLAN-SBW-00] %s", [e])
 }
 
-key_policies contains r if {
+# 作成の plan（creating）では、Bucket Policy の条件の鍵の ARN が決まらず、文書を読めない。Bucket Policy の規則は止める。
+bucket_policies(i) := {r |
+	not lib.creating(i)
 	some r in lib.readable
-	r.document.address == declared("key_policy")
+	r.document.address == declared(i, "bucket_policy")
+	lib.in_root(r.document.path, i)
 }
 
-statements contains {"path": r.document.path, "statement": s} if {
-	some r in bucket_policies
+key_policies(i) := {r |
+	some r in lib.readable
+	r.document.address == declared(i, "key_policy")
+	lib.in_root(r.document.path, i)
+}
+
+statements(i) := {{"path": r.document.path, "statement": s} |
+	some r in bucket_policies(i)
 	some s in lib.statements(r.body)
 }
 
@@ -114,16 +139,16 @@ principal_arn_values(s, op) := {v | some v in lib.as_array(conditions(s)[op]["aw
 
 tls(s) if conditions(s) == {"bool": {"aws:securetransport": "false"}}
 
-denies contains a if {
-	some a in statements
+denies(i) := {a |
+	some a in statements(i)
 	a.statement.Effect == "Deny"
 }
 
-others(a) if {
+others(i, a) if {
 	conditions(a.statement) == {"arnnotequals": object.get(conditions(a.statement), "arnnotequals", {})}
 	object.keys(conditions(a.statement).arnnotequals) == {"aws:principalarn"}
 	a.statement.Principal == "*"
-	resources(a.statement) == {sprintf("%s/*", [bucket_arn])}
+	resources(a.statement) == {sprintf("%s/*", [bucket_arn(i)])}
 	actions(a.statement) == object_write_actions
 }
 
@@ -138,30 +163,30 @@ sse := "s3:x-amz-server-side-encryption"
 
 sse_key := "s3:x-amz-server-side-encryption-aws-kms-key-id"
 
-encryption(a) if {
+encryption(i, a) if {
 	a.statement.Principal == "*"
 	actions(a.statement) == {"s3:putobject"}
-	resources(a.statement) == {sprintf("%s/*", [bucket_arn])}
+	resources(a.statement) == {sprintf("%s/*", [bucket_arn(i)])}
 }
 
-other_than_kms(a) if {
-	encryption(a)
+other_than_kms(i, a) if {
+	encryption(i, a)
 	c := conditions(a.statement)
 	object.keys(c) == {"null", "stringnotequals"}
 	c.null == {sse: "false"}
 	c.stringnotequals == {sse: "aws:kms"}
 }
 
-other_key(a) if {
-	encryption(a)
+other_key(i, a) if {
+	encryption(i, a)
 	c := conditions(a.statement)
 	object.keys(c) == {"null", "stringnotequals"}
 	c.null == {sse_key: "false"}
 	object.keys(c.stringnotequals) == {sse_key}
 }
 
-managed_key(a) if {
-	encryption(a)
+managed_key(i, a) if {
+	encryption(i, a)
 	c := conditions(a.statement)
 	object.keys(c) == {"null", "stringequals"}
 	c.stringequals == {sse: "aws:kms"}
@@ -170,30 +195,78 @@ managed_key(a) if {
 
 deny contains msg if {
 	some name in ["bucket", "bucket_policy", "key_policy", "state_key"]
-	declared(name) == ""
+	declared_raw(name) == ""
 	msg := sprintf("[PLAN-SBW-00] data.policy_plan.state_backend.%s が宣言にありません", [name])
 }
 
 deny contains msg if {
-	declared("bucket_policy") != ""
-	count(bucket_policies) == 0
-	msg := sprintf("[PLAN-SBW-00] state Bucket の Bucket Policy %q が入力にありません。address が変わったなら data.policy_plan.state_backend を直してください", [declared("bucket_policy")])
+	some name in ["bucket", "bucket_policy", "key_policy", "state_key"]
+	declared_raw(name) != ""
+	not lib.rebasable(declared_raw(name))
+	msg := sprintf("[PLAN-SBW-00] data.policy_plan.state_backend.%s %q が state_backend.module か deployment_identity.module で始まりません", [name, declared_raw(name)])
 }
 
 deny contains msg if {
-	declared("key_policy") != ""
-	count(key_policies) == 0
-	msg := sprintf("[PLAN-SBW-00] state の鍵の Key Policy %q が入力にありません。address が変わったなら data.policy_plan.state_backend を直してください", [declared("key_policy")])
+	some name in role_names
+	role_address_raw(name) != ""
+	not lib.rebasable(role_address_raw(name))
+	msg := sprintf("[PLAN-SBW-00] data.policy_plan.deployment_identity.%s.role %q が state_backend.module か deployment_identity.module で始まりません", [name, role_address_raw(name)])
+}
+
+# 読めない値の案内。正規の instance は reference の mock の plan で、ほかの instance は作成の扱いで読む。
+unreadable_hint(i) := "tests/policy-input.tftest.hcl の override_resource で与えてください" if i.root == null
+
+unreadable_hint(i) := sprintf("その instance の state の鍵を作る plan なら、data.policy_plan.state_backend.instances[%q] の %s に creating を宣言してください", [i.root, i.name]) if is_string(i.root)
+
+deny contains msg if {
+	some i in lib.instances
+	not lib.creating(i)
+	declared_raw("bucket_policy") != ""
+	count(bucket_policies(i)) == 0
+	msg := sprintf("[PLAN-SBW-00] %sstate Bucket の Bucket Policy %q が入力にありません。address が変わったなら data.policy_plan.state_backend を直してください", [lib.instance_tag(i), declared(i, "bucket_policy")])
 }
 
 deny contains msg if {
-	not bucket_known
-	msg := sprintf("[PLAN-SBW-00] state Bucket %q の ARN を入力から読めません。tests/policy-input.tftest.hcl の override_resource で与えてください", [declared("bucket")])
+	some i in lib.instances
+	lib.creating(i)
+	declared_raw("bucket_policy") != ""
+	not lib.present(declared(i, "bucket_policy"), i)
+	msg := sprintf("[PLAN-SBW-00] %sstate Bucket の Bucket Policy %q が入力にありません。address が変わったなら data.policy_plan.state_backend を直してください", [lib.instance_tag(i), declared(i, "bucket_policy")])
 }
 
 deny contains msg if {
-	not state_key_known
-	msg := sprintf("[PLAN-SBW-00] state の鍵 %q の ARN を入力から読めません。tests/policy-input.tftest.hcl の override_resource で与えてください", [declared("state_key")])
+	some i in lib.instances
+	declared_raw("key_policy") != ""
+	count(key_policies(i)) == 0
+	msg := sprintf("[PLAN-SBW-00] %sstate の鍵の Key Policy %q が入力にありません。address が変わったなら data.policy_plan.state_backend を直してください", [lib.instance_tag(i), declared(i, "key_policy")])
+}
+
+deny contains msg if {
+	some i in lib.instances
+	not lib.creating(i)
+	not bucket_known(i)
+	msg := sprintf("[PLAN-SBW-00] %sstate Bucket %q の ARN を入力から読めません。%s", [lib.instance_tag(i), declared(i, "bucket"), unreadable_hint(i)])
+}
+
+deny contains msg if {
+	some i in lib.instances
+	not lib.creating(i)
+	not state_key_known(i)
+	msg := sprintf("[PLAN-SBW-00] %sstate の鍵 %q の ARN を入力から読めません。%s", [lib.instance_tag(i), declared(i, "state_key"), unreadable_hint(i)])
+}
+
+# 宣言に無い instance の state Bucket と role は、どの規則も読まない。
+kind_name := {"state_backend": "state-backend", "deployment_identity": "deployment-identity"}
+
+deny contains msg if {
+	some u in lib.undeclared_instances
+	msg := sprintf("[PLAN-SBW-00] %s: %s の instance（prefix %q）が宣言にありません。data.policy_plan.state_backend.instances[%q] に足してください", [u.path, kind_name[u.kind], u.prefix, lib.root_name(u.path)])
+}
+
+deny contains msg if {
+	some i in lib.instances
+	lib.creating_unused(i)
+	msg := sprintf("[PLAN-SBW-11] %screating を宣言したのに、state の鍵 %q を作る plan ではありません。作成を apply した後なら、data.policy_plan.state_backend.instances[%q] の %s から creating を外してください", [lib.instance_tag(i), declared(i, "state_key"), i.root, i.name])
 }
 
 role_names contains name if {
@@ -213,17 +286,60 @@ role_names contains name if {
 }
 
 deny contains msg if {
+	some i in lib.instances
+	not lib.creating(i)
 	some name in role_names
-	not role_known(name)
-	msg := sprintf("[PLAN-SBW-00] role %q（data.policy_plan.deployment_identity.%s.role）の ARN を入力から読めません。address を直すか、tests/policy-input.tftest.hcl の override_resource で与えてください", [role_address(name), name])
+	not role_known(i, name)
+	msg := sprintf("[PLAN-SBW-00] %srole %q（data.policy_plan.deployment_identity.%s.role）の ARN を入力から読めません。address を直すか、%s", [lib.instance_tag(i), role_address(i, name), name, unreadable_hint(i)])
+}
+
+deny contains msg if {
+	some i in lib.instances
+	lib.creating(i)
+	some name in role_names
+	not role_suffix(i, name)
+	msg := sprintf("[PLAN-SBW-00] %srole %q（data.policy_plan.deployment_identity.%s.role）の名前を入力から読めません。address を直してください", [lib.instance_tag(i), role_address(i, name), name])
 }
 
 # 未定義になりうる値を not の中に直接書くと、未定義が not の外へ出て規則ごと黙る。
-role_known(name) if is_string(role_arn(name))
+role_known(i, name) if is_string(role_arn(i, name))
 
-bucket_known if is_string(bucket_arn)
+bucket_known(i) if is_string(bucket_arn(i))
 
-state_key_known if is_string(state_key_arn)
+state_key_known(i) if is_string(state_key_arn(i))
+
+# 作成の plan では role の ARN が決まらない。ARN の末尾（:role<path><name>）を、role の名前と path から組んで比べる。
+role_suffix(i, name) := sprintf(":role%s%s", [role_path(after(i, role_address(i, name))), after(i, role_address(i, name)).name]) if is_string(after(i, role_address(i, name)).name)
+
+role_path(a) := object.get(a, "path", "/") if is_string(object.get(a, "path", "/"))
+
+role_path(a) := "/" if not is_string(object.get(a, "path", "/"))
+
+principal_suffix(p) := m[0][1] if {
+	is_string(p)
+	m := regex.find_all_string_submatch_n(`^arn:aws[a-z-]*:iam::[0-9]{12}(:role/.+)$`, p, 1)
+	count(m) == 1
+}
+
+principal_suffix(p) := p if {
+	is_string(p)
+	not regex.match(`^arn:aws[a-z-]*:iam::[0-9]{12}:role/.+$`, p)
+}
+
+# Key Policy の principal と宣言の role を突き合わせる値。ARN が決まれば ARN、作成の plan では ARN の末尾で比べる。
+role_key(i, name) := role_arn(i, name) if not lib.creating(i)
+
+role_key(i, name) := role_suffix(i, name) if lib.creating(i)
+
+principal_key(i, p) := p if not lib.creating(i)
+
+principal_key(i, p) := principal_suffix(p) if lib.creating(i)
+
+role_identified(i, name) if role_key(i, name)
+
+role_label(i, name) := role_arn(i, name) if role_known(i, name)
+
+role_label(i, name) := role_address(i, name) if not role_known(i, name)
 
 deny contains msg if {
 	count(object.get(cfg, "key_user_roles", [])) == 0
@@ -243,113 +359,125 @@ deny contains msg if {
 }
 
 deny contains msg if {
-	is_string(bucket_arn)
-	count(bucket_policies) > 0
-	count({a | some a in denies; others(a)}) != 1
-	msg := sprintf("[PLAN-SBW-01] state Bucket の Bucket Policy に、%s/* への object の書き込みを aws:PrincipalArn の ArnNotEquals だけを条件に Principal \"*\" に拒否する文が1つではありません", [bucket_arn])
+	some i in lib.instances
+	is_string(bucket_arn(i))
+	count(bucket_policies(i)) > 0
+	count({a | some a in denies(i); others(i, a)}) != 1
+	msg := sprintf("[PLAN-SBW-01] %sstate Bucket の Bucket Policy に、%s/* への object の書き込みを aws:PrincipalArn の ArnNotEquals だけを条件に Principal \"*\" に拒否する文が1つではありません", [lib.instance_tag(i), bucket_arn(i)])
 }
 
 deny contains msg if {
-	some a in denies
-	others(a)
-	principal_arn_values(a.statement, "arnnotequals") != object.keys(writers)
-	msg := sprintf("[PLAN-SBW-01] %s: writer 以外の書き込みを拒否する文の例外 %v が、apply の role と lock を外す role の ARN %v と一致しません", [a.path, sort(principal_arn_values(a.statement, "arnnotequals")), sort(object.keys(writers))])
+	some i in lib.instances
+	some a in denies(i)
+	others(i, a)
+	principal_arn_values(a.statement, "arnnotequals") != object.keys(writers(i))
+	msg := sprintf("[PLAN-SBW-01] %s%s: writer 以外の書き込みを拒否する文の例外 %v が、apply の role と lock を外す role の ARN %v と一致しません", [lib.instance_tag(i), a.path, sort(principal_arn_values(a.statement, "arnnotequals")), sort(object.keys(writers(i)))])
 }
 
 exact_role_arn(v) if regex.match(`^arn:aws[a-z-]*:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$`, v)
 
 deny contains msg if {
-	some a in statements
+	some i in lib.instances
+	some a in statements(i)
 	some op, kv in conditions(a.statement)
 	kv["aws:principalarn"]
 	not op in {"arnequals", "arnnotequals"}
-	msg := sprintf("[PLAN-SBW-02] %s: aws:PrincipalArn を %s で比べています。ArnEquals か ArnNotEquals で role の ARN と完全一致で比べてください", [a.path, op])
+	msg := sprintf("[PLAN-SBW-02] %s%s: aws:PrincipalArn を %s で比べています。ArnEquals か ArnNotEquals で role の ARN と完全一致で比べてください", [lib.instance_tag(i), a.path, op])
 }
 
 deny contains msg if {
-	some a in statements
+	some i in lib.instances
+	some a in statements(i)
 	some op, kv in conditions(a.statement)
 	some v in lib.as_array(kv["aws:principalarn"])
 	not exact_role_arn(v)
-	msg := sprintf("[PLAN-SBW-02] %s: aws:PrincipalArn の値 %v が role の ARN の完全一致ではありません（user・assumed-role・root・ワイルドカードは受けません）", [a.path, v])
+	msg := sprintf("[PLAN-SBW-02] %s%s: aws:PrincipalArn の値 %v が role の ARN の完全一致ではありません（user・assumed-role・root・ワイルドカードは受けません）", [lib.instance_tag(i), a.path, v])
 }
 
 # 書き込みの拒否を object に限る理由は state-backend/ADR-0104 決定3。
 deny contains msg if {
-	some a in denies
+	some i in lib.instances
+	some a in denies(i)
 	not tls(a.statement)
 	xs := resources(a.statement) | not_resources(a.statement)
 	some x in xs
-	not object_resource(x)
-	msg := sprintf("[PLAN-SBW-03] %s: TLS 以外の Deny の Resource・NotResource に、state Bucket の object でない %v があります", [a.path, x])
+	not object_resource(i, x)
+	msg := sprintf("[PLAN-SBW-03] %s%s: TLS 以外の Deny の Resource・NotResource に、state Bucket の object でない %v があります", [lib.instance_tag(i), a.path, x])
 }
 
-object_resource(x) if startswith(x, sprintf("%s/", [bucket_arn]))
+object_resource(i, x) if startswith(x, sprintf("%s/", [bucket_arn(i)]))
 
 deny contains msg if {
-	some a in denies
+	some i in lib.instances
+	some a in denies(i)
 	not tls(a.statement)
 	count(actions(a.statement) - object_write_actions) > 0
-	msg := sprintf("[PLAN-SBW-03] %s: TLS 以外の Deny の Action %v が、object の書き込みの5つ（s3:PutObject・s3:DeleteObject・s3:DeleteObjectVersion・s3:ReplicateObject・s3:ReplicateDelete）の部分集合ではありません", [a.path, sort(actions(a.statement))])
+	msg := sprintf("[PLAN-SBW-03] %s%s: TLS 以外の Deny の Action %v が、object の書き込みの5つ（s3:PutObject・s3:DeleteObject・s3:DeleteObjectVersion・s3:ReplicateObject・s3:ReplicateDelete）の部分集合ではありません", [lib.instance_tag(i), a.path, sort(actions(a.statement))])
 }
 
 deny contains msg if {
-	some a in denies
+	some i in lib.instances
+	some a in denies(i)
 	not tls(a.statement)
 	a.statement.NotAction
-	msg := sprintf("[PLAN-SBW-03] %s: TLS 以外の Deny が NotAction を使っています。Action を列挙してください", [a.path])
+	msg := sprintf("[PLAN-SBW-03] %s%s: TLS 以外の Deny が NotAction を使っています。Action を列挙してください", [lib.instance_tag(i), a.path])
 }
 
 deny contains msg if {
-	some arn, w in writers
-	is_string(bucket_arn)
-	count(bucket_policies) > 0
+	some i in lib.instances
+	some arn, w in writers(i)
+	is_string(bucket_arn(i))
+	count(bucket_policies(i)) > 0
 	count({a |
-		some a in denies
+		some a in denies(i)
 		confining(a, arn)
 		not_resources(a.statement) == w.keys
 		count(resources(a.statement)) == 0
 		actions(a.statement) == object_write_actions
 	}) != 1
-	msg := sprintf("[PLAN-SBW-04] %s を、自分の key %v の外への書き込みを Principal \"*\" と aws:PrincipalArn の ArnEquals だけの条件で拒否する文で閉じ込めていません", [arn, sort(w.keys)])
+	msg := sprintf("[PLAN-SBW-04] %s%s を、自分の key %v の外への書き込みを Principal \"*\" と aws:PrincipalArn の ArnEquals だけの条件で拒否する文で閉じ込めていません", [lib.instance_tag(i), arn, sort(w.keys)])
 }
 
 deny contains msg if {
-	some arn, w in writers
-	is_string(bucket_arn)
-	count(bucket_policies) > 0
+	some i in lib.instances
+	some arn, w in writers(i)
+	is_string(bucket_arn(i))
+	count(bucket_policies(i)) > 0
 	count({a |
-		some a in denies
+		some a in denies(i)
 		confining(a, arn)
 		resources(a.statement) == w.keys
 		count(not_resources(a.statement)) == 0
 		actions(a.statement) == w.denied
 	}) != 1
-	msg := sprintf("[PLAN-SBW-04] %s の key %v への操作を、Principal \"*\" と aws:PrincipalArn の ArnEquals だけの条件の %v の拒否で閉じ込めていません", [arn, sort(w.keys), sort(w.denied)])
+	msg := sprintf("[PLAN-SBW-04] %s%s の key %v への操作を、Principal \"*\" と aws:PrincipalArn の ArnEquals だけの条件の %v の拒否で閉じ込めていません", [lib.instance_tag(i), arn, sort(w.keys), sort(w.denied)])
 }
 
 deny contains msg if {
-	some a in denies
+	some i in lib.instances
+	some a in denies(i)
 	some arn in principal_arn_values(a.statement, "arnequals")
-	not writers[arn]
-	msg := sprintf("[PLAN-SBW-04] %s: 宣言した writer でない %s を閉じ込める文があります", [a.path, arn])
+	not writers(i)[arn]
+	msg := sprintf("[PLAN-SBW-04] %s%s: 宣言した writer でない %s を閉じ込める文があります", [lib.instance_tag(i), a.path, arn])
 }
 
+# key の重なりは宣言だけで決まるので、instance に依らず1回見る。
 deny contains msg if {
 	some i, r1 in object.get(cfg, "roots", [])
 	some j, r2 in object.get(cfg, "roots", [])
 	i < j
-	count(root_keys(r1) & root_keys(r2)) > 0
+	count(state_keys_of(r1) & state_keys_of(r2)) > 0
 	msg := sprintf("[PLAN-SBW-05] root %q と %q の key が重なっています", [r1.writer, r2.writer])
 }
 
 deny contains msg if {
+	some i in lib.instances
 	some root in object.get(cfg, "roots", [])
-	some a in denies
+	some a in denies(i)
 	some arn in principal_arn_values(a.statement, "arnequals")
-	arn != role_arn(root.writer)
-	object_arn(root.state) in not_resources(a.statement)
-	msg := sprintf("[PLAN-SBW-05] %s: %s が root の state の key %s に書けます", [a.path, arn, object_arn(root.state)])
+	arn != role_arn(i, root.writer)
+	object_arn(i, root.state) in not_resources(a.statement)
+	msg := sprintf("[PLAN-SBW-05] %s%s: %s が root の state の key %s に書けます", [lib.instance_tag(i), a.path, arn, object_arn(i, root.state)])
 }
 
 deny contains msg if {
@@ -376,23 +504,24 @@ grants_crypto(s) if {
 
 grants_crypto(s) if s.NotAction
 
-key_grants contains {"document": r.document, "statement": s} if {
-	some r in key_policies
+key_grants(i) := {{"document": r.document, "statement": s} |
+	some r in key_policies(i)
 	some s in lib.statements(r.body)
 	s.Effect == "Allow"
 	grants_crypto(s)
 }
 
-key_users contains p if {
-	some g in key_grants
+key_users(i) := {p |
+	some g in key_grants(i)
 	is_object(g.statement.Principal)
 	some p in lib.as_array(object.get(g.statement.Principal, "AWS", []))
 }
 
 deny contains msg if {
-	some g in key_grants
+	some i in lib.instances
+	some g in key_grants(i)
 	not aws_only(g.statement.Principal)
-	msg := sprintf("[PLAN-SBW-06] %s: %s が AWS の role でない principal %v に暗号操作を許しています", [g.document.path, g.document.address, g.statement.Principal])
+	msg := sprintf("[PLAN-SBW-06] %s%s: %s が AWS の role でない principal %v に暗号操作を許しています", [lib.instance_tag(i), g.document.path, g.document.address, g.statement.Principal])
 }
 
 aws_only(p) if {
@@ -400,75 +529,85 @@ aws_only(p) if {
 	object.keys(p) == {"AWS"}
 }
 
-declared_key_users := {role_arn(name) | some name in object.get(cfg, "key_user_roles", [])}
+declared_key_users(i) := {role_key(i, name) | some name in object.get(cfg, "key_user_roles", [])}
 
 deny contains msg if {
-	count(key_policies) > 0
-	key_users != declared_key_users
-	msg := sprintf("[PLAN-SBW-06] state の鍵の暗号操作を許す principal %v が、宣言（data.policy_plan.state_backend.key_user_roles）の role %v と一致しません", [sort(key_users), sort(declared_key_users)])
+	some i in lib.instances
+	count(key_policies(i)) > 0
+	users := {principal_key(i, p) | some p in key_users(i)}
+	users != declared_key_users(i)
+	msg := sprintf("[PLAN-SBW-06] %sstate の鍵の暗号操作を許す principal %v が、宣言（data.policy_plan.state_backend.key_user_roles）の role %v と一致しません", [lib.instance_tag(i), sort(users), sort(declared_key_users(i))])
 }
 
 deny contains msg if {
-	some r in key_policies
+	some i in lib.instances
+	some r in key_policies(i)
 	some s in lib.statements(r.body)
 	s.Effect == "Deny"
-	msg := sprintf("[PLAN-SBW-06] %s: %s が Deny の文を持っています。拒否は Bucket Policy に置き、Key Policy には置きません", [r.document.path, r.document.address])
+	msg := sprintf("[PLAN-SBW-06] %s%s: %s が Deny の文を持っています。拒否は Bucket Policy に置き、Key Policy には置きません", [lib.instance_tag(i), r.document.path, r.document.address])
 }
 
 deny contains msg if {
-	is_string(bucket_arn)
-	count(bucket_policies) > 0
-	count({a | some a in denies; other_than_kms(a)}) != 1
-	msg := "[PLAN-SBW-07] state Bucket の Bucket Policy に、方式の header が在って aws:kms でない s3:PutObject を Principal \"*\" に拒否する文が1つではありません"
+	some i in lib.instances
+	is_string(bucket_arn(i))
+	count(bucket_policies(i)) > 0
+	count({a | some a in denies(i); other_than_kms(i, a)}) != 1
+	msg := sprintf("[PLAN-SBW-07] %sstate Bucket の Bucket Policy に、方式の header が在って aws:kms でない s3:PutObject を Principal \"*\" に拒否する文が1つではありません", [lib.instance_tag(i)])
 }
 
 deny contains msg if {
-	is_string(bucket_arn)
-	count(bucket_policies) > 0
-	count({a | some a in denies; managed_key(a)}) != 1
-	msg := "[PLAN-SBW-07] state Bucket の Bucket Policy に、方式の header が aws:kms で鍵 ID の header が無い s3:PutObject を Principal \"*\" に拒否する文が1つではありません"
+	some i in lib.instances
+	is_string(bucket_arn(i))
+	count(bucket_policies(i)) > 0
+	count({a | some a in denies(i); managed_key(i, a)}) != 1
+	msg := sprintf("[PLAN-SBW-07] %sstate Bucket の Bucket Policy に、方式の header が aws:kms で鍵 ID の header が無い s3:PutObject を Principal \"*\" に拒否する文が1つではありません", [lib.instance_tag(i)])
 }
 
 deny contains msg if {
-	is_string(bucket_arn)
-	count(bucket_policies) > 0
-	count({a | some a in denies; other_key(a)}) != 1
-	msg := "[PLAN-SBW-07] state Bucket の Bucket Policy に、別の鍵 ID の s3:PutObject を Principal \"*\" に拒否する文が1つではありません"
+	some i in lib.instances
+	is_string(bucket_arn(i))
+	count(bucket_policies(i)) > 0
+	count({a | some a in denies(i); other_key(i, a)}) != 1
+	msg := sprintf("[PLAN-SBW-07] %sstate Bucket の Bucket Policy に、別の鍵 ID の s3:PutObject を Principal \"*\" に拒否する文が1つではありません", [lib.instance_tag(i)])
 }
 
 deny contains msg if {
-	some a in denies
-	other_key(a)
-	{v | some v in lib.as_array(conditions(a.statement).stringnotequals[sse_key])} != {state_key_arn}
-	msg := sprintf("[PLAN-SBW-07] %s: 別の鍵 ID を拒否する文の値が、state の鍵の ARN %v ではありません", [a.path, state_key_arn])
+	some i in lib.instances
+	some a in denies(i)
+	other_key(i, a)
+	{v | some v in lib.as_array(conditions(a.statement).stringnotequals[sse_key])} != {state_key_arn(i)}
+	msg := sprintf("[PLAN-SBW-07] %s%s: 別の鍵 ID を拒否する文の値が、state の鍵の ARN %v ではありません", [lib.instance_tag(i), a.path, state_key_arn(i)])
 }
 
 deny contains msg if {
-	some a in statements
+	some i in lib.instances
+	some a in statements(i)
 	some k, v in object.get(conditions(a.statement), "null", {})
 	not v in {"true", "false"}
-	msg := sprintf("[PLAN-SBW-07] %s: Null の %s の値 %v が文字列の \"true\" か \"false\" ではありません", [a.path, k, v])
+	msg := sprintf("[PLAN-SBW-07] %s%s: Null の %s の値 %v が文字列の \"true\" か \"false\" ではありません", [lib.instance_tag(i), a.path, k, v])
 }
 
-tls_deny(a) if {
+tls_deny(i, a) if {
 	tls(a.statement)
 	a.statement.Principal == "*"
 	actions(a.statement) == {"s3:*"}
-	resources(a.statement) == {bucket_arn, sprintf("%s/*", [bucket_arn])}
+	resources(a.statement) == {bucket_arn(i), sprintf("%s/*", [bucket_arn(i)])}
 }
 
 deny contains msg if {
-	is_string(bucket_arn)
-	count(bucket_policies) > 0
-	count({a | some a in denies; tls_deny(a)}) != 1
-	msg := sprintf("[PLAN-SBW-08] state Bucket の Bucket Policy に、%s と %s/* への s3:* を aws:SecureTransport が false の要求について Principal \"*\" に拒否する文が1つではありません", [bucket_arn, bucket_arn])
+	some i in lib.instances
+	is_string(bucket_arn(i))
+	count(bucket_policies(i)) > 0
+	count({a | some a in denies(i); tls_deny(i, a)}) != 1
+	msg := sprintf("[PLAN-SBW-08] %sstate Bucket の Bucket Policy に、%s と %s/* への s3:* を aws:SecureTransport が false の要求について Principal \"*\" に拒否する文が1つではありません", [lib.instance_tag(i), bucket_arn(i), bucket_arn(i)])
 }
 
 # Allow は IAM の側に置く。ここで持つ理由は conftest/plan/README.md の plan.state_backend_write_deny の行にある。
 deny contains msg if {
-	some a in statements
+	some i in lib.instances
+	some a in statements(i)
 	a.statement.Effect != "Deny"
-	msg := sprintf("[PLAN-SBW-09] %s: state Bucket の Bucket Policy が Deny でない文（Effect %v）を持っています", [a.path, a.statement.Effect])
+	msg := sprintf("[PLAN-SBW-09] %s%s: state Bucket の Bucket Policy が Deny でない文（Effect %v）を持っています", [lib.instance_tag(i), a.path, a.statement.Effect])
 }
 
 # CI の role の Key Policy の object を、その role の IAM の S3 の object と突き合わせる（state-backend/ADR-0201 決定9）。
@@ -478,7 +617,9 @@ key_object_names := key_object_roles if is_array(key_object_roles)
 
 default key_object_names := []
 
-iam_policy(name) := object.get(object.get(di, name, {}), "policy", "")
+iam_policy_raw(name) := object.get(object.get(di, name, {}), "policy", "")
+
+iam_policy(i, name) := at(iam_policy_raw(name), i)
 
 deny contains msg if {
 	not is_array(key_object_roles)
@@ -507,30 +648,56 @@ deny contains msg if {
 
 deny contains msg if {
 	some name in key_object_names
-	iam_policy(name) == ""
+	iam_policy_raw(name) == ""
 	msg := sprintf("[PLAN-SBW-00] data.policy_plan.deployment_identity.%s.policy が宣言にありません", [name])
 }
 
 deny contains msg if {
 	some name in key_object_names
-	iam_policy(name) != ""
-	count({d | some d in lib.documents; d.type == "aws_iam_role_policy"; d.address == iam_policy(name)}) == 0
-	msg := sprintf("[PLAN-SBW-00] %s の IAM の policy %q が入力にありません。address が変わったなら data.policy_plan.deployment_identity.%s.policy を直してください", [name, iam_policy(name), name])
+	iam_policy_raw(name) != ""
+	not lib.rebasable(iam_policy_raw(name))
+	msg := sprintf("[PLAN-SBW-00] data.policy_plan.deployment_identity.%s.policy %q が state_backend.module か deployment_identity.module で始まりません", [name, iam_policy_raw(name)])
+}
+
+iam_documents(i, name) := {d |
+	some d in lib.documents
+	d.type == "aws_iam_role_policy"
+	d.address == iam_policy(i, name)
+	lib.in_root(d.path, i)
 }
 
 deny contains msg if {
+	some i in lib.instances
 	some name in key_object_names
-	some d in lib.documents
-	d.type == "aws_iam_role_policy"
-	d.address == iam_policy(name)
-	not lib.parsed(d)
-	msg := sprintf("[PLAN-SBW-10] %s: %s の IAM の policy %s が plan で決まらないか、JSON の文書として読めません", [d.path, name, d.address])
+	iam_policy_raw(name) != ""
+	count(iam_documents(i, name)) == 0
+	msg := sprintf("[PLAN-SBW-00] %s%s の IAM の policy %q が入力にありません。address が変わったなら data.policy_plan.deployment_identity.%s.policy を直してください", [lib.instance_tag(i), name, iam_policy(i, name), name])
 }
 
-iam_allows(name) := {{"path": r.document.path, "statement": s} |
+# 作成の plan では、鍵の ARN を Resource に持つ IAM の policy は決まらない。決まらない policy の突き合わせは止め、決まる policy は見る。
+deny contains msg if {
+	some i in lib.instances
+	not lib.creating(i)
+	some name in key_object_names
+	some d in iam_documents(i, name)
+	not lib.parsed(d)
+	msg := sprintf("[PLAN-SBW-10] %s%s: %s の IAM の policy %s が plan で決まらないか、JSON の文書として読めません", [lib.instance_tag(i), d.path, name, d.address])
+}
+
+iam_readable(i, name) if {
+	some d in iam_documents(i, name)
+	lib.parsed(d)
+}
+
+iam_compared(i, _) if not lib.creating(i)
+
+iam_compared(i, name) if iam_readable(i, name)
+
+iam_allows(i, name) := {{"path": r.document.path, "statement": s} |
 	some r in lib.readable
 	r.document.type == "aws_iam_role_policy"
-	r.document.address == iam_policy(name)
+	r.document.address == iam_policy(i, name)
+	lib.in_root(r.document.path, i)
 	some s in lib.statements(r.body)
 	s.Effect == "Allow"
 }
@@ -551,85 +718,94 @@ excludes_action(s, action) if {
 	lib.iam_match(x, action)
 }
 
-iam_objects(name, actions) := {x |
-	some a in iam_allows(name)
+iam_objects(i, name, actions) := {x |
+	some a in iam_allows(i, name)
 	some action in actions
 	allows_action(a.statement, action)
 	some x in lib.as_array(object.get(a.statement, "Resource", []))
 }
 
 deny contains msg if {
+	some i in lib.instances
 	some name in key_object_names
-	some a in iam_allows(name)
+	some a in iam_allows(i, name)
 	a.statement.NotResource
 	some action in ["s3:getobject", "s3:putobject"]
 	allows_action(a.statement, action)
-	msg := sprintf("[PLAN-SBW-10] %s: %s の IAM の policy %s の S3 の object の Allow が NotResource を使っています。Resource を列挙してください", [a.path, name, iam_policy(name)])
+	msg := sprintf("[PLAN-SBW-10] %s%s: %s の IAM の policy %s の S3 の object の Allow が NotResource を使っています。Resource を列挙してください", [lib.instance_tag(i), a.path, name, iam_policy(i, name)])
 }
 
-key_role_grants(arn) := {{"document": r.document, "statement": s} |
-	some r in key_policies
+key_role_grants(i, name) := {{"document": r.document, "statement": s} |
+	some r in key_policies(i)
 	some s in lib.statements(r.body)
 	s.Effect == "Allow"
 	is_object(s.Principal)
-	arn in lib.as_array(object.get(s.Principal, "AWS", []))
+	some p in lib.as_array(object.get(s.Principal, "AWS", []))
+	principal_key(i, p) == role_key(i, name)
 }
 
-key_objects(arn, action) := {v |
-	some g in key_role_grants(arn)
+key_objects(i, name, action) := {v |
+	some g in key_role_grants(i, name)
 	allows_action(g.statement, action)
 	some v in lib.limiting_values(g.statement, "kms:encryptioncontext:aws:s3:arn")
 }
 
 deny contains msg if {
+	some i in lib.instances
 	some name in key_object_names
-	role_known(name)
-	some g in key_role_grants(role_arn(name))
+	role_identified(i, name)
+	some g in key_role_grants(i, name)
 	some action in ["kms:decrypt", "kms:generatedatakey"]
 	allows_action(g.statement, action)
 	count(lib.limiting_values(g.statement, "kms:encryptioncontext:aws:s3:arn")) == 0
-	msg := sprintf("[PLAN-SBW-10] %s: %s が %s の role に、暗号操作を object（kms:EncryptionContext:aws:s3:arn）で限らずに許しています", [g.document.path, g.document.address, name])
+	msg := sprintf("[PLAN-SBW-10] %s%s: %s が %s の role に、暗号操作を object（kms:EncryptionContext:aws:s3:arn）で限らずに許しています", [lib.instance_tag(i), g.document.path, g.document.address, name])
 }
 
 # IAM は同じ条件キーの2つの演算子を AND で読むので、値の和で比べると、どちらも満たせない文を一致と見誤る。
 deny contains msg if {
+	some i in lib.instances
 	some name in key_object_names
-	role_known(name)
-	some g in key_role_grants(role_arn(name))
+	role_identified(i, name)
+	some g in key_role_grants(i, name)
 	count([k |
 		some _, kv in object.get(g.statement, "Condition", {})
 		some k, _ in kv
 		lower(k) == "kms:encryptioncontext:aws:s3:arn"
 	]) > 1
-	msg := sprintf("[PLAN-SBW-10] %s: %s の %s の role への文が kms:EncryptionContext:aws:s3:arn を2つ以上の演算子（かキー）に置いています", [g.document.path, g.document.address, name])
+	msg := sprintf("[PLAN-SBW-10] %s%s: %s の %s の role への文が kms:EncryptionContext:aws:s3:arn を2つ以上の演算子（かキー）に置いています", [lib.instance_tag(i), g.document.path, g.document.address, name])
 }
 
 # 突き合わせる object が両側とも無いときは、一致ではなく何も見ていない。
 deny contains msg if {
+	some i in lib.instances
 	some name in key_object_names
-	role_known(name)
-	count(key_objects(role_arn(name), "kms:decrypt")) == 0
-	count(iam_objects(name, ["s3:getobject", "s3:putobject"])) == 0
-	msg := sprintf("[PLAN-SBW-10] %s の role %s に、Key Policy も IAM も S3 の object を1つも許していません。宣言 key_object_roles か policy の address を確かめてください", [name, role_arn(name)])
+	role_identified(i, name)
+	count(key_objects(i, name, "kms:decrypt")) == 0
+	count(iam_objects(i, name, ["s3:getobject", "s3:putobject"])) == 0
+	msg := sprintf("[PLAN-SBW-10] %s%s の role %s に、Key Policy も IAM も S3 の object を1つも許していません。宣言 key_object_roles か policy の address を確かめてください", [lib.instance_tag(i), name, role_label(i, name)])
 }
 
 # 文字列の完全一致で比べる。pattern 同士も文字列として比べ、当たる範囲の包含は読まない。
 deny contains msg if {
+	some i in lib.instances
 	some name in key_object_names
-	role_known(name)
-	count(key_policies) > 0
-	keys := key_objects(role_arn(name), "kms:decrypt")
-	iam := iam_objects(name, ["s3:getobject", "s3:putobject"])
+	role_identified(i, name)
+	iam_compared(i, name)
+	count(key_policies(i)) > 0
+	keys := key_objects(i, name, "kms:decrypt")
+	iam := iam_objects(i, name, ["s3:getobject", "s3:putobject"])
 	keys != iam
-	msg := sprintf("[PLAN-SBW-10] %s の role %s に Key Policy が kms:Decrypt を許す object %v が、IAM の s3:GetObject・s3:PutObject の Resource %v と一致しません", [name, role_arn(name), sort(keys), sort(iam)])
+	msg := sprintf("[PLAN-SBW-10] %s%s の role %s に Key Policy が kms:Decrypt を許す object %v が、IAM の s3:GetObject・s3:PutObject の Resource %v と一致しません", [lib.instance_tag(i), name, role_label(i, name), sort(keys), sort(iam)])
 }
 
 deny contains msg if {
+	some i in lib.instances
 	some name in key_object_names
-	role_known(name)
-	count(key_policies) > 0
-	keys := key_objects(role_arn(name), "kms:generatedatakey")
-	iam := iam_objects(name, ["s3:putobject"])
+	role_identified(i, name)
+	iam_compared(i, name)
+	count(key_policies(i)) > 0
+	keys := key_objects(i, name, "kms:generatedatakey")
+	iam := iam_objects(i, name, ["s3:putobject"])
 	keys != iam
-	msg := sprintf("[PLAN-SBW-10] %s の role %s に Key Policy が kms:GenerateDataKey を許す object %v が、IAM の s3:PutObject の Resource %v と一致しません", [name, role_arn(name), sort(keys), sort(iam)])
+	msg := sprintf("[PLAN-SBW-10] %s%s の role %s に Key Policy が kms:GenerateDataKey を許す object %v が、IAM の s3:PutObject の Resource %v と一致しません", [lib.instance_tag(i), name, role_label(i, name), sort(keys), sort(iam)])
 }
