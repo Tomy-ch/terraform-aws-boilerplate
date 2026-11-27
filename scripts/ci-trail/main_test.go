@@ -22,12 +22,7 @@ const (
 	memberKey  = "ASIABBBBBBBBBBBBBBBB"
 )
 
-const regionsTF = `output "by_partition" {
-  value = {
-    aws = toset(["ap-northeast-1", "us-east-1", "us-west-2"])
-  }
-}
-`
+const regionsTF = `output "by_partition" { value = { aws = toset(["ap-northeast-1", "us-east-1", "us-west-2"]) } }`
 
 const userARN = `{"Arn":"arn:aws:iam::111111111111:user/tabp-trail"}`
 

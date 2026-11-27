@@ -24,6 +24,7 @@ import (
 	"os/exec"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -101,11 +102,14 @@ func hostAWS(bin string) awsFunc {
 			args = append([]string{"--profile", profile}, args...)
 		}
 
+		path, err := exec.LookPath(bin)
+		if err != nil {
+			return nil, xerrors.Wrap(errAWS, "aws が見つかりません")
+		}
+
 		var stdout bytes.Buffer
 
-		cmd := exec.Command(bin, args...)
-		cmd.Stdout = &stdout
-
+		cmd := &exec.Cmd{Path: path, Args: append([]string{bin}, args...), Stdout: &stdout}
 		if err := cmd.Run(); err != nil {
 			return nil, xerrors.Wrap(errAWS, strings.Join(args[:min(len(args), 3)], " "))
 		}
@@ -484,14 +488,16 @@ func report(out io.Writer, f keyFindings, keys int, memberChecked, raw bool) err
 
 // eventLine は、失敗した event を公開の文法の1行にします。
 func eventLine(ev trailEvent) string {
-	fields := []publicdiag.Field{{Name: "kind", Value: "api-error"}}
-
 	denied := publicdiag.Deny(ev.ErrorMessage)
+
+	kind := "api-error"
 	if denied != nil {
-		fields[0].Value = "iam-deny"
+		kind = "iam-deny"
 	}
 
+	fields := make([]publicdiag.Field, 0, 6+len(denied))
 	fields = append(fields,
+		publicdiag.Field{Name: "kind", Value: kind},
 		publicdiag.Field{Name: "time", Value: ev.EventTime},
 		publicdiag.Field{Name: "region", Value: ev.AWSRegion},
 		publicdiag.Field{Name: "source", Value: ev.EventSource},
@@ -501,7 +507,7 @@ func eventLine(ev trailEvent) string {
 
 	line, masked := publicdiag.Format(append(fields, denied...)...)
 	if masked > 0 {
-		extra, _ := publicdiag.Format(publicdiag.Field{Name: "masked", Value: fmt.Sprint(masked)})
+		extra, _ := publicdiag.Format(publicdiag.Field{Name: "masked", Value: strconv.Itoa(masked)})
 		line += "; " + strings.TrimPrefix(extra, publicdiag.Prefix)
 	}
 
