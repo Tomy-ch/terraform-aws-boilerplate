@@ -68,6 +68,7 @@ func Test_entries(t *testing.T) {
 			"bootstrap-contacts":         {"account put-contact-information", "account put-alternate-contact"},
 			"bootstrap-anomaly-tag":      {"ce tag-resource"},
 			"bootstrap-env-secrets":      {"gh secret set"},
+			"member-env-secrets":         {"gh secret set"},
 			"ops-chatbot-role-check":     nil,
 			"ops-workspace-check":        nil,
 			"ops-subscriptions-check":    nil,
@@ -177,6 +178,12 @@ func Test_entries(t *testing.T) {
 			return anomalyWorld(t, map[string]bool{monitorARN: true})
 		}, "tabp\n", tagResource(subARN)},
 		"bootstrap-env-secrets": {[]string{"-environments", "admin-plan", "-repo", testRepo}, callerWorld, "tabp\n", "sts get-caller-identity"},
+		"member-env-secrets": {[]string{"-environments", "security-plan", "-repo", testRepo}, func(t *testing.T) *fakeAWS {
+			m := managementWorld("111111111111", "111111111111")
+			m[listAccountsCall] = ok(`{"Accounts":[{"Id":"111111111111","Name":"tabp-security","State":"ACTIVE"}]}`)
+
+			return newFakeAWS(t, m)
+		}, "tabp\n", listAccountsCall},
 		"ops-chatbot-role-check": {[]string{"-env", "dev"}, func(t *testing.T) *fakeAWS {
 			return newFakeAWS(t, map[string]awsResult{getChatRole: ok(`{"Role":{"RoleName":"AWSServiceRoleForAWSChatbot"}}`)})
 		}, "", getChatRole},
@@ -244,10 +251,14 @@ func Test_entries(t *testing.T) {
 			d.gh = g.fn()
 			require.NoError(t, run(args, &bytes.Buffer{}, d))
 
-			if name == "bootstrap-env-secrets" {
+			switch name {
+			case "bootstrap-env-secrets":
 				assert.Equal(t, []string{listPlan, setPlan, listPlan}, g.calls)
 				assert.Equal(t, "111111111111", g.stdins[1])
-			} else {
+			case "member-env-secrets":
+				assert.Equal(t, []string{listSecurity, setSecurity, listSecurity}, g.calls)
+				assert.Equal(t, "111111111111", g.stdins[1])
+			default:
 				assert.Empty(t, g.calls)
 			}
 			assert.Contains(t, append(f.joined(), f.writes()...), tc.want)
