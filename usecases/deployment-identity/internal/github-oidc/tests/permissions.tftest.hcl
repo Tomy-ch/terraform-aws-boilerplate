@@ -1401,6 +1401,13 @@ run "policies" {
         Resource  = "arn:aws:iam::123456789012:role/aws-service-role/inspector2.amazonaws.com/AWSServiceRoleForAmazonInspector2"
         Condition = { StringEquals = { "iam:AWSServiceName" = "inspector2.amazonaws.com" } }
       },
+      {
+        Sid       = "CreateInspectorAgentlessServiceLinkedRole"
+        Effect    = "Allow"
+        Action    = "iam:CreateServiceLinkedRole"
+        Resource  = "arn:aws:iam::123456789012:role/aws-service-role/agentless.inspector2.amazonaws.com/AWSServiceRoleForAmazonInspector2Agentless"
+        Condition = { StringEquals = { "iam:AWSServiceName" = "agentless.inspector2.amazonaws.com" } }
+      },
       { Sid = "GuarddutyDisableOrganizationAdminAccount", Effect = "Allow", Action = "guardduty:DisableOrganizationAdminAccount", Resource = "*" },
       { Sid = "GuarddutyEnableOrganizationAdminAccount", Effect = "Allow", Action = "guardduty:EnableOrganizationAdminAccount", Resource = "*" },
       { Sid = "Inspector2DisableDelegatedAdminAccount", Effect = "Allow", Action = "inspector2:DisableDelegatedAdminAccount", Resource = "*" },

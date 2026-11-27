@@ -317,6 +317,7 @@ func permissionSections(n names, sk, skReason string) []section {
 	ctslr := iam + ":role/aws-service-role/cloudtrail.amazonaws.com/AWSServiceRoleForCloudTrail"
 	ctslrByName := iam + ":role/AWSServiceRoleForCloudTrail"
 	inslr := iam + ":role/aws-service-role/inspector2.amazonaws.com/AWSServiceRoleForAmazonInspector2"
+	inAgentlessSlr := iam + ":role/aws-service-role/agentless.inspector2.amazonaws.com/AWSServiceRoleForAmazonInspector2Agentless"
 	delegatedRegional := []string{"guardduty:EnableOrganizationAdminAccount", "guardduty:DisableOrganizationAdminAccount", "inspector2:EnableDelegatedAdminAccount", "inspector2:DisableDelegatedAdminAccount"}
 	delegatedLists := []string{"guardduty:ListOrganizationAdminAccounts", "inspector2:ListDelegatedAdminAccounts"}
 	hub := func(r string) string { return "arn:aws:securityhub:" + r + ":" + n.account + ":hub/default" }
@@ -491,6 +492,7 @@ func permissionSections(n names, sk, skReason string) []section {
 				sim(allowed, ai, ctslrByName, "iam:GetRole"),
 				simCtx(allowed, ai, inslr, serviceName("inspector2.amazonaws.com"), "iam:CreateServiceLinkedRole"),
 				simCtx(implicitDeny, ai, inslr, serviceName("guardduty.amazonaws.com"), "iam:CreateServiceLinkedRole"),
+				simCtx(allowed, ai, inAgentlessSlr, serviceName("agentless.inspector2.amazonaws.com"), "iam:CreateServiceLinkedRole"),
 			},
 			absentNote:  "  委任管理者の policy がまだ付いていないので、指定と解除の権限は確かめない（委任管理者の policy を作って付ける apply の後にもう一度走らせる）",
 			unknownNote: "  apply-identity の role の managed policy を確かめられないので（上の NG）、委任管理者の指定と解除の権限は確かめない",
