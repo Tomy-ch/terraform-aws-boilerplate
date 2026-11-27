@@ -291,7 +291,7 @@ var permExpand = strings.NewReplacer(
 	"$reads", "s3:GetBucketAcl s3:GetBucketCORS s3:GetBucketWebsite s3:GetAccelerateConfiguration s3:GetBucketRequestPayment "+
 		"s3:GetBucketLogging s3:GetLifecycleConfiguration s3:GetReplicationConfiguration s3:GetBucketObjectLockConfiguration "+
 		"s3:GetBucketTagging s3:GetBucketPolicy s3:GetBucketVersioning s3:GetEncryptionConfiguration "+
-		"s3:GetBucketPublicAccessBlock s3:GetBucketOwnershipControls",
+		"s3:GetBucketPublicAccessBlock s3:GetBucketOwnershipControls s3:ListTagsForResource",
 	"$manage", "iam:CreatePolicy iam:CreatePolicyVersion iam:DeletePolicyVersion iam:SetDefaultPolicyVersion iam:GetPolicy iam:GetPolicyVersion iam:ListPolicyVersions",
 	"$bg", "arn:aws:iam::123456789012:role/break-glass/tabp-break-glass",
 	"$budget", "arn:aws:budgets::123456789012:budget/tabp-admin-x",

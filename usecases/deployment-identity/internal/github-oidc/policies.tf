@@ -69,6 +69,7 @@ locals {
     "s3:GetEncryptionConfiguration",
     "s3:GetLifecycleConfiguration",
     "s3:GetReplicationConfiguration",
+    "s3:ListTagsForResource",
   ]
 
   bucket_configure_actions = [

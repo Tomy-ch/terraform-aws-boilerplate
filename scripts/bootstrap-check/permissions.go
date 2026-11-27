@@ -289,7 +289,7 @@ func permissionSections(n names, sk, skReason string) []section {
 	reads := []string{"s3:GetBucketAcl", "s3:GetBucketCORS", "s3:GetBucketWebsite", "s3:GetAccelerateConfiguration", "s3:GetBucketRequestPayment",
 		"s3:GetBucketLogging", "s3:GetLifecycleConfiguration", "s3:GetReplicationConfiguration", "s3:GetBucketObjectLockConfiguration",
 		"s3:GetBucketTagging", "s3:GetBucketPolicy", "s3:GetBucketVersioning", "s3:GetEncryptionConfiguration",
-		"s3:GetBucketPublicAccessBlock", "s3:GetBucketOwnershipControls"}
+		"s3:GetBucketPublicAccessBlock", "s3:GetBucketOwnershipControls", "s3:ListTagsForResource"}
 	with := func(a ...string) []string { return append(slices.Clone(reads), a...) }
 	plus := func(head []string, a ...string) []string { return append(append(head, reads...), a...) }
 
