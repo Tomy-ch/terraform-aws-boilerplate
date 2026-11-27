@@ -23,6 +23,7 @@ repository-wide/ADR-0604 決定6 は、メンバーアカウントの立ち上�
    - KMS の鍵は `key/*` にする。鍵の ID は作るまで決まらず、テンプレートから参照できない。与えるのは鍵の設定の読み取り（`DescribeKey`・`GetKeyPolicy`・`GetKeyRotationStatus`・`ListResourceTags`）だけで、暗号操作を含まない
    - `kms:ListAliases` は resource-level の権限を持たないので Resource `"*"` にする（Service Authorization Reference）
    - IAM の CI の role と policy は `<project>-*-ci-*` の prefix pattern にする。S3 と同じく env を名指せないためである。OIDC provider は固定の ARN にする
+   - `deployment-identity` が作るアカウントの前提の Chatbot の service-linked role は、固定の ARN（`role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot`）にする（deployment-identity/ADR-0002）。与えるのは `iam:GetRole` だけである
 
    管理アカウントの plan の role の inline policy の読みのうち、管理アカウントの構成物（組織、break-glass の user と group、StackSet、メールの parameter、password policy）と state の object・plan の出力にだけ掛かるもののほかを、すべて持つ。除いた Action は、理由と組にして `conftest/plan/decl.json` の `organization_baseline.bootstrap_read.management_only_actions` に宣言する。
 5. 立ち上げの外では閉じる。`deny-bootstrap-role` は、`OrganizationAccountAccessRole` とこの role の両方の使用を拒む。`protect-governance-roles` は、StackSets の実行の role（`stacksets-exec-*`）のほかに、この role の変更を拒む（organization-baseline/ADR-0202 決定5 と同じ例外）。この usecase が持つのはメンバーの側の拒否だけである。管理アカウントの側で、この role の引き受けをどのアカウントに許すかは `deployment-identity` が決める（deployment-identity/ADR-0201 決定22）。
