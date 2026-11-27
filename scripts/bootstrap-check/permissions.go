@@ -648,8 +648,7 @@ func stackInstanceRows(n names, other string) []simRow {
 	zss, zst, _ := stackSetARNs(n, n.project+"-bootstrap-read-x")
 	ai := n.applyIdentity
 	inst := []string{"cloudformation:CreateStackInstances", "cloudformation:UpdateStackInstances"}
-	// TargetRegion は type の評価にだけ付き、stackset と stackset-target の評価には付かない（実際の要求での観測。
-	// Service Authorization Reference は3つとも受けると書く）。付かないキーを context に与える行は、IAM が見ないものを確かめる。
+	// TargetRegion は type の評価にだけ付く（deployment-identity/ADR-0201 決定4）。付かないキーを context に与える行は、IAM が見ないものを確かめる。
 	// type の条件は一覧を受けるキー（ArrayOfString）を provider の region に限る（deployment-identity/ADR-0201 決定4）。
 	// provider の region だけの一覧は、条件が StringEquals なら implicitDeny になるので、StringEquals で書いた条件を見つける。
 	// 同じ region を2つ並べた一覧は、`,` を含む1つの値として渡ったときに allowed にならない。
@@ -875,7 +874,6 @@ func outputPolicySteps(e verifyEnv) ([]step, error) {
 	return append(steps, rows(adoc, areason, applyRows)...), nil
 }
 
-// outputPolicyRows は、plan と apply の出力の Bucket の Bucket Policy を含めて評価する行。
 func outputPolicyRows(n names) ([]simRow, []simRow) {
 	pb := "arn:aws:s3:::" + n.planBucket
 	ab := "arn:aws:s3:::" + n.applyBucket

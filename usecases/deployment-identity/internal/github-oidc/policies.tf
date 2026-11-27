@@ -130,7 +130,6 @@ locals {
   org_policy_arn = "${local.org_arn_prefix}:policy/o-*/*/p-*"
   # メンバーアカウントの ID は作るまで決まらない。
   org_account_arns = ["${local.org_arn_prefix}:account/o-*/*"]
-  # メンバーアカウントのメールは、organization-baseline が管理アカウントの parameter から読む（organization-baseline/README.md）。
   member_account_emails_parameter_arn = "arn:${data.aws_partition.current.partition}:ssm:${local.regional_arn_suffix}:parameter/${trimsuffix(var.name_prefix, "-${var.env}")}/organization-baseline/member-account-emails"
 
   break_glass_user_arns  = [for a in var.break_glass_arns : a if strcontains(a, ":user/")]
