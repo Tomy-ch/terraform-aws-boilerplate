@@ -1,19 +1,20 @@
 // tf-policy は、Policy Test（ADR-0402、ADR-0501 決定4・8）の段を持ちます。make は段を順に起動するだけで、
-// Rego の形の検査、Rego のテストの件数の突き合わせ、reference の root ごとの plan の取得と取り出しは、ここが持ちます
-// （ADR-0702 決定24・25）。Conftest の起動は make が持ち、その結果の判定は verify-result と tf-local policy-result が
-// 持ちます。
+// Rego の形の検査、opa と Conftest の内蔵の OPA の版の突き合わせ、Rego のテストの件数の突き合わせ、reference の root
+// ごとの plan の取得と取り出しは、ここが持ちます（ADR-0702 決定24・25）。opa・Conftest の起動は make が持ち、その結果の
+// 判定は opa-parity・verify-result と tf-local policy-result が持ちます。
 //
 //	tf-policy rego-check -policy <dir>
-//	tf-policy verify-result -policy <dir> -report <conftest verify -o json の出力>
+//	tf-policy opa-parity -conftest <conftest --version の出力> -opa <opa version の出力>
+//	tf-policy verify-result -policy <dir> -report <opa test -f json の出力>
 //	tf-policy plan -base <dir> -data <dir> -out <tmp/ の下の相対パス> -canary-data <dir> -canary-work <tmp/ の下の相対パス> -policy <dir> -decl <decl.json> -layer <decl.json> -reference <dir>
 //	tf-policy extract -out <dir> -decl <decl.json>
 //
 // plan は、本走査の前に同じ起動の中で canary を走らせ、canary が落ちれば本走査を行いません（ADR-0702 決定25）。
 //
-// conftest verify はテストが0件でも、conftest test は入力が0件でも失敗しません。件数はここで独立に数えます
+// opa test は結果の要素が0件でも、conftest test は入力が0件でも失敗しません。件数はここで独立に数えます
 // （ADR-0702 決定13・15）。落ちた検査は終了コード 1、入力を読めない・対象が0件・道具を起動できない・道具がシグナルで
 // 終わったは 2 です。道具を起動できない、またはシグナルで終わったときは、その時点で残りを走らせません。canary の中で
-// 起動する Conftest の終了コードは捨てて結果を読む段が合否を決めますが、起動できない・シグナルで終わったは 2 です。
+// 起動する opa・Conftest の終了コードは捨てて結果を読む段が合否を決めますが、起動できない・シグナルで終わったは 2 です。
 package main
 
 import (
@@ -37,7 +38,7 @@ func main() {
 	os.Exit(report(run(os.Args[1:], os.Stdout, command, "."), os.Stderr))
 }
 
-// run は、サブコマンドへ振り分けます。root はリポジトリ直下です。
+// run の root はリポジトリ直下です。
 func run(args []string, w io.Writer, tool toolFunc, root string) error {
 	if len(args) == 0 {
 		return xerrors.Wrap(errUsage, "サブコマンドがありません")
@@ -46,6 +47,8 @@ func run(args []string, w io.Writer, tool toolFunc, root string) error {
 	switch args[0] {
 	case "rego-check":
 		return runRegoCheck(rest, w)
+	case "opa-parity":
+		return runOpaParity(rest, w)
 	case "verify-result":
 		return runVerifyResult(rest, w)
 	case "plan":
@@ -57,7 +60,6 @@ func run(args []string, w io.Writer, tool toolFunc, root string) error {
 	}
 }
 
-// report は run のエラーを1行で w に書き、終了コードを返します。
 func report(err error, w io.Writer) int {
 	toolrun.Report("tf-policy", err, w)
 

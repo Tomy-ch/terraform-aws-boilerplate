@@ -65,6 +65,12 @@ ${jsonencode({
                 Resource = { "Fn::Sub" = "arn:$${AWS::Partition}:iam::$${AWS::AccountId}:role/${project}-*-ci-*" }
               },
               {
+                Sid      = "ReadServiceLinkedRoles"
+                Effect   = "Allow"
+                Action   = "iam:GetRole"
+                Resource = { "Fn::Sub" = "arn:$${AWS::Partition}:iam::$${AWS::AccountId}:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot" }
+              },
+              {
                 Sid      = "ReadCiPolicies"
                 Effect   = "Allow"
                 Action   = ["iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyTags", "iam:ListPolicyVersions"]

@@ -165,6 +165,26 @@ url = "https://github.com/open-policy-agent/conftest/releases/download/v0.71.1/c
 url_api = "https://api.github.com/repos/open-policy-agent/conftest/releases/assets/614476647"
 provenance = "github-attestations"
 
+[[tools."aqua:open-policy-agent/opa"]]
+version = "1.21.1"
+backend = "aqua:open-policy-agent/opa"
+specifiers = ["1.21.1"]
+
+[tools."aqua:open-policy-agent/opa"."platforms.linux-arm64"]
+checksum = "sha256:9a1f3625529c6f01240fe68286dde06aa0b23c5253da700ac48f4d943ff8a4de"
+url = "https://github.com/open-policy-agent/opa/releases/download/v1.21.1/opa_linux_arm64_static"
+url_api = "https://api.github.com/repos/open-policy-agent/opa/releases/assets/599034302"
+
+[tools."aqua:open-policy-agent/opa"."platforms.linux-x64"]
+checksum = "sha256:668506eb17a2eaa1fce6cc0d1f42ef85125d4ac5bda5fc74d1152d0c77145031"
+url = "https://github.com/open-policy-agent/opa/releases/download/v1.21.1/opa_linux_amd64_static"
+url_api = "https://api.github.com/repos/open-policy-agent/opa/releases/assets/599034191"
+
+[tools."aqua:open-policy-agent/opa"."platforms.macos-arm64"]
+checksum = "sha256:a00a6469a0968c47c01137ed0dacaa88148be5d0eaa8524310cd371f3a98a169"
+url = "https://github.com/open-policy-agent/opa/releases/download/v1.21.1/opa_darwin_arm64_static"
+url_api = "https://api.github.com/repos/open-policy-agent/opa/releases/assets/599034098"
+
 [[tools."aqua:ossf/scorecard"]]
 version = "5.6.0"
 backend = "aqua:ossf/scorecard"

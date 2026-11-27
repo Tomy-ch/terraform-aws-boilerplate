@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -727,6 +728,18 @@ func Test_checkVerify(t *testing.T) {
 		assert.Equal(t, []string{""}, lines)
 	})
 
+	// permissionsNG は、permissiveHandler（すべて allowed、委任管理者の policy は付いていない）に対して、allowed を
+	// 期待しない行の数を区分ごとに表と独立に数えた和。
+	permissionsNG := 15 + // S3 と IAM
+		8 + // state の鍵
+		13 + 19 + // 統制の構成物（条件つきを含む）
+		5 + // 委任管理者の指定（条件つきは走らない）
+		3 + // Chatbot の service-linked role
+		12 + 15 + // workload（条件つきを含む）
+		6 + 0 + // budgets（条件つきを含む）
+		4 + // unlock-identity
+		5 // unlock
+
 	// 結果の行は、permissiveHandler の応答に対して表と独立に数えたもの。
 	for _, tc := range []struct {
 		o      verifyOptions
@@ -736,7 +749,7 @@ func Test_checkVerify(t *testing.T) {
 		{verifyOptions{stage: "before-apply"}, "# 結果: 25 件のうち NG 25 件"},
 		{verifyOptions{stage: "stage4"}, "# 結果: 25 件のうち NG 23 件"},
 		{verifyOptions{stage: "stage4", executor: "bob"}, "# 結果: 25 件のうち NG 24 件"},
-		{verifyOptions{stage: "permissions"}, "# 結果: 191 件のうち NG 105 件（確かめていない区分 1）"},
+		{verifyOptions{stage: "permissions"}, "# 結果: " + strconv.Itoa(permissionsBase+governanceGated+workloadGatedCount+budgetsGatedCount) + " 件のうち NG " + strconv.Itoa(permissionsNG) + " 件（確かめていない区分 1）"},
 		{verifyOptions{stage: "stage5"}, "# 結果: 5 件のうち NG 4 件"},
 		{verifyOptions{stage: "output-policy", policySource: "live"}, "# 結果: 13 件のうち NG 7 件"},
 		{verifyOptions{stage: "output-policy", policySource: "reference", referenceDir: testReferenceDir}, "# 結果: 13 件のうち NG 7 件"},

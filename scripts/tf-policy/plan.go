@@ -24,20 +24,26 @@ import (
 type toolFunc = toolrun.Func
 
 const (
-	stepInit       = "init"
-	stepPlan       = "plan"
-	stepVerify     = "verify"
-	stepConftest   = "conftest"
-	stepDeprecated = "deprecated"
+	stepInit   = "init"
+	stepPlan   = "plan"
+	stepVerify = "verify"
+	// stepVerifyTimeout は、上限を超えた Rego のテストを実物の opa が返す形を、canary が極小の上限で確かめる段です。
+	stepVerifyTimeout = "verify-timeout"
+	stepConftest      = "conftest"
+	stepDeprecated    = "deprecated"
 )
+
+// canaryTestTimeout は、canary の Rego のテストのケースごとの上限です。canary が確かめるのは、通るはずの木がこの上限で
+// 落ちないことと、上限を超えたテストを opa が error で返すこと（stepVerifyTimeout）で、本走査の上限（policy.mk の
+// POLICY_TEST_TIMEOUT）との一致は要りません。値がずれても canary の判定は変わりません。
+const canaryTestTimeout = "60s"
 
 // policyInput は、reference の root が Policy の入力を出す terraform test のファイルです。
 const policyInput = "tests/policy-input.tftest.hcl"
 
-// Conftest と provider-schema の段は canary だけが使い、canary が建てた固定の配置（rego・decl.json・layer-decl.json・
-// data.json・layer.json・out/plans.txt・out/provider-schema.json・out/inputs）を読みます。Rego のテストは宣言そのもの
-// （decl.json・layer-decl.json）に対して走り、canary が差し替えるのは適用の段の宣言（data.json・layer.json）だけです。
-// provider-schema は PATH のものを起動します（make が、ビルドした置き場を PATH の先頭に置く）。
+// opa・Conftest と provider-schema の段は canary だけが使い、buildCase が建てた配置を読みます。Rego のテストは宣言そのもの
+// （rego/decl.json・layer-decl.json）に対して走り、canary が差し替えるのは適用の段の宣言（data.json・layer.json）だけです。
+// opa test は木の直下の decl.json を data の root に読むので、make の起動と同じ形になります。
 func command(ctx context.Context, dir string, env []string, step string, _ ...string) *exec.Cmd {
 	var cmd *exec.Cmd
 	switch step {
@@ -48,7 +54,9 @@ func command(ctx context.Context, dir string, env []string, step string, _ ...st
 	case stepPlan:
 		cmd = exec.CommandContext(ctx, "terraform", "test", "-filter="+policyInput, "-json", "-verbose")
 	case stepVerify:
-		cmd = exec.CommandContext(ctx, "conftest", "verify", "--policy", "rego", "--data", "decl.json", "--data", "layer-decl.json", "-o", "json")
+		cmd = exec.CommandContext(ctx, "opa", "test", "rego", "layer-decl.json", "-f", "json", "--timeout", canaryTestTimeout)
+	case stepVerifyTimeout:
+		cmd = exec.CommandContext(ctx, "opa", "test", "rego", "layer-decl.json", "-f", "json", "--timeout", "1ns")
 	default:
 		cmd = exec.CommandContext(ctx, "conftest", "test", "--combine", "--all-namespaces", "--no-color", "-o", "json",
 			"--policy", "rego", "--data", "data.json", "--data", "layer.json", "--data", "out/provider-schema.json", "out/inputs")
@@ -101,7 +109,6 @@ func listRoots(base string) ([]root, error) {
 	return roots, nil
 }
 
-// errorMessages は、terraform test -json の出力から error の行の本文を返します。
 func errorMessages(jsonl []byte) []string {
 	var msgs []string
 	sc := bufio.NewScanner(bytes.NewReader(jsonl))

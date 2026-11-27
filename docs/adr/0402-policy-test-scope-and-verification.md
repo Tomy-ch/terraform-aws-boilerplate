@@ -119,6 +119,7 @@ plan の出力から役割を読めるようになる。ただし tag は利用�
 
 - Static Analysis: Policy のテストが CI の必須検査として存在すること（決定7）
 - Static Analysis: テストを持たない Policy が存在しないこと（決定9）
+- Static Analysis（`make tf-policy`）: Policy のテストを、ケースごとの上限を `.makefiles/` が宣言した値で走らせ、上限を超えたテストを名指して落とすこと。テストを走らせる OPA と、適用で評価する Conftest の内蔵の OPA の版が一致すること（決定7）
 - Policy のテスト: 各 Policy が、違反する入力に対して違反を報告すること（決定8）
 - Policy のテスト: 決定17 で宣言した引数ごとに、書いた値と plan で決まらない値で違反を報告し、書かないときの値で報告しないこと。宣言した型と引数が入力に無い場合と、Provider の schema が非推奨とする書ける引数が宣言に無い場合に違反を報告すること（決定18）
 - Policy のテスト: 値を固定と読む判定ごとに、wildcard と policy 変数を含む値で違反を報告すること（決定20）

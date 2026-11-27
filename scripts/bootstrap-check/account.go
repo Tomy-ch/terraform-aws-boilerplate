@@ -104,11 +104,13 @@ func parseAccountArgs(args []string) (accountOptions, error) {
 	return o, nil
 }
 
-// query は、aws の呼び出しに --output と --region を付けて起動し、同じ引数の結果を使い回す。
+// query は、aws の呼び出しに --output と --region を付けて起動し、同じ引数の結果を使い回す。terse なら、失敗の理由に
+// stderr の文を使わず、エラーコードだけを使う（stderr の文は ARN を含む。公開されるログに出す経路で使う）。
 type query struct {
 	aws    awsFunc
 	region string
 	cache  map[string]awsResult
+	terse  bool
 }
 
 func newQuery(aws awsFunc, region string) *query {
@@ -149,7 +151,7 @@ func (q *query) object(args ...string) (map[string]any, string, error) {
 	}
 
 	if r.failed() {
-		return nil, "呼び出しが失敗: " + firstLine(r.stderr), nil
+		return nil, "呼び出しが失敗: " + q.failure(r.stderr), nil
 	}
 
 	v, ok := decodeObject(r.stdout)
@@ -158,6 +160,47 @@ func (q *query) object(args ...string) (map[string]any, string, error) {
 	}
 
 	return v, "", nil
+}
+
+// failure は、aws の失敗の stderr から理由に使う文。terse なら `An error occurred (<code>)` のコードと、その後ろの本文を
+// 1行に縮めたもの（ARN と context の entry と12桁の数字を伏せる。terseBody）。コードが無ければ文を出さないことを述べる。
+func (q *query) failure(stderr string) string {
+	if !q.terse {
+		return firstLine(stderr)
+	}
+
+	loc := awsErrorCode.FindStringSubmatchIndex(stderr)
+	if loc == nil {
+		return "エラーの文は出さない"
+	}
+
+	code := stderr[loc[2]:loc[3]]
+
+	body := stderr[loc[1]:]
+	if _, after, ok := strings.Cut(body, "operation: "); ok {
+		body = after
+	}
+
+	if body = terseBody(body); body == "" {
+		return code
+	}
+
+	return code + ": " + body
+}
+
+var (
+	contextEntryPattern = regexp.MustCompile(`\S*ContextKey\S*`)
+	arnPattern          = regexp.MustCompile(`arn:[^\s,;"'()\[\]{}]*`)
+)
+
+// terseBody は、aws のエラーの本文を公開されるログに出せる形にする。context の entry を `<context>`、ARN を `<arn>`、
+// 12桁の数字を `<account>` に置き換え、空白を1つに縮めて1行にする。
+func terseBody(s string) string {
+	s = contextEntryPattern.ReplaceAllString(s, "<context>")
+	s = arnPattern.ReplaceAllString(s, "<arn>")
+	s = accountPattern.ReplaceAllString(s, "<account>")
+
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // decodeObject は、JSON の object を読む。空、JSON でない、object でない（null を含む）ものは false。

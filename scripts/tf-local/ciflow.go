@@ -32,6 +32,9 @@ import (
 //	ci-prepare は aws だけを起動し、init の値・出力の Bucket・key を求め、全文の1行目を書く。
 //	ci-init は terraform init、ci-plan は terraform plan と show、ci-apply は terraform apply を起動する。
 //	ci-policy は conftest を起動し、plan に入口の名前空間の Policy を掛ける。
+//	ci-permissions は bootstrap-check を起動し、identity root の plan の CI の role の文書を、bootstrap の手順書の
+//	permissions と同じ表で simulate にかける。管理アカウントの identity root の plan の入口でだけ要る段で、要るかは
+//	ci-prepare が入口の値から決めて state に残す（permissionsRequired）。
 //	ci-upload は aws だけを起動し、全文を出力の Bucket に置く。
 //	ci-finish は道具を起動せず、job summary と GITHUB_OUTPUT を書いて、state の判定で終わる。
 //
@@ -48,16 +51,23 @@ const (
 	stepCIApply      = "ci-terraform-apply"
 	stepCIConftest   = "ci-conftest"
 	stepCIPutObject  = "s3api-put-object"
+	// stepCIPermissions は bootstrap-check の plan-permissions。operand は project と region の2つ。
+	stepCIPermissions = "bootstrap-check-plan-permissions"
+	// bootstrapCheckBin は、make が build する bootstrap-check の置き場（リポジトリ直下からの相対パス）。
+	bootstrapCheckBin = "tmp/bin/bootstrap-check"
+	// permissionsEnv は、権限の段が要る env。bootstrap-check の名前は <project>-admin を前提にし、admin を表す共有の宣言は無い。
+	permissionsEnv = "admin"
 
 	ciModePlan  = "plan"
 	ciModeApply = "apply"
 
-	stagePrepare = "prepare"
-	stageInit    = "init"
-	stagePlan    = "plan"
-	stagePolicy  = "policy"
-	stageApply   = "apply"
-	stageUpload  = "upload"
+	stagePrepare     = "prepare"
+	stageInit        = "init"
+	stagePlan        = "plan"
+	stagePolicy      = "policy"
+	stageApply       = "apply"
+	stageUpload      = "upload"
+	stagePermissions = "permissions"
 
 	// applyTimeout は、apply を SIGINT で打ち切るまでの時間。apply の job の timeout-minutes（applyJobTimeout）より、
 	// init・plan と、打ち切りの後に terraform が state を書いて lock を外し、全文を置くまでの分だけ短くする。job の
@@ -74,24 +84,28 @@ var (
 	errCIUnfinish       = xerrors.New("❌ 終わっていない段があります")
 	errCINotEstablished = xerrors.New("❌ 失敗した段が判定まで届いていません（道具を起動できない、値を決められないなど）")
 	errCIFailed         = xerrors.New("❌ 全文は上の key にあります")
+	errCIPermissions    = xerrors.New("❌ CI の role の権限が表と一致しません（理由は上の行）")
+	errCIPermissionsRun = xerrors.New("❌ CI の role の権限を評価できません（理由は上の行）")
 	errCIOutput         = xerrors.New("❌ job summary か GITHUB_OUTPUT に書けません")
 )
 
 // ciState は、段の間で運ぶ値です。アカウント ID を含むので、所有者だけが読める権限で書きます。
 type ciState struct {
-	Mode      string   `json:"mode"`
-	Root      string   `json:"root"`
-	Dir       string   `json:"dir"`
-	Profile   string   `json:"profile"`
-	Region    string   `json:"region"`
-	Account   string   `json:"account"`
-	InitArgs  []string `json:"init_args"`
-	OutBucket string   `json:"out_bucket"`
-	Key       string   `json:"key"`
-	Out       string   `json:"out"`
-	JSON      string   `json:"json"`
-	TFPlan    string   `json:"tfplan"`
-	Done      []string `json:"done"`
+	Mode        string   `json:"mode"`
+	Project     string   `json:"project"`
+	Root        string   `json:"root"`
+	Dir         string   `json:"dir"`
+	Profile     string   `json:"profile"`
+	Region      string   `json:"region"`
+	Account     string   `json:"account"`
+	InitArgs    []string `json:"init_args"`
+	OutBucket   string   `json:"out_bucket"`
+	Key         string   `json:"key"`
+	Out         string   `json:"out"`
+	JSON        string   `json:"json"`
+	TFPlan      string   `json:"tfplan"`
+	Done        []string `json:"done"`
+	Permissions bool     `json:"permissions"`
 	// Stage は失敗した段の種類。空なら失敗していない。
 	Stage string `json:"stage"`
 	// Established は、Stage の失敗が対象について否と言えた判定であることです。無ければ成り立たない側に倒します。
@@ -165,7 +179,7 @@ func (s *ciState) fail(stage string) {
 	}
 }
 
-// remove は、全文・plan の JSON・plan のファイルを消します。全文はアカウント ID を含む。
+// remove は、段の間のファイルを消します。全文はアカウント ID を含むので残さない。
 func (s ciState) remove() {
 	for _, p := range []string{s.Out, s.JSON, s.TFPlan} {
 		if p != "" {
@@ -254,10 +268,17 @@ func ciPrepareStep(args []string, d deps, stdout io.Writer) (string, error) {
 
 func ciPrepareState(d deps, stdout io.Writer, mode, project, env, root, profile, base, header, statePath string) (ciState, error) {
 	out, jsonPath, tfplan := ciStatePaths(statePath)
-	s := ciState{Mode: mode, Root: env + "-" + root, Profile: profile, Out: out, JSON: jsonPath, TFPlan: tfplan}
+	s := ciState{Mode: mode, Project: project, Root: env + "-" + root, Profile: profile, Out: out, JSON: jsonPath, TFPlan: tfplan,
+		Permissions: permissionsRequired(mode, env, root)}
 	for _, p := range []string{out, jsonPath, tfplan} {
 		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return s, xerrors.Wrap(errCIState, err.Error())
+		}
+	}
+	// 権限の段は、この後に make が build する bootstrap-check を起動する。build が落ちたときに前の build を起動しない。
+	if s.Permissions {
+		if err := os.Remove(filepath.Join(d.root, bootstrapCheckBin)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return s, xerrors.Wrapf(errCIState, "前の bootstrap-check を消せません: %v", err)
 		}
 	}
 	dir, err := localRoot(base, env, root)
@@ -339,7 +360,6 @@ func ciPrepareState(d deps, stdout io.Writer, mode, project, env, root, profile,
 	return s, s.save(statePath)
 }
 
-// ciStepArgs は、-state だけを取る段の引数を読みます。
 func ciStepArgs(name string, args []string, d deps, more func(*flag.FlagSet)) (string, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(d.stderr)
@@ -357,7 +377,6 @@ func ciStepArgs(name string, args []string, d deps, more func(*flag.FlagSet)) (s
 	return *statePath, nil
 }
 
-// appendOut は、全文に追記するファイルを開きます。
 func appendOut(s ciState) (*os.File, error) {
 	f, err := openInRoot(s.Out, os.O_WRONLY|os.O_APPEND)
 
@@ -412,8 +431,8 @@ func ciRunInit(s ciState, d deps) error {
 	return nil
 }
 
-// failureKind は、plan か apply の段の失敗の種類を返します。種類は revert の対象かの判定（scripts/apply-revert）が
-// 読む。plan と apply は state の lock を取るので、終了コード 1 で全文が lock の取得の失敗を述べていれば lock とする。
+// failureKind は、plan か apply の段の失敗の種類を返します。plan と apply は state の lock を取るので、終了コード 1 で
+// 全文が lock の取得の失敗を述べていれば lock とする。
 // apply は、0 なら applied（apply は終わり、それより後の失敗は commit の中身に依らない）、打ち切りなら timeout とする。
 func failureKind(step string, code int, out []byte) string {
 	switch {
@@ -518,7 +537,6 @@ func ciRunPlan(s *ciState, d deps, stdout io.Writer) (string, error) {
 	return summary, nil
 }
 
-// changeList は、変わる resource の一覧をログに出す形にします。
 func changeList(changes []string) string {
 	if len(changes) == 0 {
 		return "変わる resource はありません\n"
@@ -568,7 +586,6 @@ func ciPolicyStep(args []string, d deps, stdout io.Writer) (string, error) {
 	return fmt.Sprintf("✅ %d 個の名前空間の Policy を通りました", len(namespaces)), s.save(statePath)
 }
 
-// stringList は、繰り返し渡せるフラグです。
 type stringList []string
 
 func (l *stringList) String() string { return strings.Join(*l, " ") }
@@ -695,6 +712,95 @@ func copyTree(src, dst string) error {
 
 		return copyFile(path, filepath.Join(dst, rel))
 	})
+}
+
+// permissionsRequired は、入口が権限の段を要ること。plan の role の資格情報で、管理アカウントの identity root の plan の
+// 文書に掛ける。
+func permissionsRequired(mode, env, root string) bool {
+	return mode == ciModePlan && env == permissionsEnv && root == string(cientry.RootIdentity)
+}
+
+// ciPermissionsStep は ci-permissions です。前の段が終わっていなければ何もしません。bootstrap-check の判定の失敗
+// （終了コード 1）は判定、ほかは評価できなかったとして段の失敗に残します。
+func ciPermissionsStep(args []string, d deps, stdout io.Writer) (string, error) {
+	var work string
+	statePath, err := ciStepArgs("ci-permissions", args, d, func(fs *flag.FlagSet) {
+		fs.StringVar(&work, "work", "", "")
+	})
+	if err != nil {
+		return "", err
+	}
+	if work == "" {
+		return "", xerrors.Wrap(errUsage, "ci-permissions は -work が要ります")
+	}
+	s, err := loadCIState(statePath)
+	if err != nil {
+		return "", err
+	}
+	if !s.Permissions {
+		return "", xerrors.Wrap(errUsage, "権限の段を要らない入口では、権限を評価しません")
+	}
+	if s.Stage != "" || !slices.Contains(s.Done, stagePolicy) {
+		return "前の段が終わっていないので権限を評価しません", nil
+	}
+	if err := ciRunPermissions(s, d, stdout, work); err != nil {
+		s.fail(stagePermissions)
+		s.Established = isVerdict(err)
+		if serr := s.save(statePath); serr != nil {
+			return "", errors.Join(err, serr)
+		}
+
+		return "", err
+	}
+	s.done(stagePermissions)
+
+	return "✅ CI の role の権限が表と一致しました", s.save(statePath)
+}
+
+// ciRunPermissions は、plan の JSON を作業ディレクトリへ写し、bootstrap-check を project と region の operand で
+// 1回だけ起動します。bootstrap-check の出力（区分ごとの件数と NG の行だけ）は、12桁の数字を伏せてから stdout と stderr へ
+// 出します（bootstrap-check も伏せる。二重の守り）。起動できない・シグナルで終わったときは評価できなかったとします。
+func ciRunPermissions(s ciState, d deps, stdout io.Writer, parent string) error {
+	if !tokenPattern.MatchString(s.Project) {
+		return xerrors.Wrapf(errToken, "project %q", s.Project)
+	}
+	if !regionPattern.MatchString(s.Region) {
+		return xerrors.Wrap(errRegionMalformed, s.Region)
+	}
+	work, cleanup, err := ciWorkUnder(d.root, parent, "permissions-", d.stderr)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	if err := copyFile(s.JSON, filepath.Join(work, "plan.json")); err != nil {
+		return xerrors.Wrap(errCIPermissionsRun, err.Error())
+	}
+	var out, errOut bytes.Buffer
+	cmd := d.tool(context.Background(), work, localEnv(d.environ, s.Profile), stepCIPermissions, s.Project, s.Region)
+	cmd.Stdout, cmd.Stderr = &out, &errOut
+	code, err := toolrun.Exec(cmd)
+	if _, werr := io.WriteString(stdout, maskDigits(out.String())); werr != nil {
+		return werr
+	}
+	if _, werr := io.WriteString(d.stderr, maskDigits(errOut.String())); werr != nil {
+		return werr
+	}
+	if err != nil {
+		return errors.Join(errCIPermissionsRun, xerrors.Wrap(err, "bootstrap-check"))
+	}
+	switch code {
+	case 0:
+		return nil
+	case 1:
+		return errCIPermissions
+	default:
+		return xerrors.Wrapf(errCIPermissionsRun, "bootstrap-check の終了コード %d", code)
+	}
+}
+
+// maskDigits は、12桁の数字（アカウント ID）を伏せます。
+func maskDigits(s string) string {
+	return twelveDigits.ReplaceAllString(s, "<account>")
 }
 
 // ciApplyStep は ci-apply です。Policy を通った plan だけを apply し（ADR-0601 決定6、ADR-0604 決定11）、limit を
@@ -869,10 +975,13 @@ func ciRunUpload(s *ciState, d deps, stdout io.Writer) error {
 	return nil
 }
 
-// ciRequired は、入口ごとに終わっていなければならない段です。
-func ciRequired(mode string) []string {
+// ciRequired は、入口ごとに終わっていなければならない段です。権限の段を要る入口（Permissions）は、その段も要る。
+func ciRequired(s ciState) []string {
 	steps := []string{stagePrepare, stageInit, stagePlan, stagePolicy}
-	if mode == ciModeApply {
+	if s.Permissions {
+		steps = append(steps, stagePermissions)
+	}
+	if s.Mode == ciModeApply {
 		steps = append(steps, stageApply)
 	}
 
@@ -892,7 +1001,7 @@ func ciFinishStep(args []string, d deps) (string, error) {
 		return "", err
 	}
 	defer s.remove()
-	for _, step := range ciRequired(s.Mode) {
+	for _, step := range ciRequired(s) {
 		if !slices.Contains(s.Done, step) {
 			s.fail(step)
 		}

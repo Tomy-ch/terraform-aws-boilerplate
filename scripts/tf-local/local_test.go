@@ -59,7 +59,6 @@ exit 0
 	return tool, calls
 }
 
-// localBase は、env/admin/identity に backend.tf と providers.tf を置いた木を建てる。
 func localBase(t *testing.T) string {
 	t.Helper()
 	base, err := filepath.EvalSymlinks(t.TempDir())
@@ -98,6 +97,62 @@ func Test_command(t *testing.T) {
 			assert.Equal(t, []string{"A=1"}, c.Env)
 		})
 	}
+}
+
+func Test_commandAt(t *testing.T) {
+	t.Parallel()
+
+	t.Run("bootstrap-check の段は root の tmp/bin の bootstrap-check を起動し、dir と env を渡す", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		c := commandAt(root)(context.Background(), "/x", []string{"A=1"}, stepCIPermissions, "tabp", "ap-northeast-1")
+		require.NoError(t, c.Err)
+		assert.Equal(t, filepath.Join(root, "tmp", "bin", "bootstrap-check"), c.Path)
+		assert.Equal(t, "/x", c.Dir)
+		assert.Equal(t, []string{"A=1"}, c.Env)
+	})
+
+	t.Run("ほかの段は command と同じ", func(t *testing.T) {
+		t.Parallel()
+		c := commandAt(t.TempDir())(context.Background(), "/x", []string{"A=1"}, stepListAliases)
+		assert.Equal(t, []string{"aws", "kms", "list-aliases", "--output", "json"}, c.Args)
+	})
+}
+
+func Test_permissionsCommand(t *testing.T) {
+	t.Parallel()
+
+	t.Run("root の tmp/bin の bootstrap-check を、project と region を option の値にした固定の引数で起動する", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		c := permissionsCommand(context.Background(), root, []string{"tabp", "ap-northeast-1"})
+		require.NoError(t, c.Err)
+		assert.Equal(t, []string{filepath.Join(root, "tmp", "bin", "bootstrap-check"), "plan-permissions", "-plan", "plan.json", "-project=tabp", "-region=ap-northeast-1"}, c.Args)
+	})
+
+	t.Run("root が相対パスでも、絶対パスの bootstrap-check を起動する", func(t *testing.T) {
+		t.Parallel()
+		c := permissionsCommand(context.Background(), ".", []string{"tabp", "ap-northeast-1"})
+		require.NoError(t, c.Err)
+		assert.True(t, filepath.IsAbs(c.Path), c.Path)
+	})
+
+	for name, ops := range map[string][]string{"operand が無い": nil, "operand が1つ": {"tabp"}, "operand が3つ": {"tabp", "r", "x"}} {
+		t.Run(name+"なら、起動せずに道具を起動できない（ErrTool、終了コード 2）", func(t *testing.T) {
+			t.Parallel()
+			c := permissionsCommand(context.Background(), t.TempDir(), ops)
+			require.Error(t, c.Err)
+			_, err := toolrun.Exec(c)
+			require.ErrorIs(t, err, toolrun.ErrTool)
+			assert.Equal(t, 2, exitCode(err))
+		})
+	}
+
+	t.Run("command で bootstrap-check の段を組めば、起動せずに ErrTool", func(t *testing.T) {
+		t.Parallel()
+		_, err := toolrun.Exec(command(context.Background(), "/x", nil, stepCIPermissions, "tabp", "ap-northeast-1"))
+		require.ErrorIs(t, err, toolrun.ErrTool)
+	})
 }
 
 func Test_localEnv(t *testing.T) {
