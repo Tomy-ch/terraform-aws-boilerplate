@@ -55,7 +55,7 @@
    - `bootstrapping` からそのアカウントの env を外す
    - そのアカウントの `module.state_backend_<env>`・`module.deployment_identity_<env>` を、`removed` block（`destroy = false`）に替える
    - そのアカウントの provider を消す
-   - `conftest/plan/decl.json` の `state_backend.instances` の `admin-identity` から、そのアカウントの要素を消す
+   - `conftest/plan/decl.json` の `state_backend.instances` の `admin-identity` から、そのアカウントの要素を消す。配列が空になるなら `admin-identity` のキーごと、`instances` が空になるなら `instances` ごと消す
    - `conftest/plan/decl.json` の `stateful_protection.allow` の `admin-identity`（形は [`conftest/plan/README.md`](../../conftest/plan/README.md) の `stateful_protection` の行）に、`removed` にした保護の型の resource の address と理由を足す。管理からの除外は、許可の宣言が無いと Policy Test（`plan.stateful_protection`）が落とす。閉じ終えた後の変更で、その項目を取り除く
    - [`scripts/check-plan-bootstrapping.expected`](scripts/check-plan-bootstrapping.expected) から、そのアカウントの行を消す。立ち上げの中のアカウントが無くなれば、ファイルごと消す
 2. その Pull Request の CI の `plan-admin-identity` が、そのアカウントの resource の削除を示さないことを確かめ、Pull Request に書く
