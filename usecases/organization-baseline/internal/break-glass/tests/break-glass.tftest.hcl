@@ -103,8 +103,8 @@ run "group_policy" {
   }
 
   assert {
-    condition     = length([for s in jsondecode(aws_iam_group_policy.this.policy).Statement : s if can(regex("^signin:", try(tostring(s.Action), "")))]) == 2 && !strcontains(aws_iam_group_policy.this.policy, "public-client/remote")
-    error_message = "signin の Action は2つだけで、別の端末の流れ（remote）は許さないでください。"
+    condition     = length([for a in flatten([for s in jsondecode(aws_iam_group_policy.this.policy).Statement : try(tolist(s.Action), [s.Action])]) : a if startswith(lower(a), "signin:")]) == 2
+    error_message = "signin の Action は2つだけにしてください。"
   }
 
   assert {
@@ -116,6 +116,31 @@ run "group_policy" {
       Condition = { Bool = { "aws:MultiFactorAuthPresent" = "true" } }
     }
     error_message = "自分の MFA を外すことは、MFA で認証したセッションに限ってください。"
+  }
+}
+
+# aws login の client の ARN は、provider の region・partition と呼び出し元のアカウントから組む。
+run "group_policy_login_client_follows_region_and_partition" {
+  command = apply
+
+  override_data {
+    target = data.aws_region.current
+    values = { region = "cn-north-1" }
+  }
+
+  override_data {
+    target = data.aws_partition.current
+    values = { partition = "aws-cn" }
+  }
+
+  override_data {
+    target = data.aws_caller_identity.current
+    values = { account_id = "222222222222" }
+  }
+
+  assert {
+    condition     = toset([for s in jsondecode(aws_iam_group_policy.this.policy).Statement : s.Resource if startswith(s.Sid, "AwsLogin")]) == toset(["arn:aws-cn:signin:cn-north-1:222222222222:oauth2/public-client/localhost"])
+    error_message = "aws login の client の ARN を、provider の region・partition と呼び出し元のアカウントから組んでください。"
   }
 }
 

@@ -83,7 +83,7 @@ deny contains msg if {
 	some s in group_statements
 	s.Effect == "Allow"
 	not allowed_group_statement(s)
-	msg := sprintf("[PLAN-BG-02] break-glass の group の Allow %v が、role の引き受けと自分の資格情報の管理の外です", [object.get(s, "Sid", "")])
+	msg := sprintf("[PLAN-BG-02] break-glass の group の Allow %v が、role の引き受け、自分の資格情報の管理、aws login の外です", [object.get(s, "Sid", "")])
 }
 
 allowed_group_statement(s) if {
@@ -112,10 +112,11 @@ allowed_group_statement(s) if {
 login_client(s) if {
 	resources := lib.as_array(s.Resource)
 	count(resources) == 1
-	m := regex.find_all_string_submatch_n(`^arn:[^:]+:signin:[a-z0-9-]+:([0-9]{12}):oauth2/public-client/localhost$`, resources[0], 1)
+	m := regex.find_all_string_submatch_n(`^arn:(aws[a-z-]*):signin:[a-z]{2}(?:-[a-z]+)+-[0-9]+:([0-9]{12}):oauth2/public-client/localhost$`, resources[0], 1)
 	count(m) == 1
 	some u in user_arns
-	m[0][1] == split(u, ":")[4]
+	m[0][1] == split(u, ":")[1]
+	m[0][2] == split(u, ":")[4]
 }
 
 allowed_group_statement(s) if {
