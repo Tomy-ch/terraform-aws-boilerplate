@@ -26,6 +26,8 @@ repository-wide/ADR-0604 決定6 は、メンバーアカウントの立ち上�
    - `deployment-identity` が作るアカウントの前提の Chatbot の service-linked role は、固定の ARN（`role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot`）にする（deployment-identity/ADR-0002）。与えるのは `iam:GetRole` だけである
 
    管理アカウントの plan の role の inline policy の読みのうち、管理アカウントの構成物（組織、break-glass の user と group、StackSet、メールの parameter、password policy）と state の object・plan の出力にだけ掛かるもののほかを、すべて持つ。除いた Action は、理由と組にして `conftest/plan/decl.json` の `organization_baseline.bootstrap_read.management_only_actions` に宣言する。
+
+   加えて、メンバーの `state-backend` と `deployment-identity` の構成物の ARN ごとに、そのメンバーの `deployment-identity` の plan の role（inline policy と、付けた customer managed policy）がその ARN に Resource を限って許す読みのうち、除いた Action のほかを、その ARN に許す。要る読みは、型ごとに別に列挙せず、plan の role の文書から導く。
 5. 立ち上げの外では閉じる。`deny-bootstrap-role` は、`OrganizationAccountAccessRole` とこの role の両方の使用を拒む。`protect-governance-roles` は、StackSets の実行の role（`stacksets-exec-*`）のほかに、この role の変更を拒む（organization-baseline/ADR-0202 決定5 と同じ例外）。この usecase が持つのはメンバーの側の拒否だけである。管理アカウントの側で、この role の引き受けをどのアカウントに許すかは `deployment-identity` が決める（deployment-identity/ADR-0201 決定22）。
 6. StackSet と stack instance に `prevent_destroy` を付け、`stateful_protection.protected_types` に載せる。
 7. FSBP の CloudFormation.4 から外れる（repository-wide/ADR-0207 決定11 の記録）。
@@ -86,13 +88,13 @@ Pull Request のコードを走らせる job が、立ち上げの間メンバ�
 
 ## 保証範囲
 
-- 保証すること: StackSet が service-managed で自動展開して Root へ置き、テンプレートが1つの inline policy を持つ1つの role だけを持ち、信頼条件が管理アカウントの root と管理アカウントの plan の role の ARN に限り、inline policy が S3・KMS・IAM の wildcard の無い読み取りの Action の Allow だけで、Resource が置き先のアカウントに限られ（`kms:ListAliases` を除く）、state の object と鍵の暗号操作を含まないこと。管理アカウントの plan の role の読みのうち、宣言で除いたもののほかをすべて持つこと。`deny-bootstrap-role` がこの role の使用を拒み、`protect-governance-roles` がこの role の変更を拒むこと（Unit Test と `plan.organization_baseline_bootstrap_read` の `PLAN-BR-*`）
-- 保証しないこと: 列挙した読み取りで、立ち上げの plan が実際に `AccessDenied` 無しで通ること（最初の立ち上げの CI の plan で確かめる）。すべてのメンバーで stack instance が `CURRENT` になること（人の確認。手順書が持つ）
+- 保証すること: StackSet が service-managed で自動展開して Root へ置き、テンプレートが1つの inline policy を持つ1つの role だけを持ち、信頼条件が管理アカウントの root と管理アカウントの plan の role の ARN に限り、inline policy が S3・KMS・IAM の wildcard の無い読み取りの Action の Allow だけで、Resource が置き先のアカウントに限られ（`kms:ListAliases` を除く）、state の object と鍵の暗号操作を含まないこと。管理アカウントの plan の role の読みのうち、宣言で除いたもののほかをすべて持つこと。reference の plan に置いたメンバーの形の instance（env は `security`）の構成物（`deployment_identity.apply_role.bootstrap` の class が `target`・`key`・`service_linked` の resource）の ARN ごとに、その instance の plan の role がその ARN に Resource を限って許す読みのうち、宣言で除いたもののほかを、stack instance の region とその instance のアカウントで、この role がその ARN に許すこと。`deny-bootstrap-role` がこの role の使用を拒み、`protect-governance-roles` がこの role の変更を拒むこと（Unit Test と `plan.organization_baseline_bootstrap_read` の `PLAN-BR-*`）
+- 保証しないこと: 列挙した読み取りで、立ち上げの plan が実際に `AccessDenied` 無しで通ること（最初の立ち上げの CI の plan で確かめる）。すべてのメンバーで stack instance が `CURRENT` になること（人の確認。手順書が持つ）。メンバーの plan の role 自身が欠く読み（resource が state に入った後の plan で初めて表に出る）と、Resource `"*"` で許す読みを、この role が持つこと。reference のメンバーの instance に現れない構成物と、`security` のほかの env の名前の構成物に、Resource の pattern が当たること（pattern は env の位置を `*` にし、テンプレートの文は Unit Test が固定する）
 
 ## 検証方法
 
 - Unit Test: `internal/bootstrap-access/tests/bootstrap-access.tftest.hcl` が StackSet の設定、テンプレート、信頼条件、読み取りだけの inline policy を固定する。`internal/organization/tests/organization.tftest.hcl` が `deny-bootstrap-role` と `protect-governance-roles` の文を固定する
-- Policy Test: `conftest/plan/organization_baseline_bootstrap_read.rego`（`PLAN-BR-*`）
+- Policy Test: `conftest/plan/organization_baseline_bootstrap_read.rego`（`PLAN-BR-*`）。構成物の ARN の網羅（`PLAN-BR-07`）は、`state-backend` と `deployment-identity` の reference に置いたメンバーの形の instance で見る
 - 実環境: 立ち上げの最初の CI の plan が `AccessDenied` 無しで通ること。stack instance の状態は人が確かめる。手順は `docs/setup/organization-baseline.md` が持つ
 
 ## 影響

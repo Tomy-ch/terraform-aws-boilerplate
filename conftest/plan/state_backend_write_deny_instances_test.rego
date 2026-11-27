@@ -73,11 +73,14 @@ test_malformed_instance_elements if {
 		object.union(inst_security, {"creating": {"reason": " "}}),
 		object.union(inst_security, {"creating": {"reason": "x", "until": "x"}}),
 		object.union(inst_security, {"creating": "作成の plan"}),
+		object.union(inst_security, {"deployment_identity_root": ""}),
+		object.union(inst_security, {"deployment_identity_root": 5}),
 	] {
 		some m in shape_errors(inst_decl_with({"admin-identity": [e]}))
 		startswith(m, sprintf("data.policy_plan.state_backend.instances[\"admin-identity\"] の要素 %v が", [e]))
 	}
 	count(shape_errors(inst_decl_with({"admin-identity": [object.remove(inst_security, ["creating"])]}))) == 0
+	count(shape_errors(inst_decl_with({"state-backend": [object.union(inst_security, {"deployment_identity_root": "deployment-identity"})]}))) == 0
 }
 
 test_overlapping_instance_prefixes if {
@@ -106,9 +109,9 @@ test_root_name_is_the_basename_without_json if {
 	lib.root_name("/app/tmp/run/inputs/state-backend.json") == "state-backend"
 }
 
-canonical := {"name": "canonical", "root": null, "state_backend": "module.s.", "deployment_identity": "module.d.", "creating": null}
+canonical := {"name": "canonical", "root": null, "deployment_identity_root": null, "state_backend": "module.s.", "deployment_identity": "module.d.", "creating": null}
 
-member := {"name": "security", "root": "admin-identity", "state_backend": "module.sm.", "deployment_identity": "module.dm.", "creating": {"reason": "作成の plan"}}
+member := {"name": "security", "root": "admin-identity", "deployment_identity_root": "admin-identity", "state_backend": "module.sm.", "deployment_identity": "module.dm.", "creating": {"reason": "作成の plan"}}
 
 test_instances_count_declared_roots_present_in_the_input if {
 	lib.instances == {canonical} with data.policy_plan as inst_decl with input as [file("state-backend.json", [])]
@@ -239,4 +242,72 @@ test_malformed_marker_entries if {
 		{"path": "admin-identity.json", "address": "module.dx.module.github_oidc.aws_iam_role.apply_identity"},
 	} with data.policy_plan as inst_decl with input as inp
 	count(lib.undeclared_instances) == 0 with data.policy_plan as inst_decl with input as inp
+}
+
+# reference では、state-backend の側と deployment-identity の側が別の root のファイルに在る。
+cross := object.union(object.remove(inst_security, ["creating"]), {"deployment_identity_root": "deployment-identity"})
+
+cross_decl := inst_decl_with({"state-backend": [cross]})
+
+cross_member := {"name": "security", "root": "state-backend", "deployment_identity_root": "deployment-identity", "state_backend": "module.sm.", "deployment_identity": "module.dm.", "creating": null}
+
+test_cross_root_instance_counted_only_with_both_roots if {
+	lib.instances == {canonical, cross_member} with data.policy_plan as cross_decl with input as [file("state-backend.json", []), file("deployment-identity.json", [])]
+	lib.instances == {canonical} with data.policy_plan as cross_decl with input as [file("state-backend.json", [])]
+	lib.instances == {canonical} with data.policy_plan as cross_decl with input as [file("deployment-identity.json", [])]
+}
+
+test_cross_root_instance_reads_both_root_files if {
+	inp := [
+		file("state-backend.json", [rc("module.sm.module.kms.aws_kms_key.this", ["create"])]),
+		file("deployment-identity.json", [rc("module.dm.module.github_oidc.aws_iam_role.apply_identity", ["create"])]),
+		file("other.json", [rc("module.sm.module.x.aws_kms_key.this", ["create"])]),
+	]
+	lib.present("module.sm.module.kms.aws_kms_key.this", cross_member) with data.policy_plan as cross_decl with input as inp
+	lib.present("module.dm.module.github_oidc.aws_iam_role.apply_identity", cross_member) with data.policy_plan as cross_decl with input as inp
+	not lib.present("module.sm.module.x.aws_kms_key.this", cross_member) with data.policy_plan as cross_decl with input as inp
+}
+
+test_cross_root_markers_known_only_in_their_own_root if {
+	inp := [
+		file("state-backend.json", [marker_sb("module.sm."), marker_di("module.dm.")]),
+		file("deployment-identity.json", [marker_di("module.dm."), marker_sb("module.sm.")]),
+	]
+	got := lib.undeclared_instances with data.policy_plan as cross_decl with input as inp
+	got == {
+		{"path": "state-backend.json", "kind": "deployment_identity", "prefix": "module.dm."},
+		{"path": "deployment-identity.json", "kind": "state_backend", "prefix": "module.sm."},
+	}
+}
+
+test_member_decl_drops_management_only_policies_and_instances if {
+	d := object.union(inst_decl, {"deployment_identity": {
+		"management_only_policies": ["module.d.aws_iam_policy.governance[0]"],
+		"apply_identity_role": {"managed_policies": ["module.d.aws_iam_policy.manage", "module.d.aws_iam_policy.governance[0]"]},
+		"customer_managed_policies": ["module.d.aws_iam_policy.manage", "module.d.aws_iam_policy.governance"],
+	}})
+	got := lib.member_decl with data.policy_plan as d
+	got.deployment_identity.apply_identity_role.managed_policies == ["module.d.aws_iam_policy.manage"]
+	got.deployment_identity.apply_identity_role.role == inst_decl.deployment_identity.apply_identity_role.role
+	got.deployment_identity.customer_managed_policies == ["module.d.aws_iam_policy.manage"]
+	not "instances" in object.keys(got.state_backend)
+	got.state_backend.state_key == inst_decl.state_backend.state_key
+}
+
+test_member_view_rebases_the_instance_and_keeps_the_rest if {
+	inp := [file("sb.json", [rc("module.sm.module.kms.aws_kms_key.this", ["create"]), rc("module.s.module.kms.aws_kms_key.this", ["create"])]), file("di.json", [rc("module.dm.x.this", ["create"]), rc("module.d.x.this", ["create"]), rc("module.other.x.this", ["create"])])]
+	got := lib.member_view(cross_member) with data.policy_plan as cross_decl with input as inp
+	[[rc.address | some rc in f.contents.resource_changes] | some f in got] == [["module.s.module.kms.aws_kms_key.this"], ["module.d.x.this", "module.other.x.this"]]
+	[f.path | some f in got] == ["sb.json", "di.json"]
+}
+
+# 2つ目の instance の resource は、1つ目の付け替えた入力に残さない。
+test_member_view_drops_other_instances if {
+	two := inst_decl_with({"state-backend": [cross, object.union(cross, {"name": "log-archive", "state_backend": "module.sn.", "deployment_identity": "module.dn."})]})
+	other := {"name": "log-archive", "root": "state-backend", "deployment_identity_root": "deployment-identity", "state_backend": "module.sn.", "deployment_identity": "module.dn.", "creating": null}
+	inp := [file("state-backend.json", [rc("module.sm.module.kms.aws_kms_key.this", ["create"]), rc("module.sn.module.kms.aws_kms_key.this", ["create"])]), file("deployment-identity.json", [rc("module.dn.x.this", ["create"]), rc("module.other.x.this", ["create"])])]
+	got := lib.member_view(cross_member) with data.policy_plan as two with input as inp
+	[[rc.address | some rc in f.contents.resource_changes] | some f in got] == [["module.s.module.kms.aws_kms_key.this"], ["module.other.x.this"]]
+	got2 := lib.member_view(other) with data.policy_plan as two with input as inp
+	[[rc.address | some rc in f.contents.resource_changes] | some f in got2] == [["module.s.module.kms.aws_kms_key.this"], ["module.d.x.this", "module.other.x.this"]]
 }

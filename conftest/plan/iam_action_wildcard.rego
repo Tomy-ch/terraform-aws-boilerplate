@@ -86,7 +86,8 @@ deny contains msg if {
 # 宣言した permissions boundary の文書で、SNS を経た暗号化と復号だけを上限に置く文は外す。boundary は上限を置くだけで権限を
 # 与えず、暗号操作は Key Policy が名指す主体に限られる（deployment-identity/ADR-0201 決定16）。Action は kms:Decrypt と
 # kms:GenerateDataKey だけ、条件 StringEquals の kms:ViaService はすべて sns.<region>.amazonaws.com、Resource は鍵の ARN だけ。
-boundary_addresses := {a | some _, a in object.get(object.get(object.get(data.policy_plan, "deployment_identity", {}), "workload", {}), "boundaries", {})}
+# instance ごとの boundary は、宣言の address を instance の接頭辞へ付け替えて読む（lib/instances.rego）。
+boundary_addresses := {lib.rebase(a, i) | some _, a in object.get(object.get(object.get(data.policy_plan, "deployment_identity", {}), "workload", {}), "boundaries", {}); some i in lib.instances}
 
 boundary_via_service(r, s) if {
 	r.document.type == "aws_iam_policy"

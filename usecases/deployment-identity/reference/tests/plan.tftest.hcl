@@ -15,6 +15,24 @@ mock_provider "aws" {
   }
 }
 
+mock_provider "aws" {
+  alias = "security"
+
+  # 値を与える理由は、上の無名の mock_provider "aws" と同じ。
+  mock_resource "aws_iam_policy" {
+    defaults = { arn = "arn:aws:iam::111111111111:policy/mock" }
+  }
+  mock_data "aws_caller_identity" {
+    defaults = { account_id = "111111111111" }
+  }
+  mock_data "aws_region" {
+    defaults = { region = "ap-northeast-1" }
+  }
+  mock_data "aws_partition" {
+    defaults = { partition = "aws" }
+  }
+}
+
 # role の ARN は plan では決まらないので、mock の apply で見る。
 run "reference_roles" {
   command = apply

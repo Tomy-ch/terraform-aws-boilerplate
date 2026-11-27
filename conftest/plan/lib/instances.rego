@@ -30,7 +30,7 @@ bootstrap_modules := object.get(instance_di_cfg, ["apply_role", "bootstrap", "mo
 
 raw_instances := object.get(instance_sb_cfg, "instances", {})
 
-instance_keys := {"name", "state_backend", "deployment_identity", "creating"}
+instance_keys := {"name", "state_backend", "deployment_identity", "deployment_identity_root", "creating"}
 
 well_formed_instance(e) if {
 	is_object(e)
@@ -41,7 +41,15 @@ well_formed_instance(e) if {
 	e.name != ""
 	module_prefix(e.state_backend)
 	module_prefix(e.deployment_identity)
+	di_root_shape(e)
 	creating_shape(e)
+}
+
+di_root_shape(e) if not "deployment_identity_root" in object.keys(e)
+
+di_root_shape(e) if {
+	is_string(e.deployment_identity_root)
+	e.deployment_identity_root != ""
 }
 
 creating_shape(e) if not "creating" in object.keys(e)
@@ -93,7 +101,7 @@ instance_shape_errors contains msg if {
 	is_array(list)
 	some e in list
 	not well_formed_instance(e)
-	msg := sprintf("data.policy_plan.state_backend.instances[%q] の要素 %v が、name と state_backend・deployment_identity（module の address の接頭辞）の文字列と、任意の creating（空でない reason の文字列だけを持つ object）だけを持っていません", [root, e])
+	msg := sprintf("data.policy_plan.state_backend.instances[%q] の要素 %v が、name と state_backend・deployment_identity（module の address の接頭辞）の文字列と、任意の deployment_identity_root（空でない文字列）と creating（空でない reason の文字列だけを持つ object）だけを持っていません", [root, e])
 }
 
 instance_shape_errors contains msg if {
@@ -131,7 +139,8 @@ root_prefixes(root) := array.concat(
 	],
 ) if is_array(raw_instances[root])
 
-declared_members contains {"name": e.name, "root": root, "state_backend": e.state_backend, "deployment_identity": e.deployment_identity, "creating": object.get(e, "creating", null)} if {
+# deployment_identity_root は、deployment-identity の側が別の root に在る instance（reference）の、その root の名前。
+declared_members contains {"name": e.name, "root": root, "deployment_identity_root": object.get(e, "deployment_identity_root", root), "state_backend": e.state_backend, "deployment_identity": e.deployment_identity, "creating": object.get(e, "creating", null)} if {
 	is_object(raw_instances)
 	some root, list in raw_instances
 	is_array(list)
@@ -146,18 +155,21 @@ input_roots := {root_name(f.path) | some f in input}
 
 # 正規の instance は root を持たず、結合した入力のどこかに在ればよい。宣言した instance は、その root のファイルが
 # 入力に在るときだけ数え、そのファイルの中に在ることを求める。
-instances contains {"name": "canonical", "root": null, "state_backend": sb_module, "deployment_identity": di_module, "creating": null}
+instances contains {"name": "canonical", "root": null, "deployment_identity_root": null, "state_backend": sb_module, "deployment_identity": di_module, "creating": null}
 
 instances contains m if {
 	some m in declared_members
 	m.root in input_roots
+	m.deployment_identity_root in input_roots
 }
+
+instance_roots(inst) := {inst.root, inst.deployment_identity_root}
 
 in_root(_, inst) if inst.root == null
 
 in_root(path, inst) if {
 	is_string(inst.root)
-	root_name(path) == inst.root
+	root_name(path) in instance_roots(inst)
 }
 
 instance_tag(inst) := "" if inst.root == null
@@ -245,10 +257,16 @@ known_prefix("state_backend", prefix, _) if prefix == sb_module
 
 known_prefix("deployment_identity", prefix, _) if prefix == di_module
 
-known_prefix(kind, prefix, root) if {
+known_prefix("state_backend", prefix, root) if {
 	some m in declared_members
 	m.root == root
-	m[kind] == prefix
+	m.state_backend == prefix
+}
+
+known_prefix("deployment_identity", prefix, root) if {
+	some m in declared_members
+	m.deployment_identity_root == root
+	m.deployment_identity == prefix
 }
 
 # 作成の扱い（creating）は、その instance の state の鍵を作る plan でだけ効く。
@@ -269,3 +287,71 @@ creating_unused(inst) if {
 	is_object(inst.creating)
 	not key_created(inst)
 }
+
+# メンバーの形の instance を、正規の instance と同じ規則で評価し直すための入力と宣言（plan.deployment_identity_instances、
+# plan.organization_baseline_bootstrap_read）。入力は、正規の instance の resource を除き、instance の resource を正規の接頭辞へ
+# 付け替え、instance の外の resource はそのまま残す。正規の instance の評価が見る範囲（自分の instance と、instance の外の
+# すべて）と同じ形にする。address のほかは変えない。
+member_view(inst) := [{"path": f.path, "contents": object.union(f.contents, {"resource_changes": [moved(rc, inst) |
+	some rc in f.contents.resource_changes
+	moved(rc, inst)
+]})} |
+	some f in input
+]
+
+moved(rc, inst) := object.union(rc, {"address": canonical_address(rc.address, inst)}) if canonical_address(rc.address, inst)
+
+moved(rc, inst) := rc if {
+	not canonical_address(rc.address, inst)
+	not canonical_resource(rc.address)
+	not other_instance_resource(rc.address, inst)
+}
+
+# ほかの instance の resource は、付け替えた入力の中では宣言の外の instance になるので除く。その instance は自分の評価で見る。
+other_instance_resource(address, inst) if {
+	is_string(address)
+	some m in instances
+	m.root != null
+	m != inst
+	some kind in ["state_backend", "deployment_identity"]
+	startswith(address, m[kind])
+}
+
+canonical_address(address, inst) := concat("", [sb_module, substring(address, count(inst.state_backend), -1)]) if {
+	is_string(address)
+	startswith(address, inst.state_backend)
+}
+
+canonical_address(address, inst) := concat("", [di_module, substring(address, count(inst.deployment_identity), -1)]) if {
+	is_string(address)
+	not startswith(address, inst.state_backend)
+	startswith(address, inst.deployment_identity)
+}
+
+canonical_resource(address) if {
+	is_string(address)
+	startswith(address, sb_module)
+}
+
+canonical_resource(address) if {
+	is_string(address)
+	startswith(address, di_module)
+}
+
+# 管理アカウントにだけ在る policy（宣言 deployment_identity.management_only_policies）を除いた宣言。instances は外す。付け替えた
+# 入力の中では、メンバーの instance が正規の instance になるためである。
+management_only_policies := {a | some a in object.get(instance_di_cfg, "management_only_policies", []); is_string(a)}
+
+member_decl := object.union(object.remove(data.policy_plan, ["deployment_identity", "state_backend"]), {
+	"deployment_identity": object.union(instance_di_cfg, {
+		"apply_identity_role": object.union(object.get(instance_di_cfg, "apply_identity_role", {}), {"managed_policies": [a |
+			some a in object.get(instance_di_cfg, ["apply_identity_role", "managed_policies"], [])
+			not a in management_only_policies
+		]}),
+		"customer_managed_policies": [a |
+			some a in object.get(instance_di_cfg, "customer_managed_policies", [])
+			not a in {strip_index(m) | some m in management_only_policies}
+		],
+	}),
+	"state_backend": object.remove(instance_sb_cfg, ["instances"]),
+})

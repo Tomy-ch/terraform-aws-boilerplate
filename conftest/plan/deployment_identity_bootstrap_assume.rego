@@ -10,7 +10,7 @@ plan_policy := object.get(object.get(di, "plan_role", {}), "policy", "")
 
 apply_identity_policy := object.get(object.get(di, "bootstrap_assume", {}), "apply_identity_policy", "")
 
-# plan の role が引き受けてよいのは、メンバーの立ち上げの読み取りの role だけである（organization-baseline/ADR-0203 決定1）。
+# plan の role が引き受けてよいのは、メンバーの立ち上げの読み取りの role だけである（deployment-identity/ADR-0201 決定22）。
 bootstrap_read_role_arn := `^arn:aws:iam::([0-9]{12}):role/bootstrap/[a-z0-9]+-bootstrap-read$`
 
 access_role_arn := `^arn:aws:iam::([0-9]{12}):role/OrganizationAccountAccessRole$`
@@ -29,10 +29,15 @@ deny contains msg if {
 
 deny contains msg if {
 	well_formed_declaration
-	some a in [plan_policy, apply_identity_policy]
+	some a in required_policies
 	count({r | some r in lib.readable; r.document.address == a}) == 0
 	msg := sprintf("[PLAN-ASSUME-00] 宣言した引き受けの policy %s が入力にありません", [a])
 }
+
+# メンバーの形では apply-identity の側の policy（管理アカウントにだけ在る）を求めない。
+required_policies := [plan_policy] if lib.member_form
+
+else := [plan_policy, apply_identity_policy]
 
 # deployment-identity の CI の role の権限の文書。信頼条件（aws_iam_role の assume_role_policy）は含めない。
 ci_documents contains r if {
@@ -104,9 +109,17 @@ apply_identity_assume_shape(s) if {
 }
 
 deny contains msg if {
+	not lib.member_form
 	some x in assume_statements
 	not x.document.address in {plan_policy, apply_identity_policy}
 	msg := sprintf("[PLAN-ASSUME-03] %s: %s が sts:AssumeRole・sts:TagSession・sts:SetSourceIdentity のどれかを許します。メンバーの引き受けは、plan の role の inline policy と %s だけに置いてください", [x.document.path, x.document.address, apply_identity_policy])
+}
+
+# メンバーの形では引き受けをどこにも置かない（deployment-identity/ADR-0201 決定22 は引き受けを管理アカウントにだけ与える）。
+deny contains msg if {
+	lib.member_form
+	some x in assume_statements
+	msg := sprintf("[PLAN-ASSUME-03] %s: %s が sts:AssumeRole・sts:TagSession・sts:SetSourceIdentity のどれかを許します。メンバーアカウントの deployment-identity は、ほかのアカウントの引き受けを持ちません", [x.document.path, x.document.address])
 }
 
 accounts(address, pattern) := {regex.find_all_string_submatch_n(pattern, r, 1)[0][1] |
@@ -129,6 +142,7 @@ deny contains msg if {
 
 # 入力は reference の plan で、立ち上げの中のアカウントを持つ。引き受けが無ければ、ASSUME-01 から ASSUME-04 は何も見ていない。
 deny contains msg if {
+	not lib.member_form
 	well_formed_declaration
 	count(plan_accounts) == 0
 	msg := "[PLAN-ASSUME-05] 入力に、plan の role の立ち上げの読み取りの role の引き受けがありません。reference の bootstrap_member_account_ids にアカウントを入れてください"
