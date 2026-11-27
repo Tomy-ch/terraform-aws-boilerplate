@@ -79,6 +79,10 @@
             "integration_id": 15368
           },
           {
+            "context": "go-cooldown",
+            "integration_id": 15368
+          },
+          {
             "context": "go-fmt-check",
             "integration_id": 15368
           },

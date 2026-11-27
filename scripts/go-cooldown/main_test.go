@@ -138,6 +138,25 @@ func useGateRepo(t *testing.T, base, current string) {
 	t.Chdir(dir)
 }
 
+// useGateRepoWithBypass は base 側の go.mod とバイパス lockfile を commit したリポジトリを作り、作業ツリーを
+// current の側へ差し替えてそこへ移動する。バイパスの本文が空なら、その側にはファイルを置かない。
+func useGateRepoWithBypass(t *testing.T, baseGoMod, baseBypass, currentGoMod, currentBypass string) {
+	t.Helper()
+	dir := t.TempDir()
+	initGoModRepo(t, dir, baseGoMod)
+	if baseBypass != "" {
+		commitFile(t, dir, bypassFile, baseBypass)
+	}
+	writeGoMod(t, dir, currentGoMod)
+	if err := os.Remove(filepath.Join(dir, bypassFile)); err != nil {
+		require.ErrorIs(t, err, os.ErrNotExist)
+	}
+	if currentBypass != "" {
+		writeWorkTreeBypass(t, dir, currentBypass)
+	}
+	t.Chdir(dir)
+}
+
 func writeWorkTreeBypass(t *testing.T, dir, body string) {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, filepath.Dir(bypassFile)), 0o750))
@@ -151,6 +170,19 @@ func initGoModRepo(t *testing.T, dir, goMod string) {
 	writeGoMod(t, dir, goMod)
 	base := []string{"-C", dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "-c", "commit.gpgsign=false"}
 	for _, args := range [][]string{{"init", "-q"}, {"add", goModPath}, {"commit", "-q", "-m", "init"}} {
+		//nolint:gosec // 引数は本ファイル内のリテラルと t.TempDir のパス
+		out, err := exec.CommandContext(t.Context(), "git", append(base, args...)...).CombinedOutput()
+		require.NoError(t, err, "git %v: %s", args, out)
+	}
+}
+
+// commitFile は dir のリポジトリへ path を body で書いて commit する。base 側のバイパス lockfile を置くのに使う。
+func commitFile(t *testing.T, dir, path, body string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, filepath.Dir(path)), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, path), []byte(body), 0o600))
+	base := []string{"-C", dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "-c", "commit.gpgsign=false"}
+	for _, args := range [][]string{{"add", path}, {"commit", "-q", "-m", "add " + path}} {
 		//nolint:gosec // 引数は本ファイル内のリテラルと t.TempDir のパス
 		out, err := exec.CommandContext(t.Context(), "git", append(base, args...)...).CombinedOutput()
 		require.NoError(t, err, "git %v: %s", args, out)
@@ -420,7 +452,8 @@ func Test_validateBypasses(t *testing.T) {
 				"github.com/x/y@v1.2.3": {expires: day("2026-08-05"), issue: 931, reason: "r", line: 3},
 			}, current, today)
 			require.Len(t, violations, 1)
-			assert.Contains(t, violations[0], "期限 2026-08-05 が切れています")
+			assert.Contains(t, violations[0].msg, "期限 2026-08-05 が切れています")
+			assert.Equal(t, "github.com/x/y@v1.2.3", violations[0].key)
 			assert.Contains(t, invalid, "github.com/x/y@v1.2.3")
 		})
 
@@ -430,7 +463,8 @@ func Test_validateBypasses(t *testing.T) {
 				"github.com/x/y@v1.2.3": {expires: today.AddDate(0, maxBypassMonths, 1), issue: 931, reason: "r", line: 3},
 			}, current, today)
 			require.Len(t, violations, 1)
-			assert.Contains(t, violations[0], "を越えています")
+			assert.Contains(t, violations[0].msg, "を越えています")
+			assert.Equal(t, "github.com/x/y@v1.2.3", violations[0].key)
 			assert.Contains(t, invalid, "github.com/x/y@v1.2.3")
 		})
 
@@ -440,7 +474,8 @@ func Test_validateBypasses(t *testing.T) {
 				"github.com/gone/away@v9.9.9": {expires: day("2026-09-06"), issue: 931, reason: "r", line: 3},
 			}, current, today)
 			require.Len(t, violations, 1)
-			assert.Contains(t, violations[0], "go.mod に存在しません")
+			assert.Contains(t, violations[0].msg, "go.mod に存在しません")
+			assert.Equal(t, "github.com/gone/away@v9.9.9", violations[0].key)
 		})
 	})
 }
@@ -1116,6 +1151,18 @@ func Test_run(t *testing.T) {
 			assert.Contains(t, out.String(), "対象 1 件")
 		})
 
+		// 日付が進んだだけの期限切れで全 Pull Request を落とすと、変更が持ち込んでいない状態で人質を取る（ADR-0603 決定11）。
+		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
+		t.Run("gate は変更と無関係な期限切れのバイパスでは落とさない", func(t *testing.T) {
+			out := captureLog(t)
+			expired := `"example.com/mod@v1.0.0" = { expires = 2000-01-01, issue = 1, reason = "済んだ緊急対応" }` + "\n"
+			useGateRepoWithBypass(t, goModOneRequire, expired, goModOneRequire, expired)
+			stubProxyPublishedAt(t, aged)
+
+			require.NoError(t, run([]string{"gate", "--base=HEAD"}, now))
+			assert.NotContains(t, out.String(), "が切れています")
+		})
+
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 		t.Run("github 指定のときだけアノテーションを出す", func(t *testing.T) {
 			out := captureLog(t)
@@ -1189,6 +1236,48 @@ func Test_run(t *testing.T) {
 			stubProxyPublishedAt(t, aged)
 
 			require.ErrorIs(t, run([]string{"audit"}, now), errBlocking)
+		})
+
+		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
+		t.Run("gate は変更が足した require に掛かる期限切れのバイパスを落とす", func(t *testing.T) {
+			out := captureLog(t)
+			expired := `"example.com/mod@v1.0.0" = { expires = 2000-01-01, issue = 1, reason = "済んだ緊急対応" }` + "\n"
+			useGateRepoWithBypass(t, "module m\n", expired, goModOneRequire, expired)
+			stubProxyPublishedAt(t, aged)
+
+			require.ErrorIs(t, run([]string{"gate", "--base=HEAD"}, now), errBlocking)
+			assert.Contains(t, out.String(), "が切れています")
+		})
+
+		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
+		t.Run("gate は変更が足した期限切れのエントリを落とす", func(t *testing.T) {
+			out := captureLog(t)
+			expired := `"example.com/mod@v1.0.0" = { expires = 2000-01-01, issue = 1, reason = "済んだ緊急対応" }` + "\n"
+			useGateRepoWithBypass(t, goModOneRequire, "", goModOneRequire, expired)
+			stubProxyPublishedAt(t, aged)
+
+			require.ErrorIs(t, run([]string{"gate", "--base=HEAD"}, now), errBlocking)
+			assert.Contains(t, out.String(), "が切れています")
+		})
+
+		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
+		t.Run("gate は変更が外した require に残るエントリを落とす", func(t *testing.T) {
+			out := captureLog(t)
+			valid := `"example.com/mod@v1.0.0" = { expires = 2026-09-01, issue = 1, reason = "緊急対応" }` + "\n"
+			useGateRepoWithBypass(t, goModOneRequire, valid, "module m\n", valid)
+			stubProxyPublishedAt(t, aged)
+
+			require.ErrorIs(t, run([]string{"gate", "--base=HEAD"}, now), errBlocking)
+			assert.Contains(t, out.String(), "go.mod に存在しません")
+		})
+
+		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
+		t.Run("gate は base のバイパス lockfile を解釈できなければ失敗にする", func(t *testing.T) {
+			captureLog(t)
+			useGateRepoWithBypass(t, goModOneRequire, "これは行として解釈できない\n", goModOneRequire, "")
+			stubProxyPublishedAt(t, aged)
+
+			require.ErrorIs(t, run([]string{"gate", "--base=HEAD"}, now), errBypassInvalidLine)
 		})
 
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
@@ -1297,6 +1386,216 @@ func Test_readWorkTreeGoMod(t *testing.T) {
 
 			require.ErrorIs(t, err, os.ErrNotExist)
 			assert.Nil(t, got)
+		})
+	})
+}
+
+func Test_baseRequirements(t *testing.T) {
+	//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+	t.Run("正常系", func(t *testing.T) {
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("base の go.mod の require を在ったことと共に返す", func(t *testing.T) {
+			dir := t.TempDir()
+			initGoModRepo(t, dir, goModOneRequire)
+			t.Chdir(dir)
+
+			got, present, err := baseRequirements("HEAD")
+			require.NoError(t, err)
+			assert.True(t, present)
+			assert.Equal(t, []string{"example.com/mod@v1.0.0"}, keysOf(got))
+		})
+
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("base に go.mod が無ければ無かったことを返す", func(t *testing.T) {
+			dir := t.TempDir()
+			initGoModRepo(t, dir, goModOneRequire)
+			base := []string{"-C", dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "-c", "commit.gpgsign=false"}
+			//nolint:gosec // 引数は本ファイル内のリテラルと t.TempDir のパス
+			out, err := exec.CommandContext(t.Context(), "git", append(base, "rm", "-q", goModPath)...).CombinedOutput()
+			require.NoError(t, err, "git rm: %s", out)
+			commitFile(t, dir, "README.md", "x\n")
+			t.Chdir(dir)
+
+			got, present, err := baseRequirements("HEAD")
+			require.NoError(t, err)
+			assert.False(t, present)
+			assert.Nil(t, got)
+		})
+	})
+
+	//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+	t.Run("異常系", func(t *testing.T) {
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("base を解決できなければエラーにする", func(t *testing.T) {
+			dir := t.TempDir()
+			initGoModRepo(t, dir, "module m\n")
+			t.Chdir(dir)
+
+			_, present, err := baseRequirements("no-such-ref")
+			require.Error(t, err)
+			assert.False(t, present)
+			assert.Contains(t, err.Error(), "refspec を明示")
+		})
+	})
+}
+
+func Test_removed(t *testing.T) {
+	//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+	t.Run("正常系", func(t *testing.T) {
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("base に在り現在に無い組だけを返す", func(t *testing.T) {
+			dir := t.TempDir()
+			initGoModRepo(t, dir, "module m\n\nrequire (\n\tgithub.com/x/y v1.0.0\n\tgithub.com/kept/same v1.0.0\n)\n")
+			t.Chdir(dir)
+
+			got, err := removed("HEAD", []requirement{
+				{module: "github.com/x/y", version: "v2.0.0"},
+				{module: "github.com/kept/same", version: "v1.0.0"},
+			})
+			require.NoError(t, err)
+			assert.Equal(t, []string{"github.com/x/y@v1.0.0"}, keysOf(got))
+		})
+	})
+
+	//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+	t.Run("異常系", func(t *testing.T) {
+		// base を取れないまま空を返すと、変更が外した require に残るエントリを誰も落とさない。
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("base を解決できなければエラーにする", func(t *testing.T) {
+			dir := t.TempDir()
+			initGoModRepo(t, dir, "module m\n")
+			t.Chdir(dir)
+
+			got, err := removed("no-such-ref", nil)
+			require.Error(t, err)
+			assert.Empty(t, got)
+		})
+	})
+}
+
+func Test_parseBypasses(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("コメントを読み飛ばしてエントリを読む", func(t *testing.T) {
+			t.Parallel()
+			got, err := parseBypasses(strings.NewReader("# c\n\n" +
+				`"github.com/x/y@v1.2.3" = { expires = 2026-09-06, issue = 931, reason = "r" }` + "\n"))
+			require.NoError(t, err)
+			assert.Equal(t, map[string]bypass{
+				"github.com/x/y@v1.2.3": {expires: day("2026-09-06"), issue: 931, reason: "r", line: 3},
+			}, got)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("解釈できない行はエラーにする", func(t *testing.T) {
+			t.Parallel()
+			_, err := parseBypasses(strings.NewReader("これは行として解釈できない\n"))
+			require.ErrorIs(t, err, errBypassInvalidLine)
+		})
+	})
+}
+
+func Test_bypassesAt(t *testing.T) {
+	//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+	t.Run("正常系", func(t *testing.T) {
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("base のバイパス lockfile を読む", func(t *testing.T) {
+			dir := t.TempDir()
+			initGoModRepo(t, dir, goModOneRequire)
+			commitFile(t, dir, bypassFile, `"example.com/mod@v1.0.0" = { expires = 2026-09-01, issue = 1, reason = "r" }`+"\n")
+			t.Chdir(dir)
+
+			got, err := bypassesAt("HEAD")
+			require.NoError(t, err)
+			assert.Equal(t, []string{"example.com/mod@v1.0.0"}, sortedKeys(got))
+		})
+
+		// 空として扱うと、いまのエントリの違反はすべて変更が持ち込んだものとして数えられ、gate は落ちる側へ倒れる。
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("base にファイルが無ければ空を返す", func(t *testing.T) {
+			dir := t.TempDir()
+			initGoModRepo(t, dir, goModOneRequire)
+			t.Chdir(dir)
+
+			got, err := bypassesAt("HEAD")
+			require.NoError(t, err)
+			assert.Empty(t, got)
+		})
+	})
+
+	//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+	t.Run("異常系", func(t *testing.T) {
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("base のファイルを解釈できなければエラーにする", func(t *testing.T) {
+			dir := t.TempDir()
+			initGoModRepo(t, dir, goModOneRequire)
+			commitFile(t, dir, bypassFile, "これは行として解釈できない\n")
+			t.Chdir(dir)
+
+			_, err := bypassesAt("HEAD")
+			require.ErrorIs(t, err, errBypassInvalidLine)
+		})
+	})
+}
+
+func Test_introduced(t *testing.T) {
+	t.Parallel()
+
+	entry := bypass{expires: day("2026-08-01"), issue: 1, reason: "r", line: 1}
+	v := violation{key: "github.com/x/y@v1.2.3", msg: "期限切れ"}
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("base と同じエントリで変更が触れていない require の違反は落とす", func(t *testing.T) {
+			t.Parallel()
+			got := introduced([]violation{v}, nil, map[string]bypass{v.key: entry}, map[string]bypass{v.key: entry})
+			assert.Empty(t, got)
+		})
+
+		t.Run("行の位置だけが変わったエントリは書き換えとみなさない", func(t *testing.T) {
+			t.Parallel()
+			moved := entry
+			moved.line = 9
+			got := introduced([]violation{v}, nil, map[string]bypass{v.key: moved}, map[string]bypass{v.key: entry})
+			assert.Empty(t, got)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("変更が触れた require に掛かる違反は残す", func(t *testing.T) {
+			t.Parallel()
+			got := introduced([]violation{v}, []requirement{{module: "github.com/x/y", version: "v1.2.3"}},
+				map[string]bypass{v.key: entry}, map[string]bypass{v.key: entry})
+			assert.Equal(t, []violation{v}, got)
+		})
+
+		t.Run("base に無いエントリの違反は残す", func(t *testing.T) {
+			t.Parallel()
+			got := introduced([]violation{v}, nil, map[string]bypass{v.key: entry}, map[string]bypass{})
+			assert.Equal(t, []violation{v}, got)
+		})
+
+		t.Run("期限・issue・理由のどれかを書き換えたエントリの違反は残す", func(t *testing.T) {
+			t.Parallel()
+			for name, edit := range map[string]func(b *bypass){
+				"期限":    func(b *bypass) { b.expires = day("2026-08-02") },
+				"issue": func(b *bypass) { b.issue = 2 },
+				"理由":    func(b *bypass) { b.reason = "r2" },
+			} {
+				edited := entry
+				edit(&edited)
+				got := introduced([]violation{v}, nil, map[string]bypass{v.key: edited}, map[string]bypass{v.key: entry})
+				assert.Equal(t, []violation{v}, got, name)
+			}
 		})
 	})
 }

@@ -13,10 +13,12 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -87,6 +89,12 @@ type bypass struct {
 	line    int
 }
 
+// violation はバイパス自身の規約違反 1 件。key は違反したエントリの key で、gate はこれで変更が持ち込んだ違反だけを数える。
+type violation struct {
+	key string
+	msg string
+}
+
 // finding は窓を満たさないモジュール 1 件。
 type finding struct {
 	req       requirement
@@ -144,7 +152,7 @@ func run(args []string, now time.Time) error {
 		return xerrors.Wrap(err, "❌ "+bypassFile)
 	}
 
-	policyViolations, invalidBypasses := validateBypasses(bypasses, current, today)
+	violations, invalidBypasses := validateBypasses(bypasses, current, today)
 
 	targets := current
 	if sub == "gate" {
@@ -152,6 +160,19 @@ func run(args []string, now time.Time) error {
 		if err != nil {
 			return xerrors.Wrap(err, "❌ base との差分")
 		}
+		gone, err := removed(opt.base, current)
+		if err != nil {
+			return xerrors.Wrap(err, "❌ base との差分")
+		}
+		baseBypasses, err := bypassesAt(opt.base)
+		if err != nil {
+			return xerrors.Wrap(err, "❌ base の "+bypassFile)
+		}
+		violations = introduced(violations, append(append([]requirement{}, targets...), gone...), bypasses, baseBypasses)
+	}
+	policyViolations := make([]string, 0, len(violations))
+	for _, v := range violations {
+		policyViolations = append(policyViolations, v.msg)
 	}
 
 	findings, unresolved, err := inspect(context.Background(), targets, opt.window, now)
@@ -268,22 +289,44 @@ func parseGoMod(content []byte) ([]requirement, error) {
 // 返すので、ref の解決を先に分けて確かめる。混同すると、前者を後者と読んで**比較対象を
 // 失ったまま0件で通る**経路が開く（ADR-0702 決定13）。
 func added(base string, current []requirement) ([]requirement, error) {
+	before, present, err := baseRequirements(base)
+	if err != nil {
+		return nil, err
+	}
+	if !present {
+		return append([]requirement(nil), current...), nil
+	}
+	return diffAdded(before, current), nil
+}
+
+// removed は base 時点の go.mod に在り、現在の go.mod に無い (module, version) の組を返す。その組に
+// 掛かるバイパスが go.mod に無いエントリになるのは、この変更のせいである。
+func removed(base string, current []requirement) ([]requirement, error) {
+	before, _, err := baseRequirements(base)
+	if err != nil {
+		return nil, err
+	}
+	return diffAdded(current, before), nil
+}
+
+// baseRequirements は base 時点の go.mod の require と、base に go.mod が在ったかを返す。
+func baseRequirements(base string) ([]requirement, bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
 
 	if err := exec.CommandContext(ctx, "git", "rev-parse", "--verify", "--quiet", base+"^{commit}").Run(); err != nil { //nolint:gosec // base は呼び出し側が与える git ref
-		return nil, xerrors.Wrap(err, fmt.Sprintf("git rev-parse %s（base を解決できません。fetch は refspec を明示すること —— ブランチ名だけでは FETCH_HEAD しか更新されません）", base))
+		return nil, false, xerrors.Wrap(err, fmt.Sprintf("git rev-parse %s（base を解決できません。fetch は refspec を明示すること —— ブランチ名だけでは FETCH_HEAD しか更新されません）", base))
 	}
 
 	out, err := exec.CommandContext(ctx, "git", "show", base+":"+goModPath).Output() //nolint:gosec // base は呼び出し側が与える git ref
 	if err != nil {
-		return append([]requirement(nil), current...), nil
+		return nil, false, nil
 	}
 	before, err := parseGoMod(out)
 	if err != nil {
-		return nil, xerrors.Wrap(err, "base の go.mod")
+		return nil, false, xerrors.Wrap(err, "base の go.mod")
 	}
-	return diffAdded(before, current), nil
+	return before, true, nil
 }
 
 // diffAdded は before に無い (module, version) の組を返す。
@@ -406,8 +449,13 @@ func readBypasses(path string) (map[string]bypass, error) {
 	}
 	defer func() { _ = f.Close() }()
 
+	return parseBypasses(f)
+}
+
+// parseBypasses は readBypasses の解釈の部分。
+func parseBypasses(r io.Reader) (map[string]bypass, error) {
 	out := map[string]bypass{}
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(r)
 	for lineNo := 1; sc.Scan(); lineNo++ {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -442,41 +490,75 @@ func readBypasses(path string) (map[string]bypass, error) {
 // 無効なバイパスは効力も失う。実行はどのみち落ちるので素通ししても穴にはならないが、期限切れの
 // エントリが「通します」と報告する状態は、そのモジュールが検査を通ったのか外されただけなのかを
 // 読者が区別できなくする。
-func validateBypasses(bypasses map[string]bypass, current []requirement, today time.Time) ([]string, map[string]struct{}) {
+func validateBypasses(bypasses map[string]bypass, current []requirement, today time.Time) ([]violation, map[string]struct{}) {
 	inGoMod := make(map[string]struct{}, len(current))
 	for _, r := range current {
 		inGoMod[r.key()] = struct{}{}
 	}
 	limit := today.AddDate(0, maxBypassMonths, 0)
 	invalid := map[string]struct{}{}
-	var violations []string
+	var violations []violation
 
 	for _, key := range sortedKeys(bypasses) {
 		b := bypasses[key]
 		switch {
 		case b.expires.Before(today):
 			invalid[key] = struct{}{}
-			violations = append(violations, fmt.Sprintf(
+			violations = append(violations, violation{key: key, msg: fmt.Sprintf(
 				"%s:%d %s の期限 %s が切れています。窓明けの版へ更新してエントリを消すか、期限を延ばす判断を #%d で記録してください",
 				bypassFile, b.line, key, b.expires.Format(time.DateOnly), b.issue,
-			))
+			)})
 		case b.expires.After(limit):
 			invalid[key] = struct{}{}
-			violations = append(violations, fmt.Sprintf(
+			violations = append(violations, violation{key: key, msg: fmt.Sprintf(
 				"%s:%d %s の期限 %s が上限（%s から %d ヶ月 = %s）を越えています。恒久 allowlist にしないための上限です",
 				bypassFile, b.line, key, b.expires.Format(time.DateOnly),
 				today.Format(time.DateOnly), maxBypassMonths, limit.Format(time.DateOnly),
-			))
+			)})
 		default:
 			if _, ok := inGoMod[key]; !ok {
-				violations = append(violations, fmt.Sprintf(
+				violations = append(violations, violation{key: key, msg: fmt.Sprintf(
 					"%s:%d %s は go.mod に存在しません。不要になったエントリは消してください",
 					bypassFile, b.line, key,
-				))
+				)})
 			}
 		}
 	}
 	return violations, invalid
+}
+
+// bypassesAt は base 時点のバイパス lockfile を読む。読めなければ空として扱い、いまのエントリの違反を
+// すべてこの変更が持ち込んだものとして数える（落とす側へ倒れる）。
+func bypassesAt(base string) (map[string]bypass, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, "git", "show", base+":"+bypassFile).Output() //nolint:gosec // base は呼び出し側が与える git ref
+	if err != nil {
+		return map[string]bypass{}, nil
+	}
+	return parseBypasses(bytes.NewReader(out))
+}
+
+// introduced は、gate が落とすバイパスの違反を、変更が持ち込んだものに絞る。変更が足すか上げるか外した
+// require に掛かるエントリと、base から足されたか書き換えられたエントリの違反だけが残る。期限切れのように
+// 日付が進んだだけで生じる違反は、変更と無関係に全 Pull Request を落とすので audit（スケジュール実行）が
+// 落とす（ADR-0603 決定11）。
+func introduced(violations []violation, changed []requirement, current, base map[string]bypass) []violation {
+	touched := make(map[string]bool, len(changed))
+	for _, r := range changed {
+		touched[r.key()] = true
+	}
+	var out []violation
+	for _, v := range violations {
+		before, existed := base[v.key]
+		now := current[v.key]
+		edited := !existed || !before.expires.Equal(now.expires) || before.issue != now.issue || before.reason != now.reason
+		if touched[v.key] || edited {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func sortedKeys(m map[string]bypass) []string {
