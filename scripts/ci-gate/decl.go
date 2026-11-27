@@ -15,6 +15,9 @@ const declFile = ".github/settings/checks.json"
 const (
 	scopeTree   = "tree"
 	scopeChange = "change"
+
+	baseLine   = "line"
+	baseDeploy = "deploy"
 )
 
 var (
@@ -36,6 +39,8 @@ type check struct {
 	Scope    string   `json:"scope"`
 	Required *bool    `json:"required"`
 	PlanEnv  string   `json:"plan_env,omitempty"`
+	// Bases は、その検査が走る Pull Request の base の役割（line・deploy）。無ければ両方で走る。
+	Bases []string `json:"bases,omitempty"`
 }
 
 type decl struct {
@@ -79,6 +84,8 @@ func parseDecl(raw []byte) (decl, error) {
 			return decl{}, at("required がありません")
 		case c.PlanEnv != "" && !envRe.MatchString(c.PlanEnv):
 			return decl{}, at("plan_env の形が誤っています")
+		case c.Bases != nil && !validBases(c.Bases):
+			return decl{}, at("bases は %q と %q の重複の無い空でない配列にします", baseLine, baseDeploy)
 		}
 		for _, p := range c.Paths {
 			if err := validateGlob(p); err != nil {
@@ -100,3 +107,30 @@ func (d decl) names() []string {
 }
 
 func joinNames(names []string) string { return strings.Join(names, ", ") }
+
+func validBases(bases []string) bool {
+	if len(bases) == 0 {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, b := range bases {
+		if (b != baseLine && b != baseDeploy) || seen[b] {
+			return false
+		}
+		seen[b] = true
+	}
+	return true
+}
+
+// runsOn は、base の役割 role の Pull Request でその検査が走るかを返す。
+func (c check) runsOn(role string) bool {
+	if c.Bases == nil {
+		return true
+	}
+	for _, b := range c.Bases {
+		if b == role {
+			return true
+		}
+	}
+	return false
+}

@@ -43,6 +43,7 @@ func Test_parseDecl(t *testing.T) {
 			"required が無い":        `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree"}]}`,
 			"plan_env の形が誤り":      `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true, "plan_env": "A B"}]}`,
 			"path を解釈できない":        `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": ["!x"], "scope": "tree", "required": true}]}`,
+			"bases が未知":           `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true, "bases": ["x"]}]}`,
 			"宣言のあとに値がある":          `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true}]} {}`,
 		} {
 			t.Run(name+"なら誤りにする", func(t *testing.T) {
@@ -100,6 +101,39 @@ func Test_joinNames(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, "a, b", joinNames([]string{"a", "b"}))
 			assert.Empty(t, joinNames(nil))
+		})
+	})
+}
+
+func Test_validBases(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("line と deploy の重複の無い配列だけを受け付ける", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, validBases([]string{"deploy"}))
+			assert.True(t, validBases([]string{"line", "deploy"}))
+			assert.False(t, validBases([]string{}))
+			assert.False(t, validBases([]string{"line", "line"}))
+			assert.False(t, validBases([]string{"x"}))
+		})
+	})
+}
+
+func Test_check_runsOn(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("bases が無ければどの役割でも走り、あれば含む役割でだけ走る", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, check{}.runsOn(baseLine))
+			assert.True(t, check{}.runsOn(baseDeploy))
+			assert.True(t, check{Bases: []string{baseDeploy}}.runsOn(baseDeploy))
+			assert.False(t, check{Bases: []string{baseDeploy}}.runsOn(baseLine))
 		})
 	})
 }

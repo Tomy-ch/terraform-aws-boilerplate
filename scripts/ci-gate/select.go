@@ -7,18 +7,31 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-var errPlanEnv = xerrors.New("plan_env の env を持つデプロイブランチがありません")
+var (
+	errPlanEnv = xerrors.New("plan_env の env を持つデプロイブランチがありません")
+	// errBase は、Pull Request の base が線でもデプロイブランチでもないことを表す。gate は保護対象宛の Pull Request
+	// でだけ走るので、ここへ来るのは宣言と起動条件のずれである。
+	errBase = xerrors.New("base が線でもデプロイブランチでもありません")
+)
 
 // selectChecks は、変更したファイルと Pull Request の base のブランチから、走るべき検査の名前を宣言の順に返す。
 //
 //   - paths が空の検査は常に走る。
 //   - そうでなければ、変更したファイルのどれかが paths のどれかに当たるときに走る。
 //   - plan_env を持つ検査は、さらに base がその env へ変更を運ぶ線（宣言の from）のときだけ走る。
+//   - bases を持つ検査は、base の役割（線か、デプロイブランチか）がそこに含まれるときだけ走る。
 //
 // 変更したファイルが0件の Pull Request でも、常に走る検査は走る。
 func selectChecks(d decl, files []string, baseRef string, b branchdecl.Branches) ([]string, error) {
+	role, err := baseRole(b, baseRef)
+	if err != nil {
+		return nil, err
+	}
 	var out []string
 	for _, c := range d.Checks {
+		if !c.runsOn(role) {
+			continue
+		}
 		if c.PlanEnv != "" {
 			feeds, err := feedsEnv(b, c.PlanEnv, baseRef)
 			if err != nil {
@@ -61,4 +74,16 @@ func feedsEnv(b branchdecl.Branches, env, baseRef string) (bool, error) {
 		return false, nil
 	}
 	return false, xerrors.Wrapf(errPlanEnv, "%q", env)
+}
+
+func baseRole(b branchdecl.Branches, baseRef string) (string, error) {
+	if b.IsLine(baseRef) {
+		return baseLine, nil
+	}
+	for _, name := range b.DeployNames() {
+		if name == baseRef {
+			return baseDeploy, nil
+		}
+	}
+	return "", xerrors.Wrapf(errBase, "%q", baseRef)
 }

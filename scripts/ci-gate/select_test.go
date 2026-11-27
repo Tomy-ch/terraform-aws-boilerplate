@@ -30,6 +30,7 @@ func Test_selectChecks(t *testing.T) {
 		{Name: "always", Paths: []string{}, Scope: scopeChange, Required: boolp(true)},
 		{Name: "go", Paths: []string{"**/*.go"}, Scope: scopeTree, Required: boolp(true)},
 		{Name: "plan", Paths: []string{"env/**"}, Scope: scopeTree, Required: boolp(true), PlanEnv: "admin"},
+		{Name: "release", Paths: []string{}, Scope: scopeTree, Required: boolp(false), Bases: []string{baseDeploy}},
 	}}
 
 	t.Run("正常系", func(t *testing.T) {
@@ -49,6 +50,13 @@ func Test_selectChecks(t *testing.T) {
 			assert.Equal(t, []string{"always", "go", "plan"}, got)
 		})
 
+		t.Run("bases が deploy の検査はデプロイブランチ宛でだけ走らせる", func(t *testing.T) {
+			t.Parallel()
+			got, err := selectChecks(d, nil, "production", testBranches())
+			require.NoError(t, err)
+			assert.Equal(t, []string{"always", "release"}, got)
+		})
+
 		t.Run("plan は env へ運ばない base では走らせない", func(t *testing.T) {
 			t.Parallel()
 			got, err := selectChecks(d, []string{"env/admin/main.tf"}, "hotfix/v0.2.1", testBranches())
@@ -59,6 +67,12 @@ func Test_selectChecks(t *testing.T) {
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
+
+		t.Run("base が線でもデプロイブランチでもなければ誤りにする", func(t *testing.T) {
+			t.Parallel()
+			_, err := selectChecks(d, nil, "feature/x", testBranches())
+			require.ErrorIs(t, err, errBase)
+		})
 
 		t.Run("plan_env の env を持つデプロイブランチが無ければ誤りにする", func(t *testing.T) {
 			t.Parallel()
@@ -107,6 +121,35 @@ func Test_feedsEnv(t *testing.T) {
 			t.Parallel()
 			_, err := feedsEnv(testBranches(), "dev", "release/v0.2.0")
 			require.ErrorIs(t, err, errPlanEnv)
+		})
+	})
+}
+
+func Test_baseRole(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("線とデプロイブランチを見分ける", func(t *testing.T) {
+			t.Parallel()
+			for base, want := range map[string]string{"release/v0.2.0": baseLine, "hotfix/v0.2.1": baseLine, "admin": baseDeploy, "production": baseDeploy} {
+				got, err := baseRole(testBranches(), base)
+				require.NoError(t, err)
+				assert.Equal(t, want, got, base)
+			}
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("どちらでもない base は誤りにする", func(t *testing.T) {
+			t.Parallel()
+			for _, base := range []string{"feature/x", "release/", ""} {
+				_, err := baseRole(testBranches(), base)
+				require.ErrorIs(t, err, errBase, base)
+			}
 		})
 	})
 }
