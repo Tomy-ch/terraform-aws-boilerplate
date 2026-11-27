@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -49,6 +50,7 @@ func fakeFlow(t *testing.T, knobs map[string]string) (toolFunc, string) {
 		stepCIApply + ".out":              applySecret + "\n",
 		stepCIPutObject + ".out":          `{"VersionId":"v1","ETag":"e"}`,
 		stepCIInit + ".out":               "init\n",
+		stepCIPermissions + ".out":        "# 結果: 209 件のうち NG 0 件\n",
 		"sts-caller-identity.placeholder": "",
 	}
 	for name, body := range knobs {
@@ -69,6 +71,7 @@ s3api-put-object) cat input.json >> "$k/upload.log"; echo >> "$k/upload.log"; cp
 s3api-get-bucket-encryption) cat input.json >> "$k/encryption.log" ;;
 ci-terraform-plan*) out="${TF_CLI_ARGS_plan#-out=}"; echo tfplan > "$out" ;;
 ci-conftest) ls -R > "$k/conftest.ls" ;;
+bootstrap-check-plan-permissions) shift; echo "$*" > "$k/permissions.args"; cp plan.json "$k/permissions.plan"; pwd > "$k/permissions.pwd"; env > "$k/permissions.env" ;;
 ci-terraform-apply) if [ -e "$k/apply.sleep" ]; then trap 'echo interrupted; exit 1' INT; while :; do sleep 0.05; done; fi ;;
 s3api-get-object) cat input.json >> "$k/get.log"; echo >> "$k/get.log"; if [ -e "$k/lock.body" ]; then cp "$k/lock.body" lock.json; fi ;;
 s3api-delete-object) cat input.json >> "$k/delete.log"; echo >> "$k/delete.log" ;;
@@ -77,12 +80,13 @@ n=$(( $(cat "$k/$step.n" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$k/$step.n"
 if [ -e "$k/$step.$n.out" ]; then cat "$k/$step.$n.out"; elif [ -e "$k/$step.out" ]; then cat "$k/$step.out"; fi
 if [ -e "$k/$step.stderr" ]; then cat "$k/$step.stderr" >&2; fi
 if [ "$step" = ci-terraform-plan-hold ] && [ -e "$k/hold.sleep" ]; then while :; do sleep 0.05; done; fi
+if [ -e "$k/$step.signal" ]; then kill -KILL $$; fi
 rc=0; if [ -e "$k/$step.rc" ]; then rc=$(cat "$k/$step.rc"); fi
 exit "$rc"
 `
 	require.NoError(t, os.WriteFile(script, []byte(body), 0o600))
-	tool := func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
-		c := exec.CommandContext(ctx, "/bin/sh", script, step)
+	tool := func(ctx context.Context, d string, env []string, step string, ops ...string) *exec.Cmd {
+		c := exec.CommandContext(ctx, "/bin/sh", append([]string{script, step}, ops...)...)
 		c.Dir, c.Env = d, env
 		return c
 	}
@@ -154,8 +158,12 @@ func (f *flow) step(name string, args ...string) error {
 	return err
 }
 
-// all は、mode の入口の段を root（identity か workload）について順に起動し、finish の結果を返す。
 func (f *flow) all(mode, root string) error {
+	return f.allSteps(mode, root, mode == ciModePlan && root == "identity")
+}
+
+// allSteps は all の段を起動する。permissions なら、ci-plan-admin-identity と同じく Policy の後に ci-permissions を起動する。
+func (f *flow) allSteps(mode, root string, permissions bool) error {
 	f.state = filepath.Join(filepath.Dir(f.state), "admin-"+root+".json")
 	if err := f.step("ci-prepare", "-mode", mode, "-project", "tabp", "-env", "admin", "-root", root,
 		"-profile", "tabp-admin-ci-"+mode, "-base", f.base, "-header", f.header, "-state", f.state); err != nil {
@@ -166,6 +174,9 @@ func (f *flow) all(mode, root string) error {
 	}
 	_ = f.step("ci-plan", "-state", f.state)
 	_ = f.step("ci-policy", "-state", f.state, "-work", "tmp/ci-policy", "-policy", f.policy, "-decl", fileWith(f.t, "{}"), "-layer", fileWith(f.t, "{}"), "-namespace", "plan.p")
+	if permissions {
+		_ = f.step("ci-permissions", "-state", f.state, "-work", "tmp/ci-permissions")
+	}
 	if mode == ciModeApply {
 		_ = f.step("ci-apply", "-state", f.state, "-timeout", "5s")
 	}
@@ -176,7 +187,6 @@ func (f *flow) all(mode, root string) error {
 
 func (f *flow) calls() string { return readKnob(f.t, f.k, "calls.log") }
 
-// public は、公開されるログに出ないはずの値が出ていないことを見る。
 func (f *flow) public() {
 	f.t.Helper()
 	for _, v := range []string{planSecret, applySecret, account} {
@@ -312,6 +322,68 @@ func Test_ciFinishStep(t *testing.T) {
 			require.ErrorIs(t, err, errCINotEstablished)
 			assert.NotErrorIs(t, err, errCIFailed)
 			assert.Equal(t, 2, exitCode(err))
+		})
+	}
+
+	t.Run("管理アカウントの identity root の plan の入口は、Policy の後に権限を評価し、全文を置いて終わる", func(t *testing.T) {
+		t.Parallel()
+		f := newFlow(t, nil)
+		require.NoError(t, f.all(ciModePlan, "identity"))
+		calls := f.calls()
+		assert.Contains(t, calls, stepCIPermissions+" permissions-")
+		assert.Less(t, strings.Index(calls, stepCIConftest), strings.Index(calls, stepCIPermissions))
+		assert.Less(t, strings.Index(calls, stepCIPermissions), strings.Index(calls, stepCIPutObject))
+		assert.Contains(t, f.stdout.String(), "# 結果: 209 件のうち NG 0 件\n")
+		assert.Contains(t, f.stdout.String(), "✅ CI の role の権限が表と一致しました")
+		f.public()
+		f.leftovers()
+	})
+
+	t.Run("権限の段が要る入口で ci-permissions が走らなければ、finish が permissions の段で落とす", func(t *testing.T) {
+		t.Parallel()
+		f := newFlow(t, nil)
+		err := f.allSteps(ciModePlan, "identity", false)
+		require.ErrorIs(t, err, errCINotEstablished)
+		assert.Contains(t, err.Error(), "失敗の段: "+stagePermissions)
+		assert.Equal(t, 2, exitCode(err))
+		assert.NotEmpty(t, readKnob(t, f.k, "upload.log"), "upload は権限の段の成否に関わらず走る")
+	})
+
+	for name, c := range map[string]struct {
+		knobs map[string]string
+		want  error
+		code  int
+	}{
+		"権限が表と一致しなければ、全文を置いて permissions で落ち、判定として終了コード 1": {map[string]string{stepCIPermissions + ".rc": "1"}, errCIFailed, 1},
+		"権限を評価できなければ、全文を置いて permissions で落ち、判定に届かず終了コード 2": {map[string]string{stepCIPermissions + ".rc": "2"}, errCINotEstablished, 2},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newFlow(t, c.knobs)
+			err := f.all(ciModePlan, "identity")
+			require.ErrorIs(t, err, c.want)
+			assert.Contains(t, err.Error(), "失敗の段: "+stagePermissions)
+			assert.Equal(t, c.code, exitCode(err))
+			assert.NotEmpty(t, readKnob(t, f.k, "upload.log"))
+			f.leftovers()
+		})
+	}
+
+	for name, c := range map[string]struct {
+		knobs map[string]string
+		stage string
+	}{
+		"Policy の違反": {map[string]string{stepCIConftest + ".out": `[{"namespace":"plan.p","successes":0,"failures":[{"msg":"bad"}]}]`}, stagePolicy},
+		"plan の失敗":   {map[string]string{stepCIPlanNoLock + ".rc": "1"}, stagePlan},
+	} {
+		t.Run("権限の段が要る入口で"+name+"なら、bootstrap-check を起動せず、失敗の段は "+c.stage+" のまま終了コード 1", func(t *testing.T) {
+			t.Parallel()
+			f := newFlow(t, c.knobs)
+			err := f.all(ciModePlan, "identity")
+			require.ErrorIs(t, err, errCIFailed)
+			assert.Contains(t, err.Error(), "失敗の段: "+c.stage)
+			assert.Equal(t, 1, exitCode(err))
+			assert.NotContains(t, f.calls(), stepCIPermissions)
 		})
 	}
 
@@ -515,6 +587,67 @@ func Test_ciPrepareStep(t *testing.T) {
 		require.ErrorIs(t, prepare(f, "-mode", "x"), errUsage)
 		require.ErrorIs(t, f.step("ci-prepare", "-x"), errUsage)
 	})
+
+	for name, c := range map[string]struct {
+		extra []string
+		want  bool
+	}{
+		"管理アカウントの identity root の plan の入口": {[]string{"-mode", ciModePlan}, true},
+		"identity root の apply の入口":         {[]string{"-mode", ciModeApply}, false},
+		"identity root の lock を残す入口":        {[]string{"-mode", ciModeHold}, false},
+		"workload root の plan の入口":          {[]string{"-mode", ciModePlan, "-root", "workload"}, false},
+	} {
+		t.Run(name+"の権限の段が要るかを、入口の値から state に残す", func(t *testing.T) {
+			t.Parallel()
+			f := newFlow(t, nil)
+			require.NoError(t, prepare(f, c.extra...))
+			s, err := loadCIState(f.state)
+			require.NoError(t, err)
+			assert.Equal(t, c.want, s.Permissions)
+			assert.Equal(t, "tabp", s.Project)
+		})
+	}
+
+	t.Run("-permissions のフラグは受けない", func(t *testing.T) {
+		t.Parallel()
+		f := newFlow(t, nil)
+		require.ErrorIs(t, prepare(f, "-mode", ciModePlan, "-permissions"), errUsage)
+		assert.Empty(t, f.calls())
+	})
+
+	stale := func(t *testing.T, f *flow) string {
+		t.Helper()
+		bin := filepath.Join(f.d.root, filepath.FromSlash(bootstrapCheckBin))
+		require.NoError(t, os.MkdirAll(filepath.Dir(bin), 0o700))
+		require.NoError(t, os.WriteFile(bin, []byte("old"), 0o600))
+		return bin
+	}
+
+	t.Run("権限の段が要る入口は、前の build の bootstrap-check を消す", func(t *testing.T) {
+		t.Parallel()
+		f := newFlow(t, nil)
+		bin := stale(t, f)
+		require.NoError(t, prepare(f, "-mode", ciModePlan))
+		assert.NoFileExists(t, bin)
+	})
+
+	t.Run("権限の段が要らない入口は、bootstrap-check を消さない", func(t *testing.T) {
+		t.Parallel()
+		f := newFlow(t, nil)
+		bin := stale(t, f)
+		require.NoError(t, prepare(f, "-mode", ciModeApply))
+		assert.FileExists(t, bin)
+	})
+
+	t.Run("前の bootstrap-check を消せなければ、aws を起動せずに prepare が失敗する", func(t *testing.T) {
+		t.Parallel()
+		f := newFlow(t, nil)
+		bin := filepath.Join(f.d.root, filepath.FromSlash(bootstrapCheckBin))
+		require.NoError(t, os.MkdirAll(filepath.Join(bin, "x"), 0o700), "中身のあるディレクトリにして消せなくする")
+		require.ErrorIs(t, prepare(f, "-mode", ciModePlan), errCIState)
+		assert.NoFileExists(t, f.state)
+		assert.Empty(t, f.calls())
+	})
 }
 
 func Test_ciPrepareState(t *testing.T) {
@@ -670,6 +803,267 @@ func Test_changeList(t *testing.T) {
 	t.Run("件数と、1件ずつ字下げした行を書く", func(t *testing.T) {
 		t.Parallel()
 		assert.Equal(t, "変わる resource（2 件）:\n  create a.b\n  delete a.c\n", changeList([]string{"create a.b", "delete a.c"}))
+	})
+}
+
+func Test_ciPermissionsStep(t *testing.T) {
+	t.Parallel()
+
+	prepared := func(t *testing.T, mutate func(*ciState)) *flow {
+		t.Helper()
+		f := newFlow(t, nil)
+		require.NoError(t, f.step("ci-prepare", "-mode", ciModePlan, "-project", "tabp", "-env", "admin", "-root", "identity",
+			"-profile", "tabp-admin-ci-plan", "-base", f.base, "-header", f.header, "-state", f.state))
+		require.NoError(t, f.step("ci-init", "-state", f.state))
+		require.NoError(t, f.step("ci-plan", "-state", f.state))
+		s, err := loadCIState(f.state)
+		require.NoError(t, err)
+		s.Done = append(s.Done, stagePolicy)
+		if mutate != nil {
+			mutate(&s)
+		}
+		require.NoError(t, s.save(f.state))
+		return f
+	}
+
+	for name, mutate := range map[string]func(*ciState){
+		"Policy の段が終わっていない": func(s *ciState) { s.Done = slices.DeleteFunc(s.Done, func(d string) bool { return d == stagePolicy }) },
+		"前の段が失敗している":        func(s *ciState) { s.Stage = stagePolicy },
+	} {
+		t.Run(name+"なら、bootstrap-check を起動せず、段の失敗も残さない", func(t *testing.T) {
+			t.Parallel()
+			f := prepared(t, mutate)
+			got, err := ciPermissionsStep([]string{"-state", f.state, "-work", "tmp/ci-permissions"}, f.d, &f.stdout)
+			require.NoError(t, err)
+			assert.Equal(t, "前の段が終わっていないので権限を評価しません", got)
+			assert.NotContains(t, f.calls(), stepCIPermissions)
+			s, err := loadCIState(f.state)
+			require.NoError(t, err)
+			assert.NotContains(t, s.Done, stagePermissions)
+		})
+	}
+
+	for name, c := range map[string]struct {
+		knobs       map[string]string
+		want        error
+		established bool
+	}{
+		"終了コード 1 は判定":     {map[string]string{stepCIPermissions + ".rc": "1"}, errCIPermissions, true},
+		"終了コード 2 は評価できない": {map[string]string{stepCIPermissions + ".rc": "2"}, errCIPermissionsRun, false},
+	} {
+		t.Run(name+"として permissions の段の失敗を残す", func(t *testing.T) {
+			t.Parallel()
+			f := prepared(t, nil)
+			tool, _ := fakeFlow(t, c.knobs)
+			f.d.tool = tool
+			_, err := ciPermissionsStep([]string{"-state", f.state, "-work", "tmp/ci-permissions"}, f.d, &f.stdout)
+			require.ErrorIs(t, err, c.want)
+			s, lerr := loadCIState(f.state)
+			require.NoError(t, lerr)
+			assert.Equal(t, stagePermissions, s.Stage)
+			assert.Equal(t, c.established, s.Established)
+			assert.NotContains(t, s.Done, stagePermissions)
+		})
+	}
+
+	t.Run("bootstrap-check が無ければ、評価できなかったとして permissions の段の失敗を残す", func(t *testing.T) {
+		t.Parallel()
+		f := prepared(t, nil)
+		f.d.tool = tooltest.Missing
+		_, err := ciPermissionsStep([]string{"-state", f.state, "-work", "tmp/ci-permissions"}, f.d, &f.stdout)
+		require.ErrorIs(t, err, toolrun.ErrTool)
+		assert.Equal(t, 2, exitCode(err))
+		s, lerr := loadCIState(f.state)
+		require.NoError(t, lerr)
+		assert.Equal(t, stagePermissions, s.Stage)
+		assert.False(t, s.Established)
+	})
+
+	t.Run("成功すれば permissions の段を終わりに残す", func(t *testing.T) {
+		t.Parallel()
+		f := prepared(t, nil)
+		got, err := ciPermissionsStep([]string{"-state", f.state, "-work", "tmp/ci-permissions"}, f.d, &f.stdout)
+		require.NoError(t, err)
+		assert.Equal(t, "✅ CI の role の権限が表と一致しました", got)
+		s, err := loadCIState(f.state)
+		require.NoError(t, err)
+		assert.Contains(t, s.Done, stagePermissions)
+		assert.Empty(t, s.Stage)
+	})
+
+	t.Run("権限の段を要らない入口の state なら errUsage", func(t *testing.T) {
+		t.Parallel()
+		f := prepared(t, func(s *ciState) { s.Permissions = false })
+		_, err := ciPermissionsStep([]string{"-state", f.state, "-work", "tmp/ci-permissions"}, f.d, &f.stdout)
+		require.ErrorIs(t, err, errUsage)
+		assert.NotContains(t, f.calls(), stepCIPermissions)
+	})
+
+	for name, args := range map[string][]string{
+		"-work が無い": {"-state", "s"},
+		"余分な引数がある":  {"-state", "s", "-work", "w", "x"},
+	} {
+		t.Run(name+"なら errUsage", func(t *testing.T) {
+			t.Parallel()
+			_, err := ciPermissionsStep(args, testDeps(nil), &bytes.Buffer{})
+			require.ErrorIs(t, err, errUsage)
+		})
+	}
+
+	t.Run("state を読めなければ失敗する", func(t *testing.T) {
+		t.Parallel()
+		_, err := ciPermissionsStep([]string{"-state", filepath.Join(t.TempDir(), "none.json"), "-work", "w"}, testDeps(nil), &bytes.Buffer{})
+		require.ErrorIs(t, err, errCIState)
+	})
+}
+
+func Test_ciRunPermissions(t *testing.T) {
+	t.Parallel()
+
+	state := func(t *testing.T) ciState {
+		t.Helper()
+		return ciState{Project: "tabp", Region: "ap-northeast-1", Profile: "tabp-admin-ci-plan", JSON: fileWith(t, `{"resource_changes":[]}`)}
+	}
+
+	t.Run("plan の JSON を tmp/ の下の作業ディレクトリへ写し、project と region を operand で渡し、出力をそのまま出す", func(t *testing.T) {
+		t.Parallel()
+		tool, k := fakeFlow(t, map[string]string{stepCIPermissions + ".out": "# S3 と IAM: ok 28 件、NG 0 件\n"})
+		root := t.TempDir()
+		var out bytes.Buffer
+		require.NoError(t, ciRunPermissions(state(t), deps{tool: tool, stderr: &bytes.Buffer{}, root: root, environ: []string{"PATH=" + os.Getenv("PATH"), "AWS_ACCESS_KEY_ID=outer"}}, &out, "tmp/ci-permissions"))
+		assert.Equal(t, "tabp ap-northeast-1\n", readKnob(t, k, "permissions.args"))
+		assert.JSONEq(t, `{"resource_changes":[]}`, readKnob(t, k, "permissions.plan"))
+		pwd := strings.TrimSpace(readKnob(t, k, "permissions.pwd"))
+		rootReal, err := filepath.EvalSymlinks(root)
+		require.NoError(t, err)
+		assert.True(t, strings.HasPrefix(pwd, filepath.Join(rootReal, "tmp", "ci-permissions", "permissions-")), pwd)
+		assert.NoDirExists(t, pwd, "作業ディレクトリは消す")
+		assert.Contains(t, readKnob(t, k, "calls.log"), stepCIPermissions+" "+filepath.Base(pwd)+" profile=tabp-admin-ci-plan ")
+		assert.Equal(t, "# S3 と IAM: ok 28 件、NG 0 件\n", out.String())
+	})
+
+	t.Run("静的な資格情報を外し、plan の role の profile だけを渡す", func(t *testing.T) {
+		t.Parallel()
+		tool, k := fakeFlow(t, nil)
+		environ := []string{"PATH=" + os.Getenv("PATH"), "AWS_ACCESS_KEY_ID=outer", "AWS_SECRET_ACCESS_KEY=s", "AWS_SESSION_TOKEN=t", "AWS_CONFIG_FILE=/x", "AWS_PROFILE=outer"}
+		require.NoError(t, ciRunPermissions(state(t), deps{tool: tool, stderr: &bytes.Buffer{}, root: t.TempDir(), environ: environ}, &bytes.Buffer{}, "tmp/ci-permissions"))
+		env := strings.Split(readKnob(t, k, "permissions.env"), "\n")
+		for _, name := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_CONFIG_FILE"} {
+			assert.False(t, slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, name+"=") }), name)
+		}
+		assert.Contains(t, env, "AWS_PROFILE=tabp-admin-ci-plan")
+		assert.NotContains(t, env, "AWS_PROFILE=outer")
+	})
+
+	t.Run("子の stdout と stderr の12桁の数字を伏せてから出す", func(t *testing.T) {
+		t.Parallel()
+		tool, _ := fakeFlow(t, map[string]string{stepCIPermissions + ".out": "out 123456789012\n", stepCIPermissions + ".stderr": "err 123456789012\n", stepCIPermissions + ".rc": "1"})
+		var out, stderr bytes.Buffer
+		err := ciRunPermissions(state(t), deps{tool: tool, stderr: &stderr, root: t.TempDir()}, &out, "tmp/ci-permissions")
+		require.ErrorIs(t, err, errCIPermissions)
+		assert.Equal(t, "out <account>\n", out.String())
+		assert.Equal(t, "err <account>\n", stderr.String())
+	})
+
+	t.Run("子がシグナルで終われば、評価できなかったとして errCIPermissionsRun で終了コード 2", func(t *testing.T) {
+		t.Parallel()
+		tool, _ := fakeFlow(t, map[string]string{stepCIPermissions + ".signal": ""})
+		err := ciRunPermissions(state(t), deps{tool: tool, stderr: &bytes.Buffer{}, root: t.TempDir()}, &bytes.Buffer{}, "tmp/ci-permissions")
+		require.ErrorIs(t, err, errCIPermissionsRun)
+		require.ErrorIs(t, err, toolrun.ErrTool)
+		assert.Equal(t, 2, exitCode(err))
+	})
+
+	t.Run("bootstrap-check を組み立てられなければ、評価できなかったとして終了コード 2", func(t *testing.T) {
+		t.Parallel()
+		err := ciRunPermissions(state(t), deps{tool: command, stderr: &bytes.Buffer{}, root: t.TempDir()}, &bytes.Buffer{}, "tmp/ci-permissions")
+		require.ErrorIs(t, err, errCIPermissionsRun)
+		assert.Equal(t, 2, exitCode(err))
+	})
+
+	for name, c := range map[string]struct {
+		mutate func(*ciState)
+		want   error
+	}{
+		"project の形が違う": {func(s *ciState) { s.Project = "-x" }, errToken},
+		"region の形が違う":  {func(s *ciState) { s.Region = "--region=x" }, errRegionMalformed},
+	} {
+		t.Run(name+"なら、bootstrap-check を起動しない", func(t *testing.T) {
+			t.Parallel()
+			tool, k := fakeFlow(t, nil)
+			s := state(t)
+			c.mutate(&s)
+			err := ciRunPermissions(s, deps{tool: tool, stderr: &bytes.Buffer{}, root: t.TempDir()}, &bytes.Buffer{}, "tmp/ci-permissions")
+			require.ErrorIs(t, err, c.want)
+			assert.Equal(t, 2, exitCode(err))
+			assert.Empty(t, readKnob(t, k, "calls.log"))
+		})
+	}
+
+	t.Run("作業ディレクトリが tmp/ の外なら errUsage", func(t *testing.T) {
+		t.Parallel()
+		tool, k := fakeFlow(t, nil)
+		err := ciRunPermissions(state(t), deps{tool: tool, stderr: &bytes.Buffer{}, root: t.TempDir()}, &bytes.Buffer{}, "../x")
+		require.ErrorIs(t, err, errUsage)
+		assert.Empty(t, readKnob(t, k, "calls.log"))
+	})
+
+	t.Run("plan の JSON が無ければ、起動せずに評価できない", func(t *testing.T) {
+		t.Parallel()
+		tool, k := fakeFlow(t, nil)
+		s := state(t)
+		s.JSON = filepath.Join(t.TempDir(), "none.json")
+		err := ciRunPermissions(s, deps{tool: tool, stderr: &bytes.Buffer{}, root: t.TempDir()}, &bytes.Buffer{}, "tmp/ci-permissions")
+		require.ErrorIs(t, err, errCIPermissionsRun)
+		assert.Equal(t, 2, exitCode(err))
+		assert.Empty(t, readKnob(t, k, "calls.log"))
+	})
+
+	for name, c := range map[string]struct {
+		rc   string
+		want error
+		code int
+	}{
+		"終了コード 1 は errCIPermissions で、終了コード 1":     {"1", errCIPermissions, 1},
+		"終了コード 2 は errCIPermissionsRun で、終了コード 2":  {"2", errCIPermissionsRun, 2},
+		"知らない終了コードは errCIPermissionsRun で、終了コード 2": {"3", errCIPermissionsRun, 2},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			tool, _ := fakeFlow(t, map[string]string{stepCIPermissions + ".rc": c.rc})
+			err := ciRunPermissions(state(t), deps{tool: tool, stderr: &bytes.Buffer{}, root: t.TempDir()}, &bytes.Buffer{}, "tmp/ci-permissions")
+			require.ErrorIs(t, err, c.want)
+			assert.Equal(t, c.code, exitCode(err))
+		})
+	}
+}
+
+func Test_permissionsRequired(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		mode, env, root string
+		want            bool
+	}{
+		"管理アカウントの identity root の plan": {ciModePlan, "admin", "identity", true},
+		"apply の入口":      {ciModeApply, "admin", "identity", false},
+		"lock を残す入口":     {ciModeHold, "admin", "identity", false},
+		"workload root":  {ciModePlan, "admin", "workload", false},
+		"管理アカウントでない env": {ciModePlan, "dev", "identity", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, permissionsRequired(c.mode, c.env, c.root))
+		})
+	}
+}
+
+func Test_maskDigits(t *testing.T) {
+	t.Parallel()
+
+	t.Run("12桁の数字を伏せ、ほかは残す", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, "a <account> b 12345678901 <account>9", maskDigits("a 123456789012 b 12345678901 1234567890129"))
 	})
 }
 
@@ -954,11 +1348,19 @@ func Test_ciStatePaths(t *testing.T) {
 func Test_ciRequired(t *testing.T) {
 	t.Parallel()
 
-	t.Run("apply の入口だけが apply の段を要る", func(t *testing.T) {
-		t.Parallel()
-		assert.NotContains(t, ciRequired(ciModePlan), stageApply)
-		assert.Equal(t, []string{stagePrepare, stageInit, stagePlan, stagePolicy, stageApply, stageUpload}, ciRequired(ciModeApply))
-	})
+	for name, c := range map[string]struct {
+		s    ciState
+		want []string
+	}{
+		"plan の入口は apply の段を要らない":      {ciState{Mode: ciModePlan}, []string{stagePrepare, stageInit, stagePlan, stagePolicy, stageUpload}},
+		"apply の入口は apply の段を要る":       {ciState{Mode: ciModeApply}, []string{stagePrepare, stageInit, stagePlan, stagePolicy, stageApply, stageUpload}},
+		"権限の段が要る入口は、Policy の後に権限の段を要る": {ciState{Mode: ciModePlan, Permissions: true}, []string{stagePrepare, stageInit, stagePlan, stagePolicy, stagePermissions, stageUpload}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, ciRequired(c.s))
+		})
+	}
 }
 
 func Test_ciState_fail(t *testing.T) {

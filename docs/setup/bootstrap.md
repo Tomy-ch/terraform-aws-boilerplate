@@ -448,7 +448,7 @@ Billing and Cost Management コンソール →「Cost Explorer」→「Launch C
 
    > **重要**: 手順4 で `No changes.` を確かめる前に、次の変更を昇格しない。
 
-4. 権限を足す変更では、足した Action と期待の判定を、同じ変更で `scripts/bootstrap-check` の `permissionSections` に足す。Condition を持つ Action は、条件キーを `simCtx` の context で与える。一覧を受ける条件キー（Service Authorization Reference の型が `ArrayOfString`）は、`ctxList` で `stringList` として与える。apply の後に実行する
+4. 権限を足す変更では、足した Action と期待の判定を、同じ変更で `scripts/bootstrap-check` の `permissionSections` に足す。Condition を持つ Action は、条件キーを `simCtx` の context で与える。一覧を受ける条件キー（Service Authorization Reference の型が `ArrayOfString`）は、`ctxList` で `stringList` として与える。CI の `plan-admin-identity` は同じ表で Pull Request の plan の文書を評価し、ここでは付いた policy を評価する。apply の後に実行する
 
    ```bash
    make bootstrap-verify STAGE=permissions
@@ -656,7 +656,7 @@ aws s3api delete-object --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"
 - アカウントの準備（1-0 から 2-4）の作業や番号を変える変更は、`scripts/bootstrap-check` の `accountChecks` を同じ変更で更新する。ずれると、確認は古い手順を確かめて通るか、行頭の番号が手順と食い違う
 - identity root の resource を足すか消す変更は、[`scripts/check-plan.expected`](scripts/check-plan.expected) を同じ変更で更新する。立ち上げの中のメンバーアカウントの module の resource は、mock の突き合わせだけが読む [`scripts/check-plan-bootstrapping.expected`](scripts/check-plan-bootstrapping.expected) に書く。ずれは CI の `make check-plan-expected` が落とし、足りない行と余る行を `NG` で示す
 - identity root が作る IAM の user・group・role・policy の名前を変えるか足す変更は、`scripts/bootstrap-check` の `beforeApplySteps` を同じ変更で更新する。名前がずれると、その確認は無いものを確かめて通る
-- apply-identity の権限を足す変更は、`scripts/bootstrap-check` の `permissionSections` を同じ変更で更新する（段5 の手順4）
+- apply-identity の権限を足す変更は、`scripts/bootstrap-check` の `permissionSections` を同じ変更で更新する（段5 の手順4）。表は CI の `plan-admin-identity` の、plan の文書の評価にも使われる
 - state の鍵の Key Policy の `users` を変える変更は、`scripts/bootstrap-check` の `keyPolicy` と、その文の数を同じ変更で更新する
 - 出力の2つの Bucket の Bucket Policy を変える変更は、`scripts/bootstrap-check` の `outputPolicyRows` の期待を同じ変更で更新する
 
