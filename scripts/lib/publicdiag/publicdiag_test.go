@@ -41,7 +41,7 @@ func adversarial(r *rand.Rand) string {
 var samples = map[string]string{
 	"kind": "iam-deny", "address": "aws_iam_role.this", "file": "main.tf", "line": "3", "summary": "Resource postcondition failed",
 	"service": "IAM", "operation": "CreateRole", "status": "403", "code": "AccessDenied", "action": "iam:CreateRole",
-	"reason": "implicit:scp", "rule": "[PLAN-SBW-10]", "namespace": "plan.p", "elapsed": "3s", "count": "1", "exit": "1", "masked": "2",
+	"reason": "implicit:scp", "time": "2026-11-27T04:37:21Z", "region": "us-east-1", "source": "iam.amazonaws.com", "rule": "[PLAN-SBW-10]", "namespace": "plan.p", "elapsed": "3s", "count": "1", "exit": "1", "masked": "2",
 }
 
 // pickShort は、SDK の文の欄に入れる短い値。半分は形に当たる語、残りは識別子を含む語。
@@ -455,7 +455,7 @@ func TestCLI(t *testing.T) {
 	})
 }
 
-func Test_deny(t *testing.T) {
+func TestDeny(t *testing.T) {
 	t.Parallel()
 
 	type tc struct {
@@ -499,7 +499,7 @@ func Test_deny(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 
-			assert.Equal(t, c.want, deny(c.msg))
+			assert.Equal(t, c.want, Deny(c.msg))
 		})
 	}
 }
