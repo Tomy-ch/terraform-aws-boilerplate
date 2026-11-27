@@ -21,7 +21,6 @@ locals {
   )
 }
 
-# パスワードとハードウェア MFA は Terraform で作らず、人が設定する。
 resource "aws_iam_user" "this" {
   #checkov:skip=CKV_AWS_273:Identity Center が使えないときの緊急の経路（ADR-0301 決定19、organization-baseline/ADR-0201）。撤回: break-glass を IAM user で持たなくなったとき
   for_each = local.user_names
@@ -84,6 +83,20 @@ resource "aws_iam_group_policy" "this" {
         Action   = "iam:GetAccountPasswordPolicy"
         Resource = "*"
       },
+      # signin:OAuthGrantType は CreateOAuth2Token にだけ在る条件キーなので、文を分ける。
+      {
+        Sid      = "AwsLoginAuthorize"
+        Effect   = "Allow"
+        Action   = "signin:AuthorizeOAuth2Access"
+        Resource = "arn:${local.partition}:signin:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:oauth2/public-client/localhost"
+      },
+      {
+        Sid       = "AwsLoginToken"
+        Effect    = "Allow"
+        Action    = "signin:CreateOAuth2Token"
+        Resource  = "arn:${local.partition}:signin:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:oauth2/public-client/localhost"
+        Condition = { StringEquals = { "signin:OAuthGrantType" = ["authorization_code", "refresh_token"] } }
+      },
       {
         Sid      = "DenyLongTermCredentials"
         Effect   = "Deny"
@@ -137,7 +150,6 @@ resource "aws_iam_account_password_policy" "this" {
 }
 
 # メンバーアカウントの break-glass の role（organization-baseline/ADR-0202）。
-# description は ASCII に限る（PLAN-BG-05）。
 resource "aws_cloudformation_stack_set" "this" {
   name             = var.role_name
   description      = "Break-glass role for member accounts"

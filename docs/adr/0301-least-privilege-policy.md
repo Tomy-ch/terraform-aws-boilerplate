@@ -91,6 +91,8 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
     - 置き場は管理アカウントとする。管理アカウントは組織のすべてのアカウントへ届く権限をもともと持つので、そこへ置いても到達できる範囲は増えない。ほかのアカウントへ置くと、そのアカウントが全アカウントへ届く経路を新たに持つ
     - 管理アカウントに break-glass の IAM user を2つ置く（1つが使えなくなったときの予備）。コンソールへのサインインだけを持ち、アクセスキーを持たず、自身にアクセスキーを作ることを拒否する。MFA はフィッシングに強い FIDO の MFA（セキュリティキーかパスキー）とし、TOTP（仮想の装置もハードウェアの装置も）は使わない。FIDO の物理のセキュリティキーを強く勧め、次点は端末の外へ同期されないパスキーとする。同期されるパスキーは、break-glass が個人のクラウドのアカウントに頼ることになるので避ける。推奨の側は API で見分けられないので、守るのは FIDO であることだけとする。パスワードと MFA は Terraform で作らず、人が設定して保管する。名前は個人を表さない
     - IAM user が自身に持つ権限は、各アカウントの break-glass の role を引き受けることと、自身の MFA とパスワードの管理だけとする。管理アカウントの中の作業も、管理アカウントの break-glass の role を経由する
+    - 加えて、break-glass の role を AWS CLI から引き受けるために、IAM user に同じ端末での `aws login` を許す。Action は AWS Sign-In の `signin:AuthorizeOAuth2Access` と `signin:CreateOAuth2Token`、Resource は管理アカウントの、その region の `oauth2/public-client/localhost` に限る。別の端末での認証（`oauth2/public-client/remote`）は許さない。token の発行は authorization code と refresh token の grant に限る <!-- v1.0.0 で削除: #141 -->
+    - 前項の期間は、sandbox への apply の経路（ADR-0601 決定4）が配線されるか、v1.0.0 に達するかの早い方までとする <!-- v1.0.0 で削除: #141 -->
     - すべてのアカウント（管理アカウントを含む）に break-glass の role を置く。信頼条件は、管理アカウントの break-glass の IAM user に限り、MFA で認証したことを要求する。権限は AWS managed policy の `AdministratorAccess` とする。これは決定8・10 の例外である。緊急時に要る作業を前もって列挙できないためであり、例外は break-glass の role に限る
     - メンバーアカウントの break-glass の role を SCP の拒否から外すのは、回復を妨げる拒否（state の書き込みの拒否。ADR-0602 決定11）に限り、外すのは break-glass の role の ARN に限る。検知を止めることの拒否と、監査ログとその鍵を守る拒否からは外さない。緊急の作業にそれらは要らず、外すと管理アカウントの側が自分の記録を読めなくする経路になる
     - break-glass の IAM user のサインインと、break-glass の role の引き受けを、平時には起きない事象として必ず通知する（`ops-notification` の Topic）。管理アカウントの root の使用と `sts:AssumeRoot` の呼び出しも同じく通知する
@@ -182,6 +184,7 @@ IAM Identity Center の文書の手順である。外部 IdP を前提とし、I
   - 意味論的権限指定から生成されたActionの集合が、期待集合と完全一致すること
   - KMS Key Policy のアカウントへの委任に暗号操作と `kms:CreateGrant` が無いこと。identity-based policy（role・user・group の inline policy と customer managed policy）の Allow に KMS の暗号操作と `kms:CreateGrant` が無いこと
   - break-glass の IAM user がちょうど2つで、Terraform がアクセスキーと login profile を持たないこと。IAM user の Allow が break-glass の role の `sts:AssumeRole` と自身の MFA・パスワードの管理に限られ、長期の資格情報の作成（`iam:CreateAccessKey`・`iam:CreateServiceSpecificCredential`・`iam:UploadSSHPublicKey`・`iam:UploadSigningCertificate`）を、条件なしで全 Resource について Deny していること
+    - 決定19 の `aws login` の期間は、IAM user の Allow に、加えて `oauth2/public-client/localhost` の Resource だけに限った `signin:AuthorizeOAuth2Access` と `signin:CreateOAuth2Token` が在ってよく、`signin:CreateOAuth2Token` の Allow が grant を authorization code と refresh token に限ること。ほかの Resource とほかの `signin:` の Action を許さないこと <!-- v1.0.0 で削除: #141 -->
   - break-glass の role の信頼条件が、break-glass の IAM user の ARN と `aws:MultiFactorAuthPresent` を要求すること
   - 決定8・10 の例外（`AdministratorAccess`）が break-glass の role にだけ付いていること
   - SCP の除外が、回復を妨げる拒否についての break-glass の role の ARN に限られること

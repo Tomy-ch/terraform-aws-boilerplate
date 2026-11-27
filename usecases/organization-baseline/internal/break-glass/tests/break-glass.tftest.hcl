@@ -79,8 +79,32 @@ run "group_policy" {
   }
 
   assert {
-    condition     = length([for s in jsondecode(aws_iam_group_policy.this.policy).Statement : s if s.Effect == "Allow"]) == 4
-    error_message = "break-glass の user の Allow は、role の引き受け、自分のパスワードと MFA の管理、password policy の読み取りだけです。"
+    condition     = length([for s in jsondecode(aws_iam_group_policy.this.policy).Statement : s if s.Effect == "Allow"]) == 6
+    error_message = "break-glass の user の Allow は、role の引き受け、自分のパスワードと MFA の管理、password policy の読み取り、aws login だけです。"
+  }
+
+  assert {
+    condition = [for s in jsondecode(aws_iam_group_policy.this.policy).Statement : s if startswith(s.Sid, "AwsLogin")] == [
+      {
+        Sid      = "AwsLoginAuthorize"
+        Effect   = "Allow"
+        Action   = "signin:AuthorizeOAuth2Access"
+        Resource = "arn:aws:signin:ap-northeast-1:111111111111:oauth2/public-client/localhost"
+      },
+      {
+        Sid       = "AwsLoginToken"
+        Effect    = "Allow"
+        Action    = "signin:CreateOAuth2Token"
+        Resource  = "arn:aws:signin:ap-northeast-1:111111111111:oauth2/public-client/localhost"
+        Condition = { StringEquals = { "signin:OAuthGrantType" = ["authorization_code", "refresh_token"] } }
+      },
+    ]
+    error_message = "aws login は、このアカウントの provider の region の同じ端末の流れ（localhost）に限り、token の grant を authorization code と refresh token に限ってください。"
+  }
+
+  assert {
+    condition     = length([for a in flatten([for s in jsondecode(aws_iam_group_policy.this.policy).Statement : try(tolist(s.Action), [s.Action])]) : a if startswith(lower(a), "signin:")]) == 2
+    error_message = "signin の Action は2つだけにしてください。"
   }
 
   assert {
@@ -92,6 +116,31 @@ run "group_policy" {
       Condition = { Bool = { "aws:MultiFactorAuthPresent" = "true" } }
     }
     error_message = "自分の MFA を外すことは、MFA で認証したセッションに限ってください。"
+  }
+}
+
+# aws login の client の ARN は、provider の region・partition と呼び出し元のアカウントから組む。
+run "group_policy_login_client_follows_region_and_partition" {
+  command = apply
+
+  override_data {
+    target = data.aws_region.current
+    values = { region = "cn-north-1" }
+  }
+
+  override_data {
+    target = data.aws_partition.current
+    values = { partition = "aws-cn" }
+  }
+
+  override_data {
+    target = data.aws_caller_identity.current
+    values = { account_id = "222222222222" }
+  }
+
+  assert {
+    condition     = toset([for s in jsondecode(aws_iam_group_policy.this.policy).Statement : s.Resource if startswith(s.Sid, "AwsLogin")]) == toset(["arn:aws-cn:signin:cn-north-1:222222222222:oauth2/public-client/localhost"])
+    error_message = "aws login の client の ARN を、provider の region・partition と呼び出し元のアカウントから組んでください。"
   }
 }
 
@@ -177,7 +226,6 @@ run "member_stack_set" {
   }
 }
 
-# 管理アカウントの role と別に書いた文書が、ずれていないことを見る。
 run "member_role_matches_management_role" {
   command = apply
 
