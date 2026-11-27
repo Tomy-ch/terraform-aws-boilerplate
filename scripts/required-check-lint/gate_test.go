@@ -311,6 +311,7 @@ func Test_readEvents(t *testing.T) {
 	for name, src := range map[string]string{
 		"配列の要素がスカラーでない":    "[[push]]",
 		"マッピングのキーがスカラーでない": "? [push]\n: x\n",
+		"マッピングにマージキーがある":   "<<: {push: }\npull_request:\n",
 	} {
 		t.Run(name+"ならエラー", func(t *testing.T) {
 			t.Parallel()
@@ -324,6 +325,26 @@ func Test_readEvents(t *testing.T) {
 		_, err := readEvents(&yaml.Node{Kind: yaml.AliasNode})
 		require.ErrorIs(t, err, errEvents)
 	})
+}
+
+func Test_opaqueEntry(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		src  string
+		want int
+	}{
+		"スカラーのキーとふつうの値だけなら0":   {"paths: [x]\nbranches:\n  - a\n", 0},
+		"マージキーの行を返す":           {"a: 1\n<<: {paths: [x]}\n", 2},
+		"値が別名の項目の行を返す":         {"a: &x [b]\nbranches: *x\n", 2},
+		"キーがスカラーでない項目の行を返す":    {"? [a]\n: x\n", 1},
+		"引用符付きの << はマージキーではない": {"'<<': x\n", 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, opaqueEntry(yamlNode(t, c.src)))
+		})
+	}
 }
 
 func Test_emptyEvent(t *testing.T) {
@@ -564,17 +585,19 @@ func Test_directJobFindings(t *testing.T) {
 		line int
 		want string
 	}{
-		"reusable workflow を呼ぶ job":  {"on:\n  pull_request:\njobs:\n  build:\n    uses: ./.github/workflows/x.yaml\n", 5, "reusable workflow を呼んでいます"},
-		"workflow_call を持つ workflow": {"on:\n  pull_request:\n  workflow_call:\njobs:\n  build:\n    runs-on: x\n", 3, "workflow_call を持っています"},
-		"job の name:":                {"on:\n  pull_request:\njobs:\n  build:\n    name: Build\n    runs-on: x\n", 5, "name: を置かないでください"},
-		"pull_request が無い":           {"on:\n  push:\njobs:\n  build:\n    runs-on: x\n", 1, "pull_request トリガーがありません"},
-		"paths":                      {"on:\n  pull_request:\n    paths:\n      - x\njobs:\n  build:\n    runs-on: x\n", 3, "`paths` が残っています"},
-		"paths-ignore":               {"on:\n  pull_request:\n    paths-ignore:\n      - x\njobs:\n  build:\n    runs-on: x\n", 3, "`paths-ignore` が残っています"},
-		"branches-ignore は印があっても":    {"on:\n  pull_request:\n    branches-ignore: # branch-set: deploy\n      - x\njobs:\n  build:\n    runs-on: x\n", 3, "`branches-ignore` が残っています"},
-		"印の無い branches":              {"on:\n  pull_request:\n    branches:\n      - main\njobs:\n  build:\n    runs-on: x\n", 3, "印 `# branch-set: <集合>`"},
-		"印がほかの行にある branches":         {"on:\n  pull_request:\n    branches:\n      - main # branch-set: deploy\njobs:\n  build:\n    runs-on: x\n", 3, "印 `# branch-set: <集合>`"},
-		"pull_request の値が別名":         {"x-pr: &pr\n  paths: [x]\non:\n  pull_request: *pr\njobs:\n  build:\n    runs-on: x\n", 4, "pull_request の値を読めません"},
-		"pull_request の値が空でないスカラー":   {"on:\n  pull_request: x\njobs:\n  build:\n    runs-on: x\n", 2, "pull_request の値を読めません"},
+		"reusable workflow を呼ぶ job":     {"on:\n  pull_request:\njobs:\n  build:\n    uses: ./.github/workflows/x.yaml\n", 5, "reusable workflow を呼んでいます"},
+		"workflow_call を持つ workflow":    {"on:\n  pull_request:\n  workflow_call:\njobs:\n  build:\n    runs-on: x\n", 3, "workflow_call を持っています"},
+		"job の name:":                   {"on:\n  pull_request:\njobs:\n  build:\n    name: Build\n    runs-on: x\n", 5, "name: を置かないでください"},
+		"pull_request が無い":              {"on:\n  push:\njobs:\n  build:\n    runs-on: x\n", 1, "pull_request トリガーがありません"},
+		"paths":                         {"on:\n  pull_request:\n    paths:\n      - x\njobs:\n  build:\n    runs-on: x\n", 3, "`paths` が残っています"},
+		"paths-ignore":                  {"on:\n  pull_request:\n    paths-ignore:\n      - x\njobs:\n  build:\n    runs-on: x\n", 3, "`paths-ignore` が残っています"},
+		"branches-ignore は印があっても":       {"on:\n  pull_request:\n    branches-ignore: # branch-set: deploy\n      - x\njobs:\n  build:\n    runs-on: x\n", 3, "`branches-ignore` が残っています"},
+		"印の無い branches":                 {"on:\n  pull_request:\n    branches:\n      - main\njobs:\n  build:\n    runs-on: x\n", 3, "印 `# branch-set: <集合>`"},
+		"印がほかの行にある branches":            {"on:\n  pull_request:\n    branches:\n      - main # branch-set: deploy\njobs:\n  build:\n    runs-on: x\n", 3, "印 `# branch-set: <集合>`"},
+		"pull_request の値が別名":            {"x-pr: &pr\n  paths: [x]\non:\n  pull_request: *pr\njobs:\n  build:\n    runs-on: x\n", 4, "pull_request の値を読めません"},
+		"pull_request の値が空でないスカラー":      {"on:\n  pull_request: x\njobs:\n  build:\n    runs-on: x\n", 2, "pull_request の値を読めません"},
+		"pull_request のマージキー":           {"x-pr: &pr\n  paths: [x]\non:\n  pull_request:\n    <<: *pr\njobs:\n  build:\n    runs-on: x\n", 5, "マージキーと別名は使えません"},
+		"pull_request の branches の値が別名": {"x-b: &b\n  - main\non:\n  pull_request:\n    branches: *b # branch-set: deploy\njobs:\n  build:\n    runs-on: x\n", 5, "マージキーと別名は使えません"},
 	} {
 		t.Run(name+"は違反", func(t *testing.T) {
 			t.Parallel()
@@ -1047,6 +1070,8 @@ func Test_lineVerifyTriggerFindings(t *testing.T) {
 		"push を paths-ignore で絞る": {"on:\n  push:\n    paths-ignore:\n      - x\n", []string{"`paths-ignore` があります"}},
 		"push の値が別名":              {"x-push: &p\n  paths: [x]\non:\n  push: *p\n", []string{"push の値を読めません"}},
 		"push の値が空でないスカラー":        {"on:\n  push: x\n", []string{"push の値を読めません"}},
+		"push のマージキー":             {"x-push: &p\n  paths: [x]\non:\n  push:\n    <<: *p\n", []string{"push の項目を読めません"}},
+		"push の branches の値が別名":   {"x-b: &b\n  - main\non:\n  push:\n    branches: *b\n", []string{"push の項目を読めません"}},
 	} {
 		t.Run(name+"なら違反", func(t *testing.T) {
 			t.Parallel()

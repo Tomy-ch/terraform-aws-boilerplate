@@ -227,8 +227,8 @@ func readEvents(on *yaml.Node) ([]wfEvent, error) {
 		out := make([]wfEvent, 0, len(on.Content)/2)
 		for i := 0; i+1 < len(on.Content); i += 2 {
 			k := on.Content[i]
-			if k.Kind != yaml.ScalarNode {
-				return nil, xerrors.Wrapf(errEvents, "on: の %d 行目のキーがイベント名ではありません", k.Line)
+			if k.Kind != yaml.ScalarNode || k.ShortTag() == mergeTag {
+				return nil, xerrors.Wrapf(errEvents, "on: の %d 行目のキーがイベント名ではありません（マージキーは使えません）", k.Line)
 			}
 			out = append(out, wfEvent{name: k.Value, line: k.Line, value: on.Content[i+1]})
 		}
@@ -241,6 +241,20 @@ func readEvents(on *yaml.Node) ([]wfEvent, error) {
 // ない値（別名など）は中身を読めないので、呼び出し側は違反にする。
 func emptyEvent(v *yaml.Node) bool {
 	return v == nil || (v.Kind == yaml.ScalarNode && (v.Value == "" || v.ShortTag() == "!!null"))
+}
+
+// mergeTag は、yaml のマージキー（<<）の解決後の tag です。
+const mergeTag = "!!merge"
+
+// opaqueEntry は、マッピングの中で中身を読めない最初の項目（マージキーか、値が別名の項目）の行を返します。無ければ 0 です。
+// 取り込まれた先のキーは、このマッピングを1段だけ読む検査からは見えない。
+func opaqueEntry(m *yaml.Node) int {
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if k, v := m.Content[i], m.Content[i+1]; k.Kind != yaml.ScalarNode || k.ShortTag() == mergeTag || v.Kind == yaml.AliasNode {
+			return k.Line
+		}
+	}
+	return 0
 }
 
 func (d wfDoc) event(name string) (wfEvent, bool) {
@@ -407,6 +421,10 @@ func directJobFindings(context, set string, d wfDoc, j wfJob) []lintreport.Findi
 	}
 	if pr.value.Kind != yaml.MappingNode {
 		add(pr.line, "の workflow の pull_request の値を読めません。フィルタを置くならマッピングで書きます（別名は使えません）")
+		return findings
+	}
+	if line := opaqueEntry(pr.value); line != 0 {
+		add(line, "の workflow の pull_request の項目を読めません。マージキーと別名は使えません")
 		return findings
 	}
 	for i := 0; i+1 < len(pr.value.Content); i += 2 {
@@ -723,6 +741,13 @@ func lineVerifyTriggerFindings(d wfDoc) []lintreport.Finding {
 			findings = append(findings, lintreport.Finding{
 				File: d.file, Line: e.line,
 				Message: lineVerifyFile + " の push の値を読めません。フィルタを置くならマッピングで書きます（別名は使えません）",
+			})
+			continue
+		}
+		if line := opaqueEntry(e.value); line != 0 {
+			findings = append(findings, lintreport.Finding{
+				File: d.file, Line: line,
+				Message: lineVerifyFile + " の push の項目を読めません。マージキーと別名は使えません",
 			})
 			continue
 		}
