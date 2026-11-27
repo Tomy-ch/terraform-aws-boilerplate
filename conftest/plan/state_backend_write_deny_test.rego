@@ -876,7 +876,13 @@ creating_rc(rc) := json.patch(rc, [
 	{"op": "replace", "path": "/change/after_unknown", "value": {"arn": true}},
 ]) if rc.type == "aws_iam_role"
 
-creating_rc(rc) := unknown_after(rc, ["arn"]) if rc.type in {"aws_s3_bucket", "aws_kms_key"}
+# 名前を決めて作る Bucket は、bucket は決まり、arn が plan で決まらない。
+creating_rc(rc) := json.patch(rc, [
+	{"op": "replace", "path": "/change/after", "value": {"bucket": regex.replace(rc.change.after.arn, `^arn:[^:]+:s3:::`, "")}},
+	{"op": "replace", "path": "/change/after_unknown", "value": {"arn": true}},
+]) if rc.type == "aws_s3_bucket"
+
+creating_rc(rc) := unknown_after(rc, ["arn"]) if rc.type == "aws_kms_key"
 
 creating_rc(rc) := unknown_after(rc, ["policy"]) if rc.type == "aws_s3_bucket_policy"
 
@@ -1175,4 +1181,65 @@ test_violation_removed_member_with_a_writing_marker if {
 	rcs := array.concat([forget(rc) | some rc in member_of(canonical_rcs(valid_statements, valid_key_statements))], markers)
 	inp := array.concat(input_with(valid_statements, valid_key_statements), [{"path": "input/admin-identity.json", "contents": {"plan_format_version": "1.2", "resource_changes": rcs}}])
 	fixture.has("[PLAN-SBW-00] input/admin-identity.json: state-backend の instance（prefix \"module.sm.\"）が宣言にありません", messages_for(inp, decl))
+}
+
+# 作成の plan の委任のアカウントは、state Bucket の名前（account regional namespace）のアカウントと突き合わせる。Key Policy の文が
+# すべて別のアカウントで書かれていても、宣言の role と一致したことにしない。
+key_policy_in_account(rc, account) := json.patch(rc, [{"op": "replace", "path": "/change/after/policy", "value": strings.replace_n({"111111111111": account}, rc.change.after.policy)}]) if rc.type == "aws_kms_key_policy"
+
+key_policy_in_account(rc, _) := rc if rc.type != "aws_kms_key_policy"
+
+test_violation_member_creating_key_policy_all_in_other_account if {
+	rcs := [key_policy_in_account(rc, "222222222222") | some rc in member_creating(valid_statements, valid_key_statements)]
+	msgs := member_messages(rcs, [creating_security])
+	fixture.has("[PLAN-SBW-00] admin-identity の instance security: 作成の plan の state の鍵の Key Policy \"module.sm.module.kms.aws_kms_key_policy.this\" の委任のアカウント 222222222222 が、state Bucket \"module.sm.module.s3.aws_s3_bucket.this\" の名前のアカウント 111111111111 と違います", msgs)
+	fixture.has("[PLAN-SBW-06] admin-identity の instance security:", msgs)
+}
+
+bucket_without_name(rc) := unknown_after(rc, ["arn", "bucket"]) if rc.type == "aws_s3_bucket"
+
+bucket_without_name(rc) := rc if rc.type != "aws_s3_bucket"
+
+test_violation_member_creating_bucket_name_unreadable if {
+	rcs := [bucket_without_name(rc) | some rc in member_creating(valid_statements, valid_key_statements)]
+	msgs := member_messages(rcs, [creating_security])
+	fixture.has("[PLAN-SBW-00] admin-identity の instance security: 作成の plan の state Bucket \"module.sm.module.s3.aws_s3_bucket.this\" の名前から、account regional namespace のアカウント（<名前>-<account>-<region>-an）を読めません", msgs)
+	fixture.has("[PLAN-SBW-06] admin-identity の instance security:", msgs)
+}
+
+# 作成の plan で名前の決まらない書き手が居ても、ほかの書き手の 04 は見る。
+unlock_name_unknown(rc) := unknown_after(rc, ["arn", "name"]) if rc.address == "module.dm.aws_iam_role.this[\"unlock_identity\"]"
+
+unlock_name_unknown(rc) := rc if rc.address != "module.dm.aws_iam_role.this[\"unlock_identity\"]"
+
+test_violation_member_creating_known_writer_confinement if {
+	s := replace(valid_statements, 7, actions_of(a, workload_keys, ["s3:PutObject", "s3:ReplicateDelete", "s3:ReplicateObject"]))
+	rcs := [unlock_name_unknown(rc) | some rc in member_creating_readable(s)]
+	msgs := member_messages(rcs, [creating_security])
+	fixture.has("[PLAN-SBW-04] admin-identity の instance security: arn:aws:iam::111111111111:role/tabp-security-ci-apply の key", msgs)
+	fixture.has("[PLAN-SBW-00] admin-identity の instance security: role \"module.dm.aws_iam_role.this[\\\"unlock_identity\\\"]\"（data.policy_plan.deployment_identity.unlock_role.role）の名前を入力から読めません", msgs)
+}
+
+test_violation_member_creating_readable_bucket_policy_writer_confinement if {
+	creating_readable_has_any("[PLAN-SBW-04] admin-identity の instance security: ", replace(valid_statements, 5, actions_of(u, lock_keys, apply_denied)))
+}
+
+test_violation_member_creating_readable_bucket_policy_others_exception if {
+	creating_readable_has_any("[PLAN-SBW-01] admin-identity の instance security: ", replace(valid_statements, 1, others([a, ai, u])))
+}
+
+test_violation_member_creating_readable_bucket_policy_tls_missing if {
+	creating_readable_has_any("[PLAN-SBW-08] admin-identity の instance security: ", remove(valid_statements, 0))
+}
+
+creating_readable_has_any(prefix, statements) if {
+	msgs := member_messages(member_creating_readable(statements), [creating_security])
+	fixture.has(prefix, msgs)
+}
+
+# 印に当たるのに change を object で持たない要素は、書くかを読めないので落とす。
+test_violation_marker_without_change if {
+	broken := {"address": "module.sx.module.plan_output.aws_s3_bucket.this", "type": "aws_s3_bucket"}
+	msgs := messages_for(with_member(array.concat(member_noop(valid_statements, valid_key_statements), [broken])), with_instances([security]))
+	fixture.has("[PLAN-SBW-00] input/admin-identity.json: module.sx.module.plan_output.aws_s3_bucket.this は宣言に無い instance を見つける印の address なのに、change を object で持っていません", msgs)
 }

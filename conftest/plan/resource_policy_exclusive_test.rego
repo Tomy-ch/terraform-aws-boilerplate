@@ -408,3 +408,8 @@ test_violation_removed_member_still_written if {
 	msgs := gate.deny with input as admin_identity(array.concat(array.concat(targets, declared), members)) with data.policy_plan as d
 	fixture.has("[PLAN-RPE-00] input/admin-identity.json: state-backend の instance（prefix \"module.state_backend_security.\"）が宣言にありません", msgs)
 }
+
+test_violation_marker_without_change if {
+	broken := {"address": "module.state_backend_other.module.plan_output.aws_s3_bucket.this", "type": "aws_s3_bucket"}
+	fixture.has("[PLAN-RPE-00] input/admin-identity.json: module.state_backend_other.module.plan_output.aws_s3_bucket.this は宣言に無い instance を見つける印の address なのに、change を object で持っていません", member_messages([broken]))
+}

@@ -219,12 +219,22 @@ undeclared_instances contains {"path": f.path, "kind": kind, "prefix": prefix} i
 	some rc in f.contents.resource_changes
 	is_string(rc.address)
 	object.get(rc, "mode", "managed") == "managed"
-	is_object(object.get(rc.change, "after", null))
+	is_object(object.get(object.get(rc, "change", {}), "after", null))
 	some kind, marker in instance_markers
 	endswith(rc.address, marker)
 	prefix := substring(rc.address, 0, count(rc.address) - count(marker))
 	boundary(prefix)
 	not known_prefix(kind, prefix, root_name(f.path))
+}
+
+# 印に当たるのに change を object で持たない要素は、書くかどうかを読めない。黙って数えずに済ませないよう、使う package が 00 で落とす。
+malformed_marker_entries contains {"path": f.path, "address": rc.address} if {
+	some f in input
+	some rc in f.contents.resource_changes
+	is_string(rc.address)
+	some _, marker in instance_markers
+	endswith(rc.address, marker)
+	not is_object(object.get(rc, "change", null))
 }
 
 boundary("")

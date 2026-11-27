@@ -226,3 +226,17 @@ test_undeclared_instances_skip_non_writing_entries if {
 	got := lib.undeclared_instances with data.policy_plan as inst_decl with input as inp
 	got == {{"path": "admin-identity.json", "kind": "state_backend", "prefix": "module.sz."}}
 }
+
+test_malformed_marker_entries if {
+	inp := [file("admin-identity.json", [
+		{"address": "module.sx.module.plan_output.aws_s3_bucket.this", "type": "aws_s3_bucket"},
+		{"address": "module.dx.module.github_oidc.aws_iam_role.apply_identity", "type": "aws_iam_role", "change": "create"},
+		{"address": "module.sy.module.plan_output.aws_s3_bucket.this", "type": "aws_s3_bucket", "change": {"actions": ["delete"]}},
+		{"address": "module.sz.module.other.aws_s3_bucket.this", "type": "aws_s3_bucket"},
+	])]
+	lib.malformed_marker_entries == {
+		{"path": "admin-identity.json", "address": "module.sx.module.plan_output.aws_s3_bucket.this"},
+		{"path": "admin-identity.json", "address": "module.dx.module.github_oidc.aws_iam_role.apply_identity"},
+	} with data.policy_plan as inst_decl with input as inp
+	count(lib.undeclared_instances) == 0 with data.policy_plan as inst_decl with input as inp
+}

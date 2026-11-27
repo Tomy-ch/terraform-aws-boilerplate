@@ -50,6 +50,16 @@ role_arn(i, name) := role_arns[[ikey(i), name]]
 
 bucket_arns[ikey(i)] := after(i, declared(i, "bucket")).arn if some i in lib.instances
 
+# 作成の plan では Bucket の ARN は決まらないが、名前は決まる。ARN を名前と委任の partition から組む。
+bucket_arns[ikey(i)] := sprintf("arn:%s:s3:::%s", [instance_account(i)[0], after(i, declared(i, "bucket")).bucket]) if {
+	some i in lib.instances
+	creating(i)
+	not planned_bucket_arn(i)
+	is_string(after(i, declared(i, "bucket")).bucket)
+}
+
+planned_bucket_arn(i) if is_string(after(i, declared(i, "bucket")).arn)
+
 bucket_arn(i) := bucket_arns[ikey(i)]
 
 state_key_arns[ikey(i)] := after(i, declared(i, "state_key")).arn if some i in lib.instances
@@ -75,12 +85,12 @@ writer_entries(i) := array.concat(
 	[{"arn": arn, "keys": root_keys(i, root), "denied": {"s3:deleteobjectversion", "s3:replicatedelete", "s3:replicateobject"}} |
 		distinct_writers
 		some root in object.get(cfg, "roots", [])
-		arn := role_arn(i, root.writer)
+		arn := writer_arn(i, root.writer)
 	],
 	[{"arn": arn, "keys": {object_arn(i, lock_key(root.unlocker))}, "denied": {"s3:deleteobjectversion", "s3:putobject", "s3:replicatedelete", "s3:replicateobject"}} |
 		distinct_writers
 		some root in object.get(cfg, "roots", [])
-		arn := role_arn(i, root.unlocker)
+		arn := writer_arn(i, root.unlocker)
 	],
 )
 
@@ -283,6 +293,11 @@ deny contains msg if {
 kind_name := {"state_backend": "state-backend", "deployment_identity": "deployment-identity"}
 
 deny contains msg if {
+	some e in lib.malformed_marker_entries
+	msg := sprintf("[PLAN-SBW-00] %s: %s は宣言に無い instance を見つける印の address なのに、change を object で持っていません", [e.path, e.address])
+}
+
+deny contains msg if {
 	some u in lib.undeclared_instances
 	msg := sprintf("[PLAN-SBW-00] %s: %s の instance（prefix %q）が宣言にありません。data.policy_plan.state_backend.instances[%q] に足してください", [u.path, kind_name[u.kind], u.prefix, lib.root_name(u.path)])
 }
@@ -329,8 +344,22 @@ deny contains msg if {
 	some i in lib.instances
 	creating(i)
 	count(key_policies(i)) > 0
-	not instance_account(i)
+	not key_policy_account(i)
 	msg := sprintf("[PLAN-SBW-00] %s作成の plan の role の ARN を組むアカウントを、state の鍵の Key Policy %q のアカウントへの委任（arn:<partition>:iam::<account>:root）から1つに決められません", [lib.instance_tag(i), declared(i, "key_policy")])
+}
+
+deny contains msg if {
+	some i in lib.instances
+	creating(i)
+	not bucket_name_account(i)
+	msg := sprintf("[PLAN-SBW-00] %s作成の plan の state Bucket %q の名前から、account regional namespace のアカウント（<名前>-<account>-<region>-an）を読めません", [lib.instance_tag(i), declared(i, "bucket")])
+}
+
+deny contains msg if {
+	some i in lib.instances
+	creating(i)
+	key_policy_account(i)[1] != bucket_name_account(i)
+	msg := sprintf("[PLAN-SBW-00] %s作成の plan の state の鍵の Key Policy %q の委任のアカウント %s が、state Bucket %q の名前のアカウント %s と違います", [lib.instance_tag(i), declared(i, "key_policy"), key_policy_account(i)[1], declared(i, "bucket"), bucket_name_account(i)])
 }
 
 # 未定義になりうる値を not の中に直接書くと、未定義が not の外へ出て規則ごと黙る。
@@ -338,22 +367,18 @@ role_known(i, name) if is_string(role_arn(i, name))
 
 bucket_known(i) if is_string(bucket_arn(i))
 
-# Bucket Policy の書き手の判定（01 の例外・04）。作成の plan では、書き手の ARN がすべて決まるときだけ見る。
-writers_checked(i) if not creating(i)
+# Bucket Policy の書き手の ARN。作成の plan で決まらない ARN は、role の名前と委任のアカウントから組む。組めない書き手は
+# writers に入らず、01 の例外の集合が一致しないことと、00（名前かアカウントが決まらない）で落ちる。
+writer_arn(i, name) := role_arn(i, name) if role_known(i, name)
 
-writers_checked(i) if writers_known(i)
-
-writers_known(i) if {
-	every root in object.get(cfg, "roots", []) {
-		role_known(i, root.writer)
-		role_known(i, root.unlocker)
-	}
+writer_arn(i, name) := built_role_arn(i, name) if {
+	not role_known(i, name)
+	creating(i)
 }
 
 state_key_known(i) if is_string(state_key_arn(i))
 
-# 作成の plan では role の ARN が決まらない。role の `name`・`path` と、その instance の Key Policy の鍵の管理の委任の
-# アカウント（data.aws_caller_identity から組むので plan で決まる。modules/kms/policy.tf）から ARN を組む。
+# 作成の plan では role の ARN が決まらない。role の `name`・`path` と instance_account から ARN を組む。
 role_name_known(i, name) if is_string(after(i, role_address(i, name)).name)
 
 role_path(a) := object.get(a, "path", "/") if is_string(object.get(a, "path", "/"))
@@ -372,11 +397,22 @@ key_policy_roots_of[ikey(i)] := {[m[1], m[2]] |
 	some m in regex.find_all_string_submatch_n(`^arn:(aws[a-z-]*):iam::([0-9]{12}):root$`, p, 1)
 } if some i in lib.instances
 
-# 委任のアカウントがちょうど1つのときだけ決まる。決まらなければ、作成の plan の role は突き合わせず 00 で落とす。
-instance_account(i) := x if {
+# 委任のアカウントがちょうど1つで、state Bucket の名前のアカウントと同じときだけ決まる。Bucket の名前は account regional
+# namespace の形（<名前>-<account>-<region>-an）で、そのアカウントにしか作れない（PLAN-KMS-12 と同じ読み方）ので、Key Policy の
+# 文言から独立に、作る先のアカウントを示す。決まらなければ、作成の plan の role は突き合わせず 00 で落とす。
+key_policy_account(i) := x if {
 	count(key_policy_roots(i)) == 1
 	some x in key_policy_roots(i)
 }
+
+bucket_name_account(i) := m[0][1] if {
+	name := after(i, declared(i, "bucket")).bucket
+	is_string(name)
+	m := regex.find_all_string_submatch_n(`^[a-z0-9][a-z0-9.-]*-([0-9]{12})-[a-z0-9-]+-an$`, name, 1)
+	count(m) == 1
+}
+
+instance_account(i) := key_policy_account(i) if key_policy_account(i)[1] == bucket_name_account(i)
 
 built_role_arn(i, name) := sprintf("arn:%s:iam::%s:role%s%s", [instance_account(i)[0], instance_account(i)[1], role_path(a), a.name]) if {
 	a := after(i, role_address(i, name))
@@ -421,7 +457,6 @@ deny contains msg if {
 
 deny contains msg if {
 	some i in lib.instances
-	writers_checked(i)
 	some a in denies(i)
 	others(i, a)
 	principal_arn_values(a.statement, "arnnotequals") != object.keys(writers(i))
@@ -480,7 +515,6 @@ deny contains msg if {
 
 deny contains msg if {
 	some i in lib.instances
-	writers_checked(i)
 	some arn, w in writers(i)
 	is_string(bucket_arn(i))
 	count(bucket_policies(i)) > 0
@@ -496,7 +530,6 @@ deny contains msg if {
 
 deny contains msg if {
 	some i in lib.instances
-	writers_checked(i)
 	some arn, w in writers(i)
 	is_string(bucket_arn(i))
 	count(bucket_policies(i)) > 0
@@ -512,7 +545,6 @@ deny contains msg if {
 
 deny contains msg if {
 	some i in lib.instances
-	writers_checked(i)
 	some a in denies(i)
 	some arn in principal_arn_values(a.statement, "arnequals")
 	not writers(i)[arn]
