@@ -16,16 +16,16 @@ import (
 // permExpand は引数の順に照合するので、長い記号を先に置く。
 var (
 	permS3Descs = []string{
-		"plan $b: 15 件が allowed",
-		"apply-identity $b: 17 件が allowed",
+		"plan $b: 16 件が allowed",
+		"apply-identity $b: 18 件が allowed",
 		"apply-identity $key: 1 件が allowed",
 		"apply-identity $role/plan: 2 件が allowed",
-		"plan $pb: 15 件が allowed",
+		"plan $pb: 16 件が allowed",
 		"plan $pb/pr/1/x: 1 件が allowed",
-		"apply-identity $pb: 16 件が allowed",
+		"apply-identity $pb: 17 件が allowed",
 		"apply-identity $pb/apply/1/x: 1 件が allowed",
-		"plan $ab: 16 件が allowed",
-		"apply-identity $ab: 19 件が allowed",
+		"plan $ab: 17 件が allowed",
+		"apply-identity $ab: 20 件が allowed",
 		"apply-identity $ab: 1 件が implicitDeny",
 		"plan $ab: 2 件が implicitDeny",
 		"apply $b: 2 件が allowed",
