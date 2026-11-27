@@ -31,6 +31,7 @@ var (
 		"apply $b: 2 件が allowed",
 		"plan $key: 1 件が implicitDeny",
 		"plan $role/plan: 1 件が implicitDeny",
+		"plan *: 1 件が allowed",
 		"plan $pb/pr/1/x: 2 件が implicitDeny",
 		"plan $pb/x: 1 件が implicitDeny",
 		"apply-identity $pb/pr/1/x: 2 件が implicitDeny",
@@ -268,7 +269,7 @@ var (
 
 const (
 	// permissions の件数。条件つきの確認の有無で変わる。
-	permissionsBase     = 128
+	permissionsBase     = 129
 	governanceGated     = 31
 	delegatedGated      = 17
 	delegatedAbsent     = "  委任管理者の policy がまだ付いていないので、指定と解除の権限は確かめない（委任管理者の policy を作って付ける apply の後にもう一度走らせる）"
@@ -344,6 +345,7 @@ var permRowActions = []string{
 	"s3:ListBucket s3:GetEncryptionConfiguration",
 	"s3:PutObject",
 	"iam:PutRolePolicy",
+	"iam:SimulateCustomPolicy",
 	"s3:DeleteObject s3:DeleteObjectVersion",
 	"s3:PutObject",
 	"s3:PutObject s3:DeleteObject",
@@ -779,6 +781,25 @@ func Test_simRow_args(t *testing.T) {
 		"ContextKeyName=k,ContextKeyValues=v1,v2,ContextKeyType=stringList", "--action-names", "a"},
 		simCtx(allowed, "plan", "arn:x", []string{ctxList("k", "v1", "v2")}, "a").args(n), "stringList の entry は分けずに1つの引数として --context-entries に渡す")
 
+	t.Run("文書が1つなら、要素1つの JSON の配列を1つの引数として simulate-custom-policy の --policy-input-list に渡す", func(t *testing.T) {
+		t.Parallel()
+
+		one := simCtx(allowed, "plan", "arn:x", []string{ctxList("k", "v1", "v2")}, "a", "b")
+		one.docs = []string{`{"Version":"2012-10-17","Statement":[]}`}
+
+		assert.Equal(t, []string{"iam", "simulate-custom-policy", "--policy-input-list", `["{\"Version\":\"2012-10-17\",\"Statement\":[]}"]`, "--resource-arns", "arn:x",
+			"--context-entries", "ContextKeyName=k,ContextKeyValues=v1,v2,ContextKeyType=stringList", "--action-names", "a", "b"}, one.args(n))
+	})
+
+	t.Run("文書が2つでも引数は1つの JSON の配列で、role の ARN を渡さない", func(t *testing.T) {
+		t.Parallel()
+
+		two := sim(allowed, "plan", "arn:x", "a")
+		two.docs = []string{`{"a":1}`, `{"b":2}`}
+
+		assert.Equal(t, []string{"iam", "simulate-custom-policy", "--policy-input-list", `["{\"a\":1}","{\"b\":2}"]`, "--resource-arns", "arn:x", "--action-names", "a"}, two.args(n))
+	})
+
 	r := sim(allowed, "plan", "arn:x", "a")
 	r.bucketPolicy, r.doc = true, `{"Statement":[]}`
 
@@ -860,6 +881,34 @@ func Test_simCheck(t *testing.T) {
 		_, err := simCheck(row, n).eval(newQuery(func(...string) awsResult { return awsResult{err: os.ErrNotExist} }, testRegion))
 
 		require.ErrorIs(t, err, errAWSStart)
+	})
+
+	t.Run("文書を持つ行は、simulate-custom-policy の応答を同じ判定にかける", func(t *testing.T) {
+		t.Parallel()
+
+		r := row
+		r.docs = []string{`{"a":1}`}
+
+		f := verifyFake(t, map[string]awsResult{jsonKey(r.args(n)...): simResult([]string{"s3:A", "s3:B"}, implicitDeny)}, nil)
+
+		v, err := simCheck(r, n).eval(newQuery(f.fn, testRegion))
+
+		require.NoError(t, err)
+		assert.Equal(t, verdict{reason: "違う判定: s3:A=implicitDeny s3:B=implicitDeny"}, v)
+	})
+
+	t.Run("Bucket Policy と文書を併せ持つ行は、aws を呼ばずに NG", func(t *testing.T) {
+		t.Parallel()
+
+		f := verifyFake(t, nil, nil)
+		r := row
+		r.bucketPolicy, r.doc, r.docs = true, `{"Statement":[]}`, []string{`{"a":1}`}
+
+		v, err := simCheck(r, n).eval(newQuery(f.fn, testRegion))
+
+		require.NoError(t, err)
+		assert.Equal(t, verdict{reason: "Bucket Policy を含む行は、plan の文書では評価しない"}, v)
+		assert.Empty(t, f.calls)
 	})
 
 	for name, r := range map[string]simRow{
@@ -1032,6 +1081,76 @@ func Test_workloadGate(t *testing.T) {
 
 		require.ErrorIs(t, err, errAWSStart)
 	})
+}
+
+func Test_governanceGateOf(t *testing.T) {
+	t.Parallel()
+
+	n := testNames("")
+
+	for name, tc := range map[string]struct {
+		got              []string
+		state, delegated gateState
+	}{
+		"統制・メンバー・委任管理者が付いていれば attached": {[]string{"tabp-admin-ci-apply-identity-governance", "tabp-admin-ci-apply-identity-governance-2", "tabp-admin-ci-apply-identity-members"}, gateAttached, gateAttached},
+		"委任管理者だけなら統制は absent":           {[]string{"tabp-admin-ci-apply-identity-governance-2"}, gateAbsent, gateAttached},
+		"統制だけなら unknown":                {[]string{"tabp-admin-ci-apply-identity-governance"}, gateUnknown, gateAbsent},
+		"空なら absent":                    {nil, gateAbsent, gateAbsent},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			g, d := governanceGateOf(n, tc.got)
+
+			assert.Equal(t, tc.state, g.state)
+			assert.Equal(t, tc.delegated, d.state)
+		})
+	}
+
+	t.Run("メンバーの role の policy だけなら unknown で、名前を理由に添えた NG を持つ", func(t *testing.T) {
+		t.Parallel()
+
+		g, d := governanceGateOf(n, []string{"tabp-admin-ci-apply-identity-members"})
+
+		assert.Equal(t, gateUnknown, g.state)
+		assert.Equal(t, gateAbsent, d.state)
+
+		v, _ := g.ng.eval(nil)
+		assert.Equal(t, "apply-identity に、統制の policy とメンバーの role の policy の片方だけが付いている", g.ng.desc)
+		assert.Equal(t, verdict{reason: "tabp-admin-ci-apply-identity-members"}, v)
+	})
+
+	t.Run("片方だけなら、名前を理由に添えた NG を持つ", func(t *testing.T) {
+		t.Parallel()
+
+		g, _ := governanceGateOf(n, []string{"tabp-admin-ci-apply-identity-manage", "tabp-admin-ci-apply-identity-members"})
+
+		v, _ := g.ng.eval(nil)
+		assert.Equal(t, "apply-identity に、統制の policy とメンバーの role の policy の片方だけが付いている", g.ng.desc)
+		assert.Equal(t, verdict{reason: "tabp-admin-ci-apply-identity-manage、tabp-admin-ci-apply-identity-members"}, v)
+	})
+}
+
+func Test_workloadGateOf(t *testing.T) {
+	t.Parallel()
+
+	n := testNames("")
+
+	for name, tc := range map[string]struct {
+		got   []string
+		state gateState
+	}{
+		"3つちょうどなら attached":  {[]string{"tabp-admin-ci-apply-workload", "tabp-admin-ci-apply-workload-2", "tabp-admin-ci-apply-workload-read"}, gateAttached},
+		"並べ替えていなければ unknown": {[]string{"tabp-admin-ci-apply-workload-read", "tabp-admin-ci-apply-workload", "tabp-admin-ci-apply-workload-2"}, gateUnknown},
+		"空なら absent":         {nil, gateAbsent},
+		"1つだけなら unknown":     {[]string{"tabp-admin-ci-apply-workload"}, gateUnknown},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tc.state, workloadGateOf(n, tc.got).state)
+		})
+	}
 }
 
 func Test_permissionSections(t *testing.T) {
@@ -1370,18 +1489,15 @@ func Test_permissionsSteps(t *testing.T) {
 		identity, apply                        string
 		governance, delegated, workload, budgt []string
 		count                                  int
-		result                                 string
+		skipped                                string
 	}{
-		"条件つきの確認がすべて走る": {governanceAttached, workloadAttached, nil, nil, nil, nil, permissionsBase + governanceGated + delegatedGated + workloadGatedCount + budgetsGatedCount,
-			"# 結果: 208 件のうち NG 0 件"},
-		"統制の policy が付いていない": {noneAttached, workloadAttached, []string{governanceAbsent}, []string{delegatedAbsent}, nil, nil, permissionsBase + workloadGatedCount + budgetsGatedCount,
-			"# 結果: 160 件のうち NG 0 件（確かめていない区分 2）"},
+		"条件つきの確認がすべて走る":      {governanceAttached, workloadAttached, nil, nil, nil, nil, permissionsBase + governanceGated + delegatedGated + workloadGatedCount + budgetsGatedCount, ""},
+		"統制の policy が付いていない": {noneAttached, workloadAttached, []string{governanceAbsent}, []string{delegatedAbsent}, nil, nil, permissionsBase + workloadGatedCount + budgetsGatedCount, "（確かめていない区分 2）"},
 		"委任管理者の policy だけが付いていない": {`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-manage"},{"PolicyName":"tabp-admin-ci-apply-identity-members"},{"PolicyName":"tabp-admin-ci-apply-identity-governance"}]}`, workloadAttached,
-			nil, []string{delegatedAbsent}, nil, nil, permissionsBase + governanceGated + workloadGatedCount + budgetsGatedCount, "# 結果: 191 件のうち NG 0 件（確かめていない区分 1）"},
+			nil, []string{delegatedAbsent}, nil, nil, permissionsBase + governanceGated + workloadGatedCount + budgetsGatedCount, "（確かめていない区分 1）"},
 		"workload の policy が付いていない": {governanceAttached, noneAttached, nil, nil, []string{workloadAbsent}, []string{budgetsAbsent},
-			permissionsBase + governanceGated + delegatedGated, "# 結果: 176 件のうち NG 0 件（確かめていない区分 2）"},
-		"どちらも付いていない": {noneAttached, noneAttached, []string{governanceAbsent}, []string{delegatedAbsent}, []string{workloadAbsent}, []string{budgetsAbsent}, permissionsBase,
-			"# 結果: 128 件のうち NG 0 件（確かめていない区分 4）"},
+			permissionsBase + governanceGated + delegatedGated, "（確かめていない区分 2）"},
+		"どちらも付いていない": {noneAttached, noneAttached, []string{governanceAbsent}, []string{delegatedAbsent}, []string{workloadAbsent}, []string{budgetsAbsent}, permissionsBase, "（確かめていない区分 4）"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -1389,8 +1505,7 @@ func Test_permissionsSteps(t *testing.T) {
 			lines, err := run(t, permFake(t, okResult(tc.identity), okResult(tc.apply)))
 
 			require.NoError(t, err)
-			assert.Equal(t, append(permExpected(tc.governance, tc.delegated, tc.workload, tc.budgt), tc.result), lines)
-			assert.Contains(t, tc.result, "# 結果: "+strconv.Itoa(tc.count)+" 件", "件数は表と独立の定数から")
+			assert.Equal(t, append(permExpected(tc.governance, tc.delegated, tc.workload, tc.budgt), "# 結果: "+strconv.Itoa(tc.count)+" 件のうち NG 0 件"+tc.skipped), lines)
 		})
 	}
 

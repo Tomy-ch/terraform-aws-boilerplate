@@ -457,6 +457,20 @@ func Test_query_object(t *testing.T) {
 		})
 	}
 
+	t.Run("terse なら、呼び出しの失敗の理由は stderr の文ではなくエラーコード", func(t *testing.T) {
+		t.Parallel()
+
+		q := newQuery(func(...string) awsResult {
+			return failed("\nAn error occurred (AccessDenied) when calling the X operation: User: arn:aws:sts::123456789012:assumed-role/r/s\n")
+		}, testRegion)
+		q.terse = true
+
+		_, reason, err := q.object("iam", "get-x")
+
+		require.NoError(t, err)
+		assert.Equal(t, "呼び出しが失敗: AccessDenied", reason)
+	})
+
 	t.Run("起動できなければ errAWSStart", func(t *testing.T) {
 		t.Parallel()
 
@@ -465,6 +479,32 @@ func Test_query_object(t *testing.T) {
 		_, _, err := q.object("iam", "get-x")
 		require.ErrorIs(t, err, errAWSStart)
 	})
+}
+
+func Test_query_failure(t *testing.T) {
+	t.Parallel()
+
+	arnLine := "An error occurred (AccessDenied) when calling the X operation: User: arn:aws:sts::123456789012:assumed-role/r/s is not authorized"
+
+	for name, tc := range map[string]struct {
+		terse  bool
+		stderr string
+		want   string
+	}{
+		"terse でなければ stderr の1行目":         {false, "\n" + arnLine + "\nmore", arnLine},
+		"terse ならエラーコードだけで、ARN を出さない":     {true, "\n" + arnLine + "\nmore", "AccessDenied"},
+		"terse でエラーコードが無ければ、文を出さないことを述べる": {true, "arn:aws:iam::123456789012:role/x", "エラーの文は出さない"},
+		"terse で stderr が空":               {true, "", "エラーの文は出さない"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			q := newQuery(nil, testRegion)
+			q.terse = tc.terse
+
+			assert.Equal(t, tc.want, q.failure(tc.stderr))
+		})
+	}
 }
 
 func Test_firstLine(t *testing.T) {

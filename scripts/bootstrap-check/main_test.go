@@ -287,10 +287,11 @@ func Test_run(t *testing.T) {
 		t.Parallel()
 
 		for name, args := range map[string][]string{
-			"サブコマンドが無い":     nil,
-			"知らないサブコマンド":    {"foo"},
-			"plan の引数が足りない": {"plan"},
-			"verify の段が無い":  {"verify", "-project", "tabp", "-region", "r"},
+			"サブコマンドが無い":                   nil,
+			"知らないサブコマンド":                  {"foo"},
+			"plan の引数が足りない":               {"plan"},
+			"verify の段が無い":                {"verify", "-project", "tabp", "-region", "r"},
+			"plan-permissions の plan が無い": {"plan-permissions", "-project", "tabp", "-region", "r"},
 		} {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
@@ -541,7 +542,21 @@ func Test_execute(t *testing.T) {
 		assert.Equal(t, 2, execute(verifyArgs, errWriter{}, verifyDeps(f, nil)))
 	})
 
-	for name, args := range map[string][]string{"account": accountArgs, "verify": verifyArgs} {
+	planPermArgs := []string{"plan-permissions", "-plan", "tmp/123456789012/plan.json", "-project", testProject, "-region", testRegion}
+
+	t.Run("plan-permissions で plan を読めなければ理由を出して 2 を返し、12桁の数字は伏せる", func(t *testing.T) {
+		t.Parallel()
+
+		var stdout bytes.Buffer
+
+		f := verifyFake(t, nil, nil)
+
+		assert.Equal(t, 2, execute(planPermArgs, &stdout, verifyDeps(f, nil)))
+		assert.Equal(t, "tmp/<account>/plan.json: "+errPlanPermInput.Error()+"\n", stdout.String())
+		assert.Empty(t, f.calls)
+	})
+
+	for name, args := range map[string][]string{"account": accountArgs, "verify": verifyArgs, "plan-permissions": planPermArgs} {
 		t.Run(name+" は静的な資格情報が環境に在れば理由を出して 2 を返す", func(t *testing.T) {
 			t.Parallel()
 
