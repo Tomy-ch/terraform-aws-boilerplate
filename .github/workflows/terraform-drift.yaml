@@ -583,6 +583,8 @@ jobs:
             scheduler.ap-northeast-1.amazonaws.com
             scheduler.us-east-1.amazonaws.com
             chatbot.us-west-2.amazonaws.com
+            budgets.amazonaws.com
+            ce.us-east-1.amazonaws.com
       - name: Prepare to retry hardening the runner
         if: steps.harden-runner.outcome != 'success'
         continue-on-error: true
@@ -645,6 +647,8 @@ jobs:
             scheduler.ap-northeast-1.amazonaws.com
             scheduler.us-east-1.amazonaws.com
             chatbot.us-west-2.amazonaws.com
+            budgets.amazonaws.com
+            ce.us-east-1.amazonaws.com
 
       # 失敗にする理由は drift-admin-identity の Refuse runs outside the default branch と同じ。
       - name: Refuse runs outside the default branch
