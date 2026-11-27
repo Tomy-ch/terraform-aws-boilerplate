@@ -22,7 +22,6 @@ const layerWithNulls = `{"layer_decl": {"attachments": {
 	"aws_s3_bucket_website_configuration": {"parent_arguments": {"aws_s3_bucket": {"website": null}}}},
 	"unrelated_deprecated_arguments": {"aws_s3_bucket": {"policy": {"unwritten": null}, "region": {"unwritten": "x"}}}}}`
 
-// policyTree は、canaryExcluded のパターンにそれぞれ1件ずつ当たる rego と、残る Policy を持つ木を建てる。
 func policyTree(t *testing.T) string {
 	t.Helper()
 	files := map[string]string{"iam_action_wildcard.rego": policyOK, "iam_action_wildcard_test.rego": policyTestOK, "lib/input.rego": "package plan.lib\n"}
@@ -49,7 +48,18 @@ func Test_canaryCases(t *testing.T) {
 			}
 		}
 		assert.Equal(t, 2, pass, "ok と aws-unwritten")
-		assert.Len(t, cases, 13)
+		assert.Len(t, cases, 14)
+	})
+
+	t.Run("上限を超えたテストの落ち方は、そのケースだけが極小の上限で確かめる", func(t *testing.T) {
+		t.Parallel()
+		var timed []string
+		for _, c := range canaryCases(t.TempDir(), []byte(layerWithNulls), "    acl = null") {
+			if c.timeout {
+				timed = append(timed, c.name+" "+c.pattern)
+			}
+		}
+		assert.Equal(t, []string{"test-timeout eval_cancel_error"}, timed)
 	})
 }
 
@@ -128,7 +138,7 @@ func Test_buildCase(t *testing.T) {
 			return writeText(filepath.Join(c, "marker"), "")
 		}}
 		require.NoError(t, buildCase(dir, policyTree(t), []byte("D"), []byte("L"), c))
-		assert.Equal(t, "D", readText(t, filepath.Join(dir, "decl.json")))
+		assert.Equal(t, "D", readText(t, filepath.Join(dir, "rego", "decl.json")), "Rego のテストの宣言は、make と同じく木の直下に置く")
 		assert.Equal(t, "L", readText(t, filepath.Join(dir, "layer-decl.json")))
 		assert.Equal(t, canaryLayer+"\n", readText(t, filepath.Join(dir, "layer.json")))
 		var data map[string]any
@@ -153,7 +163,7 @@ func chainDir(t *testing.T, verify, plan, conftest string) string {
 	t.Helper()
 	files := map[string]string{
 		"rego/p.rego": policyOK, "rego/p_test.rego": policyTestOK,
-		"decl.json": "{}", "layer-decl.json": "{}", "data.json": `{"policy_plan":{"provider_format_version":"1.0"}}`,
+		"rego/decl.json": "{}", "layer-decl.json": "{}", "data.json": `{"policy_plan":{"provider_format_version":"1.0"}}`,
 		"base/usecases/x/reference/tests/policy-input.tftest.hcl": "", "base/usecases/x/reference/plan.out": plan,
 		"verify.out": verify, "conftest.out": conftest,
 	}
@@ -163,14 +173,14 @@ func chainDir(t *testing.T, verify, plan, conftest string) string {
 func Test_policyChain(t *testing.T) {
 	t.Parallel()
 
-	const verifyOK = `[{"filename":"p_test.rego","successes":2}]`
+	const verifyOK = `[{"package":"data.plan.p_test","name":"test_violation_x","duration":1},{"package":"data.plan.p_test","name":"test_pass_x","duration":1}]`
 	const resultOK = `[{"filename":"Combined","namespace":"plan.p","successes":1}]`
 
 	t.Run("段を順に走らせ、評価の数が宣言と合えば通る", func(t *testing.T) {
 		t.Parallel()
 		dir := chainDir(t, verifyOK, planOK, resultOK)
 		tool, calls := fakeTool(t)
-		out, err := policyChain(dir, "/d", tool, map[string][]byte{})
+		out, err := policyChain(dir, "/d", stepVerify, tool, map[string][]byte{})
 		require.NoError(t, err, out)
 		assert.Contains(t, out, "✅ plan.p: 規則 1 件を評価し、違反はありません")
 		root := filepath.Join(dir, "base/usecases/x/reference")
@@ -178,13 +188,13 @@ func Test_policyChain(t *testing.T) {
 		assert.FileExists(t, filepath.Join(dir, "out", "inputs", "x.json"))
 	})
 
-	t.Run("同じ Rego の木と宣言なら conftest verify を1回だけ起動する", func(t *testing.T) {
+	t.Run("同じ Rego の木と宣言と上限なら opa test を1回だけ起動する", func(t *testing.T) {
 		t.Parallel()
 		verified := map[string][]byte{}
 		tool, calls := fakeTool(t)
 		for range 2 {
 			dir := chainDir(t, verifyOK, planOK, resultOK)
-			_, err := policyChain(dir, "/d", tool, verified)
+			_, err := policyChain(dir, "/d", stepVerify, tool, verified)
 			require.NoError(t, err)
 		}
 		n := 0
@@ -199,7 +209,8 @@ func Test_policyChain(t *testing.T) {
 	for name, c := range map[string]struct {
 		verify, plan, conftest, failStep, want string
 	}{
-		"Rego のテストが落ちる":          {verify: `[{"filename":"p","successes":1,"failures":[{"msg":"t"}]}]`, plan: planOK, conftest: resultOK, want: "Rego のテストが落ちました"},
+		"Rego のテストが落ちる":          {verify: `[{"package":"data.plan.p_test","name":"test_pass_x","duration":1},{"package":"data.plan.p_test","name":"test_violation_x","fail":true}]`, plan: planOK, conftest: resultOK, want: "Rego のテストが落ちました"},
+		"Rego のテストが上限を超える":       {verify: `[{"package":"data.plan.p_test","name":"test_pass_x","duration":1},{"package":"data.plan.p_test","name":"test_violation_x","error":{"code":"eval_cancel_error","message":"context deadline exceeded"}}]`, plan: planOK, conftest: resultOK, want: "plan.p_test.test_violation_x: eval_cancel_error"},
 		"init が落ちる":              {verify: verifyOK, plan: planOK, conftest: resultOK, failStep: "init", want: "の init"},
 		"plan が落ちる":              {verify: verifyOK, plan: planOK, conftest: resultOK, failStep: "plan", want: "tf-policy が落ちたディレクトリ"},
 		"test_plan が2件":          {verify: verifyOK, plan: planOK + planOK, conftest: resultOK, want: "test_plan が 2 件"},
@@ -219,7 +230,7 @@ func Test_policyChain(t *testing.T) {
 				require.NoError(t, writeText(filepath.Join(target, "fail-"+c.failStep), ""))
 			}
 			tool, _ := fakeTool(t)
-			out, err := policyChain(dir, "/d", tool, map[string][]byte{})
+			out, err := policyChain(dir, "/d", stepVerify, tool, map[string][]byte{})
 			require.Error(t, err)
 			assert.Contains(t, out+err.Error(), c.want)
 		})
@@ -242,7 +253,7 @@ func Test_policyChain(t *testing.T) {
 				return fake(ctx, d, env, s)
 			}
 			verified := map[string][]byte{}
-			_, err := policyChain(dir, "/d", tool, verified)
+			_, err := policyChain(dir, "/d", stepVerify, tool, verified)
 			require.ErrorIs(t, err, errTool)
 			require.NotErrorIs(t, err, errFailed)
 			assert.Equal(t, 2, exitCode(err))
@@ -263,12 +274,11 @@ func Test_policyChain(t *testing.T) {
 		f := tooltest.New(t)
 		f.Set(stepVerify, "out", verifyOK)
 		f.Set(stepInit, "kill", "")
-		_, err := policyChain(dir, "/d", f.Tool(), map[string][]byte{})
+		_, err := policyChain(dir, "/d", stepVerify, f.Tool(), map[string][]byte{})
 		require.ErrorIs(t, err, errTool)
 		assert.Contains(t, err.Error(), "がシグナルで終わりました")
 	})
 
-	// rcTool は、verify・conftest が rc=1 で結果を出し、plan が planOK を出す偽の道具。
 	rcTool := func(t *testing.T) *tooltest.Fake {
 		t.Helper()
 		f := tooltest.New(t)
@@ -282,7 +292,7 @@ func Test_policyChain(t *testing.T) {
 
 	t.Run("対照: verify と conftest の 0 以外の終了コードは捨てて結果を読む", func(t *testing.T) {
 		t.Parallel()
-		out, err := policyChain(chainDir(t, verifyOK, planOK, resultOK), "/d", rcTool(t).Tool(), map[string][]byte{})
+		out, err := policyChain(chainDir(t, verifyOK, planOK, resultOK), "/d", stepVerify, rcTool(t).Tool(), map[string][]byte{})
 		require.NoError(t, err, out)
 	})
 
@@ -291,7 +301,7 @@ func Test_policyChain(t *testing.T) {
 			t.Parallel()
 			f := rcTool(t)
 			f.Set(step, "rc", "1")
-			_, err := policyChain(chainDir(t, verifyOK, planOK, resultOK), "/d", f.Tool(), map[string][]byte{})
+			_, err := policyChain(chainDir(t, verifyOK, planOK, resultOK), "/d", stepVerify, f.Tool(), map[string][]byte{})
 			require.ErrorIs(t, err, errFailed)
 			require.NotErrorIs(t, err, errTool)
 			assert.Equal(t, 1, exitCode(err))
@@ -303,7 +313,7 @@ func Test_policyChain(t *testing.T) {
 		dir := chainDir(t, verifyOK, planOK, resultOK)
 		require.NoError(t, appendText(filepath.Join(dir, "rego", "p.rego"), "\nwarn contains \"w\" if false\n"))
 		tool, calls := fakeTool(t)
-		out, err := policyChain(dir, "/d", tool, map[string][]byte{})
+		out, err := policyChain(dir, "/d", stepVerify, tool, map[string][]byte{})
 		require.ErrorIs(t, err, errFailed)
 		assert.Contains(t, out, "deny contains 以外の形")
 		assert.Empty(t, calls())
@@ -313,24 +323,30 @@ func Test_policyChain(t *testing.T) {
 func Test_verifyKey(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Rego か宣言の中身が変われば鍵が変わる", func(t *testing.T) {
+	t.Run("Rego か宣言の中身か段が変われば鍵が変わる", func(t *testing.T) {
 		t.Parallel()
-		dir := tree(t, map[string]string{"decl.json": "a", "layer-decl.json": "b"})
+		dir := tree(t, map[string]string{"rego/decl.json": "a", "layer-decl.json": "b"})
 		files := []regoFile{{rel: "p.rego", src: "x"}}
-		k1, err := verifyKey(dir, files)
+		k1, err := verifyKey(dir, stepVerify, files)
 		require.NoError(t, err)
-		k2, err := verifyKey(dir, []regoFile{{rel: "p.rego", src: "y"}})
+		again, err := verifyKey(dir, stepVerify, files)
 		require.NoError(t, err)
-		require.NoError(t, writeText(filepath.Join(dir, "decl.json"), "c"))
-		k3, err := verifyKey(dir, files)
+		assert.Equal(t, k1, again, "対照: 同じ入力なら同じ鍵")
+		k2, err := verifyKey(dir, stepVerify, []regoFile{{rel: "p.rego", src: "y"}})
+		require.NoError(t, err)
+		k4, err := verifyKey(dir, stepVerifyTimeout, files)
+		require.NoError(t, err)
+		require.NoError(t, writeText(filepath.Join(dir, "rego", "decl.json"), "c"))
+		k3, err := verifyKey(dir, stepVerify, files)
 		require.NoError(t, err)
 		assert.NotEqual(t, k1, k2)
 		assert.NotEqual(t, k1, k3)
+		assert.NotEqual(t, k1, k4, "段の違うケースは結果を持ち回らない")
 	})
 
 	t.Run("宣言が無ければ errRead", func(t *testing.T) {
 		t.Parallel()
-		_, err := verifyKey(t.TempDir(), nil)
+		_, err := verifyKey(t.TempDir(), stepVerify, nil)
 		require.ErrorIs(t, err, errRead)
 	})
 }
@@ -357,6 +373,25 @@ func Test_runCanary(t *testing.T) {
 		require.ErrorIs(t, err, errCanary)
 		assert.Contains(t, err.Error(), "ok ")
 		assert.Contains(t, out.String(), "--- canary ok の出力")
+	})
+
+	t.Run("上限を超えたテストのケースだけを、極小の上限の段で opa test にかける", func(t *testing.T) {
+		t.Parallel()
+		tool, calls := fakeTool(t)
+		require.ErrorIs(t, runCanary(args(t), &bytes.Buffer{}, tool, tree(t, nil)), errCanary, "偽の道具では canary が成り立たない")
+		var timed, normal []string
+		for _, c := range calls() {
+			f := strings.Fields(c)
+			switch f[1] {
+			case stepVerifyTimeout:
+				timed = append(timed, filepath.Base(f[0]))
+			case stepVerify:
+				normal = append(normal, filepath.Base(f[0]))
+			}
+		}
+		assert.Equal(t, []string{"test-timeout"}, timed)
+		assert.NotContains(t, normal, "test-timeout")
+		assert.Contains(t, normal, "ok", "対照: ほかのケースは本走査と同じ上限の段で走る")
 	})
 
 	t.Run("道具を起動できなければ、ケースの不成立に畳まずに errTool で終了コードは 2", func(t *testing.T) {
