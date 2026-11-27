@@ -13,9 +13,14 @@ import (
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/checksdecl"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/requiredchecks"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
+
+func TestMain(m *testing.M) {
+	os.Exit(testenv.RunGitIsolated(m))
+}
 
 func writeFixture(t *testing.T, files map[string]string) string {
 	t.Helper()

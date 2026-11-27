@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/checksdecl"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/gitenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lintreport"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/requiredchecks"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
@@ -65,10 +66,15 @@ func main() {
 
 // gitLsFiles は、root のリポジトリが追跡するファイルを、root からの `/` 区切りの path で返します。
 func gitLsFiles(root string) ([]string, error) {
+	env, err := gitenv.Env(os.Environ())
+	if err != nil {
+		return nil, xerrors.Wrapf(errLsFiles, "%s: %v", root, err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", "ls-files", "-z")
 	cmd.Dir = root
+	cmd.Env = env
 	raw, err := cmd.Output()
 	if err != nil {
 		return nil, xerrors.Wrapf(errLsFiles, "%s: %v", root, err)

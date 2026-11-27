@@ -761,6 +761,9 @@ func Test_typesFindings(t *testing.T) {
 		"単一値の types":         {"on:\n  pull_request:\n    types: edited\n", 3, "（無いもの: opened, synchronize, reopened）"},
 		"pull_request が無い":   {"on:\n  push:\n", 1, "（無いもの: opened, synchronize, reopened, edited）"},
 		"配列記法の pull_request": {"on: [pull_request]\n", 1, "（無いもの: opened, synchronize, reopened, edited）"},
+		"types が null":       {"on:\n  pull_request:\n    types: ~\n", 3, "（無いもの: opened, synchronize, reopened, edited）"},
+		"types が空配列":         {"on:\n  pull_request:\n    types: []\n", 3, "（無いもの: opened, synchronize, reopened, edited）"},
+		"types が mapping":    {"on:\n  pull_request:\n    types:\n      edited: x\n", 3, "（無いもの: opened, synchronize, reopened, edited）"},
 	} {
 		t.Run(name+"なら違反", func(t *testing.T) {
 			t.Parallel()
@@ -999,6 +1002,26 @@ func Test_stepFindings(t *testing.T) {
 		return stepFindings("gate", d, d.jobs[0], s)
 	}
 	steps := func(extra ...string) string { return "    steps:\n" + strings.Join(extra, "") }
+
+	t.Run("違反は違反の key の行と、step の行に付く", func(t *testing.T) {
+		t.Parallel()
+		got := find(t, "    env:\n      A: b\n"+steps("      - shell: sh\n        env:\n          NEEDS: x\n        run: make ci-gate RUNNER_MODE=host\n"), gateStep)
+		lines := make([]int, 0, len(got))
+		for _, f := range got {
+			lines = append(lines, f.Line)
+		}
+		assert.ElementsMatch(t, []int{5, 8, 8}, lines)
+	})
+
+	t.Run("run: が違えば run: の行、判定の step が無ければ job の行に付く", func(t *testing.T) {
+		t.Parallel()
+		got := find(t, steps("      - env:\n          NEEDS: ${{ toJSON(needs) }}\n        run: make ci-gate RUNNER_MODE=host || true\n"), gateStep)
+		require.Len(t, got, 1)
+		assert.Equal(t, 8, got[0].Line)
+		got = find(t, steps("      - uses: actions/checkout@x\n"), gateStep)
+		require.Len(t, got, 1)
+		assert.Equal(t, 3, got[0].Line)
+	})
 
 	for name, c := range map[string]struct {
 		body string

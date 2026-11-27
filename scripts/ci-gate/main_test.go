@@ -618,7 +618,19 @@ func Test_report(t *testing.T) {
 			assert.Contains(t, got, "| 検査 | 合否に数える | 走るべき | 結果 | 判定 |\n")
 			assert.Contains(t, got, "| a | はい | はい | failure | ❌ |\n")
 			assert.Contains(t, got, "\n❌ "+errFailed.Error()+"\n")
-			assert.Equal(t, out.String(), got)
+			assert.Equal(t, got, out.String())
+		})
+
+		t.Run("summary が既にあれば追記し、前の内容を残す", func(t *testing.T) {
+			t.Parallel()
+			summary := filepath.Join(t.TempDir(), "summary.md")
+			require.NoError(t, os.WriteFile(summary, []byte("prev\n"), 0o600))
+			var out bytes.Buffer
+			err := report(summary, "gate", []row{{Name: "a", Required: true, Should: true, Result: "failure"}}, errFailed, &out)
+			require.ErrorIs(t, err, errFailed)
+			raw, err := os.ReadFile(summary)
+			require.NoError(t, err)
+			assert.Equal(t, "prev\n"+out.String(), string(raw))
 		})
 
 		for _, title := range []string{"gate", "line-gate"} {
