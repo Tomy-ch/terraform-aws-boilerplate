@@ -23,6 +23,8 @@ const (
 // すべて want であれば ok。bucketPolicy なら、doc を resource の Bucket Policy として含めて評価する。
 // docs を持てば、role に付いた policy ではなく docs の文書を simulate-custom-policy で評価する。bucketPolicy と docs を
 // 併せ持つ行は評価しない（simCheck が NG にする）。unresolved が空でなければ、aws を呼ばずにそれを理由とする NG にする。
+// contextDocs が nil でなければ、simulate-principal-policy が返した足りない context を、その文書の行に関わる文の
+// キーに絞る（relevantMissing）。
 type simRow struct {
 	want         string
 	role         string
@@ -32,6 +34,7 @@ type simRow struct {
 	bucketPolicy bool
 	doc          string
 	docs         []string
+	contextDocs  []string
 	unresolved   string
 }
 
@@ -165,9 +168,13 @@ func simCheck(r simRow, n names) check {
 				return verdict{reason: "応答を読めない"}, nil
 			}
 
-			if len(r.docs) > 0 {
-				// simulate-custom-policy は、渡した文書のすべての条件キーを足りないものとして返す。行に関わる文のキーだけを数える。
+			// simulate-custom-policy と simulate-principal-policy は、評価した文書のすべての条件キーを足りないものとして
+			// 返す。行に関わる文のキーだけを数える。
+			switch {
+			case len(r.docs) > 0:
 				keys = relevantMissing(r.docs, action, r.resource, keys)
+			case r.contextDocs != nil:
+				keys = relevantMissing(r.contextDocs, action, r.resource, keys)
 			}
 
 			got = append(got, action)
@@ -253,6 +260,94 @@ func attachedNames(q *query, roleName string) ([]string, string, error) {
 	}
 
 	return got, "", nil
+}
+
+// liveRoleDocuments は、role に付く inline policy と managed policy（既定の版）の文書。読めなければ理由を返す。
+// 文書が1つも無ければ、nil ではない空の一覧を返す。
+func liveRoleDocuments(q *query, roleName string) ([]string, string, error) {
+	docs := []string{}
+
+	listed, reason, err := q.object("iam", "list-role-policies", "--role-name", roleName)
+	if err != nil || reason != "" {
+		return nil, reason, err
+	}
+
+	names, ok := items(get(listed, "PolicyNames"))
+	inline, ok2 := strs(names)
+
+	if !ok || !ok2 {
+		return nil, "list-role-policies の応答を読めない", nil
+	}
+
+	for _, name := range inline {
+		v, reason, err := q.object("iam", "get-role-policy", "--role-name", roleName, "--policy-name", name)
+		if err != nil || reason != "" {
+			return nil, reason, err
+		}
+
+		doc, ok := documentString(at(v, "PolicyDocument"))
+		if !ok {
+			return nil, "get-role-policy の応答を読めない", nil
+		}
+
+		docs = append(docs, doc)
+	}
+
+	attached, reason, err := q.object("iam", "list-attached-role-policies", "--role-name", roleName)
+	if err != nil || reason != "" {
+		return nil, reason, err
+	}
+
+	list, ok := items(get(attached, "AttachedPolicies"))
+	if !ok {
+		return nil, "list-attached-role-policies の応答を読めない", nil
+	}
+
+	for _, e := range list {
+		arn, ok := at(e, "PolicyArn").(string)
+		if !ok {
+			return nil, "list-attached-role-policies の応答を読めない", nil
+		}
+
+		policy, reason, err := q.object("iam", "get-policy", "--policy-arn", arn)
+		if err != nil || reason != "" {
+			return nil, reason, err
+		}
+
+		version, ok := at(policy, "Policy", "DefaultVersionId").(string)
+		if !ok {
+			return nil, "get-policy の応答を読めない", nil
+		}
+
+		v, reason, err := q.object("iam", "get-policy-version", "--policy-arn", arn, "--version-id", version)
+		if err != nil || reason != "" {
+			return nil, reason, err
+		}
+
+		doc, ok := documentString(at(v, "PolicyVersion", "Document"))
+		if !ok {
+			return nil, "get-policy-version の応答を読めない", nil
+		}
+
+		docs = append(docs, doc)
+	}
+
+	return docs, "", nil
+}
+
+// documentString は、aws の応答の policy の文書（aws-cli が JSON の object に戻したもの）を文字列にしたもの。
+func documentString(v any) (string, bool) {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return "", false
+	}
+
+	b, err := json.Marshal(m)
+	if err != nil {
+		return "", false
+	}
+
+	return string(b), true
 }
 
 // governanceGate は、apply-identity の role に統制の policy・メンバーの role の policy と、委任管理者の policy が付いているか。
@@ -591,7 +686,7 @@ func permissionSections(n names, sk, skReason string) []section {
 				sim(implicitDeny, apply, topic, "sns:DeleteTopic", "sns:Subscribe"),
 				sim(implicitDeny, apply, wk, "kms:ScheduleKeyDeletion"),
 				sim(allowed, apply, slr, "iam:GetRole"),
-				// account-baseline の構成物（決定13・17）。削除と停止は与えず、password policy の更新は admin で拒む（決定5）。
+				// account-baseline の構成物（決定13・17）。削除と停止は与えない。
 				simCtx(allowed, apply, rec, inCtx, "config:PutConfigurationRecorder", "config:StartConfigurationRecorder", "config:DescribeConfigurationRecorders"),
 				simCtx(explicitDeny, apply, recOut, outCtx, "config:PutConfigurationRecorder", "config:DescribeConfigurationRecorders"),
 				simCtx(implicitDeny, apply, rec, inCtx, "config:DeleteConfigurationRecorder", "config:StopConfigurationRecorder"),
@@ -758,10 +853,32 @@ func permissionsSteps(q *query, n names) ([]step, error) {
 
 	var steps []step
 
+	// role の文書を読めなければ、その role の行は足りない context を絞らずに数え、読めないことを NG として数える。
+	contextDocs := map[string][]string{}
+
+	for _, role := range n.ciRoles() {
+		docs, reason, err := liveRoleDocuments(q, n.roleName(role))
+		if err != nil {
+			return nil, err
+		}
+
+		if reason != "" {
+			steps = append(steps, checkStep(fixedCheck(role+": policy の文書を読めないので、足りない context を行に関わる文に絞れない", verdict{reason: reason})))
+
+			continue
+		}
+
+		contextDocs[role] = docs
+	}
+
 	rowSteps := func(rows []simRow) {
 		for _, r := range rows {
 			if skReason != "" && r.resource == sk {
 				r.unresolved = "state の鍵の ARN を読めない"
+			}
+
+			if docs, ok := contextDocs[r.role]; ok {
+				r.contextDocs = docs
 			}
 
 			steps = append(steps, checkStep(simCheck(r, n)))
