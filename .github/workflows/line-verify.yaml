@@ -1,0 +1,281 @@
+name: Line Verify
+
+# 線へ入った commit の木を、scope が tree の required の検査ですべて検査する（ADR-0603 決定37・38）。昇格は、その commit の
+# line-gate を待つ。path で絞らない。
+
+on:
+  push:
+    branches: # branch-set: lines
+      - 'release/**'
+      - 'hotfix/**'
+
+permissions:
+  contents: read
+
+jobs:
+  call-actions-lint:
+    uses: ./.github/workflows/actions-lint.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+
+  call-docker-lint:
+    uses: ./.github/workflows/docker-lint.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+
+  call-egress-check:
+    uses: ./.github/workflows/egress-check.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+
+  call-hygiene:
+    uses: ./.github/workflows/hygiene.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+
+  call-md-lint:
+    uses: ./.github/workflows/md-lint.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+
+  call-pin-actions-check:
+    uses: ./.github/workflows/pin-actions-check.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+
+  call-pin-images-check:
+    uses: ./.github/workflows/pin-images-check.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+
+  call-pin-runners-check:
+    uses: ./.github/workflows/pin-runners-check.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+
+  call-repo-settings-check:
+    uses: ./.github/workflows/repo-settings.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+
+  # sample:begin
+  call-sample-remove-check:
+    uses: ./.github/workflows/sample-remove-check.yaml
+    permissions:
+      contents: read
+  # sample:end
+
+  call-secret-scan:
+    uses: ./.github/workflows/secret-scan.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+
+  call-versions-check:
+    uses: ./.github/workflows/versions-check.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+
+  call-zizmor:
+    uses: ./.github/workflows/zizmor.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+      security-events: write
+
+  call-go-lint:
+    uses: ./.github/workflows/go-lint.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+
+  call-go-test:
+    uses: ./.github/workflows/go-test.yaml
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+
+  call-tidy-check:
+    uses: ./.github/workflows/tidy-check.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+      security-events: write
+
+  call-terraform-gates:
+    uses: ./.github/workflows/terraform-gates.yaml
+    permissions:
+      contents: read
+
+  call-checkov:
+    uses: ./.github/workflows/checkov.yaml
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+      security-events: write
+
+  call-kics:
+    uses: ./.github/workflows/kics.yaml
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+      security-events: write
+
+  call-semgrep:
+    uses: ./.github/workflows/semgrep.yaml
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+      security-events: write
+
+  call-trivy-config:
+    uses: ./.github/workflows/trivy-config.yaml
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+      security-events: write
+
+  # 取り消されても判定を報告するよう always() で走る。
+  line-gate:
+    needs:
+      - call-actions-lint
+      - call-docker-lint
+      - call-egress-check
+      - call-hygiene
+      - call-md-lint
+      - call-pin-actions-check
+      - call-pin-images-check
+      - call-pin-runners-check
+      - call-repo-settings-check
+      - call-sample-remove-check # sample:line
+      - call-secret-scan
+      - call-versions-check
+      - call-zizmor
+      - call-go-lint
+      - call-go-test
+      - call-tidy-check
+      - call-terraform-gates
+      - call-checkov
+      - call-kics
+      - call-semgrep
+      - call-trivy-config
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner
+        id: harden-runner
+        continue-on-error: true
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
+      - name: Harden the runner (retry)
+        id: harden-runner-retry
+        if: steps.harden-runner.outcome != 'success'
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
+        with:
+          go-version-file: scripts/go.mod
+          cache: false
+
+      - name: Judge the checks
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: make ci-line-gate RUNNER_MODE=host

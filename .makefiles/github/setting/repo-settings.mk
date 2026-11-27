@@ -9,6 +9,9 @@
 .PHONY: apply-environments ## environments.json を対象リポジトリの environment へ適用
 .PHONY: apply-vulnerability-reporting ## private-vulnerability-reporting.json を対象リポジトリの Private Vulnerability Reporting へ適用
 .PHONY: deploy-source-check ## [CI] デプロイブランチへ入る Pull Request の head を検査する（ADR-0603 決定31）
+.PHONY: ci-changes ## [CI] Pull Request の gate で走るべき検査を決め、GITHUB_OUTPUT の run へ書く（ADR-0603 決定17）
+.PHONY: ci-gate ## [CI] Pull Request の gate の判定（ADR-0603 決定17・18）
+.PHONY: ci-line-gate ## [CI] 線への push の検証の判定（ADR-0603 決定37・38）
 .PHONY: create-deploy-branch ## DEPLOY_ENV のデプロイブランチを、デフォルトブランチの先頭から作る（管理者が bootstrap で1回）
 .PHONY: deploy-branch-exists ## DEPLOY_ENV のデプロイブランチが在ることを確かめる（読み取りのみ。bootstrap の段4 の apply の前）
 
@@ -39,6 +42,17 @@ apply-vulnerability-reporting:
 # 引数は RUN_SCRIPT_HOST の sh が環境変数から展開する。
 deploy-source-check:
 	@$(call RUN_SCRIPT_HOST,repo-settings,source -base "$${BASE_REF:-}" -base-sha "$${BASE_SHA:-}" -head-sha "$${HEAD_SHA:-}" -default "$${DEFAULT_BRANCH:-}")
+
+# 判定は scripts/ci-gate が持つ。git の履歴を読むので、ツールランナーを経由しない。引数は deploy-source-check と同じく
+# RUN_SCRIPT_HOST の sh が環境変数から展開する。宣言は base の commit（線の検証では push した commit）の木から読む。
+ci-changes:
+	@$(call RUN_SCRIPT_HOST,ci-gate,changes --decl-rev "$${BASE_SHA:-}" --base "$${BASE_SHA:-}" --head "$${HEAD_SHA:-}" --base-ref "$${BASE_REF:-}" --output "$${GITHUB_OUTPUT:-}")
+
+ci-gate:
+	@$(call RUN_SCRIPT_HOST,ci-gate,judge --decl-rev "$${BASE_SHA:-}" --base "$${BASE_SHA:-}" --head "$${HEAD_SHA:-}" --base-ref "$${BASE_REF:-}" --summary "$${GITHUB_STEP_SUMMARY:-}")
+
+ci-line-gate:
+	@$(call RUN_SCRIPT_HOST,ci-gate,line --decl-rev "$${GITHUB_SHA:-}" --event "$${GITHUB_EVENT_NAME:-}" --ref "$${GITHUB_REF:-}" --summary "$${GITHUB_STEP_SUMMARY:-}")
 
 # DEPLOY_ENV は人が渡す値なので、deploy-source-check と同じく RUN_SCRIPT_HOST の sh が環境変数から展開する。
 create-deploy-branch:

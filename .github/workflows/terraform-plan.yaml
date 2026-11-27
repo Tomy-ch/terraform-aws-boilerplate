@@ -1,0 +1,552 @@
+name: Terraform Plan
+
+# admin の env の root の plan（規則は README.md の「plan の job」）。pr-gate.yaml が、base が admin へ変更を運ぶ線の
+# Pull Request で呼ぶ。admin のデプロイブランチへの Pull Request の plan は、deploy-gate.yaml の native の job が報告する。
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  detect-infra-code:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner
+        id: harden-runner
+        continue-on-error: true
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
+      - name: Harden the runner (retry)
+        id: harden-runner-retry
+        if: steps.harden-runner.outcome != 'success'
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # go: infra-code-gate と hcl-input と hcl-tally は scripts/ からビルドする。
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: aqua:open-policy-agent/conftest go
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Detect infrastructure code
+        run: make -k infra-code-gate RUNNER_MODE=host
+
+  # 規則は README.md の「plan の job」.
+  admin-identity:
+    needs: detect-infra-code
+    if: ${{ needs.detect-infra-code.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: admin-plan
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Harden the runner
+        id: harden-runner
+        continue-on-error: true
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
+            registry.terraform.io
+            releases.hashicorp.com
+            github-releases.githubusercontent.com
+            sts.ap-northeast-1.amazonaws.com
+            s3.ap-northeast-1.amazonaws.com
+            *.s3.ap-northeast-1.amazonaws.com
+            cloudformation.ap-northeast-1.amazonaws.com
+            iam.amazonaws.com
+            kms.ap-northeast-1.amazonaws.com
+            organizations.us-east-1.amazonaws.com
+            *.s3-control.ap-northeast-1.amazonaws.com
+            ssm.ap-northeast-1.amazonaws.com
+            guardduty.ap-northeast-1.amazonaws.com
+            guardduty.ap-northeast-2.amazonaws.com
+            guardduty.ap-northeast-3.amazonaws.com
+            guardduty.ap-south-1.amazonaws.com
+            guardduty.ap-southeast-1.amazonaws.com
+            guardduty.ap-southeast-2.amazonaws.com
+            guardduty.ca-central-1.amazonaws.com
+            guardduty.eu-central-1.amazonaws.com
+            guardduty.eu-north-1.amazonaws.com
+            guardduty.eu-west-1.amazonaws.com
+            guardduty.eu-west-2.amazonaws.com
+            guardduty.eu-west-3.amazonaws.com
+            guardduty.sa-east-1.amazonaws.com
+            guardduty.us-east-1.amazonaws.com
+            guardduty.us-east-2.amazonaws.com
+            guardduty.us-west-1.amazonaws.com
+            guardduty.us-west-2.amazonaws.com
+            inspector2.ap-northeast-1.amazonaws.com
+            inspector2.ap-northeast-2.amazonaws.com
+            inspector2.ap-northeast-3.amazonaws.com
+            inspector2.ap-south-1.amazonaws.com
+            inspector2.ap-southeast-1.amazonaws.com
+            inspector2.ap-southeast-2.amazonaws.com
+            inspector2.ca-central-1.amazonaws.com
+            inspector2.eu-central-1.amazonaws.com
+            inspector2.eu-north-1.amazonaws.com
+            inspector2.eu-west-1.amazonaws.com
+            inspector2.eu-west-2.amazonaws.com
+            inspector2.eu-west-3.amazonaws.com
+            inspector2.sa-east-1.amazonaws.com
+            inspector2.us-east-1.amazonaws.com
+            inspector2.us-east-2.amazonaws.com
+            inspector2.us-west-1.amazonaws.com
+            inspector2.us-west-2.amazonaws.com
+            securityhub.ap-northeast-1.amazonaws.com
+            securityhub.ap-northeast-2.amazonaws.com
+            securityhub.ap-northeast-3.amazonaws.com
+            securityhub.ap-south-1.amazonaws.com
+            securityhub.ap-southeast-1.amazonaws.com
+            securityhub.ap-southeast-2.amazonaws.com
+            securityhub.ca-central-1.amazonaws.com
+            securityhub.eu-central-1.amazonaws.com
+            securityhub.eu-north-1.amazonaws.com
+            securityhub.eu-west-1.amazonaws.com
+            securityhub.eu-west-2.amazonaws.com
+            securityhub.eu-west-3.amazonaws.com
+            securityhub.sa-east-1.amazonaws.com
+            securityhub.us-east-1.amazonaws.com
+            securityhub.us-east-2.amazonaws.com
+            securityhub.us-west-1.amazonaws.com
+            securityhub.us-west-2.amazonaws.com
+            cloudtrail.ap-northeast-1.amazonaws.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
+      - name: Harden the runner (retry)
+        id: harden-runner-retry
+        if: steps.harden-runner.outcome != 'success'
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
+            registry.terraform.io
+            releases.hashicorp.com
+            github-releases.githubusercontent.com
+            sts.ap-northeast-1.amazonaws.com
+            s3.ap-northeast-1.amazonaws.com
+            *.s3.ap-northeast-1.amazonaws.com
+            cloudformation.ap-northeast-1.amazonaws.com
+            iam.amazonaws.com
+            kms.ap-northeast-1.amazonaws.com
+            organizations.us-east-1.amazonaws.com
+            *.s3-control.ap-northeast-1.amazonaws.com
+            ssm.ap-northeast-1.amazonaws.com
+            guardduty.ap-northeast-1.amazonaws.com
+            guardduty.ap-northeast-2.amazonaws.com
+            guardduty.ap-northeast-3.amazonaws.com
+            guardduty.ap-south-1.amazonaws.com
+            guardduty.ap-southeast-1.amazonaws.com
+            guardduty.ap-southeast-2.amazonaws.com
+            guardduty.ca-central-1.amazonaws.com
+            guardduty.eu-central-1.amazonaws.com
+            guardduty.eu-north-1.amazonaws.com
+            guardduty.eu-west-1.amazonaws.com
+            guardduty.eu-west-2.amazonaws.com
+            guardduty.eu-west-3.amazonaws.com
+            guardduty.sa-east-1.amazonaws.com
+            guardduty.us-east-1.amazonaws.com
+            guardduty.us-east-2.amazonaws.com
+            guardduty.us-west-1.amazonaws.com
+            guardduty.us-west-2.amazonaws.com
+            inspector2.ap-northeast-1.amazonaws.com
+            inspector2.ap-northeast-2.amazonaws.com
+            inspector2.ap-northeast-3.amazonaws.com
+            inspector2.ap-south-1.amazonaws.com
+            inspector2.ap-southeast-1.amazonaws.com
+            inspector2.ap-southeast-2.amazonaws.com
+            inspector2.ca-central-1.amazonaws.com
+            inspector2.eu-central-1.amazonaws.com
+            inspector2.eu-north-1.amazonaws.com
+            inspector2.eu-west-1.amazonaws.com
+            inspector2.eu-west-2.amazonaws.com
+            inspector2.eu-west-3.amazonaws.com
+            inspector2.sa-east-1.amazonaws.com
+            inspector2.us-east-1.amazonaws.com
+            inspector2.us-east-2.amazonaws.com
+            inspector2.us-west-1.amazonaws.com
+            inspector2.us-west-2.amazonaws.com
+            securityhub.ap-northeast-1.amazonaws.com
+            securityhub.ap-northeast-2.amazonaws.com
+            securityhub.ap-northeast-3.amazonaws.com
+            securityhub.ap-south-1.amazonaws.com
+            securityhub.ap-southeast-1.amazonaws.com
+            securityhub.ap-southeast-2.amazonaws.com
+            securityhub.ca-central-1.amazonaws.com
+            securityhub.eu-central-1.amazonaws.com
+            securityhub.eu-north-1.amazonaws.com
+            securityhub.eu-west-1.amazonaws.com
+            securityhub.eu-west-2.amazonaws.com
+            securityhub.eu-west-3.amazonaws.com
+            securityhub.sa-east-1.amazonaws.com
+            securityhub.us-east-1.amazonaws.com
+            securityhub.us-east-2.amazonaws.com
+            securityhub.us-west-1.amazonaws.com
+            securityhub.us-west-2.amazonaws.com
+            cloudtrail.ap-northeast-1.amazonaws.com
+
+      # skip ではなく失敗にする（ADR-0602 決定14）。fork と Dependabot の run は secret を受けない。
+      - name: Refuse untrusted Pull Requests
+        id: refuse-untrusted
+        env:
+          HEAD_REPO_ID: ${{ github.event.pull_request.head.repo.id }}
+          REPO_ID: ${{ github.repository_id }}
+          ACTOR: ${{ github.actor }}
+          ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: |
+          test "$HEAD_REPO_ID" = "$REPO_ID" || { echo "❌ fork からの Pull Request では plan の role を assume しません"; exit 1; }
+          test "$ACTOR" != "dependabot[bot]" || { echo "❌ Dependabot の Pull Request では plan の role を assume しません"; exit 1; }
+          test -n "$ACCOUNT_ID" || { echo "❌ environment admin-plan の secret AWS_ACCOUNT_ID がありません"; exit 1; }
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # go: tf-local は scripts/ からビルドする。
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: aqua:hashicorp/terraform aqua:open-policy-agent/conftest aqua:aws/aws-cli go
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Assume the plan role
+        env:
+          CI_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: make ci-aws-credentials CI_ENV=admin CI_ROLE=plan RUNNER_MODE=host
+
+      - name: Confirm the apply-family roles refuse this job
+        env:
+          CI_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: make ci-assume-denied CI_ENV=admin RUNNER_MODE=host
+
+      - name: Plan the identity root
+        env:
+          CI_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          CI_PR: ${{ github.event.pull_request.number }}
+        run: make ci-plan-admin-identity RUNNER_MODE=host
+
+  # 規則は README.md の「plan の job」.
+  admin-workload:
+    needs: detect-infra-code
+    if: ${{ needs.detect-infra-code.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: admin-plan
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Harden the runner
+        id: harden-runner
+        continue-on-error: true
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
+            registry.terraform.io
+            releases.hashicorp.com
+            github-releases.githubusercontent.com
+            sts.ap-northeast-1.amazonaws.com
+            s3.ap-northeast-1.amazonaws.com
+            *.s3.ap-northeast-1.amazonaws.com
+            cloudformation.ap-northeast-1.amazonaws.com
+            iam.amazonaws.com
+            kms.ap-northeast-1.amazonaws.com
+            organizations.us-east-1.amazonaws.com
+            *.s3-control.ap-northeast-1.amazonaws.com
+            ssm.ap-northeast-1.amazonaws.com
+            sns.ap-northeast-1.amazonaws.com
+            sns.us-east-1.amazonaws.com
+            kms.us-east-1.amazonaws.com
+            scheduler.ap-northeast-1.amazonaws.com
+            scheduler.us-east-1.amazonaws.com
+            chatbot.us-west-2.amazonaws.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
+      - name: Harden the runner (retry)
+        id: harden-runner-retry
+        if: steps.harden-runner.outcome != 'success'
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
+            registry.terraform.io
+            releases.hashicorp.com
+            github-releases.githubusercontent.com
+            sts.ap-northeast-1.amazonaws.com
+            s3.ap-northeast-1.amazonaws.com
+            *.s3.ap-northeast-1.amazonaws.com
+            cloudformation.ap-northeast-1.amazonaws.com
+            iam.amazonaws.com
+            kms.ap-northeast-1.amazonaws.com
+            organizations.us-east-1.amazonaws.com
+            *.s3-control.ap-northeast-1.amazonaws.com
+            ssm.ap-northeast-1.amazonaws.com
+            sns.ap-northeast-1.amazonaws.com
+            sns.us-east-1.amazonaws.com
+            kms.us-east-1.amazonaws.com
+            scheduler.ap-northeast-1.amazonaws.com
+            scheduler.us-east-1.amazonaws.com
+            chatbot.us-west-2.amazonaws.com
+
+      # 失敗にする理由は plan-admin-identity の Refuse untrusted Pull Requests と同じ。
+      - name: Refuse untrusted Pull Requests
+        id: refuse-untrusted
+        env:
+          HEAD_REPO_ID: ${{ github.event.pull_request.head.repo.id }}
+          REPO_ID: ${{ github.repository_id }}
+          ACTOR: ${{ github.actor }}
+          ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: |
+          test "$HEAD_REPO_ID" = "$REPO_ID" || { echo "❌ fork からの Pull Request では plan の role を assume しません"; exit 1; }
+          test "$ACTOR" != "dependabot[bot]" || { echo "❌ Dependabot の Pull Request では plan の role を assume しません"; exit 1; }
+          test -n "$ACCOUNT_ID" || { echo "❌ environment admin-plan の secret AWS_ACCOUNT_ID がありません"; exit 1; }
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # go: tf-local は scripts/ からビルドする。
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: aqua:hashicorp/terraform aqua:open-policy-agent/conftest aqua:aws/aws-cli go
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Assume the plan role
+        env:
+          CI_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: make ci-aws-credentials CI_ENV=admin CI_ROLE=plan RUNNER_MODE=host
+
+      - name: Confirm the apply-family roles refuse this job
+        env:
+          CI_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: make ci-assume-denied CI_ENV=admin RUNNER_MODE=host
+
+      - name: Plan the workload root
+        env:
+          CI_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          CI_PR: ${{ github.event.pull_request.number }}
+        run: make ci-plan-admin-workload RUNNER_MODE=host

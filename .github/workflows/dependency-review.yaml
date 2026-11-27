@@ -7,12 +7,18 @@ name: Dependency Review
 on:
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      called:
+        description: workflow_call で呼ばれたこと。呼ばれたときは、走らせるかどうかを呼んだ側が決めます。
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: dependency-review-${{ github.event_name }}-${{ inputs.called && github.run_id || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -22,7 +28,7 @@ jobs:
     # The action diffs the base ref against the head ref, so it only has the
     # required context on a pull request. Skip it on workflow_dispatch instead
     # of letting the run fail.
-    if: github.event_name == 'pull_request'
+    if: inputs.called || github.event_name == 'pull_request'
     permissions:
       contents: read
       # Required by comment-summary-in-pr.

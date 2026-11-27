@@ -22,6 +22,12 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, edited]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      called:
+        description: workflow_call で呼ばれたこと。呼ばれたときは、走らせるかどうかを呼んだ側が決めます。
+        type: boolean
+        default: true
 
 # workflow レベルは読み取りだけにする。書き込みが要るのは Pull Request へ結果を投稿する
 # job だけであり、そこへ降ろす。workflow レベルに置くと、後から足した job が要らない
@@ -30,13 +36,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  group: trivy-release-gate-${{ github.event_name }}-${{ inputs.called && github.run_id || github.ref }}
   cancel-in-progress: true
 
 jobs:
   trivy-fs-release:
     # Why the trigger condition lives in a job: README.md の「必須検査はすべての Pull Request で報告される」.
-    if: ${{ github.event_name != 'pull_request' || contains(fromJSON('["admin", "security", "log-archive", "production", "staging", "develop"]'), github.base_ref) }} # branch-set: deploy
+    if: ${{ inputs.called || github.event_name != 'pull_request' || contains(fromJSON('["admin", "security", "log-archive", "production", "staging", "develop"]'), github.base_ref) }} # branch-set: deploy
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

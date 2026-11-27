@@ -1,0 +1,33 @@
+name: Actions Static Analysis (schedule)
+
+# zizmor.yaml の定期実行と、その通知。検査の中身は zizmor.yaml が持つ。
+
+on:
+  schedule:
+    - cron: '0 2 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    uses: ./.github/workflows/zizmor.yaml
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
+
+  # See README.md の「通知の起動条件」.
+  notify-failure:
+    needs: scan
+    if: ${{ always() && github.event_name == 'schedule' && contains(fromJSON('["failure", "cancelled"]'), needs.scan.result) }}
+    uses: ./.github/workflows/notify.yaml
+    with:
+      failed-job: zizmor
+    secrets:
+      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_SECURITY }}

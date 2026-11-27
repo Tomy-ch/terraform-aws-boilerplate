@@ -12,15 +12,32 @@ on:
       - 'release/**'
       - 'hotfix/**'
   pull_request:
-  schedule:
-    - cron: '0 0 * * 1'
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      called:
+        description: workflow_call で呼ばれたこと。呼ばれたときは、走らせるかどうかを呼んだ側が決めます。
+        type: boolean
+        default: true
+    outputs:
+      count:
+        description: 修正版のある脆弱性の件数。
+        value: ${{ jobs.trivy-fs.outputs.count }}
+      detail:
+        description: 検出の通知に載せる、脆弱性の識別子の一覧（Markdown）。
+        value: ${{ jobs.trivy-fs.outputs.detail }}
+      trivy-fs-status:
+        description: job trivy-fs の status（success・failure・cancelled）。走らなければ空。
+        value: ${{ jobs.trivy-fs.outputs.status }}
+      trivy-license-status:
+        description: job trivy-license の status（success・failure・cancelled）。走らなければ空。
+        value: ${{ jobs.trivy-license.outputs.status }}
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  group: trivy-fs-${{ github.event_name }}-${{ inputs.called && github.run_id || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -35,6 +52,7 @@ jobs:
       actions: read
       pull-requests: write
     outputs:
+      status: ${{ steps.status.outputs.status }}
       count: ${{ steps.summarize.outputs.count }}
       detail: ${{ steps.detail.outputs.markdown }}
     steps:
@@ -197,7 +215,7 @@ jobs:
         uses: ./.github/actions/upsert-pr-comment
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          marker: '<!-- trivy-fs-result -->'
+          marker: '<!-- trivy-fs-status -->'
           status: "${{ steps.summarize.outputs.count == '0' && 'success' || 'findings' }}"
           title: "${{ steps.summarize.outputs.title || '## ⚠️ Dependency Scan: CUT OFF (no result produced)' }}"
           body-file: trivy-fs-summary.md
@@ -216,6 +234,14 @@ jobs:
           sarif_file: trivy-fs.sarif
           category: trivy-fs
 
+      # The workflow that calls this one on a schedule reads this to tell which job to report.
+      - name: Report the job status
+        id: status
+        if: (steps.harden-runner.outcome == 'success' || steps.harden-runner-retry.outcome == 'success') && always()
+        env:
+          STATUS: ${{ job.status }}
+        run: echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+
   # License inventory shares this workflow's trigger because it asks about the very
   # same files, but it is a separate job so that its exit code, PR comment and
   # artifact never mix with the vulnerability verdict above.
@@ -228,6 +254,8 @@ jobs:
       contents: read
       pull-requests: write
 
+    outputs:
+      status: ${{ steps.status.outputs.status }}
     steps:
       - name: Harden the runner
         id: harden-runner
@@ -401,40 +429,16 @@ jobs:
         uses: ./.github/actions/upsert-pr-comment
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          marker: '<!-- trivy-license-result -->'
+          marker: '<!-- trivy-license-status -->'
           status: "${{ steps.summarize.outputs.review == '0' && 'success' || 'review' }}"
           title: "${{ steps.summarize.outputs.title || '## ⚠️ License Scan: CUT OFF (no result produced)' }}"
           body-file: trivy-license-summary.md
           details-summary: '📄 Summary'
 
-  # 報告のみの job なので、検出の通知はスケジュール実行だけが出す。理由は README.md の「通知の起動条件」。
-  notify-detection:
-    needs: trivy-fs
-    if: ${{ github.event_name == 'schedule' && needs.trivy-fs.outputs.count != '' && needs.trivy-fs.outputs.count != '0' }}
-    uses: ./.github/workflows/notify.yaml
-    with:
-      detected: Trivy FS found ${{ needs.trivy-fs.outputs.count }} fixable vulnerabilities
-      details: ${{ needs.trivy-fs.outputs.detail }}
-    secrets:
-      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_SECURITY }}
-
-  # See README.md の「通知の起動条件」.
-  notify-failure:
-    needs: trivy-fs
-    if: ${{ always() && github.event_name == 'schedule' && contains(fromJSON('["failure", "cancelled"]'), needs.trivy-fs.result) }}
-    uses: ./.github/workflows/notify.yaml
-    with:
-      failed-job: trivy-fs
-    secrets:
-      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_SECURITY }}
-
-  # The license job never fails on a finding, so reaching here means the scanner
-  # itself broke — exactly the silent weekly breakage this notification exists for.
-  notify-failure-license:
-    needs: trivy-license
-    if: ${{ always() && github.event_name == 'schedule' && contains(fromJSON('["failure", "cancelled"]'), needs.trivy-license.result) }}
-    uses: ./.github/workflows/notify.yaml
-    with:
-      failed-job: trivy-license
-    secrets:
-      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_SECURITY }}
+      # The workflow that calls this one on a schedule reads this to tell which job to report.
+      - name: Report the job status
+        id: status
+        if: (steps.harden-runner.outcome == 'success' || steps.harden-runner-retry.outcome == 'success') && always()
+        env:
+          STATUS: ${{ job.status }}
+        run: echo "status=$STATUS" >> "$GITHUB_OUTPUT"

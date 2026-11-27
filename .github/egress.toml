@@ -164,10 +164,10 @@ regions = [
 
 # CI が Terraform を実行する root と、その root に触れるジョブ（scripts/README.md の egress/ の行）。
 [root."env/admin/identity"]
-jobs = ["terraform-gates.yaml:plan-admin-identity", "terraform-apply.yaml:apply-admin-identity", "terraform-unlock.yaml:unlock-admin-identity", "terraform-lock-hold.yaml:hold-admin-identity"]
+jobs = ["deploy-gate.yaml:plan-admin-identity", "terraform-plan.yaml:admin-identity", "terraform-apply.yaml:apply-admin-identity", "terraform-unlock.yaml:unlock-admin-identity", "terraform-lock-hold.yaml:hold-admin-identity"]
 
 [root."env/admin"]
-jobs = ["terraform-gates.yaml:plan-admin-workload", "terraform-apply.yaml:apply-admin-workload", "terraform-unlock.yaml:unlock-admin-workload", "terraform-lock-hold.yaml:hold-admin-workload"]
+jobs = ["deploy-gate.yaml:plan-admin-workload", "terraform-plan.yaml:admin-workload", "terraform-apply.yaml:apply-admin-workload", "terraform-unlock.yaml:unlock-admin-workload", "terraform-lock-hold.yaml:hold-admin-workload"]
 
 # resource / data source の型が呼ぶ宛先。名前の形と当たり方は scripts/README.md の egress/ の行（make egress-check が拒む）。
 # API を呼ばない型は、型名そのもので hosts を空にする。
@@ -258,9 +258,6 @@ classes = ["mise"]
 [job."repo-settings.yaml:repo-settings-check"]
 classes = ["mise"]
 
-[job."repo-settings.yaml:deploy-source-check"]
-classes = ["mise"]
-
 [job."go-cooldown.yaml:go-cooldown"]
 classes = ["mise"]
 
@@ -318,7 +315,7 @@ extra = ["dl-cdn.alpinelinux.org"]
 [job."secret-scan.yaml:secret-scan"]
 classes = ["mise"]
 
-[job."secret-scan.yaml:trivy-secret"]
+[job."trivy-secret.yaml:trivy-secret"]
 classes = ["mise"]
 
 # --no-verification と --no-update で、走査そのものは外へ出ない。
@@ -342,9 +339,6 @@ classes = ["mise"]
 extra = ["registry.terraform.io"]
 
 # sample:begin
-[job."sonarcloud.yaml:preflight"]
-classes = []
-
 # 走査器の本体は binaries.sonarsource.com から、JRE と解析エンジンは scanner.sonarcloud.io から、
 # 解析の送り先は api.sonarcloud.io と sonarcloud.io。署名の検証鍵は keyserver.ubuntu.com から取り、
 # gpg がその SRV レコードを引くので配下も要る。keys.openpgp.org は scan-action の鍵の取得の代替先
@@ -391,10 +385,35 @@ classes = ["terraform"]
 [job."terraform-gates.yaml:infra-code-gate"]
 classes = ["mise"]
 
-[job."terraform-gates.yaml:plan-admin-identity"]
+# 宣言（checks.json と branches.json）と差分を git から読む。scripts/ci-gate は setup-go の Go で建てる。
+[job."pr-gate.yaml:changes"]
+classes = ["mise"]
+
+[job."pr-gate.yaml:gate"]
+classes = ["mise"]
+
+[job."line-verify.yaml:line-gate"]
+classes = ["mise"]
+
+[job."deploy-gate.yaml:deploy-source-check"]
+classes = ["mise"]
+
+[job."deploy-gate.yaml:detect-infra-code"]
+classes = ["mise"]
+
+[job."deploy-gate.yaml:plan-admin-identity"]
 classes = ["terraform", "aws-governance"]
 
-[job."terraform-gates.yaml:plan-admin-workload"]
+[job."deploy-gate.yaml:plan-admin-workload"]
+classes = ["terraform", "aws-notify"]
+
+[job."terraform-plan.yaml:detect-infra-code"]
+classes = ["mise"]
+
+[job."terraform-plan.yaml:admin-identity"]
+classes = ["terraform", "aws-governance"]
+
+[job."terraform-plan.yaml:admin-workload"]
 classes = ["terraform", "aws-notify"]
 
 [job."terraform-apply.yaml:apply-infra-code-gate"]

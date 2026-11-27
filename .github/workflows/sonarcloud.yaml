@@ -8,92 +8,32 @@ name: SonarCloud
 on:
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      called:
+        description: workflow_call で呼ばれたこと。呼ばれたときは、走らせるかどうかを呼んだ側が決めます。
+        type: boolean
+        default: true
+    secrets:
+      SONAR_TOKEN:
+        description: SonarCloud の token。未設定なら走査を省き、成功で終えます。
+        required: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  group: sonarcloud-${{ github.event_name }}-${{ inputs.called && github.run_id || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  preflight:
+  sonarcloud:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
     outputs:
       configured: ${{ steps.token.outputs.configured }}
-    steps:
-      - name: Harden the runner
-        id: harden-runner
-        continue-on-error: true
-        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
-        with:
-          egress-policy: block
-          dns-policy: allowed-domains-only
-          enable-sudo: false
-          allowed-ips: |
-            127.0.0.100
-          allowed-domains: |
-            api.github.com
-            github.com
-            codeload.github.com
-            objects.githubusercontent.com
-            raw.githubusercontent.com
-            release-assets.githubusercontent.com
-            *.actions.githubusercontent.com
-            productionresultssa30.blob.core.windows.net
-            productionresultssa31.blob.core.windows.net
-            productionresultssa32.blob.core.windows.net
-      - name: Prepare to retry hardening the runner
-        if: steps.harden-runner.outcome != 'success'
-        continue-on-error: true
-        timeout-minutes: 2
-        run: sleep 30 && sudo apt-get update
-      - name: Harden the runner (retry)
-        id: harden-runner-retry
-        if: steps.harden-runner.outcome != 'success'
-        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
-        with:
-          egress-policy: block
-          dns-policy: allowed-domains-only
-          enable-sudo: false
-          allowed-ips: |
-            127.0.0.100
-          allowed-domains: |
-            api.github.com
-            github.com
-            codeload.github.com
-            objects.githubusercontent.com
-            raw.githubusercontent.com
-            release-assets.githubusercontent.com
-            *.actions.githubusercontent.com
-            productionresultssa30.blob.core.windows.net
-            productionresultssa31.blob.core.windows.net
-            productionresultssa32.blob.core.windows.net
-
-      - name: Check whether SONAR_TOKEN is set
-        id: token
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: |
-          if [ -n "${SONAR_TOKEN:-}" ]; then
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::SONAR_TOKEN is not set, so the SonarCloud scan is skipped"
-          fi
-        shell: bash
-
-  sonarcloud:
-    needs: preflight
-    if: needs.preflight.outputs.configured == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    outputs:
       gate: ${{ steps.gate.outputs.status }}
       dashboard: ${{ steps.task.outputs.dashboardUrl }}
     steps:
@@ -159,8 +99,23 @@ jobs:
             *.keyserver.ubuntu.com
             keys.openpgp.org
 
+      - name: Check whether SONAR_TOKEN is set
+        id: token
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [ -n "${SONAR_TOKEN:-}" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::SONAR_TOKEN is not set, so the SonarCloud scan is skipped"
+            echo "SonarCloud: SONAR_TOKEN が未設定のため走らせません" >> "$GITHUB_STEP_SUMMARY"
+          fi
+        shell: bash
+
       # fetch-depth: 0 so the scanner can attribute lines to commits for new-code detection.
       - name: Checkout
+        if: steps.token.outputs.configured == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -169,12 +124,14 @@ jobs:
       # Forks never receive SONAR_TOKEN; a pull request from a branch of this repository does, and its
       # author can change sonar-project.properties. The values the scan reports are checked below.
       - name: Scan
+        if: steps.token.outputs.configured == 'true'
         uses: SonarSource/sonarqube-scan-action@59202af334b4ba7b5db01b701b8e79f8b3bef0f4 # v8.5.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
       # The scan only queues the analysis; its result is read back from the queue entry.
       - name: Read analysis task
+        if: steps.token.outputs.configured == 'true'
         id: task
         run: |
           set -euo pipefail
@@ -195,6 +152,7 @@ jobs:
 
       # The token goes to these values below, so they are checked before any request is made.
       - name: Check the analysis task values
+        if: steps.token.outputs.configured == 'true'
         env:
           CE_TASK_ID: ${{ steps.task.outputs.ceTaskId }}
           SERVER_URL: ${{ steps.task.outputs.serverUrl }}
@@ -210,6 +168,7 @@ jobs:
         shell: bash
 
       - name: Wait for the analysis to complete
+        if: steps.token.outputs.configured == 'true'
         id: analysis
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -239,6 +198,7 @@ jobs:
 
       # Reported, not enforced. A gate that is not assigned is reported as NONE rather than read as a pass.
       - name: Read the quality gate
+        if: steps.token.outputs.configured == 'true'
         id: gate
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -259,7 +219,7 @@ jobs:
 
   # Separate from the scan so the job that posts to the PR never holds SONAR_TOKEN.
   report:
-    needs: [preflight, sonarcloud]
+    needs: sonarcloud
     if: always() && github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -324,7 +284,7 @@ jobs:
         id: comment
         if: (steps.harden-runner.outcome == 'success' || steps.harden-runner-retry.outcome == 'success') && always()
         env:
-          CONFIGURED: ${{ needs.preflight.outputs.configured }}
+          CONFIGURED: ${{ needs.sonarcloud.outputs.configured }}
           SCAN_RESULT: ${{ needs.sonarcloud.result }}
           GATE: ${{ needs.sonarcloud.outputs.gate }}
           DASHBOARD: ${{ needs.sonarcloud.outputs.dashboard }}

@@ -17,12 +17,18 @@ name: Commitlint
 on:
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      called:
+        description: workflow_call で呼ばれたこと。呼ばれたときは、走らせるかどうかを呼んだ側が決めます。
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: commitlint-${{ github.event_name }}-${{ inputs.called && github.run_id || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -32,7 +38,7 @@ jobs:
     # A base..head range exists only in a pull-request context. Rather than invent a substitute
     # range on workflow_dispatch — which would be the same silent degradation this job exists to
     # catch — the job is skipped there.
-    if: github.event_name == 'pull_request'
+    if: inputs.called || github.event_name == 'pull_request'
     permissions:
       contents: read
       pull-requests: write

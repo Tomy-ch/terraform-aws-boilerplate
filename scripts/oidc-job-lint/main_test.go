@@ -191,7 +191,7 @@ func infoOf(source string) workflowInfo {
 	split := workflow.SplitJobs(source)
 	on, onLine := triggers(split.Preamble)
 
-	return workflowInfo{on: on, onLine: onLine, preamble: split.Preamble, jobs: split.Jobs}
+	return workflowInfo{file: deployGateFile, on: on, onLine: onLine, preamble: split.Preamble, jobs: split.Jobs}
 }
 
 func credOf(job workflow.Job) workflow.Line {
@@ -315,7 +315,7 @@ func Test_run(t *testing.T) {
 	t.Run("入口の job が id-token を欠く workflow だけなら、対象0件より先に違反で失敗する", func(t *testing.T) {
 		t.Parallel()
 
-		wf, env := repoWith(t, map[string]string{"plan.yaml": strings.Replace(planWorkflow, "      id-token: write\n", "", 1)}, envDecl)
+		wf, env := repoWith(t, map[string]string{deployGateFile: strings.Replace(planWorkflow, "      id-token: write\n", "", 1)}, envDecl)
 		var out bytes.Buffer
 		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
 		assert.Contains(t, out.String(), "job plan-admin-identity は CI の入口")
@@ -324,7 +324,7 @@ func Test_run(t *testing.T) {
 	t.Run("plan と apply の job が規則を満たせば成功する", func(t *testing.T) {
 		t.Parallel()
 
-		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": applyWorkflow}, envDecl)
+		wf, env := repoWith(t, map[string]string{deployGateFile: planWorkflow, "apply.yml": applyWorkflow}, envDecl)
 		var out bytes.Buffer
 		require.NoError(t, run(wf, env, rulesetOf(env), "", &out))
 		assert.Contains(t, out.String(), "job 2 件")
@@ -333,7 +333,7 @@ func Test_run(t *testing.T) {
 	t.Run("apply の失敗を戻す配線が欠ければ違反で失敗する", func(t *testing.T) {
 		t.Parallel()
 
-		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": replaced(t, applyWorkflow, "  revert-plan:\n", "  revert-gone:\n")}, envDecl)
+		wf, env := repoWith(t, map[string]string{deployGateFile: planWorkflow, "apply.yml": replaced(t, applyWorkflow, "  revert-plan:\n", "  revert-gone:\n")}, envDecl)
 		var out bytes.Buffer
 		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
 		assert.Contains(t, out.String(), "revert-plan の job がありません")
@@ -350,7 +350,7 @@ func Test_run(t *testing.T) {
 		t.Parallel()
 		testenv.RequireNonRoot(t, "特権実行では権限の無いファイルも読めるため検証できない")
 
-		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": applyWorkflow}, envDecl)
+		wf, env := repoWith(t, map[string]string{deployGateFile: planWorkflow, "apply.yml": applyWorkflow}, envDecl)
 		require.NoError(t, os.Chmod(filepath.Join(wf, "apply.yml"), 0))
 		err := run(wf, env, rulesetOf(env), "", &bytes.Buffer{})
 		require.ErrorIs(t, err, fs.ErrPermission)
@@ -377,7 +377,7 @@ func Test_run(t *testing.T) {
 		t.Parallel()
 
 		bad := strings.Replace(planWorkflow, "    needs: infra-code-gate\n", "", 1)
-		wf, env := repoWith(t, map[string]string{"plan.yaml": bad}, envDecl)
+		wf, env := repoWith(t, map[string]string{deployGateFile: bad}, envDecl)
 		var out bytes.Buffer
 		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
 		assert.Contains(t, out.String(), "make infra-code-gate を走らせる job")
@@ -395,14 +395,14 @@ func Test_run(t *testing.T) {
 	t.Run("environments.json を読めなければ失敗する", func(t *testing.T) {
 		t.Parallel()
 
-		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow}, envDecl)
+		wf, env := repoWith(t, map[string]string{deployGateFile: planWorkflow}, envDecl)
 		require.ErrorIs(t, run(wf, filepath.Join(t.TempDir(), "missing.json"), rulesetOf(env), "", &bytes.Buffer{}), errEnvDecl)
 	})
 
 	t.Run("Pull Request の必須検査が順序の検査を走らせなければ失敗する", func(t *testing.T) {
 		t.Parallel()
 
-		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": applyWorkflow, "gates.yaml": strings.Replace(gatesWorkflow, "        run: make resource-order-check RUNNER_MODE=host\n", "        run: echo\n", 1)}, envDecl)
+		wf, env := repoWith(t, map[string]string{deployGateFile: planWorkflow, "apply.yml": applyWorkflow, "gates.yaml": strings.Replace(gatesWorkflow, "        run: make resource-order-check RUNNER_MODE=host\n", "        run: echo\n", 1)}, envDecl)
 		var out bytes.Buffer
 		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
 		assert.Contains(t, out.String(), "make resource-order-check を走らせるものがありません")
@@ -412,7 +412,7 @@ func Test_run(t *testing.T) {
 		t.Parallel()
 
 		gates := replaced(t, gatesWorkflow, "  tf-lint:\n    needs: changes\n", "  tf-lint:\n    needs: changes\n    env:\n      X: y\n")
-		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": applyWorkflow, "gates.yaml": gates}, envDecl)
+		wf, env := repoWith(t, map[string]string{deployGateFile: planWorkflow, "apply.yml": applyWorkflow, "gates.yaml": gates}, envDecl)
 		var out bytes.Buffer
 		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
 		assert.Equal(t, 1, strings.Count(out.String(), "必須検査の job に env: を置かないでください"))
@@ -423,7 +423,7 @@ func Test_run(t *testing.T) {
 
 		gates := replaced(t, gatesWorkflow, "        run: make resource-order-check RUNNER_MODE=host\n", "        run: make resource-order-check RUNNER_MODE=host\n        if: false\n")
 		gates = replaced(t, gates, "        run: make layer-check RUNNER_MODE=host\n", "        run: make layer-check RUNNER_MODE=host\n        if: false\n")
-		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": applyWorkflow, "gates.yaml": gates}, envDecl)
+		wf, env := repoWith(t, map[string]string{deployGateFile: planWorkflow, "apply.yml": applyWorkflow, "gates.yaml": gates}, envDecl)
 		var out bytes.Buffer
 		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
 		assert.Contains(t, out.String(), "順序の検査の step に if:")
@@ -433,7 +433,7 @@ func Test_run(t *testing.T) {
 	t.Run("Pull Request の必須検査が層の検査を走らせなければ失敗する", func(t *testing.T) {
 		t.Parallel()
 
-		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": applyWorkflow, "gates.yaml": strings.Replace(gatesWorkflow, "        run: make layer-check RUNNER_MODE=host\n", "        run: echo\n", 1)}, envDecl)
+		wf, env := repoWith(t, map[string]string{deployGateFile: planWorkflow, "apply.yml": applyWorkflow, "gates.yaml": strings.Replace(gatesWorkflow, "        run: make layer-check RUNNER_MODE=host\n", "        run: echo\n", 1)}, envDecl)
 		var out bytes.Buffer
 		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
 		assert.Contains(t, out.String(), "make layer-check を走らせるものがありません")
@@ -442,7 +442,7 @@ func Test_run(t *testing.T) {
 	t.Run("保護設定を読めなければ失敗する", func(t *testing.T) {
 		t.Parallel()
 
-		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow}, envDecl)
+		wf, env := repoWith(t, map[string]string{deployGateFile: planWorkflow}, envDecl)
 		require.ErrorIs(t, run(wf, env, filepath.Join(t.TempDir(), "missing.json"), "", &bytes.Buffer{}), requiredchecks.ErrRead)
 	})
 
@@ -450,7 +450,7 @@ func Test_run(t *testing.T) {
 		t.Parallel()
 
 		apply := replaced(t, applyWorkflow, "    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check, apply-root-check]\n", "    needs: [infra-code-gate, apply-resource-order-check, apply-layer-check, apply-root-check]\n")
-		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": apply}, envDecl)
+		wf, env := repoWith(t, map[string]string{deployGateFile: planWorkflow, "apply.yml": apply}, envDecl)
 		var out bytes.Buffer
 		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
 		assert.Contains(t, out.String(), "make infra-code-gate を走らせる job")
@@ -498,15 +498,32 @@ func Test_check(t *testing.T) {
 	t.Run("規則を満たす plan の workflow は対象1件・違反0件", func(t *testing.T) {
 		t.Parallel()
 
-		n, f := check("p.yaml", planWorkflow, envs)
+		n, f := check(deployGateFile, planWorkflow, envs)
 		assert.Equal(t, 1, n)
 		assert.Empty(t, f)
+	})
+
+	t.Run("id-token を渡して reusable workflow を呼ぶ job は、対象にせず呼び出しの形だけを見る", func(t *testing.T) {
+		t.Parallel()
+
+		n, f := check("c.yaml", callerWorkflow, envs)
+		assert.Zero(t, n)
+		assert.Empty(t, f)
+	})
+
+	t.Run("id-token を渡して reusable workflow を呼ぶ job が、ほかの権限を持てば違反", func(t *testing.T) {
+		t.Parallel()
+
+		n, f := check("c.yaml", replaced(t, callerWorkflow, "      id-token: write\n", "      id-token: write\n      pull-requests: write\n"), envs)
+		assert.Zero(t, n)
+		require.Len(t, f, 1, messages(f))
+		assert.Contains(t, f[0].Message, "job call-plan: id-token: write を渡して workflow を呼ぶ job の permissions は")
 	})
 
 	t.Run("id-token を持たない入口の job は対象にせず違反にする", func(t *testing.T) {
 		t.Parallel()
 
-		n, f := check("p.yaml", strings.Replace(planWorkflow, "      id-token: write\n", "", 1), envs)
+		n, f := check(deployGateFile, strings.Replace(planWorkflow, "      id-token: write\n", "", 1), envs)
 		assert.Zero(t, n)
 		require.Len(t, f, 1, messages(f))
 		assert.Regexp(t, `^job plan-admin-identity は CI の入口（make ci-plan-\*・ci-apply-\*・ci-unlock-\*・ci-hold-\*）を走らせますが（\d+ 行目）、job の permissions に id-token: write がありません。この job はこの検査の規則を受けず、root の経路にも数えません$`, f[0].Message)
@@ -519,7 +536,7 @@ func Test_check(t *testing.T) {
 		t.Parallel()
 
 		src := planWorkflow + "\n  plan-extra:\n    steps:\n      - run: make ci-plan-admin-workload RUNNER_MODE=host\n"
-		n, f := check("p.yaml", src, envs)
+		n, f := check(deployGateFile, src, envs)
 		assert.Equal(t, 1, n)
 		require.Len(t, f, 1, messages(f))
 		assert.Contains(t, f[0].Message, "job plan-extra は CI の入口")
@@ -528,7 +545,7 @@ func Test_check(t *testing.T) {
 	t.Run("行継続で make と別の行にある入口も、id-token が無ければ違反", func(t *testing.T) {
 		t.Parallel()
 
-		n, f := check("p.yaml", "on:\n  push:\njobs:\n  apply-x:\n    steps:\n      - run: |\n          make \\\n            ci-apply-admin-workload\n", envs)
+		n, f := check(deployGateFile, "on:\n  push:\njobs:\n  apply-x:\n    steps:\n      - run: |\n          make \\\n            ci-apply-admin-workload\n", envs)
 		assert.Zero(t, n)
 		require.Len(t, f, 1, messages(f))
 		assert.Contains(t, f[0].Message, "job apply-x は CI の入口")
@@ -538,7 +555,7 @@ func Test_check(t *testing.T) {
 	t.Run("jobs: を持たず入口の行だけがある workflow は違反", func(t *testing.T) {
 		t.Parallel()
 
-		n, f := check("p.yaml", "on:\n  push:\nx: make ci-apply-a\n", envs)
+		n, f := check(deployGateFile, "on:\n  push:\nx: make ci-apply-a\n", envs)
 		assert.Zero(t, n)
 		require.Len(t, f, 1, messages(f))
 		assert.Equal(t, "CI の入口（make ci-plan-*・ci-apply-*・ci-unlock-*・ci-hold-*）を持つ行 1 件のうち 1 件を、job の行として読めません", f[0].Message)
@@ -547,7 +564,7 @@ func Test_check(t *testing.T) {
 	t.Run("job の外の入口が2行なら2件と報せる", func(t *testing.T) {
 		t.Parallel()
 
-		n, f := check("p.yaml", planWorkflow+"x-note: make ci-apply-a\ny-note: make ci-hold-a\n", envs)
+		n, f := check(deployGateFile, planWorkflow+"x-note: make ci-apply-a\ny-note: make ci-hold-a\n", envs)
 		assert.Equal(t, 1, n)
 		require.Len(t, f, 1, messages(f))
 		require.Equal(t, 1, strings.Count(planWorkflow, "ci-plan-"), "planWorkflow の入口の行の数が前提と違う")
@@ -557,7 +574,7 @@ func Test_check(t *testing.T) {
 	t.Run("permissions を持たない入口の job は違反にする", func(t *testing.T) {
 		t.Parallel()
 
-		n, f := check("p.yaml", strings.Replace(planWorkflow, "    permissions:\n      contents: read\n      id-token: write\n", "", 1), envs)
+		n, f := check(deployGateFile, strings.Replace(planWorkflow, "    permissions:\n      contents: read\n      id-token: write\n", "", 1), envs)
 		assert.Zero(t, n)
 		require.Len(t, f, 1, messages(f))
 		assert.Contains(t, f[0].Message, "job plan-admin-identity は CI の入口")
@@ -566,7 +583,7 @@ func Test_check(t *testing.T) {
 	t.Run("入口も id-token も持たない job は違反にしない", func(t *testing.T) {
 		t.Parallel()
 
-		n, f := check("p.yaml", "on:\n  pull_request:\njobs:\n  lint:\n    steps:\n      - run: make lint\n", envs)
+		n, f := check(deployGateFile, "on:\n  pull_request:\njobs:\n  lint:\n    steps:\n      - run: make lint\n", envs)
 		assert.Zero(t, n)
 		assert.Empty(t, f)
 	})
@@ -576,7 +593,7 @@ func Test_check(t *testing.T) {
 
 		src := strings.Replace(planWorkflow, "permissions:\n  contents: read\n\njobs:", "permissions:\n  contents: read\n  id-token: write\n\njobs:", 1)
 		src = strings.Replace(src, "      id-token: write\n", "", 1)
-		n, f := check("p.yaml", src, envs)
+		n, f := check(deployGateFile, src, envs)
 		assert.Zero(t, n)
 		require.Len(t, f, 2, messages(f))
 		assert.Contains(t, messages(f), "workflow 全体の permissions に id-token")
@@ -591,7 +608,7 @@ func Test_check(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			n, f := check("p.yaml", strings.Replace(planWorkflow, c.from, c.to, 1), envs)
+			n, f := check(deployGateFile, strings.Replace(planWorkflow, c.from, c.to, 1), envs)
 			assert.Equal(t, 1, n)
 			require.Len(t, f, 1, messages(f))
 			assert.Regexp(t, `^CI の入口（make ci-plan-\*・ci-apply-\*・ci-unlock-\*・ci-hold-\*）を持つ行 \d+ 件のうち 1 件を、job の行として読めません$`, f[0].Message)
@@ -601,7 +618,7 @@ func Test_check(t *testing.T) {
 	t.Run("jobs: の後のトップレベルのキーの入口は違反", func(t *testing.T) {
 		t.Parallel()
 
-		n, f := check("p.yaml", planWorkflow+"x-note: make ci-apply-admin-identity\n", envs)
+		n, f := check(deployGateFile, planWorkflow+"x-note: make ci-apply-admin-identity\n", envs)
 		assert.Equal(t, 1, n)
 		require.Len(t, f, 1, messages(f))
 		assert.Contains(t, f[0].Message, "のうち 1 件を、job の行として読めません")
@@ -611,7 +628,7 @@ func Test_check(t *testing.T) {
 		t.Parallel()
 
 		src := strings.Replace(planWorkflow, "permissions:\n  contents: read\n\njobs:", "permissions:\n  contents: read\n  id-token: write\n\njobs:", 1)
-		_, f := check("p.yaml", src, envs)
+		_, f := check(deployGateFile, src, envs)
 		assert.Contains(t, messages(f), "workflow 全体の permissions に id-token")
 	})
 
@@ -619,7 +636,7 @@ func Test_check(t *testing.T) {
 		t.Parallel()
 
 		src := strings.Replace(planWorkflow, "    permissions:\n      contents: read\n      id-token: write\n", "    permissions: { contents: read, id-token: write }\n", 1)
-		n, f := check("p.yaml", src, envs)
+		n, f := check(deployGateFile, src, envs)
 		assert.Zero(t, n)
 		require.Len(t, f, 1, messages(f))
 		assert.Contains(t, f[0].Message, "job plan-admin-identity の permissions を読めません")
@@ -629,7 +646,7 @@ func Test_check(t *testing.T) {
 		t.Parallel()
 
 		src := strings.Replace(planWorkflow, "    permissions:\n      contents: read\n      id-token: write\n", "    permissions: write-all\n", 1)
-		_, f := check("p.yaml", src, envs)
+		_, f := check(deployGateFile, src, envs)
 		require.Len(t, f, 1, messages(f))
 		assert.Contains(t, f[0].Message, "job plan-admin-identity の permissions を読めません")
 	})
@@ -638,14 +655,14 @@ func Test_check(t *testing.T) {
 		t.Parallel()
 
 		src := strings.Replace(planWorkflow, "permissions:\n  contents: read\n\njobs:", "permissions: write-all\n\njobs:", 1)
-		_, f := check("p.yaml", src, envs)
+		_, f := check(deployGateFile, src, envs)
 		assert.Contains(t, messages(f), "workflow 全体の permissions を読めません")
 	})
 
 	t.Run("jobs: を読めない workflow の id-token は違反", func(t *testing.T) {
 		t.Parallel()
 
-		n, f := check("p.yaml", strings.Replace(planWorkflow, "\njobs:\n", "\n\"jobs\":\n", 1), envs)
+		n, f := check(deployGateFile, strings.Replace(planWorkflow, "\njobs:\n", "\n\"jobs\":\n", 1), envs)
 		assert.Zero(t, n)
 		assert.Contains(t, messages(f), "id-token: write か write-all を持つ行 1 件のうち 1 件を、job の permissions として読めません")
 	})
@@ -660,7 +677,7 @@ func Test_check(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			n, f := check("p.yaml", strings.Replace(planWorkflow, "      id-token: write\n", perm, 1), envs)
+			n, f := check(deployGateFile, strings.Replace(planWorkflow, "      id-token: write\n", perm, 1), envs)
 			assert.Zero(t, n)
 			require.NotEmpty(t, f)
 			assert.Contains(t, messages(f), "job の permissions として読めません")
@@ -672,7 +689,7 @@ func Test_check(t *testing.T) {
 		t.Parallel()
 
 		src := strings.Replace(planWorkflow, "    permissions:\n      contents: read\n      id-token: write\n", "    \"permissions\":\n      contents: read\n      id-token: write\n", 1)
-		n, f := check("p.yaml", src, envs)
+		n, f := check(deployGateFile, src, envs)
 		assert.Zero(t, n)
 		require.NotEmpty(t, f)
 		assert.Contains(t, messages(f), "job の permissions として読めません")
@@ -682,7 +699,7 @@ func Test_check(t *testing.T) {
 	t.Run("id-token: read は token を得る行として数えず、入口の job を違反にする", func(t *testing.T) {
 		t.Parallel()
 
-		n, f := check("p.yaml", strings.Replace(planWorkflow, "      id-token: write\n", "      id-token: read\n", 1), envs)
+		n, f := check(deployGateFile, strings.Replace(planWorkflow, "      id-token: write\n", "      id-token: read\n", 1), envs)
 		assert.Zero(t, n)
 		require.Len(t, f, 1, messages(f))
 		assert.Contains(t, f[0].Message, "job plan-admin-identity は CI の入口")
@@ -692,7 +709,7 @@ func Test_check(t *testing.T) {
 		t.Parallel()
 
 		src := planWorkflow + "        env:\n          AWS_ACCESS_KEY_ID: ${{ secrets.KEY }}\n"
-		_, f := check("p.yaml", src, envs)
+		_, f := check(deployGateFile, src, envs)
 		require.Len(t, f, 2)
 		assert.Contains(t, f[0].Message, "長期のアクセスキー")
 		assert.Contains(t, f[1].Message, "env: に置けるのは")
@@ -701,7 +718,7 @@ func Test_check(t *testing.T) {
 	t.Run("コメントの中のキー名は違反にしない", func(t *testing.T) {
 		t.Parallel()
 
-		_, f := check("p.yaml", "# aws-access-key-id は使わない\n"+planWorkflow, envs)
+		_, f := check(deployGateFile, "# aws-access-key-id は使わない\n"+planWorkflow, envs)
 		assert.Empty(t, f)
 	})
 }
@@ -714,7 +731,7 @@ func Test_checkJob(t *testing.T) {
 
 		src := replaced(t, planWorkflow, "CI_ROLE=plan", "CI_ROLE=unlock-identity")
 		src = replaced(t, src, "environment: admin-plan", "environment: admin-unlock-identity")
-		_, f := check("p.yaml", src, envs)
+		_, f := check(deployGateFile, src, envs)
 		got := messages(f)
 		assert.Equal(t, 1, strings.Count(got, "lock の解除の job（make ci-unlock-*）だけが取って"), got)
 		assert.NotContains(t, got, "apply の job は")
@@ -733,7 +750,7 @@ func Test_checkJob(t *testing.T) {
 	t.Run("ハイフンを含む env の plan の job は、資格情報と拒否の確認と入口を通して違反0件", func(t *testing.T) {
 		t.Parallel()
 
-		n, f := check("p.yaml", logArchive(t), logArchiveEnvs)
+		n, f := check(deployGateFile, logArchive(t), logArchiveEnvs)
 		assert.Equal(t, 1, n)
 		assert.Empty(t, messages(f))
 	})
@@ -741,14 +758,14 @@ func Test_checkJob(t *testing.T) {
 	t.Run("ハイフンを含む env の資格情報と、入口の env の食い違いは違反", func(t *testing.T) {
 		t.Parallel()
 
-		_, f := check("p.yaml", replaced(t, logArchive(t), "make ci-plan-log-archive-identity", "make ci-plan-archive-identity"), logArchiveEnvs)
+		_, f := check(deployGateFile, replaced(t, logArchive(t), "make ci-plan-log-archive-identity", "make ci-plan-archive-identity"), logArchiveEnvs)
 		assert.Contains(t, messages(f), "資格情報の CI_ENV=log-archive が、入口 make ci-plan-archive-identity の env archive と違います")
 	})
 
 	t.Run("ハイフンを含む env の資格情報と、拒否の確認の CI_ENV の食い違いは違反", func(t *testing.T) {
 		t.Parallel()
 
-		_, f := check("p.yaml", replaced(t, logArchive(t), "ci-assume-denied CI_ENV=log-archive", "ci-assume-denied CI_ENV=log"), logArchiveEnvs)
+		_, f := check(deployGateFile, replaced(t, logArchive(t), "ci-assume-denied CI_ENV=log-archive", "ci-assume-denied CI_ENV=log"), logArchiveEnvs)
 		assert.Contains(t, messages(f), "make ci-assume-denied の CI_ENV=log が、資格情報の CI_ENV=log-archive と違います")
 	})
 
@@ -947,6 +964,34 @@ func Test_checkPlan(t *testing.T) {
 		pw := infoOf(planWorkflow)
 		pw.on = map[string][]workflow.Line{"pull_request": nil, "push": nil}
 		assert.Contains(t, messages(checkPlan(job, credOf(job), pw, formatted)), "pull_request だけ")
+	})
+
+	t.Run("workflow_call だけの起動は、ファイルの名前に依らず違反0件", func(t *testing.T) {
+		t.Parallel()
+
+		job := jobOf(t, planWorkflow, "plan-admin-identity")
+		pw := infoOf(planWorkflow)
+		pw.file = "terraform-plan.yaml"
+		pw.on = map[string][]workflow.Line{"workflow_call": nil}
+		assert.Empty(t, checkPlan(job, credOf(job), pw, formatted))
+	})
+
+	t.Run("deploy-gate.yaml の外の pull_request だけの起動は違反", func(t *testing.T) {
+		t.Parallel()
+
+		job := jobOf(t, planWorkflow, "plan-admin-identity")
+		pw := infoOf(planWorkflow)
+		pw.file = ".github/workflows/terraform-gates.yaml"
+		assert.Contains(t, messages(checkPlan(job, credOf(job), pw, formatted)), "workflow_call だけか、deploy-gate.yaml の pull_request だけ")
+	})
+
+	t.Run("workflow_call とほかの起動の併用は違反", func(t *testing.T) {
+		t.Parallel()
+
+		job := jobOf(t, planWorkflow, "plan-admin-identity")
+		pw := infoOf(planWorkflow)
+		pw.on = map[string][]workflow.Line{"workflow_call": nil, "pull_request": nil}
+		assert.Contains(t, messages(checkPlan(job, credOf(job), pw, formatted)), "（pull_request, workflow_call）")
 	})
 
 	t.Run("pull_request_target だけの起動は違反", func(t *testing.T) {
@@ -3224,7 +3269,7 @@ func Test_runUnlock(t *testing.T) {
 	t.Run("plan・apply・lock の解除の job が規則を満たせば成功する", func(t *testing.T) {
 		t.Parallel()
 
-		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": applyWorkflow, "unlock.yaml": unlockWorkflow}, envDecl)
+		wf, env := repoWith(t, map[string]string{deployGateFile: planWorkflow, "apply.yml": applyWorkflow, "unlock.yaml": unlockWorkflow}, envDecl)
 		var out bytes.Buffer
 		require.NoError(t, run(wf, env, rulesetOf(env), "", &out), out.String())
 		assert.Contains(t, out.String(), "job 3 件")
@@ -4521,13 +4566,13 @@ func rootJobs(roots ...string) map[string]string {
 		unlock.WriteString("  unlock-" + r + ":\n" + rootPerm + "    steps:\n      - run: make ci-unlock-" + r + " RUNNER_MODE=host\n")
 		hold.WriteString("  hold-" + r + ":\n" + rootPerm + "    steps:\n      - run: make ci-hold-" + r + " RUNNER_MODE=host\n")
 	}
-	return map[string]string{"plan.yaml": plan.String(), "apply.yaml": apply.String(), "unlock.yaml": unlock.String(), "hold.yaml": hold.String()}
+	return map[string]string{deployGateFile: plan.String(), "apply.yaml": apply.String(), "unlock.yaml": unlock.String(), "hold.yaml": hold.String()}
 }
 
 func Test_runRoots(t *testing.T) {
 	t.Parallel()
 
-	wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": applyWorkflow, "unlock.yaml": unlockWorkflow, "hold.yaml": holdWorkflow}, envDecl)
+	wf, env := repoWith(t, map[string]string{deployGateFile: planWorkflow, "apply.yml": applyWorkflow, "unlock.yaml": unlockWorkflow, "hold.yaml": holdWorkflow}, envDecl)
 
 	t.Run("root ごとの CI の経路を数えて報せる", func(t *testing.T) {
 		t.Parallel()
@@ -4552,7 +4597,7 @@ func Test_runRoots(t *testing.T) {
 
 	t.Run("root が無くても workflow の違反を先に出して違反で失敗する", func(t *testing.T) {
 		t.Parallel()
-		bad, benv := repoWith(t, map[string]string{"plan.yaml": strings.Replace(planWorkflow, "      id-token: write\n", "", 1)}, envDecl)
+		bad, benv := repoWith(t, map[string]string{deployGateFile: strings.Replace(planWorkflow, "      id-token: write\n", "", 1)}, envDecl)
 		var out bytes.Buffer
 		err := run(bad, benv, rulesetOf(benv), t.TempDir(), &out)
 		require.ErrorIs(t, err, errViolations)
@@ -4584,7 +4629,7 @@ func Test_checkRootCoverage(t *testing.T) {
 
 	drift := "on:\n  pull_request:\n  schedule:\njobs:\n  drift:\n" + rootPerm + "    steps:\n      - run: make ci-plan-admin-identity RUNNER_MODE=host\n"
 	withoutPlan := func(j map[string]string) map[string]string {
-		j["plan.yaml"] = strings.Replace(j["plan.yaml"], "make ci-plan-admin-identity", "echo", 1)
+		j[deployGateFile] = strings.Replace(j[deployGateFile], "make ci-plan-admin-identity", "echo", 1)
 		return j
 	}
 
@@ -4744,7 +4789,7 @@ func Test_checkRootCoverage(t *testing.T) {
 		}, "lock を残す job が 2 件", 4},
 		"plan が Pull Request で起動しない root は違反": {dirs, func() map[string]string {
 			j := rootJobs(four...)
-			j["plan.yaml"] = strings.Replace(j["plan.yaml"], "  pull_request:", "  push:", 1)
+			j[deployGateFile] = strings.Replace(j[deployGateFile], "  pull_request:", "  push:", 1)
 			return j
 		}, "Pull Request で plan する job がありません", 4},
 	} {
@@ -4876,7 +4921,7 @@ func Test_runHold(t *testing.T) {
 	t.Parallel()
 
 	all := func(over map[string]string) map[string]string {
-		m := map[string]string{"plan.yaml": planWorkflow, "apply.yml": applyWorkflow, "unlock.yaml": unlockWorkflow, "hold.yaml": holdWorkflow}
+		m := map[string]string{deployGateFile: planWorkflow, "apply.yml": applyWorkflow, "unlock.yaml": unlockWorkflow, "hold.yaml": holdWorkflow}
 		maps.Copy(m, over)
 
 		return m
@@ -5162,4 +5207,151 @@ func Test_holdProblem(t *testing.T) {
 			assert.Contains(t, got, "lock を残す job の concurrency の group を字面で書いて")
 		})
 	}
+}
+
+func Test_planTriggerAllowed(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		file string
+		keys []string
+		want bool
+	}{
+		{"workflow_call だけなら、どのファイルでも許す", "terraform-plan.yaml", []string{"workflow_call"}, true},
+		{"deploy-gate.yaml の pull_request だけを許す", ".github/workflows/deploy-gate.yaml", []string{"pull_request"}, true},
+		{"deploy-gate.yaml の外の pull_request は拒む", ".github/workflows/terraform-gates.yaml", []string{"pull_request"}, false},
+		{"deploy-gate.yaml でも push を足せば拒む", "deploy-gate.yaml", []string{"pull_request", "push"}, false},
+		{"workflow_call にほかの起動を足せば拒む", "terraform-plan.yaml", []string{"push", "workflow_call"}, false},
+		{"起動が無ければ拒む", "deploy-gate.yaml", nil, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, c.want, planTriggerAllowed(c.file, c.keys))
+		})
+	}
+}
+
+// callerWorkflow は、id-token: write を渡して reusable workflow を呼ぶ job を持つ workflow。
+var callerWorkflow = strings.Join([]string{
+	"name: PR Gate",
+	"",
+	"on:",
+	"  pull_request:",
+	"",
+	"permissions:",
+	"  contents: read",
+	"",
+	"jobs:",
+	"  call-plan:",
+	"    uses: ./.github/workflows/plan.yaml",
+	"    permissions:",
+	"      contents: read",
+	"      id-token: write",
+	"",
+}, "\n")
+
+func Test_reusableCall(t *testing.T) {
+	t.Parallel()
+
+	t.Run("job の直下の uses: の値と行を返す", func(t *testing.T) {
+		t.Parallel()
+
+		callee, at, ok := reusableCall(jobOf(t, callerWorkflow, "call-plan"))
+		require.True(t, ok)
+		assert.Equal(t, "./.github/workflows/plan.yaml", callee)
+		assert.Equal(t, 11, at)
+	})
+
+	t.Run("引用符を外す", func(t *testing.T) {
+		t.Parallel()
+
+		callee, _, ok := reusableCall(jobOf(t, replaced(t, callerWorkflow, "uses: ./.github/workflows/plan.yaml", "uses: \"./.github/workflows/plan.yaml\""), "call-plan"))
+		require.True(t, ok)
+		assert.Equal(t, "./.github/workflows/plan.yaml", callee)
+	})
+
+	t.Run("step の uses: は reusable workflow の呼び出しではない", func(t *testing.T) {
+		t.Parallel()
+
+		_, _, ok := reusableCall(jobOf(t, planWorkflow, "plan-admin-identity"))
+		assert.False(t, ok)
+	})
+}
+
+func Test_checkCaller(t *testing.T) {
+	t.Parallel()
+
+	t.Run("このリポジトリの workflow を contents: read と id-token: write で呼べば違反0件", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Empty(t, checkCaller("c.yaml", jobOf(t, callerWorkflow, "call-plan"), planPerms))
+	})
+
+	t.Run("ほかのリポジトリの workflow を呼べば違反", func(t *testing.T) {
+		t.Parallel()
+
+		job := jobOf(t, replaced(t, callerWorkflow, "uses: ./.github/workflows/plan.yaml", "uses: other/repo/.github/workflows/plan.yaml@main"), "call-plan")
+		f := checkCaller("c.yaml", job, planPerms)
+		require.Len(t, f, 1, messages(f))
+		assert.Contains(t, f[0].Message, "このリポジトリの ./.github/workflows/ の下のもの")
+		assert.Equal(t, 11, f[0].Line)
+	})
+
+	t.Run("ほかの書き込みの権限を持てば違反", func(t *testing.T) {
+		t.Parallel()
+
+		f := checkCaller("c.yaml", jobOf(t, callerWorkflow, "call-plan"), append(slices.Clone(planPerms), "pull-requests: write"))
+		require.Len(t, f, 1, messages(f))
+		assert.Contains(t, f[0].Message, "（pull-requests: write）")
+	})
+}
+
+func Test_checkCallees(t *testing.T) {
+	t.Parallel()
+
+	const dir = ".github/workflows"
+	callee := func(on string) string {
+		return strings.Replace(planWorkflow, "on:\n  pull_request:\n", on, 1)
+	}
+
+	t.Run("呼び出し先が workflow_call だけで起動すれば違反0件", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Empty(t, checkCallees(dir, map[string]string{
+			filepath.Join(dir, "gate.yaml"): callerWorkflow,
+			filepath.Join(dir, "plan.yaml"): callee("on:\n  workflow_call:\n"),
+		}))
+	})
+
+	t.Run("呼び出し先がほかの起動を持てば違反", func(t *testing.T) {
+		t.Parallel()
+
+		f := checkCallees(dir, map[string]string{
+			filepath.Join(dir, "gate.yaml"): callerWorkflow,
+			filepath.Join(dir, "plan.yaml"): callee("on:\n  workflow_call:\n  push:\n"),
+		})
+		require.Len(t, f, 1, messages(f))
+		assert.Contains(t, f[0].Message, "workflow_call だけにしてください（push, workflow_call）")
+		assert.Equal(t, filepath.Join(dir, "gate.yaml"), f[0].File)
+	})
+
+	t.Run("呼び出し先が無ければ違反", func(t *testing.T) {
+		t.Parallel()
+
+		f := checkCallees(dir, map[string]string{filepath.Join(dir, "gate.yaml"): callerWorkflow})
+		require.Len(t, f, 1, messages(f))
+		assert.Contains(t, f[0].Message, "呼び出し先 ./.github/workflows/plan.yaml が")
+	})
+
+	t.Run("id-token を渡さない呼び出しは見ない", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Empty(t, checkCallees(dir, map[string]string{
+			filepath.Join(dir, "gate.yaml"): replaced(t, callerWorkflow, "      id-token: write\n", ""),
+			filepath.Join(dir, "plan.yaml"): callee("on:\n  push:\n"),
+		}))
+	})
 }
