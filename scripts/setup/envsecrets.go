@@ -188,6 +188,10 @@ func envOf(name string) (string, bool) {
 // アカウントの ID にする。真ならメンバーの environment だけを受け、組織の `<project>-<env>` のアカウントの ID にする
 // （資格情報が組織の管理アカウントのものであることは、入口の前提として確かめてある）。
 func accountIDs(o options, c *client, envs []string, member bool) (map[string]string, error) {
+	if len(envs) == 0 {
+		return nil, xerrors.Wrap(errUsage, "置く environment がありません")
+	}
+
 	bases := map[string]string{}
 
 	for _, e := range envs {
@@ -231,7 +235,7 @@ func accountIDs(o options, c *client, envs []string, member bool) (map[string]st
 	}
 
 	for _, e := range envs {
-		name := o.project + "-" + bases[e]
+		name := accountName(o.project, bases[e])
 
 		a, found, err := accountNamed(accounts, name)
 

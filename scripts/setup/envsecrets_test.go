@@ -248,7 +248,7 @@ func Test_setEnvSecrets(t *testing.T) {
 			responses: map[string]awsResult{listSecurity: ok(`[]`), setSecurity: ok("")},
 			after:     map[string]map[string]awsResult{setSecurity: {listSecurity: ok(newUpdated)}},
 		}
-		f := memberWorld(t, `{"Accounts":[{"Id":"111111111111","Name":"tabp-security","State":"ACTIVE"}]}`)
+		f := memberWorld(t, `{"Accounts":[{"Id":"222222222222","Name":"management","State":"ACTIVE"},{"Id":"111111111111","Name":"tabp-security","State":"ACTIVE"}]}`)
 		term, out := tty("tabp\n")
 		require.NoError(t, setEnvSecrets(secretOptions("security-plan"), testClient(f), term, g.fn(), true))
 		assert.Equal(t, []string{listSecurity, setSecurity, listSecurity}, g.calls)
@@ -265,6 +265,36 @@ func Test_setEnvSecrets(t *testing.T) {
 		term, _ := tty("tabp\n")
 		require.ErrorIs(t, setEnvSecrets(secretOptions("security-plan"), testClient(f), term, g.fn(), true), errNoMember)
 		assert.Empty(t, g.calls)
+	})
+
+	t.Run("置くものはアカウント ID ごとに1行で、同じ ID の environment を束ねる", func(t *testing.T) {
+		t.Parallel()
+
+		const (
+			listArchive  = "secret list --repo " + testRepo + " --env log-archive-plan --json name,updatedAt"
+			setArchive   = "secret set AWS_ACCOUNT_ID --repo " + testRepo + " --env log-archive-plan"
+			listSecApply = "secret list --repo " + testRepo + " --env security-apply --json name,updatedAt"
+			setSecApply  = "secret set AWS_ACCOUNT_ID --repo " + testRepo + " --env security-apply"
+		)
+
+		g := ghWorld(t)
+		g.responses[listArchive], g.responses[setArchive] = ok(`[]`), ok("")
+		g.responses[listSecApply], g.responses[setSecApply] = ok(`[]`), ok("")
+		g.after[setArchive] = map[string]awsResult{listArchive: ok(newUpdated)}
+		g.after[setSecApply] = map[string]awsResult{listSecApply: ok(newUpdated)}
+		f := memberWorld(t, `{"Accounts":[{"Id":"111111111111","Name":"tabp-security","State":"ACTIVE"},{"Id":"222222222222","Name":"tabp-log-archive","State":"ACTIVE"}]}`)
+		o := secretOptions("security-plan,log-archive-plan,security-apply")
+		o.readFile = readFiles(map[string]string{environmentsFile: `[{"name":"security-plan"},{"name":"log-archive-plan"},{"name":"security-apply"}]`})
+		term, out := tty("tabp\n")
+		require.NoError(t, setEnvSecrets(o, testClient(f), term, g.fn(), true))
+		assert.Contains(t, out.String(), "置くもの: リポジトリ acme/infra の security-plan・security-apply に AWS_ACCOUNT_ID（アカウント ID の末尾 1111）\n置くもの: リポジトリ acme/infra の log-archive-plan に AWS_ACCOUNT_ID（アカウント ID の末尾 2222）\n")
+		sets := map[string]string{}
+		for i, c := range g.calls {
+			if strings.HasPrefix(c, "secret set ") {
+				sets[c] = g.stdins[i]
+			}
+		}
+		assert.Equal(t, map[string]string{setSecurity: "111111111111", setArchive: "222222222222", setSecApply: "111111111111"}, sets)
 	})
 
 	t.Run("すべて在れば、確認を求めず書かない", func(t *testing.T) {
@@ -499,7 +529,7 @@ func Test_accountIDs(t *testing.T) {
 	t.Parallel()
 
 	const (
-		mgmt     = `{"Id":"111111111111","Name":"management","State":"ACTIVE"}`
+		mgmt     = `{"Id":"222222222222","Name":"management","State":"ACTIVE"}`
 		security = `{"Id":"111111111111","Name":"tabp-security","State":"ACTIVE"}`
 	)
 
@@ -562,6 +592,31 @@ func Test_accountIDs(t *testing.T) {
 		f := memberWorld(t, `{"Accounts":[`+mgmt+`,{"Id":"x","Name":"tabp-security","State":"ACTIVE"}]}`)
 		_, err := accountIDs(secretOptions(""), testClient(f), []string{"security-plan"}, true)
 		require.ErrorIs(t, err, errAWSResponse)
+	})
+
+	t.Run("同じ名前の閉鎖されていないアカウントが2つ在れば errAccountName", func(t *testing.T) {
+		t.Parallel()
+
+		f := memberWorld(t, `{"Accounts":[`+security+`,{"Id":"222222222222","Name":"tabp-security","State":"ACTIVE"}]}`)
+		_, err := accountIDs(secretOptions(""), testClient(f), []string{"security-plan"}, true)
+		require.ErrorIs(t, err, errAccountName)
+	})
+
+	t.Run("組織の一覧が空なら errAWSResponse", func(t *testing.T) {
+		t.Parallel()
+
+		f := memberWorld(t, `{"Accounts":[]}`)
+		_, err := accountIDs(secretOptions(""), testClient(f), []string{"security-plan"}, true)
+		require.ErrorIs(t, err, errAWSResponse)
+	})
+
+	t.Run("置く environment が0件なら、AWS を読まずに errUsage", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeAWS(t, nil)
+		_, err := accountIDs(secretOptions(""), testClient(f), nil, true)
+		require.ErrorIs(t, err, errUsage)
+		assert.Empty(t, f.ops())
 	})
 
 	t.Run("<env>-<role> の形でない environment は、AWS を読まずに errNoAccountEnv", func(t *testing.T) {
