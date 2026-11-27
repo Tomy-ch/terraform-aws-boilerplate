@@ -216,7 +216,7 @@ func Test_run(t *testing.T) {
 			assert.Equal(t, "# 期待値: import 1 / add 1 / change 0 / destroy 0\n"+
 				"# mock の plan: import 1 / add 1 / change 0 / destroy 0\n"+
 				"# 結果: 不足 0 件、余剰 0 件\n"+
-				"✅ check-plan.expected は identity root の mock の plan と一致します\n", out.String())
+				"✅ check-plan.expected（在れば check-plan-bootstrapping.expected を足したもの）は identity root の mock の plan と一致します\n", out.String())
 		})
 
 		t.Run("差分があれば最後に ❌ の差分の行を出す", func(t *testing.T) {
@@ -227,7 +227,7 @@ func Test_run(t *testing.T) {
 			args, d := setup(t, "import b.y\n", passingTestOutput(matchingChanges()...))
 			require.ErrorIs(t, run(args, &out, d), errMismatch)
 			assert.Contains(t, out.String(), "NG  余剰  add a.x\n# 結果: 不足 0 件、余剰 1 件\n")
-			assert.True(t, bytes.HasSuffix(out.Bytes(), []byte("❌ check-plan.expected が identity root の plan と一致しません（NG の行を期待値へ写す。docs/setup/bootstrap.md の「この文書の保守」）\n")))
+			assert.True(t, bytes.HasSuffix(out.Bytes(), []byte("❌ check-plan.expected（在れば check-plan-bootstrapping.expected を足したもの）が identity root の plan と一致しません（NG の行を期待値へ写す。docs/setup/bootstrap.md の「この文書の保守」）\n")))
 		})
 
 		t.Run("検証できなければ理由の後に ❌ の突き合わせられない行を出す", func(t *testing.T) {
@@ -238,7 +238,7 @@ func Test_run(t *testing.T) {
 			args, d := setup(t, expectedBody, testOutputOf(runEvent(mockFile, mockRun, "fail")))
 			require.ErrorIs(t, run(args, &out, d), errTestFailed)
 			assert.Equal(t, errTestFailed.Error()+"\n"+
-				"❌ check-plan.expected と identity root の plan を突き合わせられません（理由は上の行）\n", out.String())
+				"❌ check-plan.expected（在れば check-plan-bootstrapping.expected を足したもの）と identity root の plan を突き合わせられません（理由は上の行）\n", out.String())
 		})
 
 		t.Run("terraform test が落ちていれば出力の error の文を出す", func(t *testing.T) {

@@ -42,9 +42,9 @@ const (
 	// commitLinePrefix は、checkPlan が header から作る commit の行の先頭。
 	commitLinePrefix = "# commit: "
 
-	mockMatched      = "✅ check-plan.expected は identity root の mock の plan と一致します"
-	mockMismatch     = "❌ check-plan.expected が identity root の plan と一致しません（NG の行を期待値へ写す。docs/setup/bootstrap.md の「この文書の保守」）"
-	mockUnverifiable = "❌ check-plan.expected と identity root の plan を突き合わせられません（理由は上の行）"
+	mockMatched      = "✅ check-plan.expected（在れば check-plan-bootstrapping.expected を足したもの）は identity root の mock の plan と一致します"
+	mockMismatch     = "❌ check-plan.expected（在れば check-plan-bootstrapping.expected を足したもの）が identity root の plan と一致しません（NG の行を期待値へ写す。docs/setup/bootstrap.md の「この文書の保守」）"
+	mockUnverifiable = "❌ check-plan.expected（在れば check-plan-bootstrapping.expected を足したもの）と identity root の plan を突き合わせられません（理由は上の行）"
 )
 
 var (

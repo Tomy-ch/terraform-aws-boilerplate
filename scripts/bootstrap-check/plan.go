@@ -57,21 +57,15 @@ func checkPlan(o options, out io.Writer, d deps) error {
 		return xerrors.Wrap(errExpectedUnreadable, d.expected)
 	}
 
-	if o.mock && d.bootstrapping != "" {
-		// 無いことは、立ち上げの中のアカウントが無いことを表す。メンバーの resource が plan に残れば余剰で落ちる。
-		extra, err := d.readFile(d.bootstrapping)
-
-		switch {
-		case err == nil:
-			raw = append(append(raw, '\n'), extra...)
-		case !errors.Is(err, fs.ErrNotExist):
-			return xerrors.Wrap(errExpectedUnreadable, d.bootstrapping)
-		}
-	}
-
 	expected, err := parseExpected(raw, d.expected)
 	if err != nil {
 		return err
+	}
+
+	if o.mock && d.bootstrapping != "" {
+		if expected, err = withBootstrapping(expected, d); err != nil {
+			return err
+		}
 	}
 
 	if o.mock {
@@ -96,6 +90,35 @@ func checkPlan(o options, out io.Writer, d deps) error {
 	fmt.Fprintln(out, "# "+header)
 
 	return compare(out, "plan", expected, actual, o.partial)
+}
+
+// withBootstrapping は、期待値に立ち上げの中のメンバーアカウントの分を足す。ファイルが無いことは、立ち上げの中の
+// アカウントが無いことを表す（plan にメンバーの resource が残れば余剰で落ちる）。2つのファイルにまたがる重複は拒む。
+func withBootstrapping(expected []string, d deps) ([]string, error) {
+	raw, err := d.readFile(d.bootstrapping)
+
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return expected, nil
+	case err != nil:
+		return nil, xerrors.Wrap(errExpectedUnreadable, d.bootstrapping)
+	}
+
+	extra, err := parseExpected(raw, d.bootstrapping)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, line := range extra {
+		if _, found := slices.BinarySearch(expected, line); found {
+			return nil, xerrors.Wrapf(errExpectedDuplicate, "%s と %s の両方に %q", d.expected, d.bootstrapping, line)
+		}
+	}
+
+	out := append(slices.Clone(expected), extra...)
+	sort.Strings(out)
+
+	return out, nil
 }
 
 func readInput(path string, d deps) ([]byte, error) {
