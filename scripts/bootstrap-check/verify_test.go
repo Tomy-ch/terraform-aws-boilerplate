@@ -756,7 +756,7 @@ func Test_checkVerify(t *testing.T) {
 		result string
 	}{
 		{verifyOptions{stage: "stage1"}, "# 結果: 4 件のうち NG 4 件"},
-		{verifyOptions{stage: "before-apply"}, "# 結果: 25 件のうち NG 25 件"},
+		{verifyOptions{stage: "before-apply"}, "# 結果: 26 件のうち NG 26 件"},
 		{verifyOptions{stage: "stage4"}, "# 結果: 25 件のうち NG 23 件"},
 		{verifyOptions{stage: "stage4", executor: "bob"}, "# 結果: 25 件のうち NG 24 件"},
 		{verifyOptions{stage: "permissions"}, "# 結果: " + strconv.Itoa(permissionsBase+governanceGated+workloadGatedCount+budgetsGatedCount) + " 件のうち NG " + strconv.Itoa(permissionsNG) + " 件（確かめていない区分 1）"},

@@ -1809,7 +1809,7 @@ run "policy_length" {
   assert {
     condition = (
       strcontains(aws_iam_policy.members[0].policy, format("stackset-target/r%063d:*", 4)) &&
-      strcontains(aws_iam_role_policy.apply_identity.policy, format("stackset/r%063d:*", 4))
+      strcontains(aws_iam_policy.governance_read[0].policy, format("stackset/r%063d:*", 4))
     )
     error_message = "長さを測る文書に、break-glass の StackSet の文が入っていません。"
   }
@@ -2096,7 +2096,7 @@ run "policy_length_aws" {
   assert {
     condition = (
       strcontains(aws_iam_policy.members[0].policy, format("stackset-target/r%063d:*", 4)) &&
-      strcontains(aws_iam_role_policy.apply_identity.policy, format("stackset/r%063d:*", 4))
+      strcontains(aws_iam_policy.governance_read[0].policy, format("stackset/r%063d:*", 4))
     )
     error_message = "長さを測る文書に、break-glass の StackSet の文が入っていません。"
   }

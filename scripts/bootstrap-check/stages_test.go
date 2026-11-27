@@ -532,7 +532,7 @@ func Test_beforeApplySteps(t *testing.T) {
 
 		require.NoError(t, err)
 		assert.Len(t, steps, beforeApplyCount)
-		assert.Equal(t, append(okLines(beforeApplyDescs), "# 結果: 25 件のうち NG 0 件"), lines)
+		assert.Equal(t, append(okLines(beforeApplyDescs), "# 結果: 26 件のうち NG 0 件"), lines)
 	})
 
 	for name, tc := range map[string]struct {
@@ -578,7 +578,7 @@ func Test_beforeApplySteps(t *testing.T) {
 
 			require.ErrorIs(t, err, errMismatch)
 			assert.Contains(t, lines, tc.line)
-			assert.Equal(t, "# 結果: 25 件のうち NG 1 件", lines[len(lines)-1])
+			assert.Equal(t, "# 結果: 26 件のうち NG 1 件", lines[len(lines)-1])
 		})
 	}
 
