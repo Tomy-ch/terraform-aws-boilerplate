@@ -713,7 +713,7 @@ func Test_ciRunInit(t *testing.T) {
 	t.Run("init が 0 以外なら errCIInit で、終了コード 2", func(t *testing.T) {
 		t.Parallel()
 		tool, _ := fakeFlow(t, map[string]string{stepCIInit + ".rc": "1"})
-		err := ciRunInit(prepared(t), deps{tool: tool})
+		err := ciRunInit(prepared(t), deps{tool: tool, stderr: &bytes.Buffer{}})
 		require.ErrorIs(t, err, errCIInit)
 		assert.Equal(t, 2, exitCode(err))
 	})
@@ -1249,7 +1249,7 @@ func Test_ciRunPolicy(t *testing.T) {
 
 	t.Run("conftest の stderr の行数を数え、空白だけなら行数を出さない", func(t *testing.T) {
 		t.Parallel()
-		for stderrText, want := range map[string]string{"a\nb\nc\n": "conftest の stderr（3 行）は全文にあります", " \n": ""} {
+		for stderrText, want := range map[string]string{"a\nb\nc\n": "conftest の stderr（3 行）は全文にあります", "\t\n": ""} {
 			tool, _ := fakeFlow(t, map[string]string{stepCIConftest + ".out": `[{"namespace":"plan.p","successes":1}]`, stepCIConftest + ".stderr": stderrText})
 			s := ciState{Root: "admin-identity", Out: fileWith(t, ""), JSON: fileWith(t, "{}")}
 			var stdout bytes.Buffer

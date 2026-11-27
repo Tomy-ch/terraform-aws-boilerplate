@@ -178,9 +178,11 @@ func CLI(stderr string) ([]Field, bool) {
 		return nil, false
 	}
 
-	fields := []Field{{"kind", "cli"}, {"code", stderr[loc[2]:loc[3]]}, {"operation", stderr[loc[4]:loc[5]]}}
+	denied := deny(stderr[loc[1]:])
+	fields := make([]Field, 0, 3+len(denied))
+	fields = append(fields, Field{"kind", "cli"}, Field{"code", stderr[loc[2]:loc[3]]}, Field{"operation", stderr[loc[4]:loc[5]]})
 
-	return append(fields, deny(stderr[loc[1]:])...), true
+	return append(fields, denied...), true
 }
 
 // deny は、AccessDenied の message の固定の位置から、拒否された Action と理由の種類を取ります。
