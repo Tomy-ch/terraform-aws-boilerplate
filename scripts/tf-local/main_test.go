@@ -231,6 +231,15 @@ func Test_rootRegion(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, "ap-northeast-1", got)
 		})
+
+		t.Run("alias の provider が同じ region を持っても読む", func(t *testing.T) {
+			t.Parallel()
+
+			providers := providersOK + "provider \"aws\" {\n  alias  = \"security\"\n  region = \"ap-northeast-1\"\n}\n"
+			got, err := rootRegion(rootWith(t, backendOK, providers), os.ReadFile)
+			require.NoError(t, err)
+			assert.Equal(t, "ap-northeast-1", got)
+		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
@@ -290,6 +299,15 @@ func Test_rootRegion(t *testing.T) {
 			require.ErrorIs(t, err, errRegionMismatch)
 		})
 
+		t.Run("provider の region が食い違えば、どれも選ばずに providers.tf を名指しして失敗する", func(t *testing.T) {
+			t.Parallel()
+
+			root := rootWith(t, backendOK, providersOK+"provider \"aws\" {\n  alias  = \"security\"\n  region = \"us-east-1\"\n}\n")
+			_, err := rootRegion(root, os.ReadFile)
+			require.ErrorIs(t, err, errRegionNotOne)
+			assert.Contains(t, err.Error(), filepath.Join(root, "providers.tf"))
+		})
+
 		t.Run("provider の region を1つに決められなければ失敗する", func(t *testing.T) {
 			t.Parallel()
 
@@ -297,6 +315,36 @@ func Test_rootRegion(t *testing.T) {
 			require.ErrorIs(t, err, errRegionNotOne)
 		})
 	})
+}
+
+func Test_providersRegion(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		in   string
+		want string
+		err  error
+	}{
+		"1件を読む":             {"  region = \"ap-northeast-1\"\n", "ap-northeast-1", nil},
+		"同じ値の複数件を読む":        {"  region = \"ap-northeast-1\"\n  region = \"ap-northeast-1\"\n", "ap-northeast-1", nil},
+		"0件なら失敗する":          {"provider \"aws\" {}\n", "", errRegionNotOne},
+		"値が食い違えば失敗する":       {"  region = \"ap-northeast-1\"\n  region = \"us-east-1\"\n", "", errRegionNotOne},
+		"同じ値でも形が誤っていれば失敗する": {"  region = \"Tokyo\"\n  region = \"Tokyo\"\n", "", errRegionMalformed},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := providersRegion(tc.in)
+			if tc.err != nil {
+				require.ErrorIs(t, err, tc.err)
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
 }
 
 func Test_backendRegion(t *testing.T) {
@@ -759,6 +807,7 @@ func Test_exitCode(t *testing.T) {
 		"手元の plan の失敗":    errLocalPlan,
 		"Policy の違反（CI）":  errCIPolicy,
 		"Policy の違反":      policyresult.ErrViolation,
+		"権限が表と一致しない":      errCIPermissions,
 		"apply の失敗":       errApplyFailed,
 		"apply の打ち切り":     errApplyTimeout,
 		"assume が通ってしまった": errAssumeSucceeded,
@@ -789,6 +838,7 @@ func Test_exitCode(t *testing.T) {
 		"Policy の規則の評価が0件なのは 2": policyresult.ErrEmpty,
 		"Policy の評価の件数の食い違いは 2": policyresult.ErrCount,
 		"判定に届かない CI の段は 2":      errCINotEstablished,
+		"権限を評価できないのは 2":         errCIPermissionsRun,
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

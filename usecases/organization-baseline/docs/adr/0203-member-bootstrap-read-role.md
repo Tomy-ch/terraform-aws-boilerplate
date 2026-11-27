@@ -11,7 +11,7 @@ repository-wide/ADR-0604 決定6 は、メンバーアカウントの立ち上�
 
 この ADR は、その読み取りの role を、この usecase がどう配り、何を許し、立ち上げの外でどう閉じるかを決める。
 
-メンバーの側に読み取りの role を Terraform で先に作る形は成り立たない。その role を作る Pull Request の plan 自身が、メンバーへ届く provider を要するからである。管理アカウントの identity root は、メンバーへ届く provider を持たない（organization-baseline/ADR-0001）。メンバーへ resource を置く経路は、管理アカウントの StackSet である（organization-baseline/ADR-0202）。
+メンバーの側に読み取りの role を Terraform で先に作る形は成り立たない。その role を作る Pull Request の plan 自身が、メンバーへ届く provider を要するからである。管理アカウントの identity root がメンバーへ届く provider を持つのは、そのアカウントの立ち上げの間だけである（repository-wide/ADR-0604 決定6）。読み取りの role はその provider より前に要るので、管理アカウントの StackSet で置く（organization-baseline/ADR-0202）。
 
 ## Decision
 
@@ -23,6 +23,7 @@ repository-wide/ADR-0604 決定6 は、メンバーアカウントの立ち上�
    - KMS の鍵は `key/*` にする。鍵の ID は作るまで決まらず、テンプレートから参照できない。与えるのは鍵の設定の読み取り（`DescribeKey`・`GetKeyPolicy`・`GetKeyRotationStatus`・`ListResourceTags`）だけで、暗号操作を含まない
    - `kms:ListAliases` は resource-level の権限を持たないので Resource `"*"` にする（Service Authorization Reference）
    - IAM の CI の role と policy は `<project>-*-ci-*` の prefix pattern にする。S3 と同じく env を名指せないためである。OIDC provider は固定の ARN にする
+   - `deployment-identity` が作るアカウントの前提の Chatbot の service-linked role は、固定の ARN（`role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot`）にする（deployment-identity/ADR-0002）。与えるのは `iam:GetRole` だけである
 
    管理アカウントの plan の role の inline policy の読みのうち、管理アカウントの構成物（組織、break-glass の user と group、StackSet、メールの parameter、password policy）と state の object・plan の出力にだけ掛かるもののほかを、すべて持つ。除いた Action は、理由と組にして `conftest/plan/decl.json` の `organization_baseline.bootstrap_read.management_only_actions` に宣言する。
 5. 立ち上げの外では閉じる。`deny-bootstrap-role` は、`OrganizationAccountAccessRole` とこの role の両方の使用を拒む。`protect-governance-roles` は、StackSets の実行の role（`stacksets-exec-*`）のほかに、この role の変更を拒む（organization-baseline/ADR-0202 決定5 と同じ例外）。この usecase が持つのはメンバーの側の拒否だけである。管理アカウントの側で、この role の引き受けをどのアカウントに許すかは `deployment-identity` が決める（deployment-identity/ADR-0201 決定22）。
@@ -30,10 +31,10 @@ repository-wide/ADR-0604 決定6 は、メンバーアカウントの立ち上�
 7. FSBP の CloudFormation.4 から外れる（repository-wide/ADR-0207 決定11 の記録）。
    - 外れる推奨: FSBP の CloudFormation.4（stack に service role が付いていること）
    - 理由: service-managed の StackSet が作る stack は、service role を持てない（organization-baseline/ADR-0202 決定8 と同じ）
-   - ユースケース上の制約: 管理アカウントの identity root は、メンバーアカウントへ届く provider を持たない（organization-baseline/ADR-0001）
+   - ユースケース上の制約: 管理アカウントの identity root がメンバーアカウントへ届く provider を持つのは、そのアカウントの立ち上げの間だけである（repository-wide/ADR-0604 決定6）。読み取りの role はその provider より前に要るので、管理アカウントの StackSet で置く
    - 影響: security は、すべてのメンバーアカウントで、この stack も CloudFormation.4 の FAILED になる。抑止はこの usecase で行わない。availability と cost への影響は無い
    - 代替案: メンバーごとの provider の alias で role を作る。立ち上げの循環を解けない（Context）
-   - 見直し条件: StackSets の service-managed の stack が service role を持てるようになったとき。メンバーアカウントへ届く provider を、この root が持つと決めたとき
+   - 見直し条件: StackSets の service-managed の stack が service role を持てるようになったとき。メンバーアカウントへ届く provider を、立ち上げの外でもこの root が持つと決めたとき
 
 ## ネイティブ統合で解けない理由
 

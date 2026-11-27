@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -521,7 +522,10 @@ func Test_verifySteps(t *testing.T) {
 		}
 
 		assert.Equal(t, want, stepTexts(steps))
-		assert.Len(t, f.calls, 3, "表を組むときは鍵と2つの role の managed policy だけを読む")
+		// 鍵 1、2つの role の managed policy の一覧 2、5つの role の inline policy の一覧 5、残る3つの role の managed policy の
+		// 一覧 3（2つは読んだ一覧を使い回す）、apply-identity の4つと apply の3つの managed policy の get-policy と
+		// get-policy-version 14。
+		assert.Len(t, f.calls, 1+2+5+3+14, "表を組むときは、鍵と、5つの role の managed policy の一覧と policy の文書だけを読む")
 	})
 
 	t.Run("output-policy は、文書を読んで、その段の表を組む", func(t *testing.T) {
@@ -584,7 +588,7 @@ func writeOps(calls []string) []string {
 }
 
 // permissiveHandler は、どの読み取りにも応答する。simulate は要求した action をすべて allowed で返し、
-// managed policy は条件つきの確認がすべて走る付き方で返す。
+// managed policy は条件つきの確認がすべて走る付き方で返し、policy の文書はどの role でも読める。
 func permissiveHandler(args []string) (awsResult, bool) {
 	joined := strings.Join(args, " ")
 
@@ -592,13 +596,20 @@ func permissiveHandler(args []string) (awsResult, bool) {
 	case slices.Contains(args, "simulate-principal-policy"):
 		return simResult(simActions(args), "allowed"), true
 	case strings.Contains(joined, "list-attached-role-policies --role-name tabp-admin-ci-apply-identity "):
-		return okResult(`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-governance"},{"PolicyName":"tabp-admin-ci-apply-identity-members"}]}`), true
+		return okResult(`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-governance","PolicyArn":"arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance"},{"PolicyName":"tabp-admin-ci-apply-identity-members","PolicyArn":"arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-members"}]}`), true
 	case strings.Contains(joined, "list-attached-role-policies --role-name tabp-admin-ci-apply "):
-		return okResult(`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-workload"},{"PolicyName":"tabp-admin-ci-apply-workload-2"},{"PolicyName":"tabp-admin-ci-apply-workload-read"}]}`), true
+		return okResult(`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-workload","PolicyArn":"arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload"},{"PolicyName":"tabp-admin-ci-apply-workload-2","PolicyArn":"arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-2"},{"PolicyName":"tabp-admin-ci-apply-workload-read","PolicyArn":"arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read"}]}`), true
 	case strings.Contains(joined, "describe-key"):
 		return okResult(`{"KeyMetadata":{"Arn":"` + testKeyARN + `"}}`), true
 	case strings.Contains(joined, "get-bucket-policy"):
 		return okResult(`{"Policy":"{\"Statement\":[{\"Effect\":\"Deny\"}]}"}`), true
+	case slices.Contains(args, "list-attached-role-policies"):
+		// ほかの role の managed policy は、段4 の期待に当たらない1つ。
+		return okResult(`{"AttachedPolicies":[{"PolicyName":"x","PolicyArn":"arn:aws:iam::123456789012:policy/x"}]}`), true
+	}
+
+	if r, ok := roleDocsHandler(args); ok {
+		return r, true
 	}
 
 	return okResult(`{}`), true
@@ -727,6 +738,18 @@ func Test_checkVerify(t *testing.T) {
 		assert.Equal(t, []string{""}, lines)
 	})
 
+	// permissionsNG は、permissiveHandler（すべて allowed、委任管理者の policy は付いていない）に対して、allowed を
+	// 期待しない行の数を区分ごとに表と独立に数えた和。
+	permissionsNG := 15 + // S3 と IAM
+		8 + // state の鍵
+		13 + 19 + // 統制の構成物（条件つきを含む）
+		5 + // 委任管理者の指定（条件つきは走らない）
+		3 + // Chatbot の service-linked role
+		12 + 15 + // workload（条件つきを含む）
+		6 + 0 + // budgets（条件つきを含む）
+		4 + // unlock-identity
+		5 // unlock
+
 	// 結果の行は、permissiveHandler の応答に対して表と独立に数えたもの。
 	for _, tc := range []struct {
 		o      verifyOptions
@@ -736,7 +759,7 @@ func Test_checkVerify(t *testing.T) {
 		{verifyOptions{stage: "before-apply"}, "# 結果: 25 件のうち NG 25 件"},
 		{verifyOptions{stage: "stage4"}, "# 結果: 25 件のうち NG 23 件"},
 		{verifyOptions{stage: "stage4", executor: "bob"}, "# 結果: 25 件のうち NG 24 件"},
-		{verifyOptions{stage: "permissions"}, "# 結果: 191 件のうち NG 105 件（確かめていない区分 1）"},
+		{verifyOptions{stage: "permissions"}, "# 結果: " + strconv.Itoa(permissionsBase+governanceGated+workloadGatedCount+budgetsGatedCount) + " 件のうち NG " + strconv.Itoa(permissionsNG) + " 件（確かめていない区分 1）"},
 		{verifyOptions{stage: "stage5"}, "# 結果: 5 件のうち NG 4 件"},
 		{verifyOptions{stage: "output-policy", policySource: "live"}, "# 結果: 13 件のうち NG 7 件"},
 		{verifyOptions{stage: "output-policy", policySource: "reference", referenceDir: testReferenceDir}, "# 結果: 13 件のうち NG 7 件"},

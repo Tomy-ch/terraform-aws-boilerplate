@@ -42,7 +42,13 @@ jobs:
             productionresultssa30.blob.core.windows.net
             productionresultssa31.blob.core.windows.net
             productionresultssa32.blob.core.windows.net
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
       - name: Harden the runner (retry)
+        id: harden-runner-retry
         if: steps.harden-runner.outcome != 'success'
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
         with:
@@ -151,7 +157,13 @@ jobs:
             rekor.sigstore.dev
             fulcio.sigstore.dev
             awscli.amazonaws.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
       - name: Harden the runner (retry)
+        id: harden-runner-retry
         if: steps.harden-runner.outcome != 'success'
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
         with:
@@ -265,7 +277,7 @@ jobs:
       # cut-off notice, which names no cause.
       - name: Build PR comment body
         id: comment
-        if: always() && github.event_name == 'pull_request'
+        if: (steps.harden-runner.outcome == 'success' || steps.harden-runner-retry.outcome == 'success') && always() && github.event_name == 'pull_request'
         shell: bash
         # Read as variables rather than interpolated: README.md の「補足」.
         env:
@@ -382,7 +394,7 @@ jobs:
           write_section 'make cover-gate RUNNER_MODE=host' /tmp/go-test-gate.log "$gate_code"
 
       - name: Comment Go test result on PR
-        if: always() && github.event_name == 'pull_request'
+        if: (steps.harden-runner.outcome == 'success' || steps.harden-runner-retry.outcome == 'success') && always() && github.event_name == 'pull_request'
         continue-on-error: true
         uses: ./.github/actions/upsert-pr-comment
         with:
@@ -396,7 +408,7 @@ jobs:
       # The verdict is re-derived from the exit codes rather than read off the comment step, which
       # only runs for a pull request and could not carry the check on any other trigger.
       - name: Fail if Go tests failed
-        if: always()
+        if: (steps.harden-runner.outcome == 'success' || steps.harden-runner-retry.outcome == 'success') && always()
         shell: bash
         # Read as environment for the same reason as the step above.
         env:
@@ -472,7 +484,13 @@ jobs:
             rekor.sigstore.dev
             fulcio.sigstore.dev
             awscli.amazonaws.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
       - name: Harden the runner (retry)
+        id: harden-runner-retry
         if: steps.harden-runner.outcome != 'success'
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
         with:

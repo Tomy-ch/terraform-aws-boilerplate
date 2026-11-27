@@ -282,3 +282,134 @@ test_violation_counted_policy_not_read_as_document if {
 	fixture.has(sprintf("[PLAN-RPE-03] 文の数を宣言した %s が入力に在るのに、policy の文書として読まれていません", [apply_bucket_policy]), msgs)
 	fixture.has(sprintf("[PLAN-RPE-03] 文の数を宣言した %s が入力に在るのに、policy の文書として読まれていません", [output_bucket_policy]), msgs)
 }
+
+# メンバーアカウントの instance（decl.json の state_backend.instances）。宣言した root の名前のファイルでだけ数える。
+member_of(x, prefix, account, env) := json.unmarshal(strings.replace_n(
+	{"module.state_backend.": prefix, "123456789012": account, "tabp-admin-": sprintf("tabp-%s-", [env]), "-id\"": sprintf("-%s-id\"", [env])},
+	json.marshal(x),
+))
+
+security(x) := member_of(x, "module.state_backend_security.", "111111111111", "security")
+
+log_archive(x) := member_of(x, "module.state_backend_log_archive.", "222222222222", "log-archive")
+
+admin_identity(rcs) := [{"path": "input/admin-identity.json", "contents": {"plan_format_version": "1.2", "resource_changes": rcs}}]
+
+members := array.concat(security(array.concat(targets, declared)), log_archive(array.concat(targets, declared)))
+
+member_messages(extra) := msgs if {
+	msgs := gate.deny with input as admin_identity(array.concat(array.concat(array.concat(targets, declared), members), extra))
+}
+
+test_pass_member_policies_on_their_resources if {
+	count(member_messages([])) == 0
+}
+
+test_violation_undeclared_policy_on_a_member_bucket if {
+	evil := rc("aws_s3_bucket_policy", "module.evil.aws_s3_bucket_policy.x", {"bucket": "state-security-id"})
+	fixture.has(sprintf("[PLAN-RPE-01] input/admin-identity.json: module.evil.aws_s3_bucket_policy.x が %s を指します", [security(state_bucket)]), member_messages([evil]))
+}
+
+test_violation_canonical_policy_on_a_member_bucket if {
+	moved := rc("aws_s3_bucket_policy", state_bucket_policy, {"bucket": "state-security-id"})
+	rcs := array.concat(array.concat(targets, [moved, declared[1], declared[2], declared[3]]), members)
+	msgs := gate.deny with input as admin_identity(rcs)
+	fixture.has(sprintf("[PLAN-RPE-02] input/admin-identity.json: 宣言した %s が %s を指していません", [state_bucket_policy, state_bucket]), msgs)
+}
+
+test_violation_member_declaration_absent_from_its_root if {
+	msgs := gate.deny with input as admin_identity(array.concat(array.concat(targets, declared), security(array.concat(targets, declared))))
+	fixture.has(sprintf("[PLAN-RPE-00] admin-identity の instance log-archive: 宣言の policy_plan.state_backend.key_policy の %s が入力にありません", [log_archive(key_policy)]), msgs)
+	not fixture.has("[PLAN-RPE-00] admin-identity の instance security:", msgs)
+}
+
+test_violation_member_declaration_only_in_another_file if {
+	inp := array.concat(admin_identity(array.concat(array.concat(targets, declared), security(array.concat(targets, declared)))), fixture.plan(log_archive(array.concat(targets, declared))))
+	fixture.has("[PLAN-RPE-00] admin-identity の instance log-archive: ", gate.deny) with input as inp
+}
+
+test_violation_undeclared_instance if {
+	other := member_of(array.concat(targets, declared), "module.state_backend_other.", "111111111111", "other")
+	msgs := member_messages(other)
+	fixture.has("[PLAN-RPE-00] input/admin-identity.json: state-backend の instance（prefix \"module.state_backend_other.\"）が宣言にありません。data.policy_plan.state_backend.instances[\"admin-identity\"] に足してください", msgs)
+}
+
+test_violation_instances_malformed if {
+	every instances in [[], {}, {"admin-identity": []}, {"admin-identity": [{"name": "security"}]}] {
+		d := json.patch(data.policy_plan, [{"op": "replace", "path": "/state_backend/instances", "value": instances}])
+		msgs := gate.deny with input as admin_identity(array.concat(array.concat(targets, declared), members)) with data.policy_plan as d
+		fixture.has("[PLAN-RPE-00] data.policy_plan.state_backend.instances", msgs)
+	}
+}
+
+test_violation_declared_address_outside_the_module if {
+	d := json.patch(data.policy_plan, [{"op": "replace", "path": "/state_backend/bucket", "value": "module.other.aws_s3_bucket.this"}])
+	fixture.has("[PLAN-RPE-00] 宣言の policy_plan.state_backend.bucket が state_backend.module か deployment_identity.module で始まりません", gate.deny) with input as fixture.plan(array.concat(targets, declared)) with data.policy_plan as d
+}
+
+# メンバーの立ち上げの作成の plan。Bucket と鍵の id と arn、policy の参照先と文書が決まらない。
+created(x, after, unknown) := json.patch(x, [
+	{"op": "replace", "path": "/change/after", "value": after},
+	{"op": "replace", "path": "/change/after_unknown", "value": {a: true | some a in unknown}},
+])
+
+creating(x) := created(x, {"bucket": x.change.after.bucket}, ["id", "arn"]) if x.type == "aws_s3_bucket"
+
+creating(x) := created(x, {}, ["id", "key_id", "arn"]) if x.type == "aws_kms_key"
+
+creating(x) := created(x, {}, ["bucket", "policy"]) if x.type == "aws_s3_bucket_policy"
+
+creating(x) := created(x, {}, ["key_id", "policy"]) if x.type == "aws_kms_key_policy"
+
+test_pass_member_policies_created_with_their_resources if {
+	count(gate.deny) == 0 with input as admin_identity(array.concat(array.concat(targets, declared), [creating(x) | some x in members]))
+}
+
+# 作成の plan でも、宣言の外の policy が作る Bucket を指すかを読めなければ落とす。
+test_violation_undeclared_policy_with_unknown_target_while_creating if {
+	u := unknown("aws_s3_bucket_policy", "module.evil.aws_s3_bucket_policy.x", "bucket")
+	msgs := gate.deny with input as admin_identity(array.concat(array.concat(array.concat(targets, declared), [creating(x) | some x in members]), [u]))
+	fixture.has("[PLAN-RPE-01] input/admin-identity.json: module.evil.aws_s3_bucket_policy.x がどの resource を指すかを plan で読めません", msgs)
+}
+
+member_statement_messages(plan_n, apply_n) := {m |
+	some m in gate.deny with input as admin_identity(array.concat(array.concat(targets, declared), array.concat(security(with_documents(plan_n, apply_n)), log_archive(array.concat(targets, declared)))))
+	startswith(m, "[PLAN-RPE-03]")
+}
+
+test_pass_member_statement_counts if {
+	count(member_statement_messages(5, 3)) == 0
+}
+
+test_violation_member_statement_counts if {
+	fixture.has(sprintf("[PLAN-RPE-03] input/admin-identity.json: %s の文が 4 件で、宣言（policy_plan.deployment_identity.apply_identity_role.output_bucket_policy_statements）の 5 件と一致しません", [security(output_bucket_policy)]), member_statement_messages(4, 3))
+	fixture.has(sprintf("[PLAN-RPE-03] input/admin-identity.json: %s の文が 4 件で、宣言（policy_plan.state_backend.apply_output_bucket_policy_statements）の 3 件と一致しません", [security(apply_bucket_policy)]), member_statement_messages(5, 4))
+}
+
+test_violation_member_counted_policy_not_read_as_document if {
+	msgs := gate.deny with input as admin_identity(array.concat(array.concat(targets, declared), members)) with data.policy_plan.documents as {}
+	fixture.has(sprintf("[PLAN-RPE-03] 文の数を宣言した %s が入力に在るのに、policy の文書として読まれていません", [security(apply_bucket_policy)]), msgs)
+	fixture.has(sprintf("[PLAN-RPE-03] 文の数を宣言した %s が入力に在るのに、policy の文書として読まれていません", [log_archive(output_bucket_policy)]), msgs)
+}
+
+# 立ち上げを閉じる PR は、メンバーの instance を removed（destroy = false）で管理から外す。宣言を外したメンバーの forget は数えない。
+test_pass_removed_members_forgotten if {
+	gone := [json.patch(x, [
+		{"op": "replace", "path": "/change/actions", "value": ["forget"]},
+		{"op": "add", "path": "/change/before", "value": x.change.after},
+		{"op": "replace", "path": "/change/after", "value": null},
+	]) | some x in members]
+	d := json.patch(data.policy_plan, [{"op": "remove", "path": "/state_backend/instances"}])
+	count(gate.deny) == 0 with input as admin_identity(array.concat(array.concat(targets, declared), gone)) with data.policy_plan as d
+}
+
+test_violation_removed_member_still_written if {
+	d := json.patch(data.policy_plan, [{"op": "remove", "path": "/state_backend/instances"}])
+	msgs := gate.deny with input as admin_identity(array.concat(array.concat(targets, declared), members)) with data.policy_plan as d
+	fixture.has("[PLAN-RPE-00] input/admin-identity.json: state-backend の instance（prefix \"module.state_backend_security.\"）が宣言にありません", msgs)
+}
+
+test_violation_marker_without_change if {
+	broken := {"address": "module.state_backend_other.module.plan_output.aws_s3_bucket.this", "type": "aws_s3_bucket"}
+	fixture.has("[PLAN-RPE-00] input/admin-identity.json: module.state_backend_other.module.plan_output.aws_s3_bucket.this は宣言に無い instance を見つける印の address なのに、change を object で持っていません", member_messages([broken]))
+}

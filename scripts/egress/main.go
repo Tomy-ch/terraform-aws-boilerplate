@@ -1,6 +1,7 @@
 // Package main は bullfrog の通信制限（with: ブロック）を SSOT から生成・検証するツール。
 //
-//	apply: .github/egress.toml を元に、各 job の先頭の bullfrog の step の対（本体と再試行）を書き換える。
+//	apply: .github/egress.toml を元に、各 job の先頭の bullfrog の step の三つ組（本体・回復・再試行）を書き換える。
+//	       三つ組の後ろで status の関数を持つ step の if: は、bullfrog の成功の条件で始まることを確かめる（書き換えない）。
 //	check: apply と同じ判定を書き換えなしで行い、ドリフトがあれば非ゼロ終了する（CI / hook 用）。
 //
 // 詳細は .github/workflows/README.md の「ランナーの封じ込め」節を参照。
@@ -58,6 +59,12 @@ var (
 	stepNameRe   = regexp.MustCompile(`^ {6}- name: \S`)
 	stepUsesRe   = regexp.MustCompile(`^ {8}uses: ` + regexp.QuoteMeta(bullfrogAction) + `@[0-9A-Za-z._-]+(?: # \S+)?$`)
 	stepWithRe   = regexp.MustCompile(`^ {8}with:$`)
+	stepIfRe     = regexp.MustCompile(`^ {8}if:(.*)$`)
+	// yamlAliasRe は、アンカー（`&name`）・エイリアス（`*name`）・マージキー（`<<:`）。`*.example.com` のような
+	// ワイルドカードは、`*` の直後が英数字でないので当たらない。
+	yamlAliasRe = regexp.MustCompile(`(?:^|[\s\[{,:])[&*][A-Za-z0-9_]|<<\s*:`)
+	// blockScalarRe は if: の値が block scalar の指示子（字下げと chomping の指示を含む）だけの形。
+	blockScalarRe = regexp.MustCompile(`^[|>][1-9+-]*$`)
 	// stepKeyRe は、bullfrog の step のうち生成器が書き直してよいキーの行。ほかのキーは apply が黙って消すので拒む。
 	stepKeyRe = regexp.MustCompile(`^ {8}(?:id|continue-on-error|if):`)
 	commentRe = regexp.MustCompile(`^\s*#`)
@@ -98,8 +105,14 @@ var (
 	// 読める形は scripts/lib/workflow の切り出しが決める。
 	errJobUnparsed   = xerrors.New("steps を読み取れないジョブがあります")
 	errStepMissing   = xerrors.New("steps を持つのに bullfrog の step が無いジョブがあります")
-	errStepNotFirst  = xerrors.New("bullfrog の step がジョブの先頭の2つ（本体と再試行）に並んでいません")
+	errStepNotFirst  = xerrors.New("bullfrog の step がジョブの先頭の3つ（本体・回復・再試行）に並んでいません")
 	errStepDuplicate = xerrors.New("1 つのジョブに bullfrog の step が3つ以上あります")
+	// errStepGuard は、三つ組の後ろで status の関数を持つ step の if: が harden.Guard を先頭に持たない場合のエラー。
+	// apply では直らない（式は人が書く）。
+	errStepGuard = xerrors.New("status の関数を持つ step の if: が、bullfrog の成功の条件で始まっていません")
+	// errYAMLAlias は、workflow が YAML のアンカー・エイリアス・マージキーを持つ場合のエラー。値が別の行から
+	// 持ち込まれ、行を読む検査（Guard の数え直しを含む）がその値を見ない。
+	errYAMLAlias = xerrors.New("workflow に YAML のアンカー・エイリアス・マージキーがあります")
 	// errStepMalformed は、bullfrog の step が生成器の書ける形（name / id / continue-on-error / if / uses / with
 	// だけ）を外れているか、step の外で bullfrog が名指しされている場合のエラー。apply では直らない。
 	errStepMalformed = xerrors.New("bullfrog の step が想定外の形をしています")
@@ -166,7 +179,7 @@ type orderedHosts struct {
 	seen map[string]bool
 }
 
-// target は 1 ジョブの bullfrog の step（本体と、在れば再試行）のうち、生成器が書き直す範囲。
+// target は 1 ジョブの bullfrog の三つ組（本体・回復・再試行。回復と再試行が無ければ在る分）のうち、生成器が書き直す範囲。
 type target struct {
 	jobKey string
 	// start / end は差し替える行の範囲（0 起点・end は排他）。本体の `- name:` から、再試行の step の
@@ -251,7 +264,6 @@ func parseSSOT(data string) (*ssot, error) {
 	return s, s.validate()
 }
 
-// regionTemplateRe は宛先の `{<name>}`。
 var regionTemplateRe = regexp.MustCompile(`\{([^{}]*)\}`)
 
 // expandRegionSets は class・job の extra・type の宛先の `{<name>}` を、region_set の各 region に展開する。
@@ -619,6 +631,11 @@ func scanJobs(name, data string) ([]target, error) {
 	if l, ok := unclaimedLine(data, split); ok {
 		return nil, xerrors.Wrap(errJobUnparsed, fmt.Sprintf("%s %d 行目: %q", name, l.Number, l.Text))
 	}
+	for i, text := range strings.Split(data, "\n") {
+		if !commentRe.MatchString(text) && yamlAliasRe.MatchString(text) {
+			return nil, xerrors.Wrap(errYAMLAlias, fmt.Sprintf("%s %d 行目: %q", name, i+1, text))
+		}
+	}
 	var targets []target
 	total := mentionsBullfrog(split.Preamble)
 	for _, job := range split.Jobs {
@@ -647,11 +664,28 @@ func scanJobs(name, data string) ([]target, error) {
 			return nil, xerrors.Wrap(errStepDuplicate, key)
 		case found[0] != 0:
 			return nil, xerrors.Wrap(errStepNotFirst, fmt.Sprintf("%s %d 行目", key, steps[found[0]].Number))
-		case len(found) == 2 && found[1] != 1:
+		case len(found) == 2 && found[1] == 1:
+			// 回復の step を持たない対。apply が三つ組へ書き直し、check は生成の形からのずれとして落とす。
+		case len(found) == 2 && found[1] == 2:
+			// 間の step は書き直す範囲に入るので、生成した回復の step と一字一句同じでなければ apply が黙って消す。
+			if !harden.IsRecovery(steps[1]) {
+				return nil, xerrors.Wrap(errStepMalformed, fmt.Sprintf("%s %d 行目: 本体と再試行の間が生成した回復の step ではありません", key, steps[1].Number))
+			}
+		case len(found) == 2:
 			return nil, xerrors.Wrap(errStepNotFirst, fmt.Sprintf("%s %d 行目", key, steps[found[1]].Number))
+		case len(found) == 1 && len(steps) > 1 && steps[1].Lines[0].Text == harden.Recovery()[0]:
+			// 再試行の無い回復の step は書き直す範囲の外に残り、apply の後に回復の step が2つになる。
+			return nil, xerrors.Wrap(errStepMalformed, fmt.Sprintf("%s %d 行目: 再試行の無い回復の step です", key, steps[1].Number))
 		}
-		t, err := checkHarden(steps[:len(found)])
+		bullfrogs := make([]workflow.Step, 0, len(found))
+		for _, i := range found {
+			bullfrogs = append(bullfrogs, steps[i])
+		}
+		t, err := checkHarden(bullfrogs)
 		if err != nil {
+			return nil, xerrors.Wrap(err, key)
+		}
+		if err := checkGuards(steps[found[len(found)-1]+1:]); err != nil {
 			return nil, xerrors.Wrap(err, key)
 		}
 		t.jobKey = key
@@ -706,8 +740,106 @@ func mentionsBullfrog(lines []workflow.Line) int {
 	return n
 }
 
+// checkGuards は、三つ組の後ろの step のうち if: が status の関数（harden.StatusFunc）を持つものが、
+// harden.Guard と ` && ` で始まり、残りに括弧の外の `||` を持たないことを確かめる。status の関数は暗黙の
+// success() を外すので、bullfrog が2つとも落ちた job で、通信の制限の無いまま step が走る。括弧の外の `||` は
+// `&&` より弱く結ぶので、Guard を迂回する。
+// status の関数を名指す行（コメントを除く）は、step の行として別に数え、読めた if: の式の外に1つでもあれば落とす
+// （ADR-0702 決定15）。読めない書き方（`- if:`、引用符で囲んだキー、フロースタイル、run: の中）を検査の外へ逃がさない。
+func checkGuards(steps []workflow.Step) error {
+	for _, st := range steps {
+		l, cond, covered, ok := stepIf(st)
+		// 式の外の行は繋いでから見る。関数名と括弧を別の行に割った折り返し（`always` の次の行に `()`）も拾う。
+		var outside []string
+		for _, sl := range st.Lines {
+			if !commentRe.MatchString(sl.Text) && !covered[sl.Number] {
+				outside = append(outside, strings.TrimSpace(sl.Text))
+			}
+		}
+		if harden.StatusFunc.MatchString(strings.Join(outside, " ")) {
+			return xerrors.Wrap(errStepGuard, fmt.Sprintf("%d 行目からの step: status の関数は、step の `if:` の式の中にだけ書けます", st.Number))
+		}
+		if !ok || !harden.StatusFunc.MatchString(cond) {
+			continue
+		}
+		rest, found := strings.CutPrefix(cond, harden.Guard+" && ")
+		if !found || orOutsideParens(rest) {
+			return xerrors.Wrap(errStepGuard, fmt.Sprintf("%d 行目: %q（%s && で始めてください）", l.Number, l.Text, harden.Guard))
+		}
+	}
+	return nil
+}
+
+// stepIf は step の if: の行、`${{ }}` を外した式、式が占める行の番号を返す。if: より深く字下げした続きの行
+// （block scalar の本文と、plain scalar の折り返し）は、空行を挟んでも1つの式に繋ぐ。`${{` が閉じていなければ外さない。
+func stepIf(st workflow.Step) (workflow.Line, string, map[int]bool, bool) {
+	for i, l := range st.Lines {
+		m := stepIfRe.FindStringSubmatch(l.Text)
+		if m == nil {
+			continue
+		}
+		covered := map[int]bool{l.Number: true}
+		parts := []string{strings.TrimSpace(m[1])}
+		if blockScalarRe.MatchString(parts[0]) {
+			parts = parts[:0]
+		}
+		for _, c := range st.Lines[i+1:] {
+			if strings.TrimSpace(c.Text) != "" && !strings.HasPrefix(c.Text, withIndent+" ") {
+				break
+			}
+			covered[c.Number] = true
+			if t := strings.TrimSpace(c.Text); t != "" {
+				parts = append(parts, t)
+			}
+		}
+		cond := strings.Join(parts, " ")
+		if inner, ok := strings.CutPrefix(cond, "${{"); ok && strings.HasSuffix(inner, "}}") {
+			cond = strings.TrimSpace(strings.TrimSuffix(inner, "}}"))
+		}
+		return l, cond, covered, true
+	}
+	return workflow.Line{}, "", nil, false
+}
+
+// orOutsideParens は、式の括弧の外に `||` があるかを返す。単一引用符の文字列（`”` は引用符そのもの）の中は
+// 数えない。閉じていない文字列と、開いていない閉じ括弧は、括弧の外を読めないので真を返す（落とす側へ倒す）。
+func orOutsideParens(expr string) bool {
+	depth := 0
+	for i := 0; i < len(expr); i++ {
+		switch expr[i] {
+		case '\'':
+			j := i + 1
+			for ; j < len(expr); j++ {
+				if expr[j] == '\'' {
+					if j+1 < len(expr) && expr[j+1] == '\'' {
+						j++
+						continue
+					}
+					break
+				}
+			}
+			if j >= len(expr) {
+				return true
+			}
+			i = j
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth < 0 {
+				return true
+			}
+		case '|':
+			if depth == 0 && i+1 < len(expr) && expr[i+1] == '|' {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // checkHarden は、ジョブの先頭の bullfrog の step（本体と、在れば再試行）が生成器の書き直せる形かを確かめ、
-// 書き直す範囲と本体の uses: 行を返す。再試行の step の uses: は本体と同じものを生成するので、ここでは読まない。
+// 書き直す範囲（間の回復の step を含む）と本体の uses: 行を返す。再試行の step の uses: は本体と同じものを生成するので、ここでは読まない。
 func checkHarden(steps []workflow.Step) (target, error) {
 	t := target{start: steps[0].Number - 1}
 	for i, st := range steps {
@@ -790,7 +922,7 @@ func renderWith(policy string, ips, hosts []string) []string {
 	return out
 }
 
-// applyOrCheck は SSOT を正本に bullfrog の step の対を書き換える。dryRun=true は書かない。
+// applyOrCheck は SSOT を正本に bullfrog の step の三つ組を書き換える。dryRun=true は書かない。
 func applyOrCheck(root string, dryRun bool) error {
 	raw, err := os.ReadFile(filepath.Join(root, ssotFile)) //nolint:gosec // path is cwd + literal filename
 	if err != nil {
@@ -858,7 +990,7 @@ func (s *ssot) planFiles(files []string) (map[string]string, map[string]bool, er
 	return changes, used, nil
 }
 
-// rewriteFile は 1 ファイルの bullfrog の step の対を、SSOT と生成の形どおりに差し替えた本文を返す。
+// rewriteFile は 1 ファイルの bullfrog の step の三つ組を、SSOT と生成の形どおりに差し替えた本文を返す。
 func (s *ssot) rewriteFile(name, data string, used map[string]bool) (string, error) {
 	targets, err := scanJobs(name, data)
 	if err != nil {
@@ -919,7 +1051,7 @@ func writeChanges(root string, changes map[string]string, dryRun bool) error {
 			}
 			return xerrors.Wrap(errEgressDrift, "make egress-apply してコミットしてください: "+strings.Join(rels, ", "))
 		}
-		log.Printf("✅ 全ジョブの bullfrog の step の対が %s と生成の形どおりです", ssotFile)
+		log.Printf("✅ 全ジョブの bullfrog の step の三つ組が %s と生成の形どおりです", ssotFile)
 
 		return nil
 	}

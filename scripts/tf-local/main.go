@@ -12,7 +12,7 @@
 //	    評価が rego の `deny contains` の数でなければ失敗する。-policy は dir の下の rego を走査して、
 //	    package ごとに突き合わせる
 //
-// 入口の段は、1回の起動で1つの目的の道具（aws か terraform か conftest）だけを、固定の引数で起動する
+// 入口の段は、1回の起動で1つの目的の道具（aws か terraform か conftest か bootstrap-check）だけを、固定の引数で起動する
 // （ADR-0702 決定3・24）。人の手元の段は local.go、CI の資格情報の段は cicred.go、plan と apply の段は ciflow.go、
 // lock の解除と lock を残す段は cihold.go が持つ。値を決められない入力はすべて失敗し（終了コードは下）、make はその時点で
 // 後の段を起動しない。make のレシピに分岐を置かず、判断はすべてここのテストで固定する。
@@ -20,7 +20,7 @@
 // 終了コードは lib/toolrun の取り決めで、対象について否と言えた失敗（plan の失敗、Policy の違反、apply の失敗、
 // lock の衝突など。verdicts）を 1、道具を起動できない・値を決められない・入力を読めない・使い方の誤りを 2 にする。
 // ci-finish は、失敗した段が判定まで届いていなければ 2 で終わる。-work（ci-credentials・ci-assume-denied・
-// ci-policy）はリポジトリ直下の tmp/ の下に限り（lib/workdir）、その下に作る一時ディレクトリだけを消す。
+// ci-policy・ci-permissions）はリポジトリ直下の tmp/ の下に限り（lib/workdir）、その下に作る一時ディレクトリだけを消す。
 //
 // backend block は式を持てないので、Bucket 名・state の鍵の alias 名・role 名の規則をここに写す。Bucket 名と alias 名の正本は
 // modules/s3 と usecases/state-backend、role 名の正本は usecases/deployment-identity で、写しのずれはテストが
@@ -61,6 +61,7 @@ var (
 	regionLine     = regexp.MustCompile(`^\s*region\s*=\s*"([^"]*)"`)
 	regionPattern  = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-[0-9]$`)
 	accountPattern = regexp.MustCompile(`^[0-9]{12}$`)
+	twelveDigits   = regexp.MustCompile(`[0-9]{12}`)
 	tokenPattern   = regexp.MustCompile(`^[a-z0-9]+$`)
 	commitPattern  = regexp.MustCompile(`^[0-9a-f]{40}$`)
 	envNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -72,7 +73,7 @@ var (
 	unsetNames    = []string{"TF_WORKSPACE", "TF_DATA_DIR", "TF_CLI_CONFIG_FILE", "TF_REATTACH_PROVIDERS",
 		"ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"}
 
-	errUsage            = xerrors.New("❌ usage: tf-local env-unset | plan-header | policy-result ... | local-prepare|local-init|local-plan ... | ci-credentials|ci-assume-denied ... | ci-prepare|ci-init|ci-plan|ci-policy|ci-apply|ci-upload|ci-finish ... | ci-unlock ... | ci-hold-absent|ci-hold-plan|ci-hold-verify ...")
+	errUsage            = xerrors.New("❌ usage: tf-local env-unset | plan-header | policy-result ... | local-prepare|local-init|local-plan ... | ci-credentials|ci-assume-denied ... | ci-prepare|ci-init|ci-plan|ci-policy|ci-permissions|ci-apply|ci-upload|ci-finish ... | ci-unlock ... | ci-hold-absent|ci-hold-plan|ci-hold-verify ...")
 	errBackendMissing   = xerrors.New("❌ backend.tf がありません")
 	errProvidersMissing = xerrors.New("❌ providers.tf がありません")
 	errRegionMismatch   = xerrors.New("❌ provider と backend の region が違います")
@@ -103,7 +104,8 @@ type deps struct {
 func main() {
 	log.SetFlags(0)
 
-	if err := run(os.Args[1:], os.Stdout, deps{readFile: os.ReadFile, environ: os.Environ(), git: gitOutput, now: time.Now, alive: processAlive, sleep: time.Sleep, tool: command, fetch: fetchOIDC, stderr: os.Stderr, root: "."}); err != nil {
+	const root = "."
+	if err := run(os.Args[1:], os.Stdout, deps{readFile: os.ReadFile, environ: os.Environ(), git: gitOutput, now: time.Now, alive: processAlive, sleep: time.Sleep, tool: commandAt(root), fetch: fetchOIDC, stderr: os.Stderr, root: root}); err != nil {
 		log.Printf("%v", err)
 		os.Exit(exitCode(err))
 	}
@@ -114,7 +116,7 @@ func main() {
 var verdicts = []error{
 	errRootCredentials, errStateKeyMissing, errStateKeyMismatch,
 	errPlanFailed, errPlanErrored, errLocalPlan,
-	errCIPolicy, policyresult.ErrViolation,
+	errCIPolicy, policyresult.ErrViolation, errCIPermissions,
 	errApplyFailed, errApplyTimeout, errAssumeSucceeded,
 	errLockFresh, errLockForeign, errLockExists,
 	errCIFailed, errCIUnfinish,
@@ -173,6 +175,8 @@ func run(args []string, out io.Writer, d deps) error {
 		value, err = ciPlanStep(args[1:], d, out)
 	case "ci-policy":
 		value, err = ciPolicyStep(args[1:], d, out)
+	case "ci-permissions":
+		value, err = ciPermissionsStep(args[1:], d, out)
 	case "ci-apply":
 		value, err = ciApplyStep(args[1:], d, out)
 	case "ci-upload":
@@ -234,7 +238,7 @@ func rootRegion(root string, readFile func(string) ([]byte, error)) (string, err
 		return "", xerrors.Wrap(err, backendPath)
 	}
 
-	providerRegion, err := backendRegion(string(providers))
+	providerRegion, err := providersRegion(string(providers))
 	if err != nil {
 		return "", xerrors.Wrap(err, providersPath)
 	}
@@ -259,6 +263,28 @@ func backendRegion(content string) (string, error) {
 
 	if len(regions) != 1 {
 		return "", xerrors.Wrap(errRegionNotOne, fmt.Sprintf("%d 件", len(regions)))
+	}
+
+	if !regionPattern.MatchString(regions[0]) {
+		return "", xerrors.Wrap(errRegionMalformed, regions[0])
+	}
+
+	return regions[0], nil
+}
+
+// providersRegion は、providers.tf の provider の region を返します。立ち上げの中のメンバーアカウントの alias の
+// provider も region を持つので、1件以上ですべて同じ値のときだけ受け、0件と食い違いはどれか1つを選ばずにエラーにします。
+func providersRegion(content string) (string, error) {
+	var regions []string
+
+	for line := range strings.Lines(content) {
+		if m := regionLine.FindStringSubmatch(line); m != nil {
+			regions = append(regions, m[1])
+		}
+	}
+
+	if len(regions) == 0 || slices.ContainsFunc(regions, func(r string) bool { return r != regions[0] }) {
+		return "", xerrors.Wrap(errRegionNotOne, fmt.Sprintf("%d 件（%s）", len(regions), strings.Join(regions, "・")))
 	}
 
 	if !regionPattern.MatchString(regions[0]) {

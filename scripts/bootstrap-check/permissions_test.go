@@ -16,21 +16,22 @@ import (
 // permExpand は引数の順に照合するので、長い記号を先に置く。
 var (
 	permS3Descs = []string{
-		"plan $b: 15 件が allowed",
-		"apply-identity $b: 17 件が allowed",
+		"plan $b: 16 件が allowed",
+		"apply-identity $b: 18 件が allowed",
 		"apply-identity $key: 1 件が allowed",
 		"apply-identity $role/plan: 2 件が allowed",
-		"plan $pb: 15 件が allowed",
+		"plan $pb: 16 件が allowed",
 		"plan $pb/pr/1/x: 1 件が allowed",
-		"apply-identity $pb: 16 件が allowed",
+		"apply-identity $pb: 17 件が allowed",
 		"apply-identity $pb/apply/1/x: 1 件が allowed",
-		"plan $ab: 16 件が allowed",
-		"apply-identity $ab: 19 件が allowed",
+		"plan $ab: 17 件が allowed",
+		"apply-identity $ab: 20 件が allowed",
 		"apply-identity $ab: 1 件が implicitDeny",
 		"plan $ab: 2 件が implicitDeny",
 		"apply $b: 2 件が allowed",
 		"plan $key: 1 件が implicitDeny",
 		"plan $role/plan: 1 件が implicitDeny",
+		"plan *: 1 件が allowed",
 		"plan $pb/pr/1/x: 2 件が implicitDeny",
 		"plan $pb/x: 1 件が implicitDeny",
 		"apply-identity $pb/pr/1/x: 2 件が implicitDeny",
@@ -269,7 +270,7 @@ var (
 
 const (
 	// permissions の件数。条件つきの確認の有無で変わる。
-	permissionsBase     = 128
+	permissionsBase     = 129
 	governanceGated     = 31
 	delegatedGated      = 18
 	delegatedAbsent     = "  委任管理者の policy がまだ付いていないので、指定と解除の権限は確かめない（委任管理者の policy を作って付ける apply の後にもう一度走らせる）"
@@ -283,8 +284,8 @@ const (
 	budgetsUnknown      = "  apply の role の managed policy を確かめられないので（上の NG）、apply の role の budgets と Cost Anomaly Detection の作成と変更の権限は確かめない"
 	attachedIdentityKey = "iam list-attached-role-policies --role-name tabp-admin-ci-apply-identity --output json --region " + testRegion
 	attachedApplyKey    = "iam list-attached-role-policies --role-name tabp-admin-ci-apply --output json --region " + testRegion
-	governanceAttached  = `{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-manage"},{"PolicyName":"tabp-admin-ci-apply-identity-members"},{"PolicyName":"tabp-admin-ci-apply-identity-governance"},{"PolicyName":"tabp-admin-ci-apply-identity-governance-2"}]}`
-	workloadAttached    = `{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-workload-read"},{"PolicyName":"tabp-admin-ci-apply-workload-2"},{"PolicyName":"tabp-admin-ci-apply-workload"}]}`
+	governanceAttached  = `{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-manage","PolicyArn":"arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-manage"},{"PolicyName":"tabp-admin-ci-apply-identity-members","PolicyArn":"arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-members"},{"PolicyName":"tabp-admin-ci-apply-identity-governance","PolicyArn":"arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance"},{"PolicyName":"tabp-admin-ci-apply-identity-governance-2","PolicyArn":"arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance-2"}]}`
+	workloadAttached    = `{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-workload-read","PolicyArn":"arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read"},{"PolicyName":"tabp-admin-ci-apply-workload-2","PolicyArn":"arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-2"},{"PolicyName":"tabp-admin-ci-apply-workload","PolicyArn":"arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload"}]}`
 	noneAttached        = `{"AttachedPolicies":[]}`
 )
 
@@ -292,7 +293,7 @@ var permExpand = strings.NewReplacer(
 	"$reads", "s3:GetBucketAcl s3:GetBucketCORS s3:GetBucketWebsite s3:GetAccelerateConfiguration s3:GetBucketRequestPayment "+
 		"s3:GetBucketLogging s3:GetLifecycleConfiguration s3:GetReplicationConfiguration s3:GetBucketObjectLockConfiguration "+
 		"s3:GetBucketTagging s3:GetBucketPolicy s3:GetBucketVersioning s3:GetEncryptionConfiguration "+
-		"s3:GetBucketPublicAccessBlock s3:GetBucketOwnershipControls",
+		"s3:GetBucketPublicAccessBlock s3:GetBucketOwnershipControls s3:ListTagsForResource",
 	"$manage", "iam:CreatePolicy iam:CreatePolicyVersion iam:DeletePolicyVersion iam:SetDefaultPolicyVersion iam:GetPolicy iam:GetPolicyVersion iam:ListPolicyVersions",
 	"$bg", "arn:aws:iam::123456789012:role/break-glass/tabp-break-glass",
 	"$budget", "arn:aws:budgets::123456789012:budget/tabp-admin-x",
@@ -345,6 +346,7 @@ var permRowActions = []string{
 	"s3:ListBucket s3:GetEncryptionConfiguration",
 	"s3:PutObject",
 	"iam:PutRolePolicy",
+	"iam:SimulateCustomPolicy",
 	"s3:DeleteObject s3:DeleteObjectVersion",
 	"s3:PutObject",
 	"s3:PutObject s3:DeleteObject",
@@ -376,15 +378,15 @@ var permRowActions = []string{
 	// 統制の構成物
 	"$manage",
 	"iam:CreatePolicy iam:CreatePolicyVersion iam:GetPolicy",
-	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-identity-governance (arn)",
-	"iam:AttachRolePolicy ; iam:PolicyARN = arn:aws:iam::aws:policy/AdministratorAccess (arn)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-identity-governance (string)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = arn:aws:iam::aws:policy/AdministratorAccess (string)",
 	"$manage",
-	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-identity-manage (arn)",
-	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-identity-manage (arn)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-identity-manage (string)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-identity-manage (string)",
 	"iam:GetPolicy iam:GetPolicyVersion",
 	"iam:CreatePolicyVersion",
 	"$manage",
-	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-identity-members (arn)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-identity-members (string)",
 	"iam:GetPolicy iam:GetPolicyVersion",
 	"iam:CreatePolicyVersion",
 	"sts:AssumeRole",
@@ -399,7 +401,7 @@ var permRowActions = []string{
 	"iam:CreatePolicyVersion",
 	"$inst cloudformation:DeleteStackInstances",
 	"organizations:CreateOrganization organizations:DescribeOrganization iam:UpdateAccountPasswordPolicy",
-	"iam:AttachRolePolicy ; iam:PolicyARN = arn:aws:iam::aws:policy/AdministratorAccess (arn)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = arn:aws:iam::aws:policy/AdministratorAccess (string)",
 	"organizations:DeleteOrganization",
 	"iam:DeleteRole",
 	"$inst",
@@ -431,7 +433,7 @@ var permRowActions = []string{
 	"cloudformation:UpdateStackSet",
 	// 委任管理者の指定
 	"$manage",
-	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-identity-governance-2 (arn)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-identity-governance-2 (string)",
 	"organizations:ListDelegatedAdministrators",
 	"organizations:DescribeAccount",
 	"organizations:DescribeOrganizationalUnit",
@@ -472,13 +474,13 @@ var permRowActions = []string{
 	"$manage",
 	"$manage",
 	"$manage",
-	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-workload (arn)",
-	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-workload-read (arn)",
-	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-workload-2 (arn)",
-	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/boundary-ops-notification (arn)",
-	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-workload-read (arn)",
-	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-workload (arn)",
-	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-workload-2 (arn)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-workload (string)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-workload-read (string)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-workload-2 (string)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/boundary-ops-notification (string)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-workload-read (string)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-workload (string)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-workload-2 (string)",
 	"iam:GetPolicy iam:GetPolicyVersion",
 	"iam:GetPolicy iam:GetPolicyVersion",
 	"sns:GetTopicAttributes sns:ListTagsForResource",
@@ -493,9 +495,9 @@ var permRowActions = []string{
 	"iam:CreateRole iam:PassRole",
 	"iam:DeleteRolePermissionsBoundary",
 	"kms:CreateKey kms:PutKeyPolicy ; kms:BypassPolicyLockoutSafetyCheck = true (boolean)",
-	"iam:CreateRole iam:PutRolePolicy iam:DeleteRole ; iam:PermissionsBoundary = $policy/boundary-ops-notification (arn)",
+	"iam:CreateRole iam:PutRolePolicy iam:DeleteRole ; iam:PermissionsBoundary = $policy/boundary-ops-notification (string)",
 	"iam:CreateRole iam:PutRolePolicy",
-	"iam:CreateRole ; iam:PermissionsBoundary = $policy/boundary-ops-notification (arn)",
+	"iam:CreateRole ; iam:PermissionsBoundary = $policy/boundary-ops-notification (string)",
 	"iam:PassRole ; iam:PassedToService = scheduler.amazonaws.com (string)",
 	"iam:PassRole ; iam:PassedToService = lambda.amazonaws.com (string)",
 	"sns:CreateTopic sns:SetTopicAttributes",
@@ -629,6 +631,58 @@ func allRows(n names, sk string) []simRow {
 	return rows
 }
 
+// roleDocsHandler は、role の policy の文書を読む呼び出しに応答する。inline policy は無く、responses に無い role には
+// managed policy が付いておらず、managed policy の文書は文を持たない。
+func roleDocsHandler(args []string) (awsResult, bool) {
+	switch {
+	case slices.Contains(args, "list-role-policies"):
+		return okResult(`{"PolicyNames":[]}`), true
+	case slices.Contains(args, "list-attached-role-policies"):
+		return okResult(noneAttached), true
+	case slices.Contains(args, "get-policy"):
+		return okResult(`{"Policy":{"DefaultVersionId":"v1"}}`), true
+	case slices.Contains(args, "get-policy-version"):
+		return okResult(`{"PolicyVersion":{"Document":{"Version":"2012-10-17","Statement":[]}}}`), true
+	}
+
+	return awsResult{}, false
+}
+
+// orElse は、first が応答しない呼び出しを second に回す。
+func orElse(first, second func([]string) (awsResult, bool)) func([]string) (awsResult, bool) {
+	return func(args []string) (awsResult, bool) {
+		if r, ok := first(args); ok {
+			return r, true
+		}
+
+		return second(args)
+	}
+}
+
+// withMissing は、handler の simulate の応答のすべての結果に、足りない context として keys を持たせる。
+func withMissing(t *testing.T, handler func([]string) (awsResult, bool), keys ...string) func([]string) (awsResult, bool) {
+	t.Helper()
+
+	return func(args []string) (awsResult, bool) {
+		r, ok := handler(args)
+		if !ok || !slices.Contains(args, "simulate-principal-policy") {
+			return r, ok
+		}
+
+		var v map[string][]map[string]any
+		require.NoError(t, json.Unmarshal(r.stdout, &v))
+
+		for _, e := range v["EvaluationResults"] {
+			e["MissingContextValues"] = keys
+		}
+
+		b, err := json.Marshal(v)
+		require.NoError(t, err)
+
+		return okResult(string(b)), true
+	}
+}
+
 func permFake(t *testing.T, identity, apply awsResult) *fakeAWS {
 	t.Helper()
 
@@ -638,7 +692,12 @@ func permFake(t *testing.T, identity, apply awsResult) *fakeAWS {
 		jsonKey("kms", "describe-key", "--key-id", testAlias): okResult(describeKeyBody),
 		attachedIdentityKey: identity,
 		attachedApplyKey:    apply,
-	}, handler: tableHandler(n, allRows(n, testKeyARN))}
+	}, handler: orElse(tableHandler(n, allRows(n, testKeyARN)), roleDocsHandler)}
+}
+
+// docsUnreadable は、role の policy の文書を読めないときの NG の行。
+func docsUnreadable(role, reason string) string {
+	return "NG  " + role + ": policy の文書を読めないので、足りない context を行に関わる文に絞れない（" + reason + "）"
 }
 
 // permExpected は、permissions の出力の行。governance・delegated・workload・budgets は条件つきの確認の区分の末尾の
@@ -781,6 +840,25 @@ func Test_simRow_args(t *testing.T) {
 		"ContextKeyName=k,ContextKeyValues=v1,v2,ContextKeyType=stringList", "--action-names", "a"},
 		simCtx(allowed, "plan", "arn:x", []string{ctxList("k", "v1", "v2")}, "a").args(n), "stringList の entry は分けずに1つの引数として --context-entries に渡す")
 
+	t.Run("文書が1つなら、要素1つの JSON の配列を1つの引数として simulate-custom-policy の --policy-input-list に渡す", func(t *testing.T) {
+		t.Parallel()
+
+		one := simCtx(allowed, "plan", "arn:x", []string{ctxList("k", "v1", "v2")}, "a", "b")
+		one.docs = []string{`{"Version":"2012-10-17","Statement":[]}`}
+
+		assert.Equal(t, []string{"iam", "simulate-custom-policy", "--policy-input-list", `["{\"Version\":\"2012-10-17\",\"Statement\":[]}"]`, "--resource-arns", "arn:x",
+			"--context-entries", "ContextKeyName=k,ContextKeyValues=v1,v2,ContextKeyType=stringList", "--action-names", "a", "b"}, one.args(n))
+	})
+
+	t.Run("文書が2つでも引数は1つの JSON の配列で、role の ARN を渡さない", func(t *testing.T) {
+		t.Parallel()
+
+		two := sim(allowed, "plan", "arn:x", "a")
+		two.docs = []string{`{"a":1}`, `{"b":2}`}
+
+		assert.Equal(t, []string{"iam", "simulate-custom-policy", "--policy-input-list", `["{\"a\":1}","{\"b\":2}"]`, "--resource-arns", "arn:x", "--action-names", "a"}, two.args(n))
+	})
+
 	r := sim(allowed, "plan", "arn:x", "a")
 	r.bucketPolicy, r.doc = true, `{"Statement":[]}`
 
@@ -864,6 +942,34 @@ func Test_simCheck(t *testing.T) {
 		require.ErrorIs(t, err, errAWSStart)
 	})
 
+	t.Run("文書を持つ行は、simulate-custom-policy の応答を同じ判定にかける", func(t *testing.T) {
+		t.Parallel()
+
+		r := row
+		r.docs = []string{`{"a":1}`}
+
+		f := verifyFake(t, map[string]awsResult{jsonKey(r.args(n)...): simResult([]string{"s3:A", "s3:B"}, implicitDeny)}, nil)
+
+		v, err := simCheck(r, n).eval(newQuery(f.fn, testRegion))
+
+		require.NoError(t, err)
+		assert.Equal(t, verdict{reason: "違う判定: s3:A=implicitDeny s3:B=implicitDeny"}, v)
+	})
+
+	t.Run("Bucket Policy と文書を併せ持つ行は、aws を呼ばずに NG", func(t *testing.T) {
+		t.Parallel()
+
+		f := verifyFake(t, nil, nil)
+		r := row
+		r.bucketPolicy, r.doc, r.docs = true, `{"Statement":[]}`, []string{`{"a":1}`}
+
+		v, err := simCheck(r, n).eval(newQuery(f.fn, testRegion))
+
+		require.NoError(t, err)
+		assert.Equal(t, verdict{reason: "Bucket Policy を含む行は、plan の文書では評価しない"}, v)
+		assert.Empty(t, f.calls)
+	})
+
 	for name, r := range map[string]simRow{
 		"context を与えた行":      simCtx(allowed, "plan", "arn:x", []string{"c"}, "s3:A", "s3:B"),
 		"Bucket Policy を含む行": {want: allowed, role: "plan", resource: "arn:x", actions: []string{"s3:A", "s3:B"}, bucketPolicy: true, doc: `{"Statement":[]}`},
@@ -890,6 +996,43 @@ func Test_simCheck(t *testing.T) {
 				assert.Equal(t, tc.want, v)
 			})
 		}
+	}
+
+	// s3:A に当たる文は s3:prefix を、当たらない文は aws:unrelated を条件に持つ。
+	roleDoc := `{"Statement":[{"Effect":"Allow","Action":"s3:A","Resource":"arn:x","Condition":{"StringLike":{"s3:prefix":"p/*"}}},` +
+		`{"Effect":"Allow","Action":"ec2:DescribeInstances","Resource":"*","Condition":{"Bool":{"aws:unrelated":"true"}}}]}`
+	missing := func(k string) awsResult {
+		return okResult(`{"EvaluationResults":[{"EvalActionName":"s3:A","EvalDecision":"allowed","MissingContextValues":["` + k + `"]},` +
+			`{"EvalActionName":"s3:B","EvalDecision":"allowed"}]}`)
+	}
+
+	for name, tc := range map[string]struct {
+		contextDocs []string
+		docs        []string
+		r           awsResult
+		want        verdict
+	}{
+		"role の文書の、行に当たらない文のキーだけが足りなければ ok": {[]string{roleDoc}, nil, missing("aws:unrelated"), verdict{ok: true}},
+		"role の文書の、行に当たる文のキーが足りなければ、そのキーで NG": {[]string{roleDoc}, nil, missing("s3:prefix"),
+			verdict{reason: "評価に足りない context: s3:prefix"}},
+		"role の文書が nil なら絞らずに NG":            {nil, nil, missing("aws:unrelated"), verdict{reason: "評価に足りない context: aws:unrelated"}},
+		"role の文書が空の一覧なら、足りない context を数えない": {[]string{}, nil, missing("s3:prefix"), verdict{ok: true}},
+		"文書を持つ行は、role の文書ではなく行の文書で絞る": {[]string{`{"Statement":[]}`}, []string{roleDoc}, missing("s3:prefix"),
+			verdict{reason: "評価に足りない context: s3:prefix"}},
+	} {
+		t.Run("context を与えた行で、"+name, func(t *testing.T) {
+			t.Parallel()
+
+			r := simCtx(allowed, "plan", "arn:x", []string{"c"}, "s3:A", "s3:B")
+			r.contextDocs, r.docs = tc.contextDocs, tc.docs
+
+			f := verifyFake(t, map[string]awsResult{jsonKey(r.args(n)...): tc.r}, nil)
+
+			v, err := simCheck(r, n).eval(newQuery(f.fn, testRegion))
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, v)
+		})
 	}
 }
 
@@ -919,6 +1062,135 @@ func Test_attachedNames(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, got)
 			assert.Equal(t, tc.wantReason, reason)
+		})
+	}
+}
+
+func Test_liveRoleDocuments(t *testing.T) {
+	t.Parallel()
+
+	const managedARN = "arn:aws:iam::123456789012:policy/m"
+
+	var (
+		listInline  = jsonKey("iam", "list-role-policies", "--role-name", "r")
+		getInline   = jsonKey("iam", "get-role-policy", "--role-name", "r", "--policy-name", "i")
+		listManaged = jsonKey("iam", "list-attached-role-policies", "--role-name", "r")
+		getPolicy   = jsonKey("iam", "get-policy", "--policy-arn", managedARN)
+		getVersion  = jsonKey("iam", "get-policy-version", "--policy-arn", managedARN, "--version-id", "v2")
+	)
+
+	good := map[string]awsResult{
+		listInline:  okResult(`{"PolicyNames":["i"]}`),
+		getInline:   okResult(`{"RoleName":"r","PolicyName":"i","PolicyDocument":{"Statement":[{"Sid":"i"}]}}`),
+		listManaged: okResult(`{"AttachedPolicies":[{"PolicyName":"m","PolicyArn":"` + managedARN + `"}]}`),
+		getPolicy:   okResult(`{"Policy":{"PolicyName":"m","DefaultVersionId":"v2"}}`),
+		getVersion:  okResult(`{"PolicyVersion":{"VersionId":"v2","Document":{"Statement":[{"Sid":"m"}]}}}`),
+	}
+
+	t.Run("inline policy と managed policy の既定の版の文書を、この順に返す", func(t *testing.T) {
+		t.Parallel()
+
+		docs, reason, err := liveRoleDocuments(newQuery(verifyFake(t, good, nil).fn, testRegion), "r")
+
+		require.NoError(t, err)
+		assert.Empty(t, reason)
+		assert.Equal(t, []string{`{"Statement":[{"Sid":"i"}]}`, `{"Statement":[{"Sid":"m"}]}`}, docs)
+	})
+
+	t.Run("policy が1つも無ければ、nil ではない空の一覧", func(t *testing.T) {
+		t.Parallel()
+
+		f := verifyFake(t, map[string]awsResult{listInline: okResult(`{"PolicyNames":[]}`), listManaged: okResult(noneAttached)}, nil)
+
+		docs, reason, err := liveRoleDocuments(newQuery(f.fn, testRegion), "r")
+
+		require.NoError(t, err)
+		assert.Empty(t, reason)
+		assert.NotNil(t, docs)
+		assert.Empty(t, docs)
+	})
+
+	for name, tc := range map[string]struct {
+		key    string
+		r      awsResult
+		reason string
+	}{
+		"list-role-policies の失敗":          {listInline, failed("denied"), "呼び出しが失敗: denied"},
+		"list-role-policies の空の応答":        {listInline, okResult(""), "応答を読めない"},
+		"PolicyNames が無い":                 {listInline, okResult(`{}`), "list-role-policies の応答を読めない"},
+		"PolicyNames が object":            {listInline, okResult(`{"PolicyNames":{"i":1}}`), "list-role-policies の応答を読めない"},
+		"PolicyNames の要素が文字列でない":          {listInline, okResult(`{"PolicyNames":[1]}`), "list-role-policies の応答を読めない"},
+		"PolicyNames が文字列":                {listInline, okResult(`{"PolicyNames":"i"}`), "list-role-policies の応答を読めない"},
+		"get-role-policy の失敗":             {getInline, failed("NoSuchEntity"), "呼び出しが失敗: NoSuchEntity"},
+		"PolicyDocument が無い":              {getInline, okResult(`{"PolicyName":"i"}`), "get-role-policy の応答を読めない"},
+		"PolicyDocument が object でない":     {getInline, okResult(`{"PolicyDocument":"%7B%7D"}`), "get-role-policy の応答を読めない"},
+		"list-attached-role-policies の失敗": {listManaged, failed("denied"), "呼び出しが失敗: denied"},
+		"AttachedPolicies が無い":            {listManaged, okResult(`{}`), "list-attached-role-policies の応答を読めない"},
+		"AttachedPolicies が配列でない":         {listManaged, okResult(`{"AttachedPolicies":{"PolicyArn":"` + managedARN + `"}}`), "list-attached-role-policies の応答を読めない"},
+		"PolicyArn が無い":                   {listManaged, okResult(`{"AttachedPolicies":[{"PolicyName":"m"}]}`), "list-attached-role-policies の応答を読めない"},
+		"get-policy の失敗":                  {getPolicy, failed("NoSuchEntity"), "呼び出しが失敗: NoSuchEntity"},
+		"DefaultVersionId が無い":            {getPolicy, okResult(`{"Policy":{"PolicyName":"m"}}`), "get-policy の応答を読めない"},
+		"get-policy-version の失敗":          {getVersion, failed("NoSuchEntity"), "呼び出しが失敗: NoSuchEntity"},
+		"Document が無い":                    {getVersion, okResult(`{"PolicyVersion":{"VersionId":"v2"}}`), "get-policy-version の応答を読めない"},
+		"Document が object でない":           {getVersion, okResult(`{"PolicyVersion":{"Document":"%7B%7D"}}`), "get-policy-version の応答を読めない"},
+	} {
+		t.Run(name+"なら、文書を返さずに理由を返す", func(t *testing.T) {
+			t.Parallel()
+
+			docs, reason, err := liveRoleDocuments(newQuery(verifyFake(t, good, map[string]awsResult{tc.key: tc.r}).fn, testRegion), "r")
+
+			require.NoError(t, err)
+			assert.Nil(t, docs)
+			assert.Equal(t, tc.reason, reason)
+		})
+	}
+
+	for _, op := range []string{"list-role-policies", "get-role-policy", "list-attached-role-policies", "get-policy", "get-policy-version"} {
+		t.Run(op+" で aws を起動できなければ errAWSStart", func(t *testing.T) {
+			t.Parallel()
+
+			f := verifyFake(t, good, nil)
+			q := newQuery(func(args ...string) awsResult {
+				if args[1] == op {
+					return awsResult{err: os.ErrNotExist}
+				}
+
+				return f.fn(args...)
+			}, testRegion)
+
+			_, _, err := liveRoleDocuments(q, "r")
+
+			require.ErrorIs(t, err, errAWSStart)
+		})
+	}
+}
+
+func Test_documentString(t *testing.T) {
+	t.Parallel()
+
+	t.Run("object なら JSON の文字列", func(t *testing.T) {
+		t.Parallel()
+
+		got, ok := documentString(map[string]any{"Version": "2012-10-17", "Statement": []any{map[string]any{"Effect": "Deny"}}})
+
+		require.True(t, ok)
+		assert.JSONEq(t, `{"Version":"2012-10-17","Statement":[{"Effect":"Deny"}]}`, got)
+	})
+
+	for name, v := range map[string]any{
+		"文字列": `{"Statement":[]}`,
+		"配列":  []any{map[string]any{}},
+		"nil": nil,
+		"数":   1.0,
+		"真偽値": true,
+	} {
+		t.Run(name+"なら偽", func(t *testing.T) {
+			t.Parallel()
+
+			got, ok := documentString(v)
+
+			assert.False(t, ok)
+			assert.Empty(t, got)
 		})
 	}
 }
@@ -1036,11 +1308,100 @@ func Test_workloadGate(t *testing.T) {
 	})
 }
 
+func Test_governanceGateOf(t *testing.T) {
+	t.Parallel()
+
+	n := testNames("")
+
+	for name, tc := range map[string]struct {
+		got              []string
+		state, delegated gateState
+	}{
+		"統制・メンバー・委任管理者が付いていれば attached": {[]string{"tabp-admin-ci-apply-identity-governance", "tabp-admin-ci-apply-identity-governance-2", "tabp-admin-ci-apply-identity-members"}, gateAttached, gateAttached},
+		"委任管理者だけなら統制は absent":           {[]string{"tabp-admin-ci-apply-identity-governance-2"}, gateAbsent, gateAttached},
+		"統制だけなら unknown":                {[]string{"tabp-admin-ci-apply-identity-governance"}, gateUnknown, gateAbsent},
+		"空なら absent":                    {nil, gateAbsent, gateAbsent},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			g, d := governanceGateOf(n, tc.got)
+
+			assert.Equal(t, tc.state, g.state)
+			assert.Equal(t, tc.delegated, d.state)
+		})
+	}
+
+	t.Run("メンバーの role の policy だけなら unknown で、名前を理由に添えた NG を持つ", func(t *testing.T) {
+		t.Parallel()
+
+		g, d := governanceGateOf(n, []string{"tabp-admin-ci-apply-identity-members"})
+
+		assert.Equal(t, gateUnknown, g.state)
+		assert.Equal(t, gateAbsent, d.state)
+
+		v, _ := g.ng.eval(nil)
+		assert.Equal(t, "apply-identity に、統制の policy とメンバーの role の policy の片方だけが付いている", g.ng.desc)
+		assert.Equal(t, verdict{reason: "tabp-admin-ci-apply-identity-members"}, v)
+	})
+
+	t.Run("片方だけなら、名前を理由に添えた NG を持つ", func(t *testing.T) {
+		t.Parallel()
+
+		g, _ := governanceGateOf(n, []string{"tabp-admin-ci-apply-identity-manage", "tabp-admin-ci-apply-identity-members"})
+
+		v, _ := g.ng.eval(nil)
+		assert.Equal(t, "apply-identity に、統制の policy とメンバーの role の policy の片方だけが付いている", g.ng.desc)
+		assert.Equal(t, verdict{reason: "tabp-admin-ci-apply-identity-manage、tabp-admin-ci-apply-identity-members"}, v)
+	})
+}
+
+func Test_workloadGateOf(t *testing.T) {
+	t.Parallel()
+
+	n := testNames("")
+
+	for name, tc := range map[string]struct {
+		got   []string
+		state gateState
+	}{
+		"3つちょうどなら attached":  {[]string{"tabp-admin-ci-apply-workload", "tabp-admin-ci-apply-workload-2", "tabp-admin-ci-apply-workload-read"}, gateAttached},
+		"並べ替えていなければ unknown": {[]string{"tabp-admin-ci-apply-workload-read", "tabp-admin-ci-apply-workload", "tabp-admin-ci-apply-workload-2"}, gateUnknown},
+		"空なら absent":         {nil, gateAbsent},
+		"1つだけなら unknown":     {[]string{"tabp-admin-ci-apply-workload"}, gateUnknown},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tc.state, workloadGateOf(n, tc.got).state)
+		})
+	}
+}
+
 func Test_permissionSections(t *testing.T) {
 	t.Parallel()
 
 	n := testNames("")
 	sections := permissionSections(n, testKeyARN, "")
+
+	t.Run("context の型は ContextKeyType の enum の値だけを使う（arn を使うと simulate-custom-policy が ValidationError で拒む）", func(t *testing.T) {
+		t.Parallel()
+
+		enum := []string{"string", "stringList", "numeric", "numericList", "boolean", "booleanList", "ip", "ipList", "binary", "binaryList", "date", "dateList"}
+		seen := 0
+
+		for _, r := range allRows(n, testKeyARN) {
+			for _, c := range r.context {
+				i := strings.LastIndex(c, ",ContextKeyType=")
+				require.GreaterOrEqual(t, i, 0, c)
+				assert.Contains(t, enum, c[i+len(",ContextKeyType="):], r.desc())
+
+				seen++
+			}
+		}
+
+		require.Positive(t, seen)
+	})
 
 	t.Run("どの行も action を1つ以上持ち、判定・role・resource が決まっている", func(t *testing.T) {
 		t.Parallel()
@@ -1372,18 +1733,15 @@ func Test_permissionsSteps(t *testing.T) {
 		identity, apply                        string
 		governance, delegated, workload, budgt []string
 		count                                  int
-		result                                 string
+		skipped                                string
 	}{
-		"条件つきの確認がすべて走る": {governanceAttached, workloadAttached, nil, nil, nil, nil, permissionsBase + governanceGated + delegatedGated + workloadGatedCount + budgetsGatedCount,
-			"# 結果: 209 件のうち NG 0 件"},
-		"統制の policy が付いていない": {noneAttached, workloadAttached, []string{governanceAbsent}, []string{delegatedAbsent}, nil, nil, permissionsBase + workloadGatedCount + budgetsGatedCount,
-			"# 結果: 160 件のうち NG 0 件（確かめていない区分 2）"},
-		"委任管理者の policy だけが付いていない": {`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-manage"},{"PolicyName":"tabp-admin-ci-apply-identity-members"},{"PolicyName":"tabp-admin-ci-apply-identity-governance"}]}`, workloadAttached,
-			nil, []string{delegatedAbsent}, nil, nil, permissionsBase + governanceGated + workloadGatedCount + budgetsGatedCount, "# 結果: 191 件のうち NG 0 件（確かめていない区分 1）"},
+		"条件つきの確認がすべて走る":      {governanceAttached, workloadAttached, nil, nil, nil, nil, permissionsBase + governanceGated + delegatedGated + workloadGatedCount + budgetsGatedCount, ""},
+		"統制の policy が付いていない": {noneAttached, workloadAttached, []string{governanceAbsent}, []string{delegatedAbsent}, nil, nil, permissionsBase + workloadGatedCount + budgetsGatedCount, "（確かめていない区分 2）"},
+		"委任管理者の policy だけが付いていない": {`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-manage","PolicyArn":"arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-manage"},{"PolicyName":"tabp-admin-ci-apply-identity-members","PolicyArn":"arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-members"},{"PolicyName":"tabp-admin-ci-apply-identity-governance","PolicyArn":"arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance"}]}`, workloadAttached,
+			nil, []string{delegatedAbsent}, nil, nil, permissionsBase + governanceGated + workloadGatedCount + budgetsGatedCount, "（確かめていない区分 1）"},
 		"workload の policy が付いていない": {governanceAttached, noneAttached, nil, nil, []string{workloadAbsent}, []string{budgetsAbsent},
-			permissionsBase + governanceGated + delegatedGated, "# 結果: 177 件のうち NG 0 件（確かめていない区分 2）"},
-		"どちらも付いていない": {noneAttached, noneAttached, []string{governanceAbsent}, []string{delegatedAbsent}, []string{workloadAbsent}, []string{budgetsAbsent}, permissionsBase,
-			"# 結果: 128 件のうち NG 0 件（確かめていない区分 4）"},
+			permissionsBase + governanceGated + delegatedGated, "（確かめていない区分 2）"},
+		"どちらも付いていない": {noneAttached, noneAttached, []string{governanceAbsent}, []string{delegatedAbsent}, []string{workloadAbsent}, []string{budgetsAbsent}, permissionsBase, "（確かめていない区分 4）"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -1391,8 +1749,7 @@ func Test_permissionsSteps(t *testing.T) {
 			lines, err := run(t, permFake(t, okResult(tc.identity), okResult(tc.apply)))
 
 			require.NoError(t, err)
-			assert.Equal(t, append(permExpected(tc.governance, tc.delegated, tc.workload, tc.budgt), tc.result), lines)
-			assert.Contains(t, tc.result, "# 結果: "+strconv.Itoa(tc.count)+" 件", "件数は表と独立の定数から")
+			assert.Equal(t, append(permExpected(tc.governance, tc.delegated, tc.workload, tc.budgt), "# 結果: "+strconv.Itoa(tc.count)+" 件のうち NG 0 件"+tc.skipped), lines)
 		})
 	}
 
@@ -1402,38 +1759,43 @@ func Test_permissionsSteps(t *testing.T) {
 		lines, err := run(t, permFake(t, failed("denied"), failed("denied")))
 
 		require.ErrorIs(t, err, errMismatch)
-		assert.Equal(t, append(permExpected(
+		// managed policy の一覧を読めない2つの role は、文書も読めない。
+		assert.Equal(t, append(append([]string{docsUnreadable("apply", "呼び出しが失敗: denied"), docsUnreadable("apply-identity", "呼び出しが失敗: denied")}, permExpected(
 			[]string{"NG  apply-identity: list-attached-role-policies を読めないので、統制の policy とメンバーの role の policy が付いているかを決められない（呼び出しが失敗: denied）"},
 			[]string{delegatedUnknown},
 			[]string{"NG  apply: list-attached-role-policies を読めないので、workload の3つの policy が付いているかを決められない（呼び出しが失敗: denied）"},
 			[]string{budgetsUnknown},
-		), "# 結果: "+strconv.Itoa(permissionsBase+2)+" 件のうち NG 2 件（確かめていない区分 2）"), lines)
+		)...), "# 結果: "+strconv.Itoa(permissionsBase+4)+" 件のうち NG 4 件（確かめていない区分 2）"), lines)
 	})
 
-	t.Run("統制の policy を読めなければ NG 1 件で、委任管理者の区分だけを確かめていない区分に数える", func(t *testing.T) {
+	t.Run("統制の policy を読めなければ NG を数え、委任管理者の区分だけを確かめていない区分に数える", func(t *testing.T) {
 		t.Parallel()
 
 		lines, err := run(t, permFake(t, failed("denied"), okResult(workloadAttached)))
 
 		require.ErrorIs(t, err, errMismatch)
 		assert.Contains(t, lines, delegatedUnknown)
-		assert.Equal(t, "# 結果: "+strconv.Itoa(permissionsBase+workloadGatedCount+budgetsGatedCount+1)+" 件のうち NG 1 件（確かめていない区分 1）", lines[len(lines)-1])
+		// 統制の NG と、同じ一覧を読めないので apply-identity の文書を読めない NG。
+		assert.Contains(t, lines, docsUnreadable("apply-identity", "呼び出しが失敗: denied"))
+		assert.Equal(t, "# 結果: "+strconv.Itoa(permissionsBase+workloadGatedCount+budgetsGatedCount+2)+" 件のうち NG 2 件（確かめていない区分 1）", lines[len(lines)-1])
 	})
 
-	t.Run("workload の policy を読めなければ NG 1 件で、budgets の注記だけを確かめていない区分に数える", func(t *testing.T) {
+	t.Run("workload の policy を読めなければ NG を数え、budgets の注記だけを確かめていない区分に数える", func(t *testing.T) {
 		t.Parallel()
 
 		lines, err := run(t, permFake(t, okResult(governanceAttached), failed("denied")))
 
 		require.ErrorIs(t, err, errMismatch)
 		assert.Contains(t, lines, budgetsUnknown)
-		assert.Equal(t, "# 結果: "+strconv.Itoa(permissionsBase+governanceGated+delegatedGated+1)+" 件のうち NG 1 件（確かめていない区分 1）", lines[len(lines)-1])
+		// workload の NG と、同じ一覧を読めないので apply の文書を読めない NG。
+		assert.Contains(t, lines, docsUnreadable("apply", "呼び出しが失敗: denied"))
+		assert.Equal(t, "# 結果: "+strconv.Itoa(permissionsBase+governanceGated+delegatedGated+2)+" 件のうち NG 2 件（確かめていない区分 1）", lines[len(lines)-1])
 	})
 
 	t.Run("apply の managed policy が想定と違えば、名前を添えて NG", func(t *testing.T) {
 		t.Parallel()
 
-		lines, err := run(t, permFake(t, okResult(governanceAttached), okResult(`{"AttachedPolicies":[{"PolicyName":"x"}]}`)))
+		lines, err := run(t, permFake(t, okResult(governanceAttached), okResult(`{"AttachedPolicies":[{"PolicyName":"x","PolicyArn":"arn:aws:iam::123456789012:policy/x"}]}`)))
 
 		require.ErrorIs(t, err, errMismatch)
 		assert.Contains(t, lines, "NG  apply の role に付く managed policy が workload の3つの policy ではない（x）")
@@ -1463,6 +1825,102 @@ func Test_permissionsSteps(t *testing.T) {
 		}
 	})
 
+	n := testNames("")
+	planInline := jsonKey("iam", "list-role-policies", "--role-name", "tabp-admin-ci-plan")
+
+	t.Run("role の文書を読めなければ、その role の行だけ足りない context を絞らずに NG とし、読めないことも NG に数える", func(t *testing.T) {
+		t.Parallel()
+
+		f := permFake(t, okResult(governanceAttached), okResult(workloadAttached))
+		f.responses[planInline] = failed("denied")
+		f.handler = withMissing(t, f.handler, "aws:unrelated")
+
+		lines, err := run(t, f)
+
+		require.ErrorIs(t, err, errMismatch)
+		assert.Equal(t, docsUnreadable("plan", "呼び出しが失敗: denied"), lines[0])
+
+		var ctxRows, planCtxRows int
+
+		for _, r := range allRows(n, testKeyARN) {
+			if len(r.context) == 0 {
+				continue
+			}
+
+			ctxRows++
+
+			if r.role != "plan" {
+				assert.Contains(t, lines, "ok  "+r.desc(), "文書を読めた role の行は、文に当たらないキーを数えない")
+
+				continue
+			}
+
+			planCtxRows++
+
+			assert.Contains(t, lines, "NG  "+r.desc()+"（評価に足りない context: "+strings.TrimSpace(strings.Repeat("aws:unrelated ", len(r.actions)))+"）")
+		}
+
+		require.Positive(t, planCtxRows)
+		require.Greater(t, ctxRows, planCtxRows)
+
+		ng := 0
+
+		for _, l := range lines {
+			if strings.HasPrefix(l, "NG  ") {
+				ng++
+			}
+		}
+
+		assert.Equal(t, 1+planCtxRows, ng)
+		assert.Equal(t, "# 結果: "+strconv.Itoa(permissionsBase+governanceGated+delegatedGated+workloadGatedCount+budgetsGatedCount+1)+" 件のうち NG "+strconv.Itoa(1+planCtxRows)+" 件", lines[len(lines)-1])
+	})
+
+	// plan の inline policy の、securityhub:ListOrganizationAdminAccounts に当たる文は aws:PrincipalTag/team を、
+	// 当たらない文は aws:MultiFactorAuthPresent を条件に持つ。
+	planDoc := `{"Version":"2012-10-17","Statement":[` +
+		`{"Effect":"Allow","Action":"securityhub:ListOrganizationAdminAccounts","Resource":"*","Condition":{"StringEquals":{"aws:RequestedRegion":"ap-northeast-1","aws:PrincipalTag/team":"x"}}},` +
+		`{"Effect":"Allow","Action":"ec2:DescribeInstances","Resource":"*","Condition":{"Bool":{"aws:MultiFactorAuthPresent":"true"}}}]}`
+
+	i := slices.IndexFunc(allRows(n, testKeyARN), func(r simRow) bool {
+		return r.role == "plan" && r.resource == "arn:aws:securityhub:"+testRegion+":"+testAccount+":hub/default" &&
+			slices.Equal(r.actions, []string{"securityhub:ListOrganizationAdminAccounts"})
+	})
+	require.GreaterOrEqual(t, i, 0)
+
+	hubRow := allRows(n, testKeyARN)[i]
+	require.NotEmpty(t, hubRow.context)
+
+	for name, tc := range map[string]struct {
+		missing string
+		line    string
+		ng      int
+	}{
+		"context を与えた行は、role の文書の当たらない文のキーだけが足りなければ ok": {"aws:MultiFactorAuthPresent", "ok  " + hubRow.desc(), 0},
+		"context を与えた行は、role の文書の当たる文のキーが足りなければ NG": {"aws:PrincipalTag/team",
+			"NG  " + hubRow.desc() + "（評価に足りない context: aws:PrincipalTag/team）", 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			f := permFake(t, okResult(governanceAttached), okResult(workloadAttached))
+			f.responses[planInline] = okResult(`{"PolicyNames":["plan"]}`)
+			f.responses[jsonKey("iam", "get-role-policy", "--role-name", "tabp-admin-ci-plan", "--policy-name", "plan")] = okResult(`{"PolicyDocument":` + planDoc + `}`)
+			f.responses[jsonKey(hubRow.args(n)...)] = okResult(`{"EvaluationResults":[{"EvalActionName":"securityhub:ListOrganizationAdminAccounts","EvalDecision":"allowed",` +
+				`"MissingContextValues":["` + tc.missing + `"]}]}`)
+
+			lines, err := run(t, f)
+
+			assert.Contains(t, lines, tc.line)
+			assert.Equal(t, "# 結果: "+strconv.Itoa(permissionsBase+governanceGated+delegatedGated+workloadGatedCount+budgetsGatedCount)+" 件のうち NG "+strconv.Itoa(tc.ng)+" 件", lines[len(lines)-1])
+
+			if tc.ng == 0 {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, errMismatch)
+			}
+		})
+	}
+
 	t.Run("表のどの行も、want と違う判定が返れば NG", func(t *testing.T) {
 		t.Parallel()
 
@@ -1482,7 +1940,8 @@ func Test_permissionsSteps(t *testing.T) {
 	t.Run("aws を起動できなければ errAWSStart", func(t *testing.T) {
 		t.Parallel()
 
-		for _, failing := range []string{"describe-key", "--role-name tabp-admin-ci-apply-identity ", "--role-name tabp-admin-ci-apply "} {
+		for _, failing := range []string{"describe-key", "--role-name tabp-admin-ci-apply-identity ", "--role-name tabp-admin-ci-apply ",
+			"list-role-policies --role-name tabp-admin-ci-plan ", "get-policy-version"} {
 			f := permFake(t, okResult(governanceAttached), okResult(workloadAttached))
 			q := newQuery(func(args ...string) awsResult {
 				if strings.Contains(strings.Join(args, " "), failing) {

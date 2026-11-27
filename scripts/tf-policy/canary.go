@@ -43,21 +43,20 @@ const canaryPolicyInput = "run \"policy_input\" {\n  command = plan\n}\n"
 // canaryOK は、違反の無い文書を持つ構成です。
 const canaryOK = `resource "terraform_data" "doc" { input = jsonencode({ Statement = [{ Effect = "Allow", Action = "s3:GetObject", Resource = "*" }] }) }`
 
-// canaryCase は、canary の1ケースです。pass は通るか落ちるか、pattern は出力に現れるべき文です。
+// canaryCase の pass は通るか落ちるか、pattern は出力に現れるべき文です。
 type canaryCase struct {
 	name    string
 	pass    bool
 	pattern string
-	main    string                        // reference の root の main.tf
+	main    string
 	extra   func(c string) error          // 構成・Rego・宣言を書き換える
 	data    func(d map[string]any)        // Policy の宣言を書き換える
 	layer   func(d map[string]any) []byte // 層の宣言を差し替える（nil なら canaryLayer）
+	timeout bool                          // Rego のテストを極小の上限で走らせる（stepVerifyTimeout）
 }
 
-// runCanary は、Policy Test の段（Rego の形の検査、Rego のテスト、plan の取得と取り出し、非推奨の引数の取り出し、
-// Conftest の適用、評価の数の突き合わせ）を、実物の terraform・Conftest・mock provider で通しで走らせ、違反の無い
-// 入力で通り、Go の単体テストでは作れない落ち方（実物の Conftest が評価しない規則、mock の override が書いた
-// 値を隠さないこと。ADR-0402 決定18）で落ちることを確かめます。[errTool] のときは、ケースの判定に
+// runCanary は、Policy Test の段を実物の terraform・opa・Conftest・mock provider で通しで走らせ、違反の無い入力で通り、
+// Go の単体テストでは作れない落ち方で落ちることを確かめます（ADR-0402 決定18）。[errTool] のときは、ケースの判定に
 // 畳まず [errTool] を返し、それまでに落ちたケースは文面にだけ添えます。root はリポジトリ直下です。
 func runCanary(args []string, w io.Writer, tool toolFunc, root string) error {
 	fset := flag.NewFlagSet("tf-policy plan の canary", flag.ContinueOnError)
@@ -78,7 +77,6 @@ func runCanary(args []string, w io.Writer, tool toolFunc, root string) error {
 	if err != nil {
 		return xerrors.Wrapf(errUsage, "-work %v", err)
 	}
-	// fixture の中で起動する道具の作業ディレクトリと、dir からの相対パスを解くため、絶対パスにする。
 	workAbs, err := filepath.Abs(resolved)
 	if err != nil {
 		return xerrors.Wrapf(err, "%s", resolved)
@@ -106,7 +104,11 @@ func runCanary(args []string, w io.Writer, tool toolFunc, root string) error {
 		if err := buildCase(dir, *policy, planDeclRaw, layerRaw, c); err != nil {
 			return xerrors.Wrapf(err, "%s の fixture", c.name)
 		}
-		out, err := policyChain(dir, *data, tool, verified)
+		verifyStep := stepVerify
+		if c.timeout {
+			verifyStep = stepVerifyTimeout
+		}
+		out, err := policyChain(dir, *data, verifyStep, tool, verified)
 		if xerrors.Is(err, errTool) {
 			if len(failed) == 0 {
 				return err
@@ -128,7 +130,7 @@ func runCanary(args []string, w io.Writer, tool toolFunc, root string) error {
 	if len(failed) > 0 {
 		return xerrors.Wrapf(errCanary, "tf-policy の canary が期待どおりでなかったケース: %s", strings.Join(failed, " "))
 	}
-	fmt.Fprintf(w, "✅ tf-policy は違反の無い入力で通り、実物の Conftest が評価しない規則・テストの件数のずれ・違反・unknown の文書・宣言と schema のずれ・mock の override が隠さない書いた引数で落ちる（%d ケース）\n", len(cases))
+	fmt.Fprintf(w, "✅ tf-policy は違反の無い入力で通り、実物の Conftest が評価しない規則・テストの件数のずれ・上限を超えた Rego のテスト・違反・unknown の文書・宣言と schema のずれ・mock の override が隠さない書いた引数で落ちる（%d ケース）\n", len(cases))
 
 	return nil
 }
@@ -190,6 +192,7 @@ func canaryCases(reference string, layerRaw []byte, nullValues string) []canaryC
 			return writeText(filepath.Join(c, "rego", "extra_test.rego"), "package plan.extra_test\n\ntest_pass_note if true\n\ntest_violation_note if true\n")
 		}},
 		{name: "indented-rule", pattern: "plan.iam_action_wildcard: 評価", main: canaryOK, extra: appendTo("rego/iam_action_wildcard.rego", "\n  deny contains \"[PLAN-IAM-01] y\" if false\n")},
+		{name: "test-timeout", pattern: "eval_cancel_error", main: canaryOK, timeout: true},
 		{name: "count-mismatch", pattern: "宣言された", main: canaryOK, extra: appendTo("rego/iam_action_wildcard_test.rego", "\nnot_a_test := `\ntest_counted_but_not_run\n`\n")},
 		{name: "undeclared-arg", pattern: "[PLAN-INPUT-10] inline_arguments の terraform_data の nope", main: canaryOK, data: func(d map[string]any) {
 			d["policy_plan"].(map[string]any)["inline_arguments"].(map[string]any)["terraform_data"].(map[string]any)["nope"] = nil
@@ -255,13 +258,13 @@ func awsNullValues(layerRaw []byte) (string, error) {
 	return strings.Join(keys, "\n"), nil
 }
 
-// buildCase は、ケースの配置（rego・decl.json・layer-decl.json・data.json・layer.json・base の reference の root）を
+// buildCase は、ケースの配置（rego・rego/decl.json・layer-decl.json・data.json・layer.json・base の reference の root）を
 // dir に建てます。
 func buildCase(dir, policy string, planDecl, layerDecl []byte, c canaryCase) error {
 	if err := copyPolicy(policy, filepath.Join(dir, "rego")); err != nil {
 		return err
 	}
-	if err := writeText(filepath.Join(dir, "decl.json"), string(planDecl)); err != nil {
+	if err := writeText(filepath.Join(dir, "rego", "decl.json"), string(planDecl)); err != nil {
 		return err
 	}
 	if err := writeText(filepath.Join(dir, "layer-decl.json"), string(layerDecl)); err != nil {
@@ -348,9 +351,10 @@ func copyPolicy(src, dst string) error {
 }
 
 // policyChain は、ケースの配置 dir で Policy Test の段を順に走らせ、出力と、最初に落ちた段のエラーを返します。
-// Rego のテストの結果は、Rego の木と宣言の中身が同じケースの間で verified に持ち回ります（同じ入力の conftest
-// verify を繰り返さない）。[errTool] を返した段は、その結果を持ち回りません。
-func policyChain(dir, data string, tool toolFunc, verified map[string][]byte) (string, error) {
+// Rego のテストは verifyStep（stepVerify か stepVerifyTimeout）で走らせ、その結果は、Rego の木と宣言の中身と段が
+// 同じケースの間で verified に持ち回ります（同じ入力の opa test を繰り返さない）。[errTool] を返した段は、その結果を
+// 持ち回りません。
+func policyChain(dir, data, verifyStep string, tool toolFunc, verified map[string][]byte) (string, error) {
 	var out bytes.Buffer
 	files, err := readPolicy(filepath.Join(dir, "rego"))
 	if err != nil {
@@ -364,17 +368,17 @@ func policyChain(dir, data string, tool toolFunc, verified map[string][]byte) (s
 		return out.String(), xerrors.Wrap(errFailed, "Policy の形")
 	}
 	env := tfexec.Env(os.Environ())
-	key, err := verifyKey(dir, files)
+	key, err := verifyKey(dir, verifyStep, files)
 	if err != nil {
 		return out.String(), err
 	}
 	report, ok := verified[key]
 	if !ok {
 		var buf bytes.Buffer
-		verify := tool(context.Background(), dir, env, stepVerify)
+		verify := tool(context.Background(), dir, env, verifyStep)
 		verify.Stdout, verify.Stderr = &buf, &out
 		if _, err := toolrun.Exec(verify); err != nil {
-			return out.String(), xerrors.Wrap(err, "conftest verify")
+			return out.String(), xerrors.Wrap(err, "opa test")
 		}
 		report = buf.Bytes()
 		verified[key] = report
@@ -455,13 +459,14 @@ func policyChain(dir, data string, tool toolFunc, verified map[string][]byte) (s
 	return out.String(), nil
 }
 
-// verifyKey は、Rego の木と Rego のテストに渡す宣言の中身から、conftest verify の結果を持ち回る鍵を作ります。
-func verifyKey(dir string, files []regoFile) (string, error) {
+// verifyKey は、Rego の木と Rego のテストに渡す宣言の中身と段から、opa test の結果を持ち回る鍵を作ります。
+func verifyKey(dir, verifyStep string, files []regoFile) (string, error) {
 	h := sha256.New()
+	fmt.Fprintf(h, "step\x00%s\x00", verifyStep)
 	for _, f := range files {
 		fmt.Fprintf(h, "%s\x00%s\x00", f.rel, f.src)
 	}
-	for _, name := range []string{"decl.json", "layer-decl.json"} {
+	for _, name := range []string{"rego/decl.json", "layer-decl.json"} {
 		raw, err := os.ReadFile(filepath.Clean(filepath.Join(dir, name)))
 		if err != nil {
 			return "", xerrors.Wrapf(errRead, "%s: %v", name, err)

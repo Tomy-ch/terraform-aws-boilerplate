@@ -103,6 +103,7 @@
       "aws_cloudwatch_log_resource_policy"
     ],
     "deployment_identity": {
+      "module": "module.deployment_identity.",
       "roles": [
         "module.deployment_identity.module.github_oidc.aws_iam_role.this",
         "module.deployment_identity.module.github_oidc.aws_iam_role.apply_identity"
@@ -380,6 +381,7 @@
       "public_entrypoints": []
     },
     "state_backend": {
+      "module": "module.state_backend.",
       "bucket": "module.state_backend.module.s3.aws_s3_bucket.this",
       "bucket_policy": "module.state_backend.module.s3.aws_s3_bucket_policy.this",
       "state_key": "module.state_backend.module.kms.aws_kms_key.this",
@@ -412,7 +414,21 @@
         "unlock_role",
         "workload_unlock_role"
       ],
-      "apply_output_bucket_policy_statements": 3
+      "apply_output_bucket_policy_statements": 3,
+      "instances": {
+        "admin-identity": [
+          {
+            "name": "security",
+            "state_backend": "module.state_backend_security.",
+            "deployment_identity": "module.deployment_identity_security."
+          },
+          {
+            "name": "log-archive",
+            "state_backend": "module.state_backend_log_archive.",
+            "deployment_identity": "module.deployment_identity_log_archive."
+          }
+        ]
+      }
     },
     "image_registry": {
       "repository": "module.image_registry.module.repository.aws_ecr_repository.this",

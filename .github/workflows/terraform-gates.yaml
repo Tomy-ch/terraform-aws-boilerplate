@@ -44,7 +44,13 @@ jobs:
             productionresultssa30.blob.core.windows.net
             productionresultssa31.blob.core.windows.net
             productionresultssa32.blob.core.windows.net
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
       - name: Harden the runner (retry)
+        id: harden-runner-retry
         if: steps.harden-runner.outcome != 'success'
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
         with:
@@ -161,7 +167,13 @@ jobs:
             registry.terraform.io
             releases.hashicorp.com
             github-releases.githubusercontent.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
       - name: Harden the runner (retry)
+        id: harden-runner-retry
         if: steps.harden-runner.outcome != 'success'
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
         with:
@@ -269,7 +281,13 @@ jobs:
             registry.terraform.io
             releases.hashicorp.com
             github-releases.githubusercontent.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
       - name: Harden the runner (retry)
+        id: harden-runner-retry
         if: steps.harden-runner.outcome != 'success'
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
         with:
@@ -388,7 +406,13 @@ jobs:
             registry.terraform.io
             releases.hashicorp.com
             github-releases.githubusercontent.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
       - name: Harden the runner (retry)
+        id: harden-runner-retry
         if: steps.harden-runner.outcome != 'success'
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
         with:
@@ -498,7 +522,13 @@ jobs:
             registry.terraform.io
             releases.hashicorp.com
             github-releases.githubusercontent.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
       - name: Harden the runner (retry)
+        id: harden-runner-retry
         if: steps.harden-runner.outcome != 'success'
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
         with:
@@ -548,11 +578,11 @@ jobs:
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
-          tools: aqua:hashicorp/terraform aqua:open-policy-agent/conftest go
+          tools: aqua:hashicorp/terraform aqua:open-policy-agent/conftest aqua:open-policy-agent/opa go
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      # go: Policy Test の段（scripts/tf-policy・provider-schema・tf-local）を scripts/ からビルドする。conftest と terraform:
-      # tf-policy plan が本走査の前に走らせる canary は、ホストの PATH のものを起動する。落ちえないゲートは reference の
+      # go: Policy Test の段（scripts/tf-policy・provider-schema・tf-local）を scripts/ からビルドする。opa は Rego のテストを
+      # 走らせる。opa・conftest と terraform: tf-policy plan が本走査の前に走らせる canary は、ホストの PATH のものを起動する。落ちえないゲートは reference の
       # root について何も言わないので、canary が落ちれば本走査を行わない。
       # この step に secret を渡さない: plan は資格情報なしに mock_provider で走る。
       - name: Run the Policy Test
@@ -603,7 +633,13 @@ jobs:
             rekor.sigstore.dev
             fulcio.sigstore.dev
             awscli.amazonaws.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
       - name: Harden the runner (retry)
+        id: harden-runner-retry
         if: steps.harden-runner.outcome != 'success'
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
         with:
@@ -771,7 +807,13 @@ jobs:
             securityhub.us-west-1.amazonaws.com
             securityhub.us-west-2.amazonaws.com
             cloudtrail.ap-northeast-1.amazonaws.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
       - name: Harden the runner (retry)
+        id: harden-runner-retry
         if: steps.harden-runner.outcome != 'success'
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
         with:
@@ -983,7 +1025,13 @@ jobs:
             scheduler.ap-northeast-1.amazonaws.com
             scheduler.us-east-1.amazonaws.com
             chatbot.us-west-2.amazonaws.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
       - name: Harden the runner (retry)
+        id: harden-runner-retry
         if: steps.harden-runner.outcome != 'success'
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
         with:

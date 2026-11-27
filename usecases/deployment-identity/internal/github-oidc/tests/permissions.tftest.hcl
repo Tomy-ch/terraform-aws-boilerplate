@@ -175,6 +175,7 @@ run "policies" {
           "s3:GetEncryptionConfiguration",
           "s3:GetLifecycleConfiguration",
           "s3:GetReplicationConfiguration",
+          "s3:ListTagsForResource",
         ]
         Resource = [
           "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an",
@@ -591,6 +592,7 @@ run "policies" {
           "s3:GetEncryptionConfiguration",
           "s3:GetLifecycleConfiguration",
           "s3:GetReplicationConfiguration",
+          "s3:ListTagsForResource",
         ]
         Resource = [
           "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an",

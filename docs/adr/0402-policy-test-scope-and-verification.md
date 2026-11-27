@@ -54,7 +54,7 @@ ADR-0501 決定4・6 は Security レイヤーを Trivy / Checkov / KICS / Semgr
 
 ### Policy が依存してよい入力
 
-11. Policy の入力を、Terraform の JSON の plan 表現の `resource_changes` とする（ADR-0501 決定8）。資格情報なしの検査では mock provider の下の `terraform test -json -verbose` が出す `test_plan` を、実 provider の plan では `terraform show -json` の出力を用いる。Policy が判定に読む入力は、両者に共通する `resource_changes` だけである（形の版の検査は ADR-0501 決定8）。入力のほかに読むのは、宣言と、決定18 の Provider の schema の一覧である。
+11. Policy の入力を、Terraform の JSON の plan 表現の `resource_changes` とする（ADR-0501 決定8）。資格情報なしの検査では mock provider の下の `terraform test -json -verbose` が出す `test_plan` を、実 provider の plan では `terraform show -json` の出力を用いる。Policy が判定に読む入力は、両者に共通する `resource_changes` だけである（形の版の検査は ADR-0501 決定8）。入力のほかに読むのは、宣言と、決定18 の Provider の schema の一覧である。入力のファイルの名前も、root の名前（basename から `.json` を除いたもの）として読む。CI は root ごとの plan を `<env>-<root>.json` の名前で渡し、reference の root はユースケースの名前を使う（stateful_protection の root ごとの許可の宣言、state_backend の instances）。
 12. Policy は resource の Terraform address（`module.<name>.<type>.<name>`）に依存してよい。ADR-0202 が address を実装詳細としているのは**公開契約に対して**であり、リポジトリ内部の検査には及ばない。
 13. 「インターネット公開点である」等のアーキテクチャ上の役割を、address によって判定する。tag、名前の規約、および利用者が入力できる値を、役割判定の根拠にしない。
 14. 決定13 の理由を次とする。
@@ -119,6 +119,7 @@ plan の出力から役割を読めるようになる。ただし tag は利用�
 
 - Static Analysis: Policy のテストが CI の必須検査として存在すること（決定7）
 - Static Analysis: テストを持たない Policy が存在しないこと（決定9）
+- Static Analysis（`make tf-policy`）: Policy のテストを、ケースごとの上限を `.makefiles/` が宣言した値で走らせ、上限を超えたテストを名指して落とすこと。テストを走らせる OPA と、適用で評価する Conftest の内蔵の OPA の版が一致すること（決定7）
 - Policy のテスト: 各 Policy が、違反する入力に対して違反を報告すること（決定8）
 - Policy のテスト: 決定17 で宣言した引数ごとに、書いた値と plan で決まらない値で違反を報告し、書かないときの値で報告しないこと。宣言した型と引数が入力に無い場合と、Provider の schema が非推奨とする書ける引数が宣言に無い場合に違反を報告すること（決定18）
 - Policy のテスト: 値を固定と読む判定ごとに、wildcard と policy 変数を含む値で違反を報告すること（決定20）

@@ -41,6 +41,7 @@ ${jsonencode({
                   "s3:GetEncryptionConfiguration",
                   "s3:GetLifecycleConfiguration",
                   "s3:GetReplicationConfiguration",
+                  "s3:ListTagsForResource",
                 ]
                 Resource = [for s in ["tfstate", "tfplan", "tfapply"] : { "Fn::Sub" = "arn:$${AWS::Partition}:s3:::${project}-*-${s}-$${AWS::AccountId}-*" }]
               },
@@ -62,6 +63,12 @@ ${jsonencode({
                 Effect   = "Allow"
                 Action   = ["iam:GetRole", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:ListRolePolicies", "iam:ListRoleTags"]
                 Resource = { "Fn::Sub" = "arn:$${AWS::Partition}:iam::$${AWS::AccountId}:role/${project}-*-ci-*" }
+              },
+              {
+                Sid      = "ReadServiceLinkedRoles"
+                Effect   = "Allow"
+                Action   = "iam:GetRole"
+                Resource = { "Fn::Sub" = "arn:$${AWS::Partition}:iam::$${AWS::AccountId}:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot" }
               },
               {
                 Sid      = "ReadCiPolicies"

@@ -42,7 +42,13 @@ jobs:
             productionresultssa30.blob.core.windows.net
             productionresultssa31.blob.core.windows.net
             productionresultssa32.blob.core.windows.net
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
       - name: Harden the runner (retry)
+        id: harden-runner-retry
         if: steps.harden-runner.outcome != 'success'
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
         with:
@@ -137,7 +143,13 @@ jobs:
             rekor.sigstore.dev
             fulcio.sigstore.dev
             awscli.amazonaws.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
       - name: Harden the runner (retry)
+        id: harden-runner-retry
         if: steps.harden-runner.outcome != 'success'
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
         with:
@@ -210,7 +222,7 @@ jobs:
           exit 0
 
       - name: Comment Go lint result on PR
-        if: always() && github.event_name == 'pull_request'
+        if: (steps.harden-runner.outcome == 'success' || steps.harden-runner-retry.outcome == 'success') && always() && github.event_name == 'pull_request'
         continue-on-error: true
         uses: ./.github/actions/upsert-pr-comment
         with:
@@ -223,7 +235,7 @@ jobs:
 
       # 空の終了コードは、golangci-lint が終わる前に job が打ち切られたことを表す。
       - name: Fail if golangci-lint failed
-        if: always()
+        if: (steps.harden-runner.outcome == 'success' || steps.harden-runner-retry.outcome == 'success') && always()
         shell: bash
         env:
           EXIT_CODE: ${{ steps.golangci.outputs.exit_code }}
@@ -286,7 +298,13 @@ jobs:
             rekor.sigstore.dev
             fulcio.sigstore.dev
             awscli.amazonaws.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
       - name: Harden the runner (retry)
+        id: harden-runner-retry
         if: steps.harden-runner.outcome != 'success'
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
         with:

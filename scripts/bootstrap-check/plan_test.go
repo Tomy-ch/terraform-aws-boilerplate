@@ -93,6 +93,70 @@ func Test_checkPlan(t *testing.T) {
 		require.NoError(t, checkPlan(o, &bytes.Buffer{}, d))
 	})
 
+	t.Run("mock は立ち上げの期待値を足して判定し、メンバーの resource が足りなければ差分にする", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		d := osDepsExpected("", write(t, dir, "e", expectedBody))
+		d.bootstrapping = write(t, dir, "b", "# 立ち上げ\nadd m.x\n")
+		member := rc("m.x", `["create"]`, false)
+
+		o := options{mock: true, testExitFile: write(t, dir, "x", "0\n"), input: write(t, dir, "t", passingTestOutput(append(matchingChanges(), member)...))}
+		require.NoError(t, checkPlan(o, &bytes.Buffer{}, d))
+
+		o.input = write(t, dir, "t2", passingTestOutput(matchingChanges()...))
+
+		var out bytes.Buffer
+
+		require.ErrorIs(t, checkPlan(o, &out, d), errMismatch)
+		assert.Contains(t, out.String(), "NG  不足  add m.x")
+	})
+
+	t.Run("mock は立ち上げの期待値が無ければ、メンバーの resource を余剰にする", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		d := osDepsExpected("", write(t, dir, "e", expectedBody))
+		d.bootstrapping = filepath.Join(dir, "missing")
+		member := rc("m.x", `["create"]`, false)
+		o := options{mock: true, testExitFile: write(t, dir, "x", "0\n"), input: write(t, dir, "t", passingTestOutput(append(matchingChanges(), member)...))}
+
+		var out bytes.Buffer
+
+		require.ErrorIs(t, checkPlan(o, &out, d), errMismatch)
+		assert.Contains(t, out.String(), "NG  余剰  add m.x")
+	})
+
+	t.Run("mock は立ち上げの期待値を読めなければ失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		d := osDepsExpected("", write(t, dir, "e", expectedBody))
+		d.bootstrapping = dir
+		o := options{mock: true, testExitFile: write(t, dir, "x", "0\n"), input: write(t, dir, "t", passingTestOutput(matchingChanges()...))}
+		require.ErrorIs(t, checkPlan(o, &bytes.Buffer{}, d), errExpectedUnreadable)
+	})
+
+	t.Run("mock は2つの期待値にまたがる重複を拒む", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		d := osDepsExpected("", write(t, dir, "e", expectedBody))
+		d.bootstrapping = write(t, dir, "b", "add a.x\n")
+		o := options{mock: true, testExitFile: write(t, dir, "x", "0\n"), input: write(t, dir, "t", passingTestOutput(matchingChanges()...))}
+		require.ErrorIs(t, checkPlan(o, &bytes.Buffer{}, d), errExpectedDuplicate)
+	})
+
+	t.Run("実 plan は立ち上げの期待値を読まない", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		d := osDepsExpected("", write(t, dir, "e", expectedBody))
+		d.bootstrapping = write(t, dir, "b", "add m.x\n")
+		o := options{headerFile: write(t, dir, "h", headerClean), input: write(t, dir, "p", planJSON(matchingChanges()...))}
+		require.NoError(t, checkPlan(o, &bytes.Buffer{}, d))
+	})
+
 	t.Run("mock は terraform test の失敗を差分にも一致にもしない", func(t *testing.T) {
 		t.Parallel()
 
@@ -961,5 +1025,60 @@ func Test_compare(t *testing.T) {
 		out, err := compareOut([]string{"add a"}, []string{"add a", "unknown(read) b"}, false)
 		require.ErrorIs(t, err, errMismatch)
 		assert.Contains(t, out, "NG  余剰  unknown(read) b\n")
+	})
+}
+
+func Test_withBootstrapping(t *testing.T) {
+	t.Parallel()
+
+	t.Run("足した行を整列して返す", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		d := osDepsExpected("", filepath.Join(dir, "e"))
+		d.bootstrapping = write(t, dir, "b", "# 立ち上げ\nadd c.z\nadd a.a\n")
+		got, err := withBootstrapping([]string{"add b.y", "import d.w"}, d)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"add a.a", "add b.y", "add c.z", "import d.w"}, got)
+	})
+
+	t.Run("ファイルが無ければ期待値をそのまま返す", func(t *testing.T) {
+		t.Parallel()
+
+		d := osDepsExpected("", "e")
+		d.bootstrapping = filepath.Join(t.TempDir(), "missing")
+		got, err := withBootstrapping([]string{"add b.y"}, d)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"add b.y"}, got)
+	})
+
+	t.Run("コメントだけなら errExpectedEmpty", func(t *testing.T) {
+		t.Parallel()
+
+		d := osDepsExpected("", "e")
+		d.bootstrapping = write(t, t.TempDir(), "b", "# だけ\n")
+		_, err := withBootstrapping([]string{"add b.y"}, d)
+		require.ErrorIs(t, err, errExpectedEmpty)
+	})
+
+	t.Run("形の崩れた行は、そのファイルを名指しして errExpectedMalformed", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		d := osDepsExpected("", "e")
+		d.bootstrapping = write(t, dir, "b", "create x.y\n")
+		_, err := withBootstrapping([]string{"add b.y"}, d)
+		require.ErrorIs(t, err, errExpectedMalformed)
+		assert.Contains(t, err.Error(), d.bootstrapping+" の 1 行目")
+	})
+
+	t.Run("2つにまたがる重複は、両方を名指しして errExpectedDuplicate", func(t *testing.T) {
+		t.Parallel()
+
+		d := osDepsExpected("", "e")
+		d.bootstrapping = write(t, t.TempDir(), "b", "add b.y\n")
+		_, err := withBootstrapping([]string{"add b.y"}, d)
+		require.ErrorIs(t, err, errExpectedDuplicate)
+		assert.Contains(t, err.Error(), "e と "+d.bootstrapping)
 	})
 }

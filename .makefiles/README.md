@@ -107,7 +107,7 @@ secret scan、脆弱性・設定の走査、供給網のクールダウン。
 ### `terraform/`
 
 Terraform 側の検査（fmt / validate / TFLint / `terraform test` / Policy Test、インフラ内コードの検出、
-bootstrap の plan の期待値と identity root の一致）と、その検査自体の検査。Policy Test の conftest は
+bootstrap の plan の期待値と identity root の一致）と、その検査自体の検査。Policy Test の opa と conftest は
 `$(GO_TOOL)` を経由する。
 
 ### `terraform/operation/`
@@ -119,7 +119,10 @@ CI（OIDC で role を assume しての plan と apply）。
 `TF_ENV`（資格情報を外す）を経由しない。`local.mk` の init と plan は、`scripts/tf-local` の段
 （`local-prepare` が aws で init の値を算出し、`local-init` と `local-plan` が terraform を起動する）を順に起動する。
 `ci.mk` の資格情報・plan・apply・lock の解除・lock を残す入口も、`scripts/tf-local` の段（`ci-*`）を順に
-起動する。aws・terraform・conftest は段が起動し、make は段の順序だけを持つ。
+起動する。aws・terraform・conftest は段が起動し、make は段の順序だけを持つ。`ci-plan-admin-identity` だけは、Policy の段の後に
+`scripts/bootstrap-check` を build し、段 `ci-permissions` がそれを起動して、plan の CI の role の policy の文書を
+`bootstrap-check plan-permissions` で評価する。段が要るかは make ではなく `tf-local ci-prepare` が入口の値
+（plan・admin・identity）から決め、段が走らなければ `ci-finish` が落とす。
 
 `bootstrap-check-plan` は、保存した plan を `terraform show -json` で読み、`scripts/bootstrap-check` へ標準入力で
 渡して段2-4 の期待値と突き合わせる。plan のパスと標準入力がホストのものなので `RUN_SCRIPT_HOST` で起動し、
@@ -136,7 +139,7 @@ aws の起動は bootstrap-check が持つ。
 `tf-local env-unset` の変数を外し、`PROFILE`（`bootstrap.mk` は bootstrap の profile）と identity root の region で
 `scripts/setup` を起動する。`ops-notification.mk` と `dns-zone.mk` は各アカウントで行う手順で、region は `ENV` の
 workload root（`env/<ENV>`）の provider の region とし、`ENV` を `-env` にも渡す。
-人が渡す値（organization-baseline の `PROFILE`・`MEMBER_ENV`・`IDC_USER`、bootstrap の `ENVIRONMENTS`・`REPO`、
+人が渡す値（organization-baseline の `PROFILE`・`MEMBER_ENV`・`IDC_USER`・`ENVIRONMENTS`・`REPO`、bootstrap の `ENVIRONMENTS`・`REPO`、
 ops-notification の `PROFILE`・`ENV`、dns-zone の `PROFILE`・`ENV`・`ZONE`）はレシピの本文に埋めず、
 `literal_value` で字面のまま環境変数にして渡す。
 `IDS` と `REPLACE` は `1` のときだけ効く。書き込みの前の確かめ・差分・確認の入力と aws・gh の起動は `scripts/setup` が持つ

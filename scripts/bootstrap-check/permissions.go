@@ -21,7 +21,10 @@ const (
 
 // simRow は、role の policy を resource に対して評価する simulate-principal-policy の1回。actions の判定が
 // すべて want であれば ok。bucketPolicy なら、doc を resource の Bucket Policy として含めて評価する。
-// unresolved が空でなければ、aws を呼ばずにそれを理由とする NG にする。
+// docs を持てば、role に付いた policy ではなく docs の文書を simulate-custom-policy で評価する。bucketPolicy と docs を
+// 併せ持つ行は評価しない（simCheck が NG にする）。unresolved が空でなければ、aws を呼ばずにそれを理由とする NG にする。
+// contextDocs が nil でなければ、simulate-principal-policy が返した足りない context を、その文書の行に関わる文の
+// キーに絞る（relevantMissing）。
 type simRow struct {
 	want         string
 	role         string
@@ -30,6 +33,8 @@ type simRow struct {
 	actions      []string
 	bucketPolicy bool
 	doc          string
+	docs         []string
+	contextDocs  []string
 	unresolved   string
 }
 
@@ -90,6 +95,19 @@ func (r simRow) desc() string {
 }
 
 func (r simRow) args(n names) []string {
+	if len(r.docs) > 0 {
+		// --policy-input-list は、文書の文字列を要素とする JSON の配列を1つの引数で受ける。file:// で文書を渡すと、
+		// aws-cli は文字列を1文字ずつの要素に分けて送る。
+		list, _ := json.Marshal(r.docs)
+		args := []string{"iam", "simulate-custom-policy", "--policy-input-list", string(list), "--resource-arns", r.resource}
+
+		if len(r.context) > 0 {
+			args = append(append(args, "--context-entries"), r.context...)
+		}
+
+		return append(append(args, "--action-names"), r.actions...)
+	}
+
 	role := n.roleARN(r.role)
 	args := []string{"iam", "simulate-principal-policy", "--policy-source-arn", role}
 
@@ -118,6 +136,10 @@ func simCheck(r simRow, n names) check {
 			return verdict{reason: r.unresolved}, nil
 		}
 
+		if r.bucketPolicy && len(r.docs) > 0 {
+			return verdict{reason: "Bucket Policy を含む行は、plan の文書では評価しない"}, nil
+		}
+
 		v, reason, err := q.object(r.args(n)...)
 		if err != nil || reason != "" {
 			return verdict{reason: reason}, err
@@ -144,6 +166,15 @@ func simCheck(r simRow, n names) check {
 
 			if !ok1 || !ok2 || !ok3 || !ok4 {
 				return verdict{reason: "応答を読めない"}, nil
+			}
+
+			// simulate-custom-policy と simulate-principal-policy は、評価した文書のすべての条件キーを足りないものとして
+			// 返す。行に関わる文のキーだけを数える。
+			switch {
+			case len(r.docs) > 0:
+				keys = relevantMissing(r.docs, action, r.resource, keys)
+			case r.contextDocs != nil:
+				keys = relevantMissing(r.contextDocs, action, r.resource, keys)
 			}
 
 			got = append(got, action)
@@ -231,6 +262,94 @@ func attachedNames(q *query, roleName string) ([]string, string, error) {
 	return got, "", nil
 }
 
+// liveRoleDocuments は、role に付く inline policy と managed policy（既定の版）の文書。読めなければ理由を返す。
+// 文書が1つも無ければ、nil ではない空の一覧を返す。
+func liveRoleDocuments(q *query, roleName string) ([]string, string, error) {
+	docs := []string{}
+
+	listed, reason, err := q.object("iam", "list-role-policies", "--role-name", roleName)
+	if err != nil || reason != "" {
+		return nil, reason, err
+	}
+
+	names, ok := items(get(listed, "PolicyNames"))
+	inline, ok2 := strs(names)
+
+	if !ok || !ok2 {
+		return nil, "list-role-policies の応答を読めない", nil
+	}
+
+	for _, name := range inline {
+		v, reason, err := q.object("iam", "get-role-policy", "--role-name", roleName, "--policy-name", name)
+		if err != nil || reason != "" {
+			return nil, reason, err
+		}
+
+		doc, ok := documentString(at(v, "PolicyDocument"))
+		if !ok {
+			return nil, "get-role-policy の応答を読めない", nil
+		}
+
+		docs = append(docs, doc)
+	}
+
+	attached, reason, err := q.object("iam", "list-attached-role-policies", "--role-name", roleName)
+	if err != nil || reason != "" {
+		return nil, reason, err
+	}
+
+	list, ok := items(get(attached, "AttachedPolicies"))
+	if !ok {
+		return nil, "list-attached-role-policies の応答を読めない", nil
+	}
+
+	for _, e := range list {
+		arn, ok := at(e, "PolicyArn").(string)
+		if !ok {
+			return nil, "list-attached-role-policies の応答を読めない", nil
+		}
+
+		policy, reason, err := q.object("iam", "get-policy", "--policy-arn", arn)
+		if err != nil || reason != "" {
+			return nil, reason, err
+		}
+
+		version, ok := at(policy, "Policy", "DefaultVersionId").(string)
+		if !ok {
+			return nil, "get-policy の応答を読めない", nil
+		}
+
+		v, reason, err := q.object("iam", "get-policy-version", "--policy-arn", arn, "--version-id", version)
+		if err != nil || reason != "" {
+			return nil, reason, err
+		}
+
+		doc, ok := documentString(at(v, "PolicyVersion", "Document"))
+		if !ok {
+			return nil, "get-policy-version の応答を読めない", nil
+		}
+
+		docs = append(docs, doc)
+	}
+
+	return docs, "", nil
+}
+
+// documentString は、aws の応答の policy の文書（aws-cli が JSON の object に戻したもの）を文字列にしたもの。
+func documentString(v any) (string, bool) {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return "", false
+	}
+
+	b, err := json.Marshal(m)
+	if err != nil {
+		return "", false
+	}
+
+	return string(b), true
+}
+
 // governanceGate は、apply-identity の role に統制の policy・メンバーの role の policy と、委任管理者の policy が付いているか。
 // 1回の読み取りから2つを決める。読めなければどちらも unknown で、NG は統制の側だけが持つ。
 func governanceGate(q *query, n names) (gateResult, gateResult, error) {
@@ -245,6 +364,14 @@ func governanceGate(q *query, n names) (gateResult, gateResult, error) {
 		return unknown, gateResult{state: gateUnknown}, nil
 	}
 
+	governance, delegated := governanceGateOf(n, got)
+
+	return governance, delegated, nil
+}
+
+// governanceGateOf は、apply-identity の role に付く managed policy の名前の一覧 got から、統制の側と委任管理者の側の
+// 付き方を決める。
+func governanceGateOf(n names, got []string) (gateResult, gateResult) {
 	delegated := gateResult{state: gateAbsent}
 	if slices.Contains(got, n.roleName(n.applyIdentity+"-governance-2")) {
 		delegated = gateResult{state: gateAttached}
@@ -256,11 +383,11 @@ func governanceGate(q *query, n names) (gateResult, gateResult, error) {
 
 	switch {
 	case governance && members:
-		return gateResult{state: gateAttached}, delegated, nil
+		return gateResult{state: gateAttached}, delegated
 	case !governance && !members:
-		return gateResult{state: gateAbsent}, delegated, nil
+		return gateResult{state: gateAbsent}, delegated
 	default:
-		return gateResult{state: gateUnknown, ng: fixedCheck(n.applyIdentity+" に、統制の policy とメンバーの role の policy の片方だけが付いている", verdict{reason: strings.Join(got, "、")})}, delegated, nil
+		return gateResult{state: gateUnknown, ng: fixedCheck(n.applyIdentity+" に、統制の policy とメンバーの role の policy の片方だけが付いている", verdict{reason: strings.Join(got, "、")})}, delegated
 	}
 }
 
@@ -270,17 +397,24 @@ func workloadGate(q *query, n names) (gateResult, error) {
 		return gateResult{}, err
 	}
 
+	if reason != "" {
+		return gateResult{state: gateUnknown, ng: fixedCheck(n.apply+": list-attached-role-policies を読めないので、workload の3つの policy が付いているかを決められない", verdict{reason: reason})}, nil
+	}
+
+	return workloadGateOf(n, got), nil
+}
+
+// workloadGateOf は、apply の role に付く managed policy の名前（並べ替えたもの）got から、workload の側の付き方を決める。
+func workloadGateOf(n names, got []string) gateResult {
 	want := []string{n.roleName(n.apply + "-workload"), n.roleName(n.apply + "-workload-2"), n.roleName(n.apply + "-workload-read")}
 
 	switch {
-	case reason != "":
-		return gateResult{state: gateUnknown, ng: fixedCheck(n.apply+": list-attached-role-policies を読めないので、workload の3つの policy が付いているかを決められない", verdict{reason: reason})}, nil
 	case slices.Equal(got, want):
-		return gateResult{state: gateAttached}, nil
+		return gateResult{state: gateAttached}
 	case len(got) == 0:
-		return gateResult{state: gateAbsent}, nil
+		return gateResult{state: gateAbsent}
 	default:
-		return gateResult{state: gateUnknown, ng: fixedCheck("apply の role に付く managed policy が workload の3つの policy ではない", verdict{reason: strings.Join(got, "、")})}, nil
+		return gateResult{state: gateUnknown, ng: fixedCheck("apply の role に付く managed policy が workload の3つの policy ではない", verdict{reason: strings.Join(got, "、")})}
 	}
 }
 
@@ -289,7 +423,7 @@ func permissionSections(n names, sk, skReason string) []section {
 	reads := []string{"s3:GetBucketAcl", "s3:GetBucketCORS", "s3:GetBucketWebsite", "s3:GetAccelerateConfiguration", "s3:GetBucketRequestPayment",
 		"s3:GetBucketLogging", "s3:GetLifecycleConfiguration", "s3:GetReplicationConfiguration", "s3:GetBucketObjectLockConfiguration",
 		"s3:GetBucketTagging", "s3:GetBucketPolicy", "s3:GetBucketVersioning", "s3:GetEncryptionConfiguration",
-		"s3:GetBucketPublicAccessBlock", "s3:GetBucketOwnershipControls"}
+		"s3:GetBucketPublicAccessBlock", "s3:GetBucketOwnershipControls", "s3:ListTagsForResource"}
 	with := func(a ...string) []string { return append(slices.Clone(reads), a...) }
 	plus := func(head []string, a ...string) []string { return append(append(head, reads...), a...) }
 
@@ -300,7 +434,9 @@ func permissionSections(n names, sk, skReason string) []section {
 	ab := "arn:aws:s3:::" + n.applyBucket
 	iam := "arn:aws:iam::" + n.account
 	other := "arn:aws:kms:" + n.region + ":" + n.account + ":key/00000000-0000-0000-0000-0000000000a0"
-	policyARN := func(arn string) []string { return []string{ctxEntry("iam:PolicyARN", arn, "arn")} }
+	// ARN の条件キーも string で与える。ContextKeyType の enum に arn は無く、simulate-custom-policy は ValidationError で拒む
+	// （ArnEquals・ArnLike は string の値で評価される）。
+	policyARN := func(arn string) []string { return []string{ctxEntry("iam:PolicyARN", arn, "string")} }
 	bypass := []string{ctxEntry("kms:BypassPolicyLockoutSafetyCheck", "true", "boolean")}
 	manage := []string{"iam:CreatePolicy", "iam:CreatePolicyVersion", "iam:DeletePolicyVersion", "iam:SetDefaultPolicyVersion", "iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyVersions"}
 
@@ -358,7 +494,7 @@ func permissionSections(n names, sk, skReason string) []section {
 		}
 	}
 	or := iam + ":role/" + n.prefix + "-ops-heartbeat"
-	boundary := []string{ctxEntry("iam:PermissionsBoundary", bp, "arn")}
+	boundary := []string{ctxEntry("iam:PermissionsBoundary", bp, "string")}
 	passed := func(svc string) []string { return []string{ctxEntry("iam:PassedToService", svc, "string")} }
 
 	budget := "arn:aws:budgets::" + n.account + ":budget/" + n.prefix + "-x"
@@ -388,6 +524,8 @@ func permissionSections(n names, sk, skReason string) []section {
 			sim(allowed, apply, b, "s3:ListBucket", "s3:GetEncryptionConfiguration"),
 			sim(implicitDeny, plan, key, "s3:PutObject"),
 			sim(implicitDeny, plan, n.roleARN(plan), "iam:PutRolePolicy"),
+			// CI の plan の job が plan の文書を評価する（plan-permissions）。
+			sim(allowed, plan, "*", "iam:SimulateCustomPolicy"),
 			sim(implicitDeny, plan, pb+"/pr/1/x", "s3:DeleteObject", "s3:DeleteObjectVersion"),
 			sim(implicitDeny, plan, pb+"/x", "s3:PutObject"),
 			sim(implicitDeny, ai, pb+"/pr/1/x", "s3:PutObject", "s3:DeleteObject"),
@@ -548,7 +686,7 @@ func permissionSections(n names, sk, skReason string) []section {
 				sim(implicitDeny, apply, topic, "sns:DeleteTopic", "sns:Subscribe"),
 				sim(implicitDeny, apply, wk, "kms:ScheduleKeyDeletion"),
 				sim(allowed, apply, slr, "iam:GetRole"),
-				// account-baseline の構成物（決定13・17）。削除と停止は与えず、password policy の更新は admin で拒む（決定5）。
+				// account-baseline の構成物（決定13・17）。削除と停止は与えない。
 				simCtx(allowed, apply, rec, inCtx, "config:PutConfigurationRecorder", "config:StartConfigurationRecorder", "config:DescribeConfigurationRecorders"),
 				simCtx(explicitDeny, apply, recOut, outCtx, "config:PutConfigurationRecorder", "config:DescribeConfigurationRecorders"),
 				simCtx(implicitDeny, apply, rec, inCtx, "config:DeleteConfigurationRecorder", "config:StopConfigurationRecorder"),
@@ -616,8 +754,7 @@ func permissionSections(n names, sk, skReason string) []section {
 	}
 }
 
-// otherRegion は、provider の region でない region。workload の権限は provider の region と us-east-1 に及び、ほかの
-// region には及ばない（ADR-0208 決定4）。
+// otherRegion は、workload の権限が及ばない region。権限は provider の region と us-east-1 に及ぶ（ADR-0208 決定4）。
 func otherRegion(n names) string {
 	if n.region == "us-west-2" {
 		return "eu-west-1"
@@ -650,8 +787,7 @@ func stackInstanceRows(n names, other string) []simRow {
 	zss, zst, _ := stackSetARNs(n, n.project+"-bootstrap-read-x")
 	ai := n.applyIdentity
 	inst := []string{"cloudformation:CreateStackInstances", "cloudformation:UpdateStackInstances"}
-	// TargetRegion は type の評価にだけ付き、stackset と stackset-target の評価には付かない（実際の要求での観測。
-	// Service Authorization Reference は3つとも受けると書く）。付かないキーを context に与える行は、IAM が見ないものを確かめる。
+	// TargetRegion は type の評価にだけ付く（deployment-identity/ADR-0201 決定4）。付かないキーを context に与える行は、IAM が見ないものを確かめる。
 	// type の条件は一覧を受けるキー（ArrayOfString）を provider の region に限る（deployment-identity/ADR-0201 決定4）。
 	// provider の region だけの一覧は、条件が StringEquals なら implicitDeny になるので、StringEquals で書いた条件を見つける。
 	// 同じ region を2つ並べた一覧は、`,` を含む1つの値として渡ったときに allowed にならない。
@@ -717,10 +853,32 @@ func permissionsSteps(q *query, n names) ([]step, error) {
 
 	var steps []step
 
+	// role の文書を読めなければ、その role の行は足りない context を絞らずに数え、読めないことを NG として数える。
+	contextDocs := map[string][]string{}
+
+	for _, role := range n.ciRoles() {
+		docs, reason, err := liveRoleDocuments(q, n.roleName(role))
+		if err != nil {
+			return nil, err
+		}
+
+		if reason != "" {
+			steps = append(steps, checkStep(fixedCheck(role+": policy の文書を読めないので、足りない context を行に関わる文に絞れない", verdict{reason: reason})))
+
+			continue
+		}
+
+		contextDocs[role] = docs
+	}
+
 	rowSteps := func(rows []simRow) {
 		for _, r := range rows {
 			if skReason != "" && r.resource == sk {
 				r.unresolved = "state の鍵の ARN を読めない"
+			}
+
+			if docs, ok := contextDocs[r.role]; ok {
+				r.contextDocs = docs
 			}
 
 			steps = append(steps, checkStep(simCheck(r, n)))
@@ -877,7 +1035,6 @@ func outputPolicySteps(e verifyEnv) ([]step, error) {
 	return append(steps, rows(adoc, areason, applyRows)...), nil
 }
 
-// outputPolicyRows は、plan と apply の出力の Bucket の Bucket Policy を含めて評価する行。
 func outputPolicyRows(n names) ([]simRow, []simRow) {
 	pb := "arn:aws:s3:::" + n.planBucket
 	ab := "arn:aws:s3:::" + n.applyBucket
