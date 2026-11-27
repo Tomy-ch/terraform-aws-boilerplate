@@ -13,9 +13,8 @@ locals {
   group_name = "break-glass"
 
   # 作る前に決まる ARN。deployment-identity の policy が、まだ無い break-glass を名指せる。
-  arn_prefix       = "arn:${local.partition}:iam::${data.aws_caller_identity.current.account_id}"
-  user_arns        = [for n in sort(local.user_names) : "${local.arn_prefix}:user${var.path}${n}"]
-  login_client_arn = "arn:${local.partition}:signin:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:oauth2/public-client/localhost"
+  arn_prefix = "arn:${local.partition}:iam::${data.aws_caller_identity.current.account_id}"
+  user_arns  = [for n in sort(local.user_names) : "${local.arn_prefix}:user${var.path}${n}"]
   arns = concat(
     local.user_arns,
     ["${local.arn_prefix}:group${var.path}${local.group_name}", "${local.arn_prefix}:role${var.path}${var.role_name}"],
@@ -89,13 +88,13 @@ resource "aws_iam_group_policy" "this" {
         Sid      = "AwsLoginAuthorize"
         Effect   = "Allow"
         Action   = "signin:AuthorizeOAuth2Access"
-        Resource = local.login_client_arn
+        Resource = "arn:${local.partition}:signin:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:oauth2/public-client/localhost"
       },
       {
         Sid       = "AwsLoginToken"
         Effect    = "Allow"
         Action    = "signin:CreateOAuth2Token"
-        Resource  = local.login_client_arn
+        Resource  = "arn:${local.partition}:signin:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:oauth2/public-client/localhost"
         Condition = { StringEquals = { "signin:OAuthGrantType" = ["authorization_code", "refresh_token"] } }
       },
       {
