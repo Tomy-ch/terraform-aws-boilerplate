@@ -27,6 +27,7 @@ AWS Organizations の組織と OU、SCP・RCP・declarative policy、root の資
 | `account_ids` | メンバーアカウントの env から ID への map。メンバーの root と、アカウントを名指す usecase が使う |
 | `bootstrapping_account_ids` | `bootstrapping` に入れたメンバーアカウントの env から ID への map。管理アカウントの identity root が、立ち上げの provider の引き受け先に使い、`deployment-identity` の `bootstrap_member_account_ids` へ渡して、引き受けをこのアカウントに限る |
 | `bootstrap_read_role` | メンバーへ配る立ち上げの読み取りの role の名前と path（`object({ name, path })`）。管理アカウントの identity root が `deployment-identity` へ渡し、その role を配る StackSet の権限と、plan の role の引き受けの Resource にさせる |
+| `member_break_glass_role` | メンバーへ配る break-glass の role の名前と path（`object({ name, path })`）。管理アカウントの identity root が、立ち上げの中のメンバーの `deployment-identity` に渡す break-glass の ARN を組む |
 
 - メンバーアカウントのメールは入力に取らない。管理アカウントの SSM の String の parameter `/<project>/organization-baseline/member-account-emails`（JSON の object。env からメールへ）を読む。人が置く（[`docs/setup/organization-baseline.md`](../../docs/setup/organization-baseline.md)）。key の集合が対応表と一致しないか、値がメールの形でなければ plan が落ちる
 

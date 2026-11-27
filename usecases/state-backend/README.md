@@ -66,6 +66,7 @@ supported:
 - 1つのアカウントに1つの state Bucket を置き、identity root と workload root の state をそれぞれ1つの key で置く構成（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定2・7）
 - 1つのアカウントに1つの plan の出力の Bucket を置き、そのアカウントの root の CI の plan と apply の全文を保持日数のあいだ残す構成
 - 1つのアカウントに1つの apply の出力の Bucket を置き、そのアカウントの workload root の CI の apply の全文を保持日数のあいだ残す構成
+- メンバーアカウントで、管理アカウントの identity root が、立ち上げの中のアカウント（`organization-baseline` の `bootstrapping`）への provider で呼ぶ構成（[メンバーアカウントの立ち上げ 手順書](../../docs/setup/member-bootstrap.md)）
 
 unsupported:
 

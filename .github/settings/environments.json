@@ -4,5 +4,15 @@
   { "name": "admin-apply-identity", "deploy_from": "deploy-branch", "can_admins_bypass": false },
   { "name": "admin-unlock-identity", "deploy_from": "deploy-branch", "can_admins_bypass": false },
   { "name": "admin-unlock", "deploy_from": "deploy-branch", "can_admins_bypass": false },
+  { "name": "security-plan", "deploy_from": "protected-and-pull-requests", "can_admins_bypass": false },
+  { "name": "security-apply", "deploy_from": "deploy-branch", "can_admins_bypass": false },
+  { "name": "security-apply-identity", "deploy_from": "deploy-branch", "can_admins_bypass": false },
+  { "name": "security-unlock-identity", "deploy_from": "deploy-branch", "can_admins_bypass": false },
+  { "name": "security-unlock", "deploy_from": "deploy-branch", "can_admins_bypass": false },
+  { "name": "log-archive-plan", "deploy_from": "protected-and-pull-requests", "can_admins_bypass": false },
+  { "name": "log-archive-apply", "deploy_from": "deploy-branch", "can_admins_bypass": false },
+  { "name": "log-archive-apply-identity", "deploy_from": "deploy-branch", "can_admins_bypass": false },
+  { "name": "log-archive-unlock-identity", "deploy_from": "deploy-branch", "can_admins_bypass": false },
+  { "name": "log-archive-unlock", "deploy_from": "deploy-branch", "can_admins_bypass": false },
   { "name": "copilot", "deploy_from": "any", "can_admins_bypass": false }
 ]

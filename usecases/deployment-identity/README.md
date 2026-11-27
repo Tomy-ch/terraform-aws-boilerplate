@@ -79,6 +79,7 @@ supported:
 
 - github.com のリポジトリで、OIDC の `sub` が immutable 形式（`use_immutable_subject: true`）であるもの
 - 1つのアカウントに、このユースケースの OIDC provider を1つ置く構成
+- メンバーアカウントで、管理アカウントの identity root が、立ち上げの中のアカウント（`organization-baseline` の `bootstrapping`）への provider で呼ぶ構成（[メンバーアカウントの立ち上げ 手順書](../../docs/setup/member-bootstrap.md)）
 
 unsupported:
 

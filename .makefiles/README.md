@@ -139,7 +139,7 @@ aws の起動は bootstrap-check が持つ。
 `tf-local env-unset` の変数を外し、`PROFILE`（`bootstrap.mk` は bootstrap の profile）と identity root の region で
 `scripts/setup` を起動する。`ops-notification.mk` と `dns-zone.mk` は各アカウントで行う手順で、region は `ENV` の
 workload root（`env/<ENV>`）の provider の region とし、`ENV` を `-env` にも渡す。
-人が渡す値（organization-baseline の `PROFILE`・`MEMBER_ENV`・`IDC_USER`、bootstrap の `ENVIRONMENTS`・`REPO`、
+人が渡す値（organization-baseline の `PROFILE`・`MEMBER_ENV`・`IDC_USER`・`ENVIRONMENTS`・`REPO`、bootstrap の `ENVIRONMENTS`・`REPO`、
 ops-notification の `PROFILE`・`ENV`、dns-zone の `PROFILE`・`ENV`・`ZONE`）はレシピの本文に埋めず、
 `literal_value` で字面のまま環境変数にして渡す。
 `IDS` と `REPLACE` は `1` のときだけ効く。書き込みの前の確かめ・差分・確認の入力と aws・gh の起動は `scripts/setup` が持つ

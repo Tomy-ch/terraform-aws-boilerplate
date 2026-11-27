@@ -4,8 +4,10 @@ output "bucket_name" {
 }
 
 output "bucket_arn" {
-  description = "Bucket の ARN。"
-  value       = aws_s3_bucket.this.arn
+  description = "Bucket の ARN。Bucket を作る plan でも決まる。"
+  # computed の arn を読まず名前から組む。Bucket を作る plan でも、この ARN を読む Key Policy の文書が決まる（PLAN-KMS-09）。
+  # aws_s3_bucket.this を読むのは Bucket の作成を待つ依存のためである。
+  value = aws_s3_bucket.this.bucket == local.bucket_name ? local.bucket_arn : null
 }
 
 output "noncurrent_version_retention_days" {

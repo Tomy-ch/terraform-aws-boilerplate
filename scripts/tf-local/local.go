@@ -74,7 +74,7 @@ func command(ctx context.Context, dir string, env []string, step string, _ ...st
 		cmd = exec.CommandContext(ctx, "terraform", "apply")
 	case stepCIConftest:
 		cmd = exec.CommandContext(ctx, "conftest", "test", "--combine", "--all-namespaces", "--no-color", "-o", "json",
-			"--policy", "rego", "--data", "decl.json", "--data", "layer.json", "plan.json")
+			"--policy", "rego", "--data", "decl.json", "--data", "layer.json", policyInputDir)
 	case stepCIPutObject:
 		cmd = exec.CommandContext(ctx, "aws", "s3api", "put-object", "--cli-input-json", "file://input.json", "--body", "body.txt", "--output", "json")
 	case stepS3List:
