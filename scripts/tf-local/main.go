@@ -234,7 +234,7 @@ func rootRegion(root string, readFile func(string) ([]byte, error)) (string, err
 		return "", xerrors.Wrap(err, backendPath)
 	}
 
-	providerRegion, err := backendRegion(string(providers))
+	providerRegion, err := providersRegion(string(providers))
 	if err != nil {
 		return "", xerrors.Wrap(err, providersPath)
 	}
@@ -259,6 +259,28 @@ func backendRegion(content string) (string, error) {
 
 	if len(regions) != 1 {
 		return "", xerrors.Wrap(errRegionNotOne, fmt.Sprintf("%d 件", len(regions)))
+	}
+
+	if !regionPattern.MatchString(regions[0]) {
+		return "", xerrors.Wrap(errRegionMalformed, regions[0])
+	}
+
+	return regions[0], nil
+}
+
+// providersRegion は、providers.tf の provider の region を返します。立ち上げの中のメンバーアカウントの alias の
+// provider も region を持つので、1件以上ですべて同じ値のときだけ受け、0件と食い違いはどれか1つを選ばずにエラーにします。
+func providersRegion(content string) (string, error) {
+	var regions []string
+
+	for line := range strings.Lines(content) {
+		if m := regionLine.FindStringSubmatch(line); m != nil {
+			regions = append(regions, m[1])
+		}
+	}
+
+	if len(regions) == 0 || slices.ContainsFunc(regions, func(r string) bool { return r != regions[0] }) {
+		return "", xerrors.Wrap(errRegionNotOne, fmt.Sprintf("%d 件（%s）", len(regions), strings.Join(regions, "・")))
 	}
 
 	if !regionPattern.MatchString(regions[0]) {
