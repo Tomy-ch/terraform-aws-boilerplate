@@ -1642,3 +1642,26 @@ test_violation_management_policy_missing if {
 test_violation_management_policy_empty if {
 	management_malformed({"op": "replace", "path": "/deployment_identity/apply_role/governance/management_policy", "value": ""})
 }
+
+# メンバーの形（plan.deployment_identity_instances が lib.member_form を真にする）は統制の印を持たない。印の存在と
+# management_actions を求めず、governance.actions は求め続ける。
+member_messages_for(rcs, d) := msgs if {
+	msgs := messages_for(rcs, d) with data.plan.lib.member_form as true
+}
+
+test_pass_member_form_without_governance_policy if {
+	msgs := member_messages_for(without(world(without_management_deny), governance_policy_address), decl)
+	not fixture.has("[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.governance.management_policy", msgs)
+	not fixture.has(denied_06("iam:UpdateAccountPasswordPolicy"), msgs)
+}
+
+test_pass_member_form_does_not_require_management_actions if {
+	not fixture.has(denied_06("iam:UpdateAccountPasswordPolicy"), member_messages_for(world(without_management_deny), decl))
+	fixture.has(denied_06("iam:UpdateAccountPasswordPolicy"), messages_for(world(without_management_deny), decl))
+}
+
+test_violation_member_form_still_requires_governance_actions if {
+	some a in governance_actions
+	statements := [s | some s in valid_statements; not s == governance_deny]
+	fixture.has(denied_06(a), member_messages_for(without(world(statements), governance_policy_address), decl))
+}
