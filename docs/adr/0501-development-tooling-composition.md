@@ -52,7 +52,7 @@ Security は事情が違う。誤設定の規則は道具ごとに独立に書�
    | Integration | `terraform test`（実 provider） | 必要 |
    | E2E | Terratest（Go） | 必要 |
    | Cost | Infracost | 不要 |
-   | Drift | `terraform plan -refresh-only` | 必要 |
+   | Drift | `terraform plan -detailed-exitcode`（判定は plan の JSON の `resource_changes` と `resource_drift`。ADR-0601 決定12） | 必要 |
 
 5. TFLint は `terraform validate` の代替ではなく補完として置く。
 

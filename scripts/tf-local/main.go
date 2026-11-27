@@ -12,10 +12,10 @@
 //	    評価が rego の `deny contains` の数でなければ失敗する。-policy は dir の下の rego を走査して、
 //	    package ごとに突き合わせる
 //
-// 入口の段は、1回の起動で1つの目的の道具（aws か terraform か conftest か bootstrap-check）だけを、固定の引数で起動する
-// （ADR-0702 決定3・24）。人の手元の段は local.go、CI の資格情報の段は cicred.go、plan と apply の段は ciflow.go、
-// lock の解除と lock を残す段は cihold.go が持つ。値を決められない入力はすべて失敗し（終了コードは下）、make はその時点で
-// 後の段を起動しない。make のレシピに分岐を置かず、判断はすべてここのテストで固定する。
+// 入口の段は、1回の起動で1つの目的の道具（aws か terraform か conftest か bootstrap-check か git）だけを、固定の引数で
+// 起動する（ADR-0702 決定3・24）。人の手元の段は local.go、CI の資格情報の段は cicred.go、plan と apply の段は ciflow.go、
+// lock の解除と lock を残す段は cihold.go、drift の検出の段は cidrift.go が持つ。値を決められない入力はすべて失敗し
+// （終了コードは下）、make はその時点で後の段を起動しない。make のレシピに分岐を置かず、判断はすべてここのテストで固定する。
 //
 // 終了コードは lib/toolrun の取り決めで、対象について否と言えた失敗（plan の失敗、Policy の違反、apply の失敗、
 // lock の衝突など。verdicts）を 1、道具を起動できない・値を決められない・入力を読めない・使い方の誤りを 2 にする。
@@ -73,7 +73,7 @@ var (
 	unsetNames    = []string{"TF_WORKSPACE", "TF_DATA_DIR", "TF_CLI_CONFIG_FILE", "TF_REATTACH_PROVIDERS",
 		"ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"}
 
-	errUsage            = xerrors.New("❌ usage: tf-local env-unset | plan-header | policy-result ... | local-prepare|local-init|local-plan ... | ci-credentials|ci-assume-denied ... | ci-prepare|ci-init|ci-plan|ci-policy|ci-permissions|ci-apply|ci-upload|ci-finish ... | ci-unlock ... | ci-hold-absent|ci-hold-plan|ci-hold-verify ...")
+	errUsage            = xerrors.New("❌ usage: tf-local env-unset | plan-header | policy-result ... | local-prepare|local-init|local-plan ... | ci-credentials|ci-assume-denied ... | ci-prepare|ci-init|ci-plan|ci-policy|ci-permissions|ci-apply|ci-upload|ci-finish ... | ci-unlock ... | ci-hold-absent|ci-hold-plan|ci-hold-verify ... | ci-drift-target|ci-drift-lock|ci-drift|ci-drift-report ...")
 	errBackendMissing   = xerrors.New("❌ backend.tf がありません")
 	errProvidersMissing = xerrors.New("❌ providers.tf がありません")
 	errRegionMismatch   = xerrors.New("❌ provider と backend の region が違います")
@@ -120,9 +120,9 @@ var verdicts = []error{
 	errApplyFailed, errApplyTimeout, errAssumeSucceeded,
 	errLockFresh, errLockForeign, errLockExists,
 	errCIFailed, errCIUnfinish,
+	errDriftFound, errDriftInconclusive,
 }
 
-// exitCode は err の終了コードです。
 func exitCode(err error) int {
 	return toolrun.ExitCode(err, verdicts...)
 }
@@ -191,6 +191,14 @@ func run(args []string, out io.Writer, d deps) error {
 		value, err = ciHoldPlanStep(args[1:], d)
 	case "ci-hold-verify":
 		value, err = ciHoldVerifyStep(args[1:], d, out)
+	case "ci-drift-target":
+		value, err = ciDriftTargetStep(args[1:], d, out)
+	case "ci-drift-lock":
+		value, err = ciDriftLockStep(args[1:], d, out)
+	case "ci-drift":
+		value, err = ciDriftStep(args[1:], d, out)
+	case "ci-drift-report":
+		value, err = ciDriftReportStep(args[1:], d)
 	default:
 		return xerrors.Wrap(errUsage, args[0])
 	}
