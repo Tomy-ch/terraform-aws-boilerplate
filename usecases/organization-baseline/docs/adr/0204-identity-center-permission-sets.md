@@ -98,7 +98,7 @@ bootstrap の構成物の誤った書き換えを止めない。CI の role の�
 - 保証しないこと: `organization_admin` の inline の Deny が、`AdministratorAccess` を持つ人を止めること。その人は新しい IAM の主体を作って許可を与えれば越えられ、管理アカウントには SCP が効かない。管理アカウントで `sts:AssumeRoot` を呼べる主体が break-glass の role だけであり続けることも、同じ理由で保証しない（organization-baseline/ADR-0001 の保証範囲）
 - 保証しないこと: `PLAN-IDC-*` が env の実 plan に掛かること。掛かるのは reference の mock の plan の文書の形までである。実 plan では、`plan.stateful_protection` が permission set の削除・置換・管理からの除外を落とす
 - 保証しないこと: `organization_admin` を持つ人が、Identity Center の directory の user・group・membership と、identity source・MFA・セッションの既定の設定を変えること（Terraform の外。drift を plan で見ない）。MFA が「サインインごと」であること（Provider に resource が無い。人の手順）
-- 保証しないこと: 割当の相手。label から ID への対応は parameter `/<project>/organization-baseline/identity-center-principals` が持つので、それを書ける主体が、`organization_admin` を誰に割り当てるかを決める。管理アカウントの CI の role には、この parameter の書き込みを拒む（deployment-identity/ADR-0201）。残る書き手は、管理アカウントの管理者（`organization_admin` と break-glass の role）である。parameter の形と label の在ることは postcondition が確かめるが、ID が正しい人を指すことは確かめない
+- 保証しないこと: 割当の相手。label から ID への対応は parameter `/<project>/organization-baseline/identity-center-principals` が持つので、それを書ける主体が、`organization_admin` を誰に割り当てるかを決める。管理アカウントの CI の role は、この parameter の書き込みの Allow を持たず、apply の role と permissions boundary がその書き込みを Deny で拒む（deployment-identity/ADR-0201）。残る書き手は、管理アカウントの管理者（`organization_admin` と break-glass の role）である。parameter の形と label の在ることは postcondition が確かめるが、ID が正しい人を指すことは確かめない
 - 保証しないこと: 主体の ID を plan と state から隠すこと。ID は plan の JSON と state に平文で入る。どちらも暗号化した Bucket にだけ置く。repository・resource の address・公開のログには label だけが載る
 
 ## 検証方法
