@@ -280,7 +280,6 @@ test_cross_root_markers_known_only_in_their_own_root if {
 	}
 }
 
-# メンバーの形の宣言は、管理アカウントにだけ在る policy を除き、instances を外す。ほかは変えない。
 test_member_decl_drops_management_only_policies_and_instances if {
 	d := object.union(inst_decl, {"deployment_identity": {
 		"management_only_policies": ["module.d.aws_iam_policy.governance[0]"],
@@ -295,7 +294,6 @@ test_member_decl_drops_management_only_policies_and_instances if {
 	got.state_backend.state_key == inst_decl.state_backend.state_key
 }
 
-# 付け替えた入力は、正規の instance の resource を除き、instance の resource を正規の接頭辞へ移し、ほかを残す。
 test_member_view_rebases_the_instance_and_keeps_the_rest if {
 	inp := [file("sb.json", [rc("module.sm.module.kms.aws_kms_key.this", ["create"]), rc("module.s.module.kms.aws_kms_key.this", ["create"])]), file("di.json", [rc("module.dm.x.this", ["create"]), rc("module.d.x.this", ["create"]), rc("module.other.x.this", ["create"])])]
 	got := lib.member_view(cross_member) with data.policy_plan as cross_decl with input as inp

@@ -1396,8 +1396,6 @@ test_violation_prerequisite_only_outside_one_denied if {
 	fixture.has(sprintf("[PLAN-APPLY-07] p.json: %s が", [outside_address]), msgs)
 }
 
-# 宣言した instance の deployment-identity の module の下は置き場に当たる（lib/instances.rego）。件数は正規の接頭辞で数え、
-# instance の件数は plan.deployment_identity_instances が付け替えた入力で見る。
 member_slr_address := "module.deployment_identity_m.module.service_linked_roles.aws_iam_service_linked_role.chatbot[0]"
 
 member_slr_decl := json.patch(slr_decl, [
@@ -1643,8 +1641,6 @@ test_violation_management_policy_empty if {
 	management_malformed({"op": "replace", "path": "/deployment_identity/apply_role/governance/management_policy", "value": ""})
 }
 
-# メンバーの形（plan.deployment_identity_instances が lib.member_form を真にする）は統制の印を持たない。印の存在と
-# management_actions を求めず、governance.actions は求め続ける。
 member_messages_for(rcs, d) := msgs if {
 	msgs := messages_for(rcs, d) with data.plan.lib.member_form as true
 }

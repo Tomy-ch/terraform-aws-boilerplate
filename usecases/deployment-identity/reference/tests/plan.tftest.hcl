@@ -18,11 +18,10 @@ mock_provider "aws" {
 mock_provider "aws" {
   alias = "security"
 
-  # attachment の policy_arn は ARN の形を検証するので、mock の policy の ARN を ARN の形にする。
+  # 値を与える理由は、上の無名の mock_provider "aws" と同じ。
   mock_resource "aws_iam_policy" {
     defaults = { arn = "arn:aws:iam::111111111111:policy/mock" }
   }
-  # state_key_arn の precondition は、鍵の ARN を data source の partition・region・account と比べる。
   mock_data "aws_caller_identity" {
     defaults = { account_id = "111111111111" }
   }

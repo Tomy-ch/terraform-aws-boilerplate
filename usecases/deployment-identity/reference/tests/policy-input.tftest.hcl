@@ -13,7 +13,6 @@ mock_provider "aws" {
   }
 }
 
-
 mock_provider "aws" {
   alias           = "security"
   override_during = plan

@@ -62,7 +62,7 @@ trust := {
 
 read := {"Sid": "ListBuckets", "Effect": "Allow", "Action": "s3:ListBucket", "Resource": [{"Fn::Sub": "arn:${AWS::Partition}:s3:::tabp-*-tfstate-${AWS::AccountId}-*"}]}
 
-# メンバーの構成物（member_files）の読み。PLAN-BR-07 のケースのほかは、テンプレートに常に足す。
+# PLAN-BR-07 のケースのほかは、テンプレートに常に足す（properties）。
 member_key_read := {"Sid": "ReadStateKey", "Effect": "Allow", "Action": "kms:DescribeKey", "Resource": {"Fn::Sub": "arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/*"}}
 
 member_role_read := {"Sid": "ReadCiRoles", "Effect": "Allow", "Action": "iam:GetRole", "Resource": {"Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/tabp-*-ci-*"}}
@@ -589,13 +589,11 @@ test_pass_member_resources_covered if {
 	count(member_messages(valid_stack_set, instances_with(root_target), member_sb, member_di)) == 0
 }
 
-# #641 の前のテンプレート。メンバーの managed policy の iam:GetRole が、Chatbot の SLR の読みを要求する。
 test_violation_service_linked_role_not_covered if {
 	set := stack_set_with({}, properties_with([trust], [read, member_key_read, member_role_read]))
 	br07(member_messages(set, instances_with(root_target), member_sb, member_di)) == {not_covered(slr_arn, "iam:getrole")}
 }
 
-# その ARN に当たる文が別の Action だけを持っても、覆わない。
 test_violation_action_on_other_statement if {
 	other := object.union(member_slr_read, {"Action": "iam:GetPolicy"})
 	set := stack_set_with({}, properties_with([trust], [read, member_key_read, member_role_read, other]))
@@ -690,7 +688,6 @@ test_violation_plan_role_not_resource if {
 	not fixture.has(not_covered(role_arn, "iam:listroletags"), member_messages(valid_stack_set, instances_with(root_target), member_sb, di2))
 }
 
-# 3つの疑似パラメータのほかの ${...} が残る pattern は、どの ARN にも当たらない。
 test_violation_unknown_substitution_not_counted if {
 	odd := object.union(member_slr_read, {"Resource": {"Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${Other}"}})
 	set := stack_set_with({}, properties_with([trust], [read, member_key_read, member_role_read, odd]))

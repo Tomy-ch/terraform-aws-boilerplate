@@ -285,7 +285,7 @@ bootstrap_role_protected if {
 
 # メンバーの構成物の ARN ごとに、そのメンバーの plan の role が Resource を限って許す読みを、この role がその ARN に許す
 # （organization-baseline/ADR-0203 決定4）。構成物と plan の role の Allow は、reference のメンバーの形の instance を正規の
-# 接頭辞へ付け替えた入力（lib.member_view）の上で、deployment-identity の規則から取る。要る読みを型ごとに別に持たない。
+# 接頭辞へ付け替えた入力（lib.member_view）の上で、deployment-identity の規則から取る。
 members contains i if {
 	some i in lib.instances
 	i.root != null

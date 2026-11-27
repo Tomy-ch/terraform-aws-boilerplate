@@ -178,8 +178,6 @@ test_violation_other_ci_policy_not_action_excludes_only_assume_role if {
 	fixture.has("[PLAN-ASSUME-03]", messages(array.concat(valid, [other])))
 }
 
-# メンバーの形（plan.deployment_identity_instances が lib.member_form を真にする）では、引き受けをどこにも置かない。
-# apply-identity の側の policy（管理アカウントにだけ在る）と、引き受けの存在は求めない。plan の role の policy は求める。
 member_messages(rs) := msgs if {
 	msgs := messages(rs) with data.plan.lib.member_form as true
 }

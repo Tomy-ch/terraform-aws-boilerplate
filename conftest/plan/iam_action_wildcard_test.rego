@@ -186,8 +186,6 @@ test_pass_delete_only_change if {
 	count(p.deny) == 0 with input as fixture.plan([fixture.role_policy([fixture.allow("s3:GetObject")]), gone]) with data.policy_plan.resource_wildcard_actions as []
 }
 
-# boundary は instance ごとの接頭辞へ付け替えて読む（lib/instances.rego）。宣言した instance の boundary は通り、宣言の外の
-# 接頭辞の同じ文は落ちる。
 member_boundary_decl := {
 	"deployment_identity": {
 		"module": "module.deployment_identity.",
@@ -217,7 +215,6 @@ test_violation_crypto_via_service_in_undeclared_instance_boundary if {
 	fixture.has("[PLAN-IAM-04]", p.deny) with input as member_files([rc]) with data.policy_plan as object.union(data.policy_plan, member_boundary_decl) with data.policy_plan.resource_wildcard_actions as []
 }
 
-# instance の root のファイルが入力に無ければ、その instance の boundary は宣言の boundary として数えない。
 test_violation_crypto_via_service_in_member_boundary_without_its_roots if {
 	rc := member_boundary("module.deployment_identity_m.module.github_oidc.aws_iam_policy.boundary[\"ops-notification\"]")
 	fixture.has("[PLAN-IAM-04]", p.deny) with input as fixture.plan([rc]) with data.policy_plan as object.union(data.policy_plan, member_boundary_decl) with data.policy_plan.resource_wildcard_actions as []

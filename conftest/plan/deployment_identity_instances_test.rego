@@ -11,7 +11,6 @@ decl := object.union(data.policy_plan, {"state_backend": object.union(data.polic
 
 file(path, rcs) := {"path": path, "contents": {"plan_format_version": "1.2", "resource_changes": rcs}}
 
-# 正規の接頭辞の下の resource を instance m の接頭辞へ移す。
 moved(rc) := object.union(rc, {"address": concat("", [member.deployment_identity, substring(rc.address, count("module.deployment_identity."), -1)])}) if startswith(rc.address, "module.deployment_identity.")
 
 moved(rc) := object.union(rc, {"address": concat("", [member.state_backend, substring(rc.address, count("module.state_backend."), -1)])}) if startswith(rc.address, "module.state_backend.")
@@ -34,8 +33,7 @@ messages(inp) := msgs if {
 	msgs := p.deny with input as inp with data.policy_plan as decl
 }
 
-# 付け替えた入力の評価は、正規の接頭辞に置いた同じ resource をメンバーの形で直接評価したものと一致する。package を変数で
-# 引くと、このテスト自身の package を含んで再帰になるので、package ごとに書く。
+# package を変数で引くと、このテスト自身の package を含んで再帰になるので、package ごとに書く。
 direct(inp) := msgs if {
 	md := lib.member_decl with data.policy_plan as decl
 	trust := data.plan.deployment_identity_trust.deny with input as inp with data.policy_plan as md with data.plan.lib.member_form as true
@@ -58,7 +56,6 @@ test_member_instance_is_evaluated_like_the_canonical_instance if {
 	got == want
 }
 
-# instance の外から instance の role へ付けた policy も、正規の instance と同じく見る。
 test_violation_policy_attached_from_outside_the_member_module if {
 	fixture.has("[PLAN-DIM-01] instance m: [PLAN-APPLY-05] di.json: module.audit_evidence.aws_iam_role_policy.rogue が apply の role に policy を付けています", messages(member_input([rogue])))
 }
