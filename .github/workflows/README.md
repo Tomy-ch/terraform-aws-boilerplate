@@ -19,6 +19,7 @@ CI の workflow 定義。Pull Request を止めるゲート、供給網のクー
 | apply | デプロイブランチ `admin` への push | 管理アカウントの identity root と workload root を、この順に apply する。失敗を通知し、失敗を戻す revert のブランチを用意する |
 | lock の解除 | 人が手動で起動する | apply の job の timeout を超えて残った state の lock を外す |
 | lock を残す | 人が手動で起動する | lock の解除を障害の前に試すために、apply と同じ role で state の lock を取り、外さずに残す |
+| drift の検出 | 毎日と手動 | 管理アカウントの identity root と workload root を、デプロイブランチの先頭の木で plan し、drift を issue と通知に残す。適用しない |
 | リリース昇格のゲート | デプロイブランチ宛の Pull Request | 修正版の無い脆弱性も含めて落とす |
 
 ブランチの名前は [`branches.json`](../settings/branches.json) から `make repo-settings-apply` が生成し、
@@ -95,9 +96,16 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
 —— AWS の側の状態は、どのファイルを変えたかと無関係に plan を変える。
 
 - **公開されるログに plan の全文を出さない。** 全文は plan の出力の Bucket へ置き、ログと job summary
-  には終了コード・件数・object の key・SHA-256・版 ID と、Policy の違反の文（resource の address）だけを
-  出す（ADR-0602 決定13、`.makefiles/terraform/operation/ci.mk`）。identity root の plan の、CI の role の policy の
+  には終了コード・件数・object の key・SHA-256・版 ID と、全文から導いた値のうち許可の文法
+  （`scripts/lib/publicdiag`）に当たるものだけを出す（ADR-0602 決定13、`.makefiles/terraform/operation/ci.mk`）。
+  失敗の診断（AWS の service・operation・error code・拒否された Action、条件の失敗のファイルと行）、変わる
+  resource の address、Policy の違反の規則の ID と件数がそれに当たり、違反の文は全文へ置く。全文は、
+  init・plan・apply の `-json` の stream と、plan の人の読む差分（`terraform show`）を順に持つ。identity root の plan の、CI の role の policy の
   文書の評価（`scripts/bootstrap-check` の `plan-permissions`）も、区分ごとの件数と期待と違う行の要約だけを出す
+- **失敗の診断は、ログと job summary の診断の行、`make ci-trail`（CloudTrail）の順に読む。** `make ci-trail` は
+  人の手元の入口で、主体は CloudTrail を読むだけの IAM Identity Center の permission set である。permission set が
+  配線されるまでは、CloudTrail を読むだけの IAM user で走らせ、root の資格情報では走らせない
+  （`docs/setup/bootstrap.md` の「CloudTrail で拒否を引く」）
 - **全文は、ログの版 ID で読み、SHA-256 を確かめる。** plan の role は `pr/*`・`branch/*` のどの key にも
   書けるので、版を指定せずに読んだ最新の版は、別の run が書いたものでありうる（ADR-0602 の保証しないこと）。
   `aws s3api get-object --bucket <Bucket> --key <key> --version-id <版 ID> plan.txt` の後、
@@ -171,9 +179,9 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
   起動できるかは environment が限る
 - **concurrency は workflow 全体に1つ置き、実行中の apply を止めない。** 待っている run は後から来た
   run に置き換わるので、線の途中の commit は apply されず、最新の commit だけが apply される
-- **公開されるログに terraform の出力を出さない。** ログには plan の終了コード・件数・Policy の違反の文と
-  apply の終了コード、全文を置いた object の key・SHA-256・版 ID だけを出し、job summary には件数と apply の
-  成否と同じ key・SHA-256・版 ID だけを出す。apply の全文は、identity root なら plan の全文と同じ Bucket の
+- **公開されるログに terraform の出力を出さない。** ログには plan と apply の終了コード・件数と、全文を置いた
+  object の key・SHA-256・版 ID と、許可の文法に当たる診断の行だけを出し、job summary には件数と apply の成否と
+  同じ key・SHA-256・版 ID と診断の行だけを出す（plan の job と同じ。失敗の経路でも job summary を書く）。apply の全文は、identity root なら plan の全文と同じ Bucket の
   `apply/` の下へ apply-identity の role が置き、workload root なら apply の出力の Bucket へ apply の role が
   置く（ADR-0602 決定13）。Bucket の名前と key を得た後は、plan・Policy・apply の
   どこで失敗しても全文を置いてから失敗する。apply には job の `timeout-minutes` より短い時間
@@ -357,6 +365,86 @@ terraform は取り消しの信号（SIGINT・SIGTERM）で lock を外してか
 - **SIGKILL で止めた terraform の provider のプロセスが、すぐに止まること。** 片付けはランナーの job の終わりに
   任せる
 
+### drift の job
+
+`terraform-drift.yaml` の `drift-admin-identity` と `drift-admin-workload` は、毎日の schedule と入力の無い
+`workflow_dispatch` で起動し、environment `admin-plan` の下で plan の role を取って、管理アカウントの identity root と
+workload root を plan し、drift を検出する（ADR-0601 決定12）。検出は通知であり、適用も自動修復もしない（同 決定13・14）。
+新しい role も environment も持たない —— plan の role の信頼条件は environment の名前で job を限り、event と ref を見ない
+（ADR-0602 決定14）。
+
+- **plan する木は、デプロイブランチ `admin` の先頭の commit である。** AWS に当たっているのはデプロイブランチの木なので、
+  schedule が走るデフォルトブランチの木を plan すると、昇格していない変更がいつも差分に出て drift と区別できない。
+  資格情報を持たない `drift-target-admin` が `make ci-target-drift` で先頭の commit を git から取り（ブランチの名前は
+  `branches.json` から導く）、検出の job `drift-infra-code-gate-admin` と drift の job は、その commit を checkout する
+  （ADR-0601 決定9 を同じ commit で満たす）。手動の起動もデフォルトブランチから行い、plan する木は起動した ref ではなく
+  デプロイブランチの先頭である
+- **昇格の前の root は判定しない。** 昇格は root の単位で見る。`drift-target-admin` は、デフォルトブランチの木の drift の
+  入口ごとに、デプロイブランチの木の `ci.mk` が同じ入口を持つかを `promoted-<env>-<root>` に出し、持たない root（入口を
+  足した変更が merge されてから昇格するまで）の drift の job は走らない。報告は昇格の前の root を除いた集合で判定し、
+  昇格の前の root の件数を job summary に出す。昇格済みの root が1つも無い回だけ、issue を動かさず通知もしない。
+  木の job と検出の job の失敗は、昇格の済みに依らず失敗である
+- **判定は1回の `terraform plan -detailed-exitcode` と、plan の JSON の2つの欄による**（ADR-0501 決定4）。
+  `resource_changes`（宣言との差）が1件でもあるか終了コードが 2 なら drift、`resource_drift`（前回の state と refresh した
+  実態の差）は、変わった最上位の属性がすべて ADR-0601 決定20 の一覧の組（resource type と属性）である項目だけを外し、
+  残りがあれば drift とする。一覧は ADR の表から `scripts/lib/ownedattrs` が読み、読めなければ判定しない。
+  削除・置換は一覧の resource type でも外さない。`check` block（ADR-0601 決定23）の結果は読まない。plan は lock を
+  取らず（ADR-0604 決定8）、Policy も掛けない —— 適用の判断をしないからである
+- **apply と重なった回は判定しない。** plan の前と後に state の lock file の有無を見て、在れば未確定とする。apply の
+  途中の実態を drift と取り違えて issue を開かないためである。未確定は失敗として通知し、issue は動かさない
+- **結果は3値で、肯定側から読む。** drift の job は GITHUB_OUTPUT の `result` に `clean`・`drift`・`inconclusive` を書き、
+  `drift` と `inconclusive` では job を赤にする。報告の job `report` は `result == 'clean'` で成功した job だけを
+  clean と読み、`drift` で落ちた job を drift と読む。それ以外（空の result、skip、取り消し、検出の job や木の job の失敗）は
+  すべて失敗である。drift を赤にするのは、outputs が届かなかった回を、緑のまま黙って消さずに失敗の通知へ倒すためである
+- **issue に出すのは root ごとの件数と run の URL だけである。** issue「Terraform Drift Report」は drift がある間は開き、
+  無くなったら閉じる。本文には、drift の集合の SHA-256 の印も置き、次の回が集合の変化を見分ける。前回の報告として読むのは、
+  題名が同じで、`GITHUB_TOKEN` で作られ（作者が `app/github-actions`）、本文が upsert-report-issue の印で始まる開いた issue だけで
+  ある（`gh issue list --author` と `ci-drift-report` の両方で確かめる）。誰でも開ける issue の本文の印で通知を止めさせない。
+  開いた issue の一覧が `--limit` の件数に達した回は、前回の報告を見落としうるので報告の job が落ちる。変わる resource の
+  address（plan の job と同じく `lib/publicdiag` が、role の名前・リージョン・整数の index のほかの key を伏せる）と
+  変わった最上位の属性の名前は、drift の job の job summary にだけ書く。属性の値はどこにも書かない。plan が失敗した回の
+  job summary には、plan の job と同じく許可の文法の欄だけの診断を書く。plan の全文は plan の job と同じく plan の出力の
+  Bucket の `branch/admin/` の下に置き、ログには key・SHA-256・版 ID と診断の行だけを出す
+- **通知は critical の deploy の系統へ、drift の集合が変わったときだけ送る。** 新しく出たとき・変わったとき・解消したときに
+  `notify-drift` が検出のモードで送り、同じ集合が続く間は送らない。失敗・取り消し・未確定は毎回 `notify-failure` が送る。
+  報告の job が走らなかった run（取り消し）も失敗として送る
+- **印は通知が届いた後に書く。** `report` は issue を、印を前回のまま保った本文で書く（新しく開く issue は印を持たない。
+  解消した回は issue を閉じない）。`notify-drift` が成功した後にだけ、`mark-report` が印を今回の集合の値にする（解消した
+  回は閉じる）。通知が届かなかった回は印が前回のまま残り、次の回も同じ集合を通知する
+- **apply の concurrency の group に入らない。** workflow 全体の group は `terraform-drift`（`cancel-in-progress: false`）で、
+  apply・lock の解除・lock を残す workflow の group と違う。同じ group では、待っている drift の run と apply の run が互いを
+  取り消しうる
+- **AWS のアカウント ID は environment `admin-plan` の secret `AWS_ACCOUNT_ID` を読む。** plan の job と同じ secret である。
+  資格情報を取る前の `refuse-off-default` が、起動が schedule か手動であることと、ref がデフォルトブランチであることを
+  確かめ、違えば失敗する。`*-plan` の environment は承認者と待機時間を持たない（`make repo-settings-check` が実態を突き合わせる）。
+  持たせると定期の job が承認待ちで止まる
+- 許す AWS の宛先は、その root の plan の job と同じクラスである。`ci-drift-*` は terraform を呼ぶ入口なので、egress の
+  `root` に名指され、型の宛先を求められる（「ランナーの封じ込め」節）
+- root を足す変更は、その root の drift の job（`make ci-drift-<env>-<root>`）と、その系統の通知の宣言を同じ変更に含める。
+  `make oidc-job-lint` の root の網羅が、root ごとに drift の job がちょうど1つあることを求める
+- job の形（起動条件、environment と role、拒否の step、拒否の確認、待つ job、checkout する commit、`if:`、concurrency の
+  group、報告と2つの通知と印を書く job の存在と `if:`）は `make oidc-job-lint` が、判定と、値を出さないことは `scripts/tf-local` の
+  段のテストが偽物の terraform と aws で見る
+
+保証しないこと:
+
+- **drift の定期実行が走ること。** GitHub の schedule は高負荷で遅れ、落とされることがあり、public のリポジトリでは
+  60 日の無活動で無効になる（GitHub の文書の「Events that trigger workflows」）。欠けた回は次の回が拾う。無効になったときは
+  push で起動する見張りも同時に止まるので、GitHub の中に見張りを置いても失敗の形が移るだけである。気づき方は、issue の
+  更新と run の一覧である
+- **Terraform の外で作られ、宣言にも state にも無い resource を検出すること**（import 漏れを含む）。plan はそれを扱わない
+  （ADR-0601 の保証しないこと）
+- **plan の間だけ走って終わった apply と重なったこと。** lock file は plan の前と後にしか見ないので、その間に始まって
+  終わった apply は見えない。その回の drift は、次の回が apply の後の実態で確かめ直す
+- **schedule の run の OIDC token の `sub` が environment の形になること。** GitHub の文書は environment を参照する job の
+  `sub` を environment の形とし、例は `workflow_dispatch` である。schedule は名指されていない
+- **リポジトリが private のとき、`drift-target-admin` がデプロイブランチを取れること。** checkout は資格情報を残さず
+  （`persist-credentials: false`）、この job の git は認証を持たない
+- **書く issue が前回の報告であること。** upsert-report-issue は開いた issue を題名だけで選ぶ（ほかの報告の workflow と同じ
+  既存の流儀）。同じ題名の issue を別の主体が先に開けば、報告と印はその issue に書かれうる。前回の報告として読む側は、上の
+  作者と印で絞る
+- **`mark-report` が落ちた回に、そのことが通知されること。** 印が前回のまま残るので、次の回が同じ集合をもう一度通知する
+
 ### apply の失敗の revert
 
 `terraform-apply.yaml` の apply の job が commit の宣言を AWS に対して評価した後に失敗すると、`revert-plan` が、
@@ -499,7 +587,8 @@ truthy 側へ置く。
 | `terraform-gates.yaml` の `changes` と plan の2 job を除く6 job、`terraform-apply.yaml:apply-infra-code-gate`、`terraform-apply.yaml:apply-resource-order-check`、`terraform-apply.yaml:apply-layer-check`、`terraform-apply.yaml:apply-root-check` | 15 | 同上（新設） |
 | `terraform-unlock.yaml` の3 job | 15 | 同上（新設）。apply の job と違い terraform を呼ばない |
 | `terraform-apply.yaml:revert-plan`、`terraform-apply.yaml:revert-push` | 15 | 同上（新設）。terraform を呼ばない |
-| `terraform-gates.yaml` の plan の2 job、`terraform-apply.yaml` の apply の2 job | 30 | AWS の API を呼ぶ。role の session（3600 秒）より短く置く |
+| `terraform-gates.yaml` の plan の2 job、`terraform-apply.yaml` の apply の2 job、`terraform-drift.yaml` の drift の2 job | 30 | AWS の API を呼ぶ。role の session（3600 秒）より短く置く |
+| `terraform-drift.yaml:drift-target-admin`、`terraform-drift.yaml:drift-infra-code-gate-admin`、`terraform-drift.yaml:report`、`terraform-drift.yaml:mark-report` | 15 | 実測できる完了 run が無い（新設） |
 | `sonarcloud.yaml` の3 job、`sample-remove-check.yaml:sample-remove-check` | 15 | 同上（新設） <!-- sample:line --> |
 | `checkov.yaml:checkov`、`kics.yaml:kics`、`semgrep.yaml:semgrep` | 15 | 実測できる完了 run が無い（新設） |
 | `secret-scan.yaml` | 15 | 実測は Pull Request のみ。週次は履歴全体を走査し、完了 run が無い |
@@ -522,7 +611,7 @@ truthy 側へ置く。
 | 系統 | 送るもの |
 | --- | --- |
 | セキュリティ | 走査（`govulncheck.yaml`・`secret-scan.yaml`・`trivy-fs.yaml`・`zizmor.yaml`・`scorecard.yaml`）の失敗と検出 |
-| critical の deploy | 管理アカウント（admin）と本番（prd）の apply の成功と失敗 |
+| critical の deploy | 管理アカウント（admin）と本番（prd）の apply の成功と失敗と、drift の検出の変化と失敗 |
 | promotion の deploy | 本番へ上がる途中の段（dev・stg）の apply の成功と失敗 |
 | validation の deploy | 検証の器（sandbox）の apply の成功と失敗 |
 | 保守 | 上流の報告（`partitions-drift-report.yaml`）の失敗 |
@@ -569,6 +658,11 @@ webhook の secret が未設定なら配信を省いて run を緑のままに�
 `partitions-drift-report.yaml` は、写しと上流のずれと、上流と比べられなかったことを issue へ書き、比べられなかった回は
 job も落とす。issue へ書く前の段（setup・egress・checkout）で落ちた回は issue に現れないので、スケジュールの失敗を
 保守の系統へ通知する。
+
+`terraform-drift.yaml` は、drift の集合が前回の issue の印と変わったときに検出のモードで、失敗・取り消し・未確定のときに
+failure モードで、critical の deploy の系統へ送る（「drift の job」）。印は検出の通知が届いた後にだけ今回の値にするので、
+届かなかった通知は次の回にもう一度送られる。drift は管理アカウントの実態が Git からずれたことで、
+apply の失敗と同じ受け手が直す。
 
 `terraform-apply.yaml` は push で起動するが、スケジュールと同じ理由で failure モードを持つ —— merge の後の
 失敗は誰にも見えず、merge したのに apply されない状態を黙って作る。検出・順序の検査・層の検査の job が落ちると
@@ -659,6 +753,7 @@ job の先頭に並んでいないこと、本体と再試行の間が生成し�
 | `aws-state` | STS・S3 の endpoint（region と wildcard の理由は宣言のコメント） | OIDC で role を assume し、state の Bucket に触れる job（lock の解除の job） |
 | `aws` | `aws-state` に加えて IAM・KMS・S3 Control の endpoint | Terraform で AWS の API を呼ぶ job |
 | `aws-notify` | `aws` に加えて SNS・EventBridge Scheduler・Chatbot の endpoint | 通知の構成物を持つ workload root を Terraform で扱う job |
+| `aws-cost` | `aws` に加えて Budgets・Cost Explorer の endpoint | 費用の監視の構成物を持つ workload root を Terraform で扱う job |
 
 1つの job に固有のものは、その job の `extra` へ置く —— 走査のデータ源、通知先の `hooks.slack.com`。
 2つ目の job の `extra` に現れた宛先は、クラスへ移す。
@@ -722,7 +817,7 @@ label を手で書き換えない —— check が拒む。
 | `setup-mise` | digest を検証してから pin された mise を導入し、呼び出し側が名指しした道具を入れる |
 | `upsert-pr-comment` | マーカーによる PR コメントの upsert（既存を検出 → 更新 / 作成）。`status: success` は既存を更新するが新規は作らない |
 | `notify-detail` | 走査の Markdown 要約を所見の行だけへ削る。検出通知が、PR コメント向けの散文を運ばずに所見を名指しできる |
-| `upsert-report-issue` | 週次の報告を、title を同一性の鍵にした1件の issue へ書く。呼び出し側が `open`（作成・更新）・`close`・`keep`（何もしない）を選ぶ |
+| `upsert-report-issue` | 定期の報告を、title を同一性の鍵にした1件の issue へ書く。呼び出し側が `open`（作成・更新）・`close`・`keep`（何もしない）を選ぶ |
 
 ### mise の導入
 

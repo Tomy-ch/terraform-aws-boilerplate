@@ -1,0 +1,936 @@
+name: Terraform Drift
+
+# 管理アカウントの identity root と workload root を、デプロイブランチの先頭の木で毎日 plan し、drift を検出する
+# （ADR-0601 決定12）。適用は起動しない（同 決定14）。規則は README.md の「drift の job」。手順の定義は
+# .makefiles/terraform/operation/ci.mk だけが持つ。
+
+on:
+  schedule:
+    - cron: '23 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# apply・lock の解除・lock を残す workflow の group には入らない（README.md の「drift の job」）。
+concurrency:
+  group: terraform-drift
+  cancel-in-progress: false
+
+jobs:
+  # 資格情報を持たない。規則は README.md の「drift の job」。
+  drift-target-admin:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.target.outputs.sha }}
+      promoted-admin-identity: ${{ steps.target.outputs.promoted-admin-identity }}
+      promoted-admin-workload: ${{ steps.target.outputs.promoted-admin-workload }}
+    steps:
+      - name: Harden the runner
+        id: harden-runner
+        continue-on-error: true
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
+      - name: Harden the runner (retry)
+        id: harden-runner-retry
+        if: steps.harden-runner.outcome != 'success'
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # go: tf-local は scripts/ からビルドする。
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: go
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve the deploy branch head
+        id: target
+        run: make ci-target-drift CI_ENV=admin RUNNER_MODE=host
+
+  # terraform-apply.yaml の apply-infra-code-gate と同じ検出を、drift の job が plan する commit に掛ける（ADR-0601 決定9）。
+  drift-infra-code-gate-admin:
+    needs: drift-target-admin
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner
+        id: harden-runner
+        continue-on-error: true
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
+      - name: Harden the runner (retry)
+        id: harden-runner-retry
+        if: steps.harden-runner.outcome != 'success'
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
+
+      - name: Checkout the deploy branch head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.drift-target-admin.outputs.sha }}
+          persist-credentials: false
+
+      # go: infra-code-gate と hcl-input と hcl-tally は scripts/ からビルドする。
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: aqua:open-policy-agent/conftest go
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Detect infrastructure code
+        run: make -k infra-code-gate RUNNER_MODE=host
+
+  # 規則は README.md の「drift の job」.
+  drift-admin-identity:
+    needs: [drift-target-admin, drift-infra-code-gate-admin]
+    if: ${{ needs.drift-target-admin.result == 'success' && needs.drift-infra-code-gate-admin.result == 'success' && needs.drift-target-admin.outputs.promoted-admin-identity == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: admin-plan
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      result: ${{ steps.drift.outputs.result }}
+      count: ${{ steps.drift.outputs.count }}
+      digest: ${{ steps.drift.outputs.digest }}
+    steps:
+      - name: Harden the runner
+        id: harden-runner
+        continue-on-error: true
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
+            registry.terraform.io
+            releases.hashicorp.com
+            github-releases.githubusercontent.com
+            sts.ap-northeast-1.amazonaws.com
+            s3.ap-northeast-1.amazonaws.com
+            *.s3.ap-northeast-1.amazonaws.com
+            cloudformation.ap-northeast-1.amazonaws.com
+            iam.amazonaws.com
+            kms.ap-northeast-1.amazonaws.com
+            organizations.us-east-1.amazonaws.com
+            *.s3-control.ap-northeast-1.amazonaws.com
+            ssm.ap-northeast-1.amazonaws.com
+            guardduty.ap-northeast-1.amazonaws.com
+            guardduty.ap-northeast-2.amazonaws.com
+            guardduty.ap-northeast-3.amazonaws.com
+            guardduty.ap-south-1.amazonaws.com
+            guardduty.ap-southeast-1.amazonaws.com
+            guardduty.ap-southeast-2.amazonaws.com
+            guardduty.ca-central-1.amazonaws.com
+            guardduty.eu-central-1.amazonaws.com
+            guardduty.eu-north-1.amazonaws.com
+            guardduty.eu-west-1.amazonaws.com
+            guardduty.eu-west-2.amazonaws.com
+            guardduty.eu-west-3.amazonaws.com
+            guardduty.sa-east-1.amazonaws.com
+            guardduty.us-east-1.amazonaws.com
+            guardduty.us-east-2.amazonaws.com
+            guardduty.us-west-1.amazonaws.com
+            guardduty.us-west-2.amazonaws.com
+            inspector2.ap-northeast-1.amazonaws.com
+            inspector2.ap-northeast-2.amazonaws.com
+            inspector2.ap-northeast-3.amazonaws.com
+            inspector2.ap-south-1.amazonaws.com
+            inspector2.ap-southeast-1.amazonaws.com
+            inspector2.ap-southeast-2.amazonaws.com
+            inspector2.ca-central-1.amazonaws.com
+            inspector2.eu-central-1.amazonaws.com
+            inspector2.eu-north-1.amazonaws.com
+            inspector2.eu-west-1.amazonaws.com
+            inspector2.eu-west-2.amazonaws.com
+            inspector2.eu-west-3.amazonaws.com
+            inspector2.sa-east-1.amazonaws.com
+            inspector2.us-east-1.amazonaws.com
+            inspector2.us-east-2.amazonaws.com
+            inspector2.us-west-1.amazonaws.com
+            inspector2.us-west-2.amazonaws.com
+            securityhub.ap-northeast-1.amazonaws.com
+            securityhub.ap-northeast-2.amazonaws.com
+            securityhub.ap-northeast-3.amazonaws.com
+            securityhub.ap-south-1.amazonaws.com
+            securityhub.ap-southeast-1.amazonaws.com
+            securityhub.ap-southeast-2.amazonaws.com
+            securityhub.ca-central-1.amazonaws.com
+            securityhub.eu-central-1.amazonaws.com
+            securityhub.eu-north-1.amazonaws.com
+            securityhub.eu-west-1.amazonaws.com
+            securityhub.eu-west-2.amazonaws.com
+            securityhub.eu-west-3.amazonaws.com
+            securityhub.sa-east-1.amazonaws.com
+            securityhub.us-east-1.amazonaws.com
+            securityhub.us-east-2.amazonaws.com
+            securityhub.us-west-1.amazonaws.com
+            securityhub.us-west-2.amazonaws.com
+            cloudtrail.ap-northeast-1.amazonaws.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
+      - name: Harden the runner (retry)
+        id: harden-runner-retry
+        if: steps.harden-runner.outcome != 'success'
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
+            registry.terraform.io
+            releases.hashicorp.com
+            github-releases.githubusercontent.com
+            sts.ap-northeast-1.amazonaws.com
+            s3.ap-northeast-1.amazonaws.com
+            *.s3.ap-northeast-1.amazonaws.com
+            cloudformation.ap-northeast-1.amazonaws.com
+            iam.amazonaws.com
+            kms.ap-northeast-1.amazonaws.com
+            organizations.us-east-1.amazonaws.com
+            *.s3-control.ap-northeast-1.amazonaws.com
+            ssm.ap-northeast-1.amazonaws.com
+            guardduty.ap-northeast-1.amazonaws.com
+            guardduty.ap-northeast-2.amazonaws.com
+            guardduty.ap-northeast-3.amazonaws.com
+            guardduty.ap-south-1.amazonaws.com
+            guardduty.ap-southeast-1.amazonaws.com
+            guardduty.ap-southeast-2.amazonaws.com
+            guardduty.ca-central-1.amazonaws.com
+            guardduty.eu-central-1.amazonaws.com
+            guardduty.eu-north-1.amazonaws.com
+            guardduty.eu-west-1.amazonaws.com
+            guardduty.eu-west-2.amazonaws.com
+            guardduty.eu-west-3.amazonaws.com
+            guardduty.sa-east-1.amazonaws.com
+            guardduty.us-east-1.amazonaws.com
+            guardduty.us-east-2.amazonaws.com
+            guardduty.us-west-1.amazonaws.com
+            guardduty.us-west-2.amazonaws.com
+            inspector2.ap-northeast-1.amazonaws.com
+            inspector2.ap-northeast-2.amazonaws.com
+            inspector2.ap-northeast-3.amazonaws.com
+            inspector2.ap-south-1.amazonaws.com
+            inspector2.ap-southeast-1.amazonaws.com
+            inspector2.ap-southeast-2.amazonaws.com
+            inspector2.ca-central-1.amazonaws.com
+            inspector2.eu-central-1.amazonaws.com
+            inspector2.eu-north-1.amazonaws.com
+            inspector2.eu-west-1.amazonaws.com
+            inspector2.eu-west-2.amazonaws.com
+            inspector2.eu-west-3.amazonaws.com
+            inspector2.sa-east-1.amazonaws.com
+            inspector2.us-east-1.amazonaws.com
+            inspector2.us-east-2.amazonaws.com
+            inspector2.us-west-1.amazonaws.com
+            inspector2.us-west-2.amazonaws.com
+            securityhub.ap-northeast-1.amazonaws.com
+            securityhub.ap-northeast-2.amazonaws.com
+            securityhub.ap-northeast-3.amazonaws.com
+            securityhub.ap-south-1.amazonaws.com
+            securityhub.ap-southeast-1.amazonaws.com
+            securityhub.ap-southeast-2.amazonaws.com
+            securityhub.ca-central-1.amazonaws.com
+            securityhub.eu-central-1.amazonaws.com
+            securityhub.eu-north-1.amazonaws.com
+            securityhub.eu-west-1.amazonaws.com
+            securityhub.eu-west-2.amazonaws.com
+            securityhub.eu-west-3.amazonaws.com
+            securityhub.sa-east-1.amazonaws.com
+            securityhub.us-east-1.amazonaws.com
+            securityhub.us-east-2.amazonaws.com
+            securityhub.us-west-1.amazonaws.com
+            securityhub.us-west-2.amazonaws.com
+            cloudtrail.ap-northeast-1.amazonaws.com
+
+      # skip ではなく失敗にする（ADR-0602 決定14）。environment admin-plan は保護ブランチと Pull Request の ref を許すので、
+      # 定期の起動と手動の起動のほかで、デフォルトブランチのほかの workflow の定義から plan の role を取らせない。
+      - name: Refuse runs outside the default branch
+        id: refuse-off-default
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref }}
+          ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: |
+          case "$GITHUB_EVENT_NAME" in schedule | workflow_dispatch) ;; *) echo "❌ $GITHUB_EVENT_NAME の起動では drift を検出しません"; exit 1 ;; esac
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          test -n "$auth" || { echo "❌ token から認証の header を組めません"; exit 1; }
+          echo "::add-mask::$auth"
+          default=$(git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" ls-remote --symref "https://github.com/$REPO.git" HEAD \
+            | awk '$1 == "ref:" && $3 == "HEAD" { n++; ref = $2 } END { if (n != 1) exit 1; print ref }') \
+            || { echo "❌ git ls-remote でデフォルトブランチを1つに決められません"; exit 1; }
+          test "$REF" = "$default" || { echo "❌ $REF はデフォルトブランチ（$default）ではないので drift を検出しません"; exit 1; }
+          test -n "$ACCOUNT_ID" || { echo "❌ environment admin-plan の secret AWS_ACCOUNT_ID がありません"; exit 1; }
+
+      - name: Checkout the deploy branch head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.drift-target-admin.outputs.sha }}
+          persist-credentials: false
+
+      # go: tf-local は scripts/ からビルドする。
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: aqua:hashicorp/terraform aqua:aws/aws-cli go
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Assume the plan role
+        env:
+          CI_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: make ci-aws-credentials CI_ENV=admin CI_ROLE=plan RUNNER_MODE=host
+
+      - name: Confirm the apply-family roles refuse this job
+        env:
+          CI_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: make ci-assume-denied CI_ENV=admin RUNNER_MODE=host
+
+      - name: Detect drift in the identity root
+        id: drift
+        run: make ci-drift-admin-identity RUNNER_MODE=host
+
+  # 規則は README.md の「drift の job」.
+  drift-admin-workload:
+    needs: [drift-target-admin, drift-infra-code-gate-admin]
+    if: ${{ needs.drift-target-admin.result == 'success' && needs.drift-infra-code-gate-admin.result == 'success' && needs.drift-target-admin.outputs.promoted-admin-workload == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: admin-plan
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      result: ${{ steps.drift.outputs.result }}
+      count: ${{ steps.drift.outputs.count }}
+      digest: ${{ steps.drift.outputs.digest }}
+    steps:
+      - name: Harden the runner
+        id: harden-runner
+        continue-on-error: true
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
+            registry.terraform.io
+            releases.hashicorp.com
+            github-releases.githubusercontent.com
+            sts.ap-northeast-1.amazonaws.com
+            s3.ap-northeast-1.amazonaws.com
+            *.s3.ap-northeast-1.amazonaws.com
+            cloudformation.ap-northeast-1.amazonaws.com
+            iam.amazonaws.com
+            kms.ap-northeast-1.amazonaws.com
+            organizations.us-east-1.amazonaws.com
+            *.s3-control.ap-northeast-1.amazonaws.com
+            ssm.ap-northeast-1.amazonaws.com
+            sns.ap-northeast-1.amazonaws.com
+            sns.us-east-1.amazonaws.com
+            kms.us-east-1.amazonaws.com
+            scheduler.ap-northeast-1.amazonaws.com
+            scheduler.us-east-1.amazonaws.com
+            chatbot.us-west-2.amazonaws.com
+            budgets.amazonaws.com
+            ce.us-east-1.amazonaws.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
+      - name: Harden the runner (retry)
+        id: harden-runner-retry
+        if: steps.harden-runner.outcome != 'success'
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
+            registry.terraform.io
+            releases.hashicorp.com
+            github-releases.githubusercontent.com
+            sts.ap-northeast-1.amazonaws.com
+            s3.ap-northeast-1.amazonaws.com
+            *.s3.ap-northeast-1.amazonaws.com
+            cloudformation.ap-northeast-1.amazonaws.com
+            iam.amazonaws.com
+            kms.ap-northeast-1.amazonaws.com
+            organizations.us-east-1.amazonaws.com
+            *.s3-control.ap-northeast-1.amazonaws.com
+            ssm.ap-northeast-1.amazonaws.com
+            sns.ap-northeast-1.amazonaws.com
+            sns.us-east-1.amazonaws.com
+            kms.us-east-1.amazonaws.com
+            scheduler.ap-northeast-1.amazonaws.com
+            scheduler.us-east-1.amazonaws.com
+            chatbot.us-west-2.amazonaws.com
+            budgets.amazonaws.com
+            ce.us-east-1.amazonaws.com
+
+      # 失敗にする理由は drift-admin-identity の Refuse runs outside the default branch と同じ。
+      - name: Refuse runs outside the default branch
+        id: refuse-off-default
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref }}
+          ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: |
+          case "$GITHUB_EVENT_NAME" in schedule | workflow_dispatch) ;; *) echo "❌ $GITHUB_EVENT_NAME の起動では drift を検出しません"; exit 1 ;; esac
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          test -n "$auth" || { echo "❌ token から認証の header を組めません"; exit 1; }
+          echo "::add-mask::$auth"
+          default=$(git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" ls-remote --symref "https://github.com/$REPO.git" HEAD \
+            | awk '$1 == "ref:" && $3 == "HEAD" { n++; ref = $2 } END { if (n != 1) exit 1; print ref }') \
+            || { echo "❌ git ls-remote でデフォルトブランチを1つに決められません"; exit 1; }
+          test "$REF" = "$default" || { echo "❌ $REF はデフォルトブランチ（$default）ではないので drift を検出しません"; exit 1; }
+          test -n "$ACCOUNT_ID" || { echo "❌ environment admin-plan の secret AWS_ACCOUNT_ID がありません"; exit 1; }
+
+      - name: Checkout the deploy branch head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.drift-target-admin.outputs.sha }}
+          persist-credentials: false
+
+      # go: tf-local は scripts/ からビルドする。
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: aqua:hashicorp/terraform aqua:aws/aws-cli go
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Assume the plan role
+        env:
+          CI_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: make ci-aws-credentials CI_ENV=admin CI_ROLE=plan RUNNER_MODE=host
+
+      - name: Confirm the apply-family roles refuse this job
+        env:
+          CI_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: make ci-assume-denied CI_ENV=admin RUNNER_MODE=host
+
+      - name: Detect drift in the workload root
+        id: drift
+        run: make ci-drift-admin-workload RUNNER_MODE=host
+
+  report:
+    needs: [drift-target-admin, drift-infra-code-gate-admin, drift-admin-identity, drift-admin-workload]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      notify: ${{ steps.report.outputs.notify }}
+      headline: ${{ steps.report.outputs.headline }}
+      details: ${{ steps.report.outputs.details }}
+      failed-job: ${{ steps.report.outputs.failed-job }}
+      title: ${{ steps.report.outputs.title }}
+      marker: ${{ steps.report.outputs.marker }}
+      mark-state: ${{ steps.report.outputs.mark-state }}
+      mark-body: ${{ steps.report.outputs.mark-body }}
+    steps:
+      - name: Harden the runner
+        id: harden-runner
+        continue-on-error: true
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
+      - name: Harden the runner (retry)
+        id: harden-runner-retry
+        if: steps.harden-runner.outcome != 'success'
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # go: tf-local は scripts/ からビルドする。
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: go
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # 前回の報告の印（drift の集合の SHA-256）を読み、集合が変わったときだけ通知する。GITHUB_TOKEN で作った issue だけを
+      # 読み、作者と本文の先頭の印は ci-report-drift も確かめる。件数が --limit に達すれば ci-report-drift が落ちる。
+      - name: Read the open issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: gh issue list --repo "$REPO" --state open --author app/github-actions --limit 1000 --json number,title,body,url,author > "$RUNNER_TEMP/drift-issues.json"
+
+      - name: Decide the report
+        id: report
+        env:
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: make ci-report-drift RUNNER_MODE=host
+
+      # drift の集合の印は前回のまま書く。今回の印は、通知が届いた後に mark-report が書く。
+      - name: Create, update or close the report issue
+        uses: ./.github/actions/upsert-report-issue
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          title: ${{ steps.report.outputs.title }}
+          marker: ${{ steps.report.outputs.marker }}
+          state: ${{ steps.report.outputs.state }}
+          body-file: ${{ steps.report.outputs.body }}
+          close-comment: デプロイブランチの木の plan に drift が無くなったので閉じます。
+
+  # 理由は README.md の「通知の起動条件」。
+  notify-drift:
+    needs: report
+    if: ${{ needs.report.result == 'success' && needs.report.outputs.notify == 'drift' }}
+    uses: ./.github/workflows/notify.yaml
+    with:
+      detected: ${{ needs.report.outputs.headline }}
+      details: ${{ needs.report.outputs.details }}
+    secrets:
+      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_DEPLOY_CRITICAL }}
+
+  # notify-drift が届いた後にだけ、issue の drift の集合の印を今回の値にする（集合が無くなったなら閉じる）。届かなければ印は
+  # 前回のまま残り、次の回も通知する（README.md の「drift の job」）。
+  mark-report:
+    needs: [report, notify-drift]
+    if: ${{ needs.report.result == 'success' && needs.notify-drift.result == 'success' && needs.report.outputs.mark-state != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Harden the runner
+        id: harden-runner
+        continue-on-error: true
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
+      - name: Harden the runner (retry)
+        id: harden-runner-retry
+        if: steps.harden-runner.outcome != 'success'
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Write the marked report body
+        env:
+          BODY: ${{ needs.report.outputs.mark-body }}
+        run: printf '%s\n' "$BODY" > "$RUNNER_TEMP/drift-report.md"
+
+      - name: Mark or close the report issue
+        uses: ./.github/actions/upsert-report-issue
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          title: ${{ needs.report.outputs.title }}
+          marker: ${{ needs.report.outputs.marker }}
+          state: ${{ needs.report.outputs.mark-state }}
+          body-file: ${{ runner.temp }}/drift-report.md
+          close-comment: デプロイブランチの木の plan に drift が無くなったので閉じます。
+
+  # 理由は README.md の「通知の起動条件」。
+  notify-failure:
+    needs: report
+    if: ${{ always() && (needs.report.result != 'success' || needs.report.outputs.notify == 'failure') }}
+    uses: ./.github/workflows/notify.yaml
+    with:
+      failed-job: ${{ needs.report.outputs.failed-job || 'report' }}
+    secrets:
+      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_DEPLOY_CRITICAL }}

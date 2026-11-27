@@ -18,3 +18,14 @@ module "ops_notification" {
   }
   permissions_boundary_arn = local.ops_notification_boundary_arn
 }
+
+# 予算は組織全体の費用に対するもの。
+module "finops" {
+  source = "../../usecases/finops"
+
+  project                = "tabp"
+  env                    = "admin"
+  notification_topic_arn = module.ops_notification.topic_arn
+  monthly_budget_usd     = 100
+  anomaly_threshold_usd  = 100
+}

@@ -63,12 +63,14 @@ func command(ctx context.Context, dir string, env []string, step string, _ ...st
 	case stepAssumeRole:
 		cmd = exec.CommandContext(ctx, "aws", "sts", "assume-role-with-web-identity", "--cli-input-json", "file://input.json", "--output", "json")
 	case stepCIInit:
-		cmd = exec.CommandContext(ctx, "terraform", "init", "-input=false", "-no-color", "-lockfile=readonly")
+		cmd = exec.CommandContext(ctx, "terraform", "init", "-input=false", "-no-color", "-json", "-lockfile=readonly")
 	case stepCIPlanNoLock:
-		cmd = exec.CommandContext(ctx, "terraform", "plan", "-lock=false", "-input=false", "-no-color", "-detailed-exitcode")
+		cmd = exec.CommandContext(ctx, "terraform", "plan", "-lock=false", "-input=false", "-no-color", "-json", "-detailed-exitcode")
 	case stepCIPlanLock:
-		cmd = exec.CommandContext(ctx, "terraform", "plan", "-input=false", "-no-color", "-detailed-exitcode")
+		cmd = exec.CommandContext(ctx, "terraform", "plan", "-input=false", "-no-color", "-json", "-detailed-exitcode")
 	case stepCIShow:
+		cmd = exec.CommandContext(ctx, "terraform", "show")
+	case stepCIShowText:
 		cmd = exec.CommandContext(ctx, "terraform", "show")
 	case stepCIApply:
 		cmd = exec.CommandContext(ctx, "terraform", "apply")
@@ -87,6 +89,14 @@ func command(ctx context.Context, dir string, env []string, step string, _ ...st
 		cmd = exec.CommandContext(ctx, "terraform", "plan", "-input=false", "-no-color", "-parallelism=1")
 	case stepLocalInit:
 		cmd = exec.CommandContext(ctx, "terraform", "init", "-input=false", "-lockfile=readonly")
+	case stepGitFetch:
+		// refspec は stdin の1行（refs/heads/<デプロイブランチ>）。hook を走らせない。
+		cmd = exec.CommandContext(ctx, "git", "-c", "core.hooksPath=/dev/null", "fetch", "--depth=1", "--no-tags", "--no-recurse-submodules", "--quiet", "--stdin", "origin")
+	case stepGitRevParse:
+		cmd = exec.CommandContext(ctx, "git", "-c", "core.hooksPath=/dev/null", "rev-parse", "--verify", "--end-of-options", "FETCH_HEAD^{commit}")
+	case stepGitCatFile:
+		// object の名前は stdin の1行（<commit>:<path>）。
+		cmd = exec.CommandContext(ctx, "git", "-c", "core.hooksPath=/dev/null", "cat-file", "--batch")
 	default:
 		cmd = exec.CommandContext(ctx, "terraform", "plan", "-lock=false", "-input=false", "-no-color")
 	}

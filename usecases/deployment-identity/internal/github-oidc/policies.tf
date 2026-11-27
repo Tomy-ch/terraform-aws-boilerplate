@@ -163,7 +163,8 @@ locals {
   members_policy_arns        = [for a in ["${local.iam_arn_prefix}:policy/${local.members_policy_name}"] : a if local.management]
   apply_identity_policy_arns = concat([local.manage_policy_arn], local.governance_policy_arns, local.members_policy_arns)
   managed_policy_arns        = { apply_identity = local.apply_identity_policy_arns, apply = local.workload_policy_arns, plan = [local.workload_read_policy_arn] }
-  ci_policy_arns             = concat(local.apply_identity_policy_arns, local.workload_policy_arns, values(local.boundary_policy_arns))
+  # 統制の読み取りは、plan と apply-identity の role が共有する policy に置く（決定7・21）。
+  governance_read_policy_arns = [for a in ["${local.iam_arn_prefix}:policy/${var.name_prefix}-ci-governance-read"] : a if local.management]
 
   regional_arn_suffix = "${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}"
   # workload root の usecase の構成物は、名前を `<name_prefix>-` で始める pattern で限る（決定13）。
@@ -692,11 +693,12 @@ locals {
   }] : s if local.baseline_supported && local.management] }
 
   ci_policy_management_statements = [
+    # 作成と削除は CI の policy の名前の pattern で限り、付与は role ごとに列挙した ARN の条件で限る（決定4）。
     {
       Sid      = "ManageCiPolicies"
       Effect   = "Allow"
       Action   = ["iam:CreatePolicy", "iam:CreatePolicyVersion", "iam:DeletePolicy", "iam:DeletePolicyVersion", "iam:SetDefaultPolicyVersion"]
-      Resource = local.ci_policy_arns
+      Resource = "${local.iam_arn_prefix}:policy/${var.name_prefix}-ci-*"
     },
     {
       Sid       = "AttachApplyWorkloadPolicy"
@@ -705,20 +707,20 @@ locals {
       Resource  = local.role_arns.apply
       Condition = { ArnEquals = { "iam:PolicyARN" = local.workload_policy_arns } }
     },
-    # plan の role は workload の読み取りを apply の role と同じ policy で受ける（決定17）。
+    # plan の role は workload の読み取りを apply の role と、統制の読み取りを apply-identity の role と同じ policy で受ける（決定7・17）。
     {
       Sid       = "AttachPlanReadPolicy"
       Effect    = "Allow"
       Action    = "iam:AttachRolePolicy"
       Resource  = local.role_arns.plan
-      Condition = { ArnEquals = { "iam:PolicyARN" = local.workload_read_policy_arn } }
+      Condition = { ArnEquals = { "iam:PolicyARN" = concat([local.workload_read_policy_arn], local.governance_read_policy_arns) } }
     },
     {
       Sid       = "AttachApplyIdentityPolicies"
       Effect    = "Allow"
       Action    = "iam:AttachRolePolicy"
       Resource  = local.role_arns.apply_identity
-      Condition = { ArnEquals = { "iam:PolicyARN" = local.apply_identity_policy_arns } }
+      Condition = { ArnEquals = { "iam:PolicyARN" = concat(local.apply_identity_policy_arns, local.governance_read_policy_arns) } }
     },
   ]
 

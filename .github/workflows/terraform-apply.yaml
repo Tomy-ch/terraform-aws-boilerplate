@@ -795,6 +795,8 @@ jobs:
             scheduler.ap-northeast-1.amazonaws.com
             scheduler.us-east-1.amazonaws.com
             chatbot.us-west-2.amazonaws.com
+            budgets.amazonaws.com
+            ce.us-east-1.amazonaws.com
       - name: Prepare to retry hardening the runner
         if: steps.harden-runner.outcome != 'success'
         continue-on-error: true
@@ -857,6 +859,8 @@ jobs:
             scheduler.ap-northeast-1.amazonaws.com
             scheduler.us-east-1.amazonaws.com
             chatbot.us-west-2.amazonaws.com
+            budgets.amazonaws.com
+            ce.us-east-1.amazonaws.com
 
       # 古い run を止める理由は apply-admin-identity の Refuse stale commits と同じ。
       - name: Refuse stale commits
