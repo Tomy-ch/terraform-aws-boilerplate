@@ -102,7 +102,7 @@ GitHub の案内は、ruleset に Code Quality の閾値を宣言する**前に*
 | 群 | context |
 | --- | --- |
 | 検査の設定と定義 | `actions-lint`、`adr-lint`、`commitlint`、`docker-lint`、`egress-check`、`md-lint`、`ref-record-lint`、`zizmor` |
-| 宣言と実体のずれ | `mod-tidy-check`、`pin-actions-check`、`pin-images-check`、`pin-runners-check`、`repo-settings-check`、`skill-lint`、`tool-cooldown`、`versions-check` |
+| 宣言と実体のずれ | `go-cooldown`、`mod-tidy-check`、`pin-actions-check`、`pin-images-check`、`pin-runners-check`、`repo-settings-check`、`skill-lint`、`tool-cooldown`、`versions-check` |
 | サンプルの除去 | `sample-remove-check` <!-- sample:line --> |
 | コードと構成 | `go-lint`、`go-fmt-check`、`go-test`、`test-mapping`、`tf-fmt-check`、`tf-lint`、`tf-validate-test`、`infra-code-gate`、`tf-policy`、`trivy-config`、`checkov`、`kics`、`semgrep`、`secret-scan`、`trufflehog`、`typos`、`editorconfig-check` |
 | デプロイブランチへの経路（ADR-0603 決定32 の例外） | `deploy-source-check`。デフォルトブランチの名前と到達性、デプロイブランチの今の木に依り、変更に誤りが無くても赤になりうる。デプロイブランチ宛でない Pull Request では対象外として成功する。検査のコードと宣言は Pull Request の base の commit のものを使う |
