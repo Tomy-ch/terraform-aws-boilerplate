@@ -65,15 +65,15 @@ ADR-0401 は検証レイヤーを定義したが、検証がどの時点で実�
 ### Drift
 
 11. Drift Detection を deployment 機構の代替として使用しない。通常の変更反映は Git → CI/CD → AWS の経路のみで行う。例外は、決定20 の一覧の属性を発火側が変えることだけとする。
-12. Drift Detection を次の検出に用いる。
+12. Drift Detection を、宣言か state に在る resource についての次の検出に用いる。
 
     - AWS Console からの手動変更
-    - Terraform 管理外の変更
-    - import 漏れ
     - 外部システムによる変更
     - AWS 側で変更された属性
+    - Terraform 管理外の変更のうち、管理下の resource の属性か、一覧を排他的に持つ resource に現れるもの
+    - 管理下の resource の、Terraform の外での削除
 
-    決定20 の一覧の属性の変化は発火側の正規の変更であり、検出の対象としない。その属性が指す先の中身は除かない。中身の検出は決定23 による。
+    検出は、env のデプロイブランチの先頭の木に対する plan で行い、宣言との差と前回の state との差の両方を drift とする。決定20 の一覧の属性の変化は発火側の正規の変更であり、検出の対象としない。外すのは一覧の resource type と属性の組だけで、同じ resource のほかの属性は外さない。その属性が指す先の中身は除かない。中身の検出は決定23 による。drift の検出の plan は、決定23 の `check` block の結果を読まない。
 
 13. drift の解消も Git を経由する。Git 側を実態へ合わせるか、実態を Git の宣言へ戻すかのいずれかを Pull Request として提出する。検出箇所へ直接 apply して差分を黙らせない。
 14. drift の自動修復を行わない。検出は通知であり、適用の起動条件としない。
@@ -171,6 +171,8 @@ Git と実態の乖離が自動的に収束する。ただし drift の原因（
 - 保証しないこと: Git 外で行われた変更が発生しないこと（検出のみを保証する）。検出から解消までの間、実態が Git と一致していること
 - 保証しないこと: apply の失敗から revert の merge まで、または後続の apply の成功までの間、実態が Git と一致していること。revert の apply が成功すること
 - 保証しないこと: sandbox への apply の成功が、merge の時点でその Pull Request の構成が sandbox に当たっていること。sandbox の state は1つで、別の線の Pull Request の apply が後から上書きしうる。成功が示すのは、その head の木が、その時点の sandbox の状態に対して apply できたことである（決定4）
+- 保証しないこと: Terraform の外で作られ、宣言にも state にも無い resource（import 漏れを含む）を、drift として検出すること。plan はそれを扱わない
+- 保証しないこと: drift の定期実行が走ること。GitHub の schedule は遅延し、落とされ、public のリポジトリでは 60 日の無活動で無効になる。失敗と取り消しは通知する
 - 保証しないこと: 実行中の Task 定義の revision が、Terraform が登録した revision であること。発火側が登録した revision の中身が Terraform の宣言と一致すること（事後の検出のみ。決定23）
 - 保証しないこと: Terraform の宣言の変更が、発火側の次の更新より前に、実行中の Service へ届くこと（決定21）
 
@@ -182,13 +184,13 @@ Git と実態の乖離が自動的に収束する。ただし drift の原因（
 - Static Analysis: sandbox の apply の job が、Pull Request だけで起動し、1つの concurrency の group に属し、ADR-0603 決定31 の検査の成功に依存し、古い head と fork・Dependabot の Pull Request を資格情報の取得の前に拒むこと（決定4）
 - Static Analysis: Pull Request 契機の workflow に apply が含まれないこと。決定3 の sandbox の例外を除く
 - Static Analysis: 検証ジョブの実行順序が決定9 を満たすこと
-- 定期実行: drift 検出ジョブが存在し、結果が観測可能な形で残ること
+- Static Analysis（make oidc-job-lint）: plan の job を持つ root ごとに drift の job がちょうど1つあり、schedule と入力の無い手動の起動だけで起動し、資格情報を取る前に env のデプロイブランチの先頭の commit を checkout し、結果を GitHub の issue と通知に残すこと（報告の job と失敗・drift の通知の job の存在と `if:` の形）
 - Static Analysis: リポジトリへの書き込みの資格情報（`contents: write`）を持つ job が、決定18 の形に限られること（`make contents-write-lint`）
 - Static Analysis（HCL）: `lifecycle.ignore_changes` が、決定20 の一覧の resource type と属性の組にだけ現れ、`all` を含まないこと
 - Policy Test: 発火側の role の `iam:PassRole` の Resource が当該 use-case の Task Role と Execution Role に限られ、`iam:PassedToService` の条件で ECS のタスクに限られること。`ecs:UpdateService` の Resource が当該 Service に限られること（決定22）
 - Contract Test: 決定20 の一覧を使う use-case が、発火側が元にする revision の識別子を出力すること（決定21）
 - 実環境（sandbox）: 決定20 の一覧を使う use-case で、Terraform が Task 定義を変えた後、発火側の更新を経て、その変更が実行中のタスクへ届くこと（決定21）
-- 定期実行: drift 検出ジョブが決定20 の一覧の属性を検出から外す場合、外す規則が一覧から導かれ、一覧の外の属性を外さないこと
+- Unit Test（scripts/tf-local・scripts/lib/ownedattrs）: 外す組が決定20 の表から読まれ、表の外の属性と、同じ resource のほかの属性を外さないこと
 
 ## 影響
 

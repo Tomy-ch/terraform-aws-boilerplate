@@ -17,6 +17,7 @@ AWS の whitepaper「Organizing Your AWS Environment Using Multiple Accounts」�
 
 1. 管理アカウントに、IAM user `break-glass-1`・`break-glass-2` を path `/break-glass/` で置く。パスワードと MFA（FIDO。repository-wide/ADR-0301 決定19）は Terraform で作らず、人が設定して保管する。2つは同じ group に入り同じ権限を持つ対等な user で、片方が使えなくなったとき（MFA を失くしたときを含む）の予備を互いに持つ。片方の MFA を失くしたときは、もう片方でサインインし、管理アカウントの break-glass の role を引き受けて、その MFA を外す（repository-wide/ADR-0301 決定19）。
 2. 権限は IAM group `break-glass` の inline policy で与え、user に policy を直接付けない。与えるのは、各アカウントの break-glass の role の引き受け（MFA を要求）、自分のパスワードと MFA の管理、password policy の読み取りだけとする。自分の MFA を外すこと（`iam:DeactivateMFADevice`）は、MFA で認証したセッションに限る。アクセスキーなど長期の資格情報を作ることを Deny で拒む。
+   repository-wide/ADR-0301 決定19 の `aws login` の期間は、加えて `signin:AuthorizeOAuth2Access` と `signin:CreateOAuth2Token` を、管理アカウントの provider の region の `oauth2/public-client/localhost` に限って与え、`signin:CreateOAuth2Token` の grant を authorization code と refresh token に限る。 <!-- v1.0.0 で削除: #141 -->
 3. role の引き受けの Resource は、アカウントをワイルドカードにした break-glass の role の ARN とする。メンバーアカウントの ID はアカウントを作るまで決まらない（repository-wide/ADR-0301 決定11）。password policy の読み取り（`iam:GetAccountPasswordPolicy`）は resource-level の権限を持たないので、Resource `"*"` で与える（同 決定9）。
 4. 管理アカウントの break-glass の role `<project>-break-glass` を path `/break-glass/` で置き、信頼条件を break-glass の user の ARN と `aws:MultiFactorAuthPresent` に限る。`AdministratorAccess` だけを付け、セッションは1時間とする。
 5. 管理アカウントの IAM の password policy を持つ。14文字以上、24世代の再利用の禁止、英大文字・英小文字・数字・記号を求め、90日で失効させる。失効した user は自分でパスワードを変えられる（`hard_expiry` を有効にしない）。break-glass の user は45日より短い間隔で試すので、その試験でパスワードを替える。メンバーアカウントの password policy は持たない。メンバーでは IAM user の作成を SCP で拒む（organization-baseline/ADR-0101）。
@@ -56,6 +57,7 @@ Trivy・Checkov・KICS の既定のルールが、90日を超える有効期限�
 ## 保証範囲
 
 - 保証すること: break-glass の user がちょうど2つで、長期の資格情報を Terraform で作らないこと、group の Allow が決定2 に限られること（MFA を外すのは MFA のセッションだけ）、role の信頼条件が break-glass の user と MFA に限られること、`AdministratorAccess` を付ける role が break-glass の role だけであること（`plan.organization_baseline_break_glass`）
+- 保証すること: repository-wide/ADR-0301 決定19 の `aws login` の期間、group の `signin:` の Allow が `oauth2/public-client/localhost` の Resource と2つの Action に限られ、token の grant が authorization code と refresh token に限られること（`plan.organization_baseline_break_glass`） <!-- v1.0.0 で削除: #141 -->
 - 保証しないこと: user に FIDO の MFA が登録されていること（人の手順。FIDO の装置だけであることは `make setup-organization-baseline-break-glass-check` が、MFA があることは Security Hub の IAM.5・IAM.19 が見る。IAM.5・IAM.19 は種類を問わない）。FIDO のうちどの種類か（API で見分けられない）
 
 ## 検証方法

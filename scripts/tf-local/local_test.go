@@ -88,6 +88,15 @@ func Test_command(t *testing.T) {
 		stepBucketEncrypt:  {"aws", "s3api", "get-bucket-encryption", "--cli-input-json", "file://input.json", "--output", "json"},
 		stepLocalInit:      {"terraform", "init", "-input=false", "-lockfile=readonly"},
 		stepLocalPlan:      {"terraform", "plan", "-lock=false", "-input=false", "-no-color"},
+		stepGitFetch:       {"git", "-c", "core.hooksPath=/dev/null", "fetch", "--depth=1", "--no-tags", "--no-recurse-submodules", "--quiet", "--stdin", "origin"},
+		stepGitRevParse:    {"git", "-c", "core.hooksPath=/dev/null", "rev-parse", "--verify", "--end-of-options", "FETCH_HEAD^{commit}"},
+		stepGitCatFile:     {"git", "-c", "core.hooksPath=/dev/null", "cat-file", "--batch"},
+		stepCIInit:         {"terraform", "init", "-input=false", "-no-color", "-json", "-lockfile=readonly"},
+		stepCIPlanNoLock:   {"terraform", "plan", "-lock=false", "-input=false", "-no-color", "-json", "-detailed-exitcode"},
+		stepCIPlanLock:     {"terraform", "plan", "-input=false", "-no-color", "-json", "-detailed-exitcode"},
+		stepCIShow:         {"terraform", "show"},
+		stepCIShowText:     {"terraform", "show"},
+		stepCIApply:        {"terraform", "apply"},
 	} {
 		t.Run(step, func(t *testing.T) {
 			t.Parallel()

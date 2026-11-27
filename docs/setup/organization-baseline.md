@@ -95,7 +95,7 @@
 
 StackSet か stack instance の作成で昇格の apply が失敗したときは、失敗した resource が state に残ったかで直し方が分かれる。`prevent_destroy` を持つ resource が tainted で残ると、次の plan は作り直しを求めて止まる。CI の role は削除の権限を持たないので、tainted は人が外す。apply は人が行わず、CI の経路でやり直す。
 
-1. 原因を見る。作成の API が拒まれたなら CloudTrail に `AccessDenied` が残り、resource は state に入らない。API が通って操作が失敗したなら、CloudFormation の「StackSets」で失敗した StackSet の「オペレーション」に失敗した操作とアカウントの理由が残り、resource は tainted で state に残る
+1. 原因を見る。作成の API が拒まれたなら CloudTrail に `AccessDenied` が残り（[段5 の CI の apply が失敗した](bootstrap.md#cloudtrail-で拒否を引く) の `make ci-trail` で引く）、resource は state に入らない。API が通って操作が失敗したなら、CloudFormation の「StackSets」で失敗した StackSet の「オペレーション」に失敗した操作とアカウントの理由が残り、resource は tainted で state に残る
 2. 作成の API が拒まれたとき（resource は state に無い）
    1. 拒否が、同じ apply の権限の更新の直後なら、IAM の反映の遅れである。失敗した job を走らせ直す（[bootstrap 手順書](bootstrap.md#段5-の-ci-の-apply-が失敗した) の `AccessDenied` の行）
    2. 走らせ直しも拒まれるなら、権限の不足である。権限を直す Pull Request を昇格する。resource は state に無いので、同じ apply で作られる
@@ -156,3 +156,14 @@ declarative policy は、付ける前に account status report で影響を見�
 2. `make setup-organization-baseline-service-access-check PROFILE=<管理アカウントの profile>` の出力を Pull Request に書く（3つの信頼アクセスが有効である）
 
 指定の変更が昇格した後に、`make setup-organization-baseline-delegated-admin-check PROFILE=<管理アカウントの profile>` の出力を Pull Request に書く（サービスの主体のそれぞれで、委任管理者が security のアカウントだけである）。
+
+### 3.10 break-glass の CLI の経路を試す <!-- v1.0.0 で削除: #141 -->
+
+break-glass の user の `aws login` のセッションから、break-glass の role を AWS CLI で引き受けられるかを確かめる（[ADR-0301](../adr/0301-least-privilege-policy.md) 決定19 の `aws login` の期間）。group の `aws login` の権限を足す変更が昇格した後に1回行い、結果を Pull Request か issue に記録する。この試験は break-glass の使用であり、3.6 の毎月の試験を兼ねてよい。 <!-- v1.0.0 で削除: #141 -->
+
+1. コンソールに break-glass の user で FIDO を使ってサインインしておく <!-- v1.0.0 で削除: #141 -->
+2. `aws login --profile <break-glass の user の profile> --region <管理アカウントの provider の region>` を実行し、ブラウザで break-glass の user のセッションを選ぶ。AccessDenied なら、CloudTrail の errorMessage を記録して止まる <!-- v1.0.0 で削除: #141 -->
+3. `aws sts assume-role --profile <break-glass の user の profile> --role-arn <管理アカウントの break-glass の role の ARN> --role-session-name <project>-breakglass-mfa-check --duration-seconds 900 --query AssumedRoleUser.Arn` が assumed-role の ARN を返すことを確かめる。role の信頼条件が MFA を要るので、成功すればセッションが MFA の印を持つ。資格情報を画面に出さないよう、`--query` で ARN だけを出す <!-- v1.0.0 で削除: #141 -->
+4. `role_arn` と `source_profile`（break-glass の user の profile）を持つ profile を置き、`aws sts get-caller-identity --profile <その profile>` が assumed-role の ARN を返すかを確かめる。落ちたら、`source_profile` の代わりに `credential_process = aws configure export-credentials --profile <break-glass の user の profile> --format process` を持つ profile を試す <!-- v1.0.0 で削除: #141 -->
+5. `aws logout --profile <break-glass の user の profile>` を実行する <!-- v1.0.0 で削除: #141 -->
+6. CloudTrail の Event history で、3 と 4 の AssumeRole の `userIdentity.sessionContext.attributes.mfaAuthenticated` を読み、記録に添える <!-- v1.0.0 で削除: #141 -->

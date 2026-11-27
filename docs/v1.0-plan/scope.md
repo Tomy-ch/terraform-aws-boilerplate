@@ -491,7 +491,7 @@ SCPによる方向の強制は、ライブで逆流を試して確かめない�
 
 - **予算:** 月1万円程度。検証リソースは常駐させず、検証後に即座に破棄する。
 - **常駐層:** `state-backend`、`deployment-identity`、`dns-zone`、`image-registry`、`organization-baseline`（管理アカウント側）、`finops`、`ops-notification`、GuardDuty（組織の委任管理者が全アカウントで有効にする。sandboxも含む）。
-- **定期plan:** 常駐層のdrift検知として`-detailed-exitcode`で実行する（終了コード2がdrift）。
+- **定期plan:** 常駐層を含む各 root の drift 検知として、デプロイブランチの先頭の木を `terraform plan -detailed-exitcode` で毎日 plan する。終了コード2（宣言との差）か、plan の JSON の `resource_drift`（前回の state との差。ADR-0601 決定20 の一覧の属性を除く）があれば drift とする（ADR-0601 決定12）。デプロイブランチを持たない sandbox の木の決め方は、sandbox の apply の経路が決める。
 - **掃除CI:** aws-nuke（ekristen版）等を常駐層を除外して定期実行する。テストジョブの最後に常に実行するステップとして、残存検出も置く。
 - **越境検証でdev側に作る資源:** スナップショットの共有設定、KMSのkey grant等はテストのteardownで消し、残存検出をdev側にも掛ける。devはaws-nukeの対象にしない —— リリース経路の最初の段であり、丸ごと消してよい場所ではない。
 - **掃除用Role:** OIDCのtrust policyで`sub`をリポジトリ、ブランチ、workflowまで絞る。

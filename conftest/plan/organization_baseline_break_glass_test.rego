@@ -33,7 +33,13 @@ long_term_credentials_deny := {"Effect": "Deny", "Action": long_term_credential_
 
 deactivate := {"Effect": "Allow", "Action": "iam:DeactivateMFADevice", "Resource": "arn:aws:iam::111111111111:user/break-glass/${aws:username}", "Condition": mfa}
 
-valid_group := [assume, self_manage, deactivate, password_policy, long_term_credentials_deny]
+login_client := "arn:aws:signin:ap-northeast-1:111111111111:oauth2/public-client/localhost"
+
+login_authorize := {"Sid": "AwsLoginAuthorize", "Effect": "Allow", "Action": "signin:AuthorizeOAuth2Access", "Resource": login_client}
+
+login_token := {"Sid": "AwsLoginToken", "Effect": "Allow", "Action": "signin:CreateOAuth2Token", "Resource": login_client, "Condition": {"StringEquals": {"signin:OAuthGrantType": ["authorization_code", "refresh_token"]}}}
+
+valid_group := [assume, self_manage, deactivate, password_policy, login_authorize, login_token, long_term_credentials_deny]
 
 trust(principals) := [{"Effect": "Allow", "Principal": {"AWS": principals}, "Action": "sts:AssumeRole", "Condition": mfa}]
 
@@ -548,7 +554,7 @@ manage_own(resource) := object.union(self_manage, {"Sid": "ManageOwn", "Resource
 
 deactivate_own(resource) := object.union(deactivate, {"Sid": "DeactivateOwnMfa", "Resource": resource})
 
-denied(sid) := sprintf("[PLAN-BG-02] break-glass の group の Allow %s が、role の引き受けと自分の資格情報の管理の外です", [sid])
+denied(sid) := sprintf("[PLAN-BG-02] break-glass の group の Allow %s が、role の引き受け、自分の資格情報の管理、aws login の外です", [sid])
 
 user_address(n) := user(n, "").address
 
@@ -785,4 +791,164 @@ test_violation_attachment_without_policy_arn if {
 test_violation_attachment_declaration_key_absent if {
 	d := {"break_glass": object.remove(decl.break_glass, ["role_policy_attachment"])}
 	fixture.has("[PLAN-BG-00]", p.deny) with input as valid with data.policy_plan as {"organization_baseline": d}
+}
+
+login_messages(authorize, token) := msgs if {
+	group := [assume, self_manage, deactivate, password_policy, authorize, token, long_term_credentials_deny]
+	msgs := p.deny with input as fixture.plan(rcs(group, trust(user_arns), [admin])) with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_pass_login_statements_are_optional if {
+	count(group_messages(with_deny([long_term_credentials_deny]))) == 0
+}
+
+login_authorize_denied := denied("AwsLoginAuthorize")
+
+login_token_denied := denied("AwsLoginToken")
+
+test_violation_login_remote_client if {
+	remote := "arn:aws:signin:ap-northeast-1:111111111111:oauth2/public-client/remote"
+	login_authorize_denied in login_messages(object.union(login_authorize, {"Resource": remote}), login_token)
+}
+
+test_violation_login_wildcard_resource if {
+	login_authorize_denied in login_messages(object.union(login_authorize, {"Resource": "*"}), login_token)
+}
+
+test_violation_login_wildcard_region if {
+	wildcard := "arn:aws:signin:*:111111111111:oauth2/public-client/localhost"
+	login_token_denied in login_messages(login_authorize, object.union(login_token, {"Resource": wildcard}))
+}
+
+test_violation_login_policy_variable_in_resource if {
+	variable := "arn:aws:signin:${aws:RequestedRegion}:111111111111:oauth2/public-client/localhost"
+	login_authorize_denied in login_messages(object.union(login_authorize, {"Resource": variable}), login_token)
+}
+
+test_violation_login_wildcard_partition if {
+	wildcard := "arn:*:signin:ap-northeast-1:111111111111:oauth2/public-client/localhost"
+	login_authorize_denied in login_messages(object.union(login_authorize, {"Resource": wildcard}), login_token)
+}
+
+test_violation_login_partition_mismatch if {
+	other := "arn:aws-cn:signin:ap-northeast-1:111111111111:oauth2/public-client/localhost"
+	login_authorize_denied in login_messages(object.union(login_authorize, {"Resource": other}), login_token)
+}
+
+test_violation_login_other_account if {
+	other := "arn:aws:signin:ap-northeast-1:222222222222:oauth2/public-client/localhost"
+	login_authorize_denied in login_messages(object.union(login_authorize, {"Resource": other}), login_token)
+}
+
+test_violation_login_localhost_wildcard_suffix if {
+	suffix := concat("", [login_client, "*"])
+	login_authorize_denied in login_messages(object.union(login_authorize, {"Resource": suffix}), login_token)
+}
+
+test_violation_login_localhost_trailing_path if {
+	trailing := concat("", [login_client, "/extra"])
+	login_authorize_denied in login_messages(object.union(login_authorize, {"Resource": trailing}), login_token)
+}
+
+test_violation_login_prefixed_arn if {
+	prefixed := concat("", ["x", login_client])
+	login_authorize_denied in login_messages(object.union(login_authorize, {"Resource": prefixed}), login_token)
+}
+
+test_violation_login_two_resources if {
+	two := [login_client, "arn:aws:signin:ap-northeast-1:111111111111:oauth2/public-client/remote"]
+	login_authorize_denied in login_messages(object.union(login_authorize, {"Resource": two}), login_token)
+}
+
+test_violation_login_resource_empty_array if {
+	login_authorize_denied in login_messages(object.union(login_authorize, {"Resource": []}), login_token)
+}
+
+test_violation_login_resource_absent if {
+	login_authorize_denied in login_messages(object.remove(login_authorize, ["Resource"]), login_token)
+}
+
+test_violation_login_resource_null if {
+	login_authorize_denied in login_messages(object.union(login_authorize, {"Resource": null}), login_token)
+}
+
+test_violation_login_not_resource if {
+	not_resource := object.union(object.remove(login_authorize, ["Resource"]), {"NotResource": login_client})
+	login_authorize_denied in login_messages(not_resource, login_token)
+}
+
+# user の ARN が読めなければ、照合するアカウントが無い。login の文を許す側へ倒さない。
+test_violation_login_when_user_arns_empty if {
+	group := [assume, self_manage, deactivate, password_policy, login_authorize, login_token, long_term_credentials_deny]
+	inp := fixture.plan([organization, user(1, ""), user(2, ""), group_policy(group), role(trust(user_arns)), attachments([admin]), attachment(admin), stack_set("SERVICE_MANAGED", true, valid_member), instances("tabp-break-glass")])
+	msgs := p.deny with input as inp with data.policy_plan as {"organization_baseline": decl}
+	login_authorize_denied in msgs
+	login_token_denied in msgs
+}
+
+test_violation_login_authorize_with_condition if {
+	with_mfa := object.union(login_authorize, {"Condition": mfa})
+	login_authorize_denied in login_messages(with_mfa, login_token)
+}
+
+test_violation_login_authorize_with_empty_condition if {
+	login_authorize_denied in login_messages(object.union(login_authorize, {"Condition": {}}), login_token)
+}
+
+test_violation_login_authorize_with_grant_condition if {
+	login_authorize_denied in login_messages(object.union(login_authorize, {"Condition": login_token.Condition}), login_token)
+}
+
+test_violation_login_token_without_grant_condition if {
+	login_token_denied in login_messages(login_authorize, object.remove(login_token, ["Condition"]))
+}
+
+test_violation_login_token_other_grant if {
+	grant := {"StringEquals": {"signin:OAuthGrantType": ["authorization_code", "refresh_token", "client_credentials"]}}
+	login_token_denied in login_messages(login_authorize, object.union(login_token, {"Condition": grant}))
+}
+
+test_violation_login_token_condition_other_operator if {
+	like := {"StringLike": {"signin:OAuthGrantType": ["authorization_code", "refresh_token"]}}
+	login_token_denied in login_messages(login_authorize, object.union(login_token, {"Condition": like}))
+}
+
+test_violation_login_token_condition_extra_key if {
+	extra := object.union(login_token.Condition, {"Bool": {"aws:SecureTransport": "true"}})
+	login_token_denied in login_messages(login_authorize, object.union(login_token, {"Condition": extra}))
+}
+
+test_violation_login_token_condition_scalar_grant if {
+	scalar := {"StringEquals": {"signin:OAuthGrantType": "authorization_code"}}
+	login_token_denied in login_messages(login_authorize, object.union(login_token, {"Condition": scalar}))
+}
+
+# 宣言の順（Terraform の jsonencode が保つ）の完全一致に限る。並べ替えた式は、その意味が同じでも通さない。
+test_violation_login_token_grant_order if {
+	reordered := {"StringEquals": {"signin:OAuthGrantType": ["refresh_token", "authorization_code"]}}
+	login_token_denied in login_messages(login_authorize, object.union(login_token, {"Condition": reordered}))
+}
+
+test_violation_login_other_signin_action if {
+	login_authorize_denied in login_messages(object.union(login_authorize, {"Action": "signin:*"}), login_token)
+}
+
+test_violation_login_both_actions_in_one_statement if {
+	both := object.union(login_token, {"Action": ["signin:AuthorizeOAuth2Access", "signin:CreateOAuth2Token"]})
+	login_token_denied in login_messages(login_authorize, both)
+}
+
+test_pass_login_action_case_insensitive if {
+	upper := object.union(login_authorize, {"Action": "SIGNIN:AUTHORIZEOAUTH2ACCESS"})
+	count(login_messages(upper, login_token)) == 0
+}
+
+test_pass_login_other_region_shape if {
+	other := "arn:aws:signin:eusc-de-east-1:111111111111:oauth2/public-client/localhost"
+	count(login_messages(object.union(login_authorize, {"Resource": other}), object.union(login_token, {"Resource": other}))) == 0
+}
+
+test_pass_login_single_element_arrays if {
+	arrays := object.union(login_authorize, {"Action": ["signin:AuthorizeOAuth2Access"], "Resource": [login_client]})
+	count(login_messages(arrays, login_token)) == 0
 }

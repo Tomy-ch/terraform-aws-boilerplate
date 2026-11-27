@@ -24,4 +24,6 @@
 "job:terraform-apply.yaml:notify-revert" = "deploy-critical"
 "job:terraform-apply.yaml:notify-success-admin-identity" = "deploy-critical"
 "job:terraform-apply.yaml:notify-success-admin-workload" = "deploy-critical"
+"job:terraform-drift.yaml:notify-drift" = "deploy-critical"
+"job:terraform-drift.yaml:notify-failure" = "deploy-critical"
 "job:partitions-drift-report.yaml:notify-failure" = "maintenance"
