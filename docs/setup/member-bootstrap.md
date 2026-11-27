@@ -26,7 +26,9 @@
 
 ### 3.1 立ち上げの Pull Request の merge の前
 
-`env/admin/identity` にメンバーの `state-backend`・`deployment-identity` を足し、`.github/settings/` に environment とデプロイブランチを足す Pull Request の merge の前に、リポジトリの管理者が次を行う。`<env>` は `security` と `log-archive` のそれぞれである。
+`env/admin/identity` にメンバーの `state-backend`・`deployment-identity` を足し、`.github/settings/` に environment とデプロイブランチを足す Pull Request は、`conftest/plan/decl.json` の `state_backend.instances` の `admin-identity` に、そのアカウントの2つの module の接頭辞と `creating`（理由）も足す。作成の plan では鍵の ARN が決まらず、`plan.state_backend_write_deny` が state Bucket の Bucket Policy と CI の role の IAM を読めないので、`creating` の間はその判定だけを止める（[`conftest/plan/README.md`](../../conftest/plan/README.md)）。
+
+その Pull Request の merge の前に、リポジトリの管理者が次を行う。`<env>` は `security` と `log-archive` のそれぞれである。
 
 1. `make apply-environments` で、宣言した environment を作る
 2. `make create-deploy-branch DEPLOY_ENV=<env>` で、デプロイブランチを作る
@@ -43,7 +45,7 @@
 
 1. 昇格の apply の job が成功したことを確かめる
 2. `make setup-organization-baseline-stack-instances-check PROFILE=<管理アカウントの profile>` で、立ち上げの読み取りの StackSet の stack instance が、立ち上げの中のアカウントで `CURRENT` であることを確かめる
-3. 次の Pull Request の CI の `plan-admin-identity` が変更を示さないことを確かめ、Pull Request に書く
+3. すぐに、`state_backend.instances` からそのアカウントの `creating` を外す Pull Request を作る。作成を終えた鍵に `creating` が残ると、すべての Pull Request の `plan-admin-identity` が `PLAN-SBW-11` で落ちる。その Pull Request の CI の `plan-admin-identity` が、変更を示さず、`plan.state_backend_write_deny` をすべて通ることを確かめ、Pull Request に書く
 
 ### 3.3 立ち上げを閉じる
 
@@ -53,6 +55,7 @@
    - `bootstrapping` からそのアカウントの env を外す
    - そのアカウントの `module.state_backend_<env>`・`module.deployment_identity_<env>` を、`removed` block（`destroy = false`）に替える
    - そのアカウントの provider を消す
-   - `conftest/plan/decl.json` の `stateful_protection.allow`（root の名前のキーと形は [`conftest/plan/README.md`](../../conftest/plan/README.md) の `stateful_protection` の行）に、`removed` にした保護の型の resource の address と理由を足す。管理からの除外は、許可の宣言が無いと Policy Test（`plan.stateful_protection`）が落とす。閉じ終えた後の変更で、その項目を取り除く
+   - `conftest/plan/decl.json` の `state_backend.instances` の `admin-identity` から、そのアカウントの要素を消す
+   - `conftest/plan/decl.json` の `stateful_protection.allow` の `admin-identity`（形は [`conftest/plan/README.md`](../../conftest/plan/README.md) の `stateful_protection` の行）に、`removed` にした保護の型の resource の address と理由を足す。管理からの除外は、許可の宣言が無いと Policy Test（`plan.stateful_protection`）が落とす。閉じ終えた後の変更で、その項目を取り除く
    - [`scripts/check-plan-bootstrapping.expected`](scripts/check-plan-bootstrapping.expected) から、そのアカウントの行を消す。立ち上げの中のアカウントが無くなれば、ファイルごと消す
 2. その Pull Request の CI の `plan-admin-identity` が、そのアカウントの resource の削除を示さないことを確かめ、Pull Request に書く
