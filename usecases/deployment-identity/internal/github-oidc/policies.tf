@@ -603,7 +603,8 @@ locals {
     "cloudtrail.amazonaws.com"         = "${local.iam_arn_prefix}:role/aws-service-role/cloudtrail.amazonaws.com/AWSServiceRoleForCloudTrail"
     "context.cloudtrail.amazonaws.com" = "${local.iam_arn_prefix}:role/aws-service-role/context.cloudtrail.amazonaws.com/AWSServiceRoleForCloudTrailEventContext"
   }
-  inspector_slr_arn = "${local.iam_arn_prefix}:role/aws-service-role/inspector2.amazonaws.com/AWSServiceRoleForAmazonInspector2"
+  inspector_slr_arn           = "${local.iam_arn_prefix}:role/aws-service-role/inspector2.amazonaws.com/AWSServiceRoleForAmazonInspector2"
+  inspector_agentless_slr_arn = "${local.iam_arn_prefix}:role/aws-service-role/agentless.inspector2.amazonaws.com/AWSServiceRoleForAmazonInspector2Agentless"
   # GuardDuty・Inspector・Security Hub の指定はリージョンごとで、ADR-0209 の集合のすべてに置く。Security Hub の Action は
   # 管理アカウントの hub を resource に取る（Service Authorization Reference）。
   delegated_admin_regional_read_actions   = ["guardduty:ListOrganizationAdminAccounts", "inspector2:ListDelegatedAdminAccounts"]
@@ -654,13 +655,19 @@ locals {
       Resource  = arn
       Condition = { StringEquals = { "iam:AWSServiceName" = svc } }
     }],
-    # Inspector の指定は、Inspector の SLR が無ければ呼び手の権限で作る。
+    # Inspector の指定は、Inspector の2つの SLR が無ければ呼び手の権限で作る。
     [for s in [{
       Sid       = "CreateInspectorServiceLinkedRole"
       Effect    = "Allow"
       Action    = "iam:CreateServiceLinkedRole"
       Resource  = local.inspector_slr_arn
       Condition = { StringEquals = { "iam:AWSServiceName" = "inspector2.amazonaws.com" } }
+      }, {
+      Sid       = "CreateInspectorAgentlessServiceLinkedRole"
+      Effect    = "Allow"
+      Action    = "iam:CreateServiceLinkedRole"
+      Resource  = local.inspector_agentless_slr_arn
+      Condition = { StringEquals = { "iam:AWSServiceName" = "agentless.inspector2.amazonaws.com" } }
     }] : s if local.baseline_supported],
     [for a in local.delegated_admin_regional_manage_actions : { Sid = replace(title(replace(a, ":", " ")), " ", ""), Effect = "Allow", Action = a, Resource = "*" } if local.baseline_supported],
     [for s in [{ Sid = "ManageSecurityHubAdminAccounts", Effect = "Allow", Action = local.securityhub_manage_actions, Resource = local.securityhub_hub_arn }] : s if local.baseline_supported],
