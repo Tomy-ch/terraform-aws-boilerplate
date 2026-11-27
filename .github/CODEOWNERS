@@ -37,6 +37,26 @@ scripts/repo-settings/                @Tomy-ch
 .makefiles/github/setting/repo-settings.mk @Tomy-ch
 .github/workflows/repo-settings.yaml  @Tomy-ch
 
+# Pull Request の gate と線の検証（ADR-0603 決定17・37）、役割ごとの ruleset の宣言（決定35）。検査の paths を狭めても、
+# required を false にしても、gate はその宣言どおりに判定して通る。deploy-gate.yaml の deploy-source-check は base の commit の
+# コードと宣言で判定するが、job の定義は Pull Request の側のものである（ADR-0603 の保証しないこと）。
+.github/settings/checks.json          @Tomy-ch
+.github/settings/rulesets/            @Tomy-ch
+scripts/lib/checksdecl/               @Tomy-ch
+scripts/ci-gate/                      @Tomy-ch
+.github/workflows/pr-gate.yaml        @Tomy-ch
+.github/workflows/line-verify.yaml    @Tomy-ch
+.github/workflows/deploy-gate.yaml    @Tomy-ch
+
+# Trivy の秘密の走査（gate の合否に数えない）と、走査の定期実行とその失敗と検出の通知。通知の job を通知の系統の宣言ごと
+# 外しても、検査は通る。
+.github/workflows/trivy-secret.yaml            @Tomy-ch
+.github/workflows/govulncheck-schedule.yaml    @Tomy-ch
+.github/workflows/secret-scan-schedule.yaml    @Tomy-ch
+.github/workflows/trivy-fs-schedule.yaml       @Tomy-ch
+.github/workflows/trivy-secret-schedule.yaml   @Tomy-ch
+.github/workflows/zizmor-schedule.yaml         @Tomy-ch
+
 # CI の plan・apply・lock の解除の経路（ADR-0602 決定13・14）。これを変える主体が、CI の role の資格情報がどこへ
 # 届くかと、terraform の全文が公開のログに出ないかと、何がいつ apply され、どの lock がいつ外されるかを決める。
 .makefiles/terraform/operation/ci.mk  @Tomy-ch
@@ -95,6 +115,7 @@ scripts/tf-job-lint/                       @Tomy-ch
 .makefiles/terraform/resource-order.mk     @Tomy-ch
 .makefiles/terraform/layer.mk              @Tomy-ch
 .github/workflows/terraform-gates.yaml     @Tomy-ch
+.github/workflows/terraform-plan.yaml      @Tomy-ch
 .github/workflows/terraform-apply.yaml     @Tomy-ch
 .github/workflows/terraform-unlock.yaml    @Tomy-ch
 .github/workflows/terraform-lock-hold.yaml @Tomy-ch

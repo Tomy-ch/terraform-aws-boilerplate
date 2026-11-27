@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
@@ -23,7 +24,8 @@ var (
 	errUnexpectedResponse = xerrors.New("GitHub API の応答が想定した形ではありません")
 	errRequest            = xerrors.New("GitHub API へ要求できませんでした")
 	// errNotFound は 404 の応答。errHTTP の一種なので、errHTTP で判定する呼び出し側はそのまま落ちる。
-	errNotFound = xerrors.Wrap(errHTTP, "404")
+	errNotFound   = xerrors.Wrap(errHTTP, "404")
+	errNoRulesets = xerrors.New("突合する ruleset の宣言がありません")
 )
 
 // githubClient は GitHub REST API の呼び出し。base はテストで差し替える。
@@ -93,25 +95,32 @@ func pagedPath(path string, page int) string {
 	return fmt.Sprintf("%s%sper_page=%d&page=%d", path, sep, perPage, page)
 }
 
-// fetchLive は ruleset と environment の実態を読みます。GET だけを使います。
-func fetchLive(ctx context.Context, c githubClient, repo, rulesetName string) (live, error) {
-	var got live
-	ruleset, id, err := fetchRuleset(ctx, c, repo, rulesetName)
+// fetchLive は、名前が names の ruleset と environment の実態を読みます。GET だけを使います。
+func fetchLive(ctx context.Context, c githubClient, repo string, names []string) (live, error) {
+	rulesets, undeclared, err := fetchRulesets(ctx, c, repo, names)
 	if err != nil {
 		return live{}, err
 	}
-	got.Ruleset, got.RulesetID = ruleset, id
 	envs, err := fetchEnvironments(ctx, c, repo)
 	if err != nil {
 		return live{}, err
 	}
-	got.Envs = envs
-	return got, nil
+	return live{Rulesets: rulesets, UndeclaredRulesets: undeclared, Envs: envs}, nil
 }
 
-// fetchRuleset は、名前が rulesetName でリポジトリが持つ ruleset を読みます。無ければ nil を返します。
-func fetchRuleset(ctx context.Context, c githubClient, repo, rulesetName string) (map[string]any, int64, error) {
-	var ids []int64
+// fetchRulesets は、リポジトリが持つ ruleset のうち名前が names のものを読み、names に無い名前を昇順で返します。
+// 実在しない名前は戻り値の map に持ちません。names が空なら何も問わずに失敗します —— 突合する ruleset が無いまま
+// 一致と報せない。
+func fetchRulesets(ctx context.Context, c githubClient, repo string, names []string) (map[string]liveRuleset, []string, error) {
+	if len(names) == 0 {
+		return nil, nil, errNoRulesets
+	}
+	declared := map[string]bool{}
+	for _, n := range names {
+		declared[n] = true
+	}
+	ids := map[string][]int64{}
+	undeclared := map[string]bool{}
 	for page := 1; ; page++ {
 		var list []struct {
 			ID         int64  `json:"id"`
@@ -119,36 +128,52 @@ func fetchRuleset(ctx context.Context, c githubClient, repo, rulesetName string)
 			SourceType string `json:"source_type"`
 		}
 		if err := c.do(ctx, http.MethodGet, pagedPath("/repos/"+repo+"/rulesets?includes_parents=false", page), nil, &list); err != nil {
-			return nil, 0, err
+			return nil, nil, err
 		}
 		for _, r := range list {
 			// source_type が無い要素を数えずに進むと、同名の ruleset を見落として重複して作る。
 			if r.SourceType == "" {
-				return nil, 0, xerrors.Wrapf(errUnexpectedResponse, "ruleset %d に source_type がありません", r.ID)
+				return nil, nil, xerrors.Wrapf(errUnexpectedResponse, "ruleset %d に source_type がありません", r.ID)
 			}
-			if r.Name == rulesetName && r.SourceType == "Repository" {
-				ids = append(ids, r.ID)
+			if r.SourceType != "Repository" {
+				continue
+			}
+			if declared[r.Name] {
+				ids[r.Name] = append(ids[r.Name], r.ID)
+			} else {
+				undeclared[r.Name] = true
 			}
 		}
 		if len(list) < perPage {
 			break
 		}
 	}
-	switch len(ids) {
-	case 0:
-		return nil, 0, nil
-	case 1:
-	default:
-		return nil, 0, xerrors.Wrapf(errAmbiguousRuleset, "%s: %d 件", rulesetName, len(ids))
+	for _, n := range names {
+		if len(ids[n]) > 1 {
+			return nil, nil, xerrors.Wrapf(errAmbiguousRuleset, "%s: %d 件", n, len(ids[n]))
+		}
 	}
-	var ruleset map[string]any
-	if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/rulesets/%d", repo, ids[0]), nil, &ruleset); err != nil {
-		return nil, 0, err
+	out := map[string]liveRuleset{}
+	for _, n := range names {
+		if len(ids[n]) == 0 {
+			continue
+		}
+		id := ids[n][0]
+		var body map[string]any
+		if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/rulesets/%d", repo, id), nil, &body); err != nil {
+			return nil, nil, err
+		}
+		if len(body) == 0 {
+			return nil, nil, xerrors.Wrapf(errUnexpectedResponse, "ruleset %d の本体が空です", id)
+		}
+		out[n] = liveRuleset{ID: id, Body: body}
 	}
-	if len(ruleset) == 0 {
-		return nil, 0, xerrors.Wrapf(errUnexpectedResponse, "ruleset %d の本体が空です", ids[0])
+	extra := make([]string, 0, len(undeclared))
+	for n := range undeclared {
+		extra = append(extra, n)
 	}
-	return ruleset, ids[0], nil
+	sort.Strings(extra)
+	return out, extra, nil
 }
 
 const (

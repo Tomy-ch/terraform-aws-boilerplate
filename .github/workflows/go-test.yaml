@@ -2,18 +2,24 @@ name: Go Test
 
 on:
   pull_request:
+  workflow_call:
+    inputs:
+      called:
+        description: workflow_call で呼ばれたこと。呼ばれたときは、走らせるかどうかを呼んだ側が決めます。
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: go-test-${{ github.event_name }}-${{ inputs.called && github.run_id || github.ref }}
   cancel-in-progress: true
 
 jobs:
   # Why the trigger condition lives in a job: README.md の「必須検査はすべての Pull Request で報告される」.
   changes:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && !inputs.called
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -223,9 +229,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # The console gets the filtered stream, not the raw one: most of a passing run's output is
-      # lines that say only "this package passed". That is what anyone reading the run log pays,
-      # `gh run view` included -- `::group::` folds in the browser but leaves every byte in the
-      # fetched log, so folding would not have helped.
+      # lines that say only "this package passed".
       #
       # `tee` keeps the raw log for the comment step below, which reads it from disk. Nothing unique
       # is dropped from the console: the per-package percentages live in `coverage.out`, which

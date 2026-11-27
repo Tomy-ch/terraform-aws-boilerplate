@@ -3,6 +3,7 @@ package requiredchecks_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -54,6 +55,106 @@ func TestRead(t *testing.T) {
 		t.Parallel()
 
 		_, err := requiredchecks.Read(filepath.Join(t.TempDir(), "missing.json"))
+		require.ErrorIs(t, err, requiredchecks.ErrRead)
+	})
+}
+
+func TestReadDir(t *testing.T) {
+	t.Parallel()
+
+	const deletion = `{"rules": [{"type": "deletion"}]}`
+	required := func(contexts ...string) string {
+		items := make([]string, 0, len(contexts))
+		for _, c := range contexts {
+			items = append(items, `{"context": "`+c+`"}`)
+		}
+		return `{"rules": [{"type": "required_status_checks", "parameters": {"required_status_checks": [` + strings.Join(items, ", ") + `]}}]}`
+	}
+	build := func(t *testing.T, files map[string]string) string {
+		t.Helper()
+
+		dir := t.TempDir()
+		for name, body := range files {
+			p := filepath.Join(dir, name)
+			require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o750))
+			require.NoError(t, os.WriteFile(p, []byte(body), 0o600))
+		}
+
+		return dir
+	}
+
+	t.Run("ファイル名の順に、各ファイルの宣言の順で、宣言したファイルとともに返す", func(t *testing.T) {
+		t.Parallel()
+
+		dir := build(t, map[string]string{
+			"lines.json":  required("gate"),
+			"common.json": deletion,
+			"deploy.json": required("deploy-source-check", "line-gate"),
+		})
+		got, err := requiredchecks.ReadDir(dir)
+		require.NoError(t, err)
+		assert.Equal(t, []requiredchecks.Context{
+			{Name: "deploy-source-check", File: filepath.Join(dir, "deploy.json")},
+			{Name: "line-gate", File: filepath.Join(dir, "deploy.json")},
+			{Name: "gate", File: filepath.Join(dir, "lines.json")},
+		}, got)
+	})
+
+	t.Run(".json でないファイルとサブディレクトリは読まない", func(t *testing.T) {
+		t.Parallel()
+
+		dir := build(t, map[string]string{
+			"lines.json":     required("gate"),
+			"README.md":      "nope",
+			"sub/other.json": required("other"),
+		})
+		got, err := requiredchecks.ReadDir(dir)
+		require.NoError(t, err)
+		assert.Equal(t, []requiredchecks.Context{{Name: "gate", File: filepath.Join(dir, "lines.json")}}, got)
+	})
+
+	t.Run(".json で終わる名前のディレクトリと、.json の後ろに続きのあるファイルは読まない", func(t *testing.T) {
+		t.Parallel()
+
+		dir := build(t, map[string]string{
+			"lines.json":        required("gate"),
+			"x.json/other.json": required("other"),
+			"deploy.json.bak":   required("stale"),
+			"deploy.json~":      "nope",
+		})
+		got, err := requiredchecks.ReadDir(dir)
+		require.NoError(t, err)
+		assert.Equal(t, []requiredchecks.Context{{Name: "gate", File: filepath.Join(dir, "lines.json")}}, got)
+	})
+
+	for name, c := range map[string]struct {
+		files map[string]string
+		want  error
+	}{
+		"ruleset が1つも無ければ0件のエラー":              {map[string]string{"README.md": "x"}, requiredchecks.ErrNone},
+		"どの ruleset も required を持たなければ0件のエラー": {map[string]string{"common.json": deletion}, requiredchecks.ErrNone},
+		"解釈できない ruleset が1つでもあれば読めない":         {map[string]string{"lines.json": required("gate"), "broken.json": "nope"}, requiredchecks.ErrRead},
+		"context の空な ruleset が1つでもあれば読めない":    {map[string]string{"lines.json": required("gate"), "deploy.json": required("")}, requiredchecks.ErrRead},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := requiredchecks.ReadDir(build(t, c.files))
+			require.ErrorIs(t, err, c.want)
+		})
+	}
+
+	t.Run("空のディレクトリは0件のエラー", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := requiredchecks.ReadDir(t.TempDir())
+		require.ErrorIs(t, err, requiredchecks.ErrNone)
+	})
+
+	t.Run("ディレクトリが無ければ読めない", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := requiredchecks.ReadDir(filepath.Join(t.TempDir(), "missing"))
 		require.ErrorIs(t, err, requiredchecks.ErrRead)
 	})
 }

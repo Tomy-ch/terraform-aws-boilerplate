@@ -243,14 +243,14 @@ func Test_fetchLive(t *testing.T) {
 	t.Run("ruleset と environment をまとめて読む", func(t *testing.T) {
 		t.Parallel()
 		f, c := newFakeGitHub(t, map[string]fakeResponse{
-			rulesetListPath(1):          ok(`[{"id": 7, "name": "bp", "source_type": "Repository"}]`),
+			rulesetListPath(1):          ok(`[{"id": 7, "name": "bp", "source_type": "Repository"}, {"id": 8, "name": "zz", "source_type": "Repository"}]`),
 			"GET /repos/o/r/rulesets/7": ok(`{"name": "bp"}`),
 			envListPath(1):              ok(`{"total_count": 1, "environments": [{"name": "copilot", "protection_rules": [], "can_admins_bypass": true, "deployment_branch_policy": null}]}`),
 		})
-		got, err := fetchLive(context.Background(), c, repo, "bp")
+		got, err := fetchLive(context.Background(), c, repo, []string{"bp"})
 		require.NoError(t, err)
-		assert.Equal(t, int64(7), got.RulesetID)
-		assert.Equal(t, map[string]any{"name": "bp"}, got.Ruleset)
+		assert.Equal(t, map[string]liveRuleset{"bp": {ID: 7, Body: map[string]any{"name": "bp"}}}, got.Rulesets)
+		assert.Equal(t, []string{"zz"}, got.UndeclaredRulesets)
 		require.Contains(t, got.Envs, "copilot")
 		assert.Empty(t, f.writes())
 	})
@@ -258,14 +258,22 @@ func Test_fetchLive(t *testing.T) {
 	t.Run("ruleset を読めなければ失敗する", func(t *testing.T) {
 		t.Parallel()
 		_, c := newFakeGitHub(t, map[string]fakeResponse{})
-		_, err := fetchLive(context.Background(), c, repo, "bp")
+		_, err := fetchLive(context.Background(), c, repo, []string{"bp"})
 		require.ErrorIs(t, err, errHTTP)
+	})
+
+	t.Run("ruleset の宣言が0件なら、何も問わずに失敗する", func(t *testing.T) {
+		t.Parallel()
+		f, c := newFakeGitHub(t, map[string]fakeResponse{})
+		_, err := fetchLive(context.Background(), c, repo, nil)
+		require.ErrorIs(t, err, errNoRulesets)
+		assert.Empty(t, f.requests)
 	})
 
 	t.Run("environment を読めなければ失敗する", func(t *testing.T) {
 		t.Parallel()
 		_, c := newFakeGitHub(t, map[string]fakeResponse{rulesetListPath(1): ok(`[]`)})
-		_, err := fetchLive(context.Background(), c, repo, "bp")
+		_, err := fetchLive(context.Background(), c, repo, []string{"bp"})
 		require.ErrorIs(t, err, errHTTP)
 		assert.Contains(t, err.Error(), "GET /repos/o/r/environments")
 	})
@@ -363,13 +371,14 @@ func Test_fetchVulnerabilityReporting(t *testing.T) {
 	})
 }
 
-func Test_fetchRuleset(t *testing.T) {
+func Test_fetchRulesets(t *testing.T) {
 	t.Parallel()
 
 	full := make([]string, 0, perPage)
 	for i := range perPage {
-		full = append(full, fmt.Sprintf(`{"id": %d, "name": "other%d", "source_type": "Repository"}`, i+100, i))
+		full = append(full, fmt.Sprintf(`{"id": %d, "name": "other%d", "source_type": "Organization"}`, i+100, i))
 	}
+	bp := []string{"bp"}
 
 	t.Run("2ページ目まで読んで同名の ruleset を見つける", func(t *testing.T) {
 		t.Parallel()
@@ -378,10 +387,45 @@ func Test_fetchRuleset(t *testing.T) {
 			rulesetListPath(2):          ok(`[{"id": 7, "name": "bp", "source_type": "Repository"}]`),
 			"GET /repos/o/r/rulesets/7": ok(`{"name": "bp", "rules": []}`),
 		})
-		got, id, err := fetchRuleset(context.Background(), c, repo, "bp")
+		got, undeclared, err := fetchRulesets(context.Background(), c, repo, bp)
 		require.NoError(t, err)
-		assert.Equal(t, int64(7), id)
-		assert.Equal(t, "bp", got["name"])
+		require.Contains(t, got, "bp")
+		assert.Equal(t, int64(7), got["bp"].ID)
+		assert.Equal(t, "bp", got["bp"].Body["name"])
+		assert.Empty(t, undeclared)
+	})
+
+	t.Run("宣言の名前ごとに本体を読み、実在しない名前は持たない", func(t *testing.T) {
+		t.Parallel()
+		f, c := newFakeGitHub(t, map[string]fakeResponse{
+			rulesetListPath(1):          ok(`[{"id": 8, "name": "b", "source_type": "Repository"}, {"id": 7, "name": "a", "source_type": "Repository"}]`),
+			"GET /repos/o/r/rulesets/7": ok(`{"name": "a"}`),
+			"GET /repos/o/r/rulesets/8": ok(`{"name": "b"}`),
+		})
+		got, undeclared, err := fetchRulesets(context.Background(), c, repo, []string{"a", "b", "c"})
+		require.NoError(t, err)
+		assert.Equal(t, map[string]liveRuleset{"a": {ID: 7, Body: map[string]any{"name": "a"}}, "b": {ID: 8, Body: map[string]any{"name": "b"}}}, got)
+		assert.Empty(t, undeclared)
+		assert.Empty(t, f.writes())
+	})
+
+	t.Run("宣言に無い名前のリポジトリの ruleset を、重複を除いて昇順で返す", func(t *testing.T) {
+		t.Parallel()
+		_, c := newFakeGitHub(t, map[string]fakeResponse{
+			rulesetListPath(1): ok(`[{"id": 1, "name": "zz", "source_type": "Repository"}, {"id": 2, "name": "aa", "source_type": "Repository"}, {"id": 3, "name": "zz", "source_type": "Repository"}, {"id": 4, "name": "org", "source_type": "Organization"}]`),
+		})
+		got, undeclared, err := fetchRulesets(context.Background(), c, repo, bp)
+		require.NoError(t, err)
+		assert.Empty(t, got)
+		assert.Equal(t, []string{"aa", "zz"}, undeclared)
+	})
+
+	t.Run("宣言の名前が0件なら、何も問わずに失敗する", func(t *testing.T) {
+		t.Parallel()
+		f, c := newFakeGitHub(t, map[string]fakeResponse{})
+		_, _, err := fetchRulesets(context.Background(), c, repo, []string{})
+		require.ErrorIs(t, err, errNoRulesets)
+		assert.Empty(t, f.requests)
 	})
 
 	t.Run("ちょうど100件のページの次が空なら、そこで終える", func(t *testing.T) {
@@ -390,9 +434,9 @@ func Test_fetchRuleset(t *testing.T) {
 			rulesetListPath(1): ok("[" + strings.Join(full, ",") + "]"),
 			rulesetListPath(2): ok(`[]`),
 		})
-		got, _, err := fetchRuleset(context.Background(), c, repo, "bp")
+		got, _, err := fetchRulesets(context.Background(), c, repo, bp)
 		require.NoError(t, err)
-		assert.Nil(t, got)
+		assert.Empty(t, got)
 		assert.Len(t, f.requests, 2)
 	})
 
@@ -401,7 +445,7 @@ func Test_fetchRuleset(t *testing.T) {
 		f, c := newFakeGitHub(t, map[string]fakeResponse{
 			rulesetListPath(1): ok("[" + strings.Join(full[:perPage-1], ",") + "]"),
 		})
-		_, _, err := fetchRuleset(context.Background(), c, repo, "bp")
+		_, _, err := fetchRulesets(context.Background(), c, repo, bp)
 		require.NoError(t, err)
 		assert.Len(t, f.requests, 1)
 	})
@@ -413,8 +457,20 @@ func Test_fetchRuleset(t *testing.T) {
 			rulesetListPath(1): ok("[" + strings.Join(page1, ",") + "]"),
 			rulesetListPath(2): ok(`[{"id": 8, "name": "bp", "source_type": "Repository"}]`),
 		})
-		_, _, err := fetchRuleset(context.Background(), c, repo, "bp")
+		_, _, err := fetchRulesets(context.Background(), c, repo, bp)
 		require.ErrorIs(t, err, errAmbiguousRuleset)
+	})
+
+	t.Run("2つ目の宣言の名前が同名2件でも、どの本体も読まずに失敗する", func(t *testing.T) {
+		t.Parallel()
+		f, c := newFakeGitHub(t, map[string]fakeResponse{
+			rulesetListPath(1):          ok(`[{"id": 7, "name": "a", "source_type": "Repository"}, {"id": 8, "name": "b", "source_type": "Repository"}, {"id": 9, "name": "b", "source_type": "Repository"}]`),
+			"GET /repos/o/r/rulesets/7": ok(`{"name": "a"}`),
+		})
+		_, _, err := fetchRulesets(context.Background(), c, repo, []string{"a", "b"})
+		require.ErrorIs(t, err, errAmbiguousRuleset)
+		assert.ErrorContains(t, err, "b: 2 件")
+		assert.Len(t, f.requests, 1)
 	})
 
 	t.Run("本体が null なら、無いとは扱わずに失敗する", func(t *testing.T) {
@@ -423,19 +479,19 @@ func Test_fetchRuleset(t *testing.T) {
 			rulesetListPath(1):          ok(`[{"id": 7, "name": "bp", "source_type": "Repository"}]`),
 			"GET /repos/o/r/rulesets/7": ok(`null`),
 		})
-		_, _, err := fetchRuleset(context.Background(), c, repo, "bp")
+		_, _, err := fetchRulesets(context.Background(), c, repo, bp)
 		require.ErrorIs(t, err, errUnexpectedResponse)
 	})
 
-	t.Run("組織から継いだ同名の ruleset は数えない", func(t *testing.T) {
+	t.Run("組織から継いだ同名の ruleset は数えず、宣言に無い名前にも数えない", func(t *testing.T) {
 		t.Parallel()
 		_, c := newFakeGitHub(t, map[string]fakeResponse{
 			rulesetListPath(1): ok(`[{"id": 7, "name": "bp", "source_type": "Organization"}]`),
 		})
-		got, id, err := fetchRuleset(context.Background(), c, repo, "bp")
+		got, undeclared, err := fetchRulesets(context.Background(), c, repo, bp)
 		require.NoError(t, err)
-		assert.Nil(t, got)
-		assert.Zero(t, id)
+		assert.Empty(t, got)
+		assert.Empty(t, undeclared)
 	})
 
 	t.Run("source_type の無い要素があれば失敗する", func(t *testing.T) {
@@ -443,7 +499,7 @@ func Test_fetchRuleset(t *testing.T) {
 		_, c := newFakeGitHub(t, map[string]fakeResponse{
 			rulesetListPath(1): ok(`[{"id": 7, "name": "bp"}]`),
 		})
-		_, _, err := fetchRuleset(context.Background(), c, repo, "bp")
+		_, _, err := fetchRulesets(context.Background(), c, repo, bp)
 		require.ErrorIs(t, err, errUnexpectedResponse)
 	})
 
@@ -452,14 +508,14 @@ func Test_fetchRuleset(t *testing.T) {
 		_, c := newFakeGitHub(t, map[string]fakeResponse{
 			rulesetListPath(1): ok(`[{"id": 7, "name": "bp", "source_type": "Repository"}, {"id": 8, "name": "bp", "source_type": "Repository"}]`),
 		})
-		_, _, err := fetchRuleset(context.Background(), c, repo, "bp")
+		_, _, err := fetchRulesets(context.Background(), c, repo, bp)
 		require.ErrorIs(t, err, errAmbiguousRuleset)
 	})
 
 	t.Run("一覧を読めなければ失敗する", func(t *testing.T) {
 		t.Parallel()
 		_, c := newFakeGitHub(t, map[string]fakeResponse{rulesetListPath(1): {status: http.StatusInternalServerError}})
-		_, _, err := fetchRuleset(context.Background(), c, repo, "bp")
+		_, _, err := fetchRulesets(context.Background(), c, repo, bp)
 		require.ErrorIs(t, err, errHTTP)
 	})
 
@@ -468,7 +524,7 @@ func Test_fetchRuleset(t *testing.T) {
 		_, c := newFakeGitHub(t, map[string]fakeResponse{
 			rulesetListPath(1): ok(`[{"id": 7, "name": "bp", "source_type": "Repository"}]`),
 		})
-		_, _, err := fetchRuleset(context.Background(), c, repo, "bp")
+		_, _, err := fetchRulesets(context.Background(), c, repo, bp)
 		require.ErrorIs(t, err, errHTTP)
 	})
 }

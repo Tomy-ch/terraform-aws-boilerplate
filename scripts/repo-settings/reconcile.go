@@ -10,10 +10,16 @@ import (
 )
 
 type desired struct {
-	// Ruleset は保護設定の宣言そのもの（GitHub へ送る body でもある）。
-	Ruleset                map[string]any
+	// Rulesets は ruleset の宣言の順。
+	Rulesets               []desiredRuleset
 	Envs                   []desiredEnv
 	VulnerabilityReporting bool
+}
+
+type desiredRuleset struct {
+	Name string
+	// Body は宣言そのもの（GitHub へ送る body でもある）。
+	Body map[string]any
 }
 
 // Patterns が nil なら deployment branch policy を持たない。
@@ -23,10 +29,16 @@ type desiredEnv struct {
 }
 
 type live struct {
-	// Ruleset は同名の ruleset の内容。無ければ nil。
-	Ruleset   map[string]any
-	RulesetID int64
-	Envs      map[string]liveEnv
+	// Rulesets は宣言の名前から、同名でリポジトリが持つ ruleset を引く。実在しない名前は持たない。
+	Rulesets map[string]liveRuleset
+	// UndeclaredRulesets は、宣言に無い名前でリポジトリが持つ ruleset の名前（昇順）。
+	UndeclaredRulesets []string
+	Envs               map[string]liveEnv
+}
+
+type liveRuleset struct {
+	ID   int64
+	Body map[string]any
 }
 
 type liveEnv struct {
@@ -56,8 +68,11 @@ type branchPolicy struct {
 var customOnly = branchPolicy{ProtectedBranches: false, CustomBranchPolicies: true}
 
 type diff struct {
-	Ruleset rulesetDiff
-	Envs    []envDiff
+	// Rulesets は宣言の ruleset ごとの差分。宣言の順で、差分の無いものも持つ。
+	Rulesets []rulesetDiff
+	// UndeclaredRulesets は実態にだけ在る ruleset。sync は消さない。
+	UndeclaredRulesets []string
+	Envs               []envDiff
 	// Extra は実態にだけ在る environment。sync は消さない（消すと secret ごと失われる）。
 	Extra []string
 	// Unobserved は読み取りの権限で観測できず、突合しなかったもの。
@@ -65,6 +80,7 @@ type diff struct {
 }
 
 type rulesetDiff struct {
+	Name     string
 	Missing  bool
 	ID       int64
 	Findings []string
@@ -82,8 +98,13 @@ type envDiff struct {
 
 func (d diff) findings() []string {
 	var out []string
-	for _, f := range d.Ruleset.Findings {
-		out = append(out, "ruleset: "+f)
+	for _, r := range d.Rulesets {
+		for _, f := range r.Findings {
+			out = append(out, fmt.Sprintf("ruleset %s: %s", r.Name, f))
+		}
+	}
+	for _, name := range d.UndeclaredRulesets {
+		out = append(out, fmt.Sprintf("ruleset %s: 宣言に無い ruleset が実在します", name))
 	}
 	for _, e := range d.Envs {
 		for _, f := range e.Findings {
@@ -96,11 +117,28 @@ func (d diff) findings() []string {
 	return out
 }
 
+// exceptions は、ADR-0603 決定7 の例外に当たる ruleset の差分を、findings と同じ形で返します。
+func (d diff) exceptions() []string {
+	var out []string
+	for _, r := range d.Rulesets {
+		for _, f := range r.Exceptions {
+			out = append(out, fmt.Sprintf("ruleset %s: %s", r.Name, f))
+		}
+	}
+	return out
+}
+
 func computeDiff(want desired, got live) diff {
-	d := diff{Ruleset: diffRuleset(want.Ruleset, got)}
-	if got.Ruleset != nil {
-		if _, ok := got.Ruleset["bypass_actors"]; !ok {
-			d.Unobserved = append(d.Unobserved, "ruleset の bypass_actors（write 権限の無い読み取りには返らない）")
+	d := diff{UndeclaredRulesets: got.UndeclaredRulesets}
+	for _, w := range want.Rulesets {
+		g := got.Rulesets[w.Name]
+		rd := diffRuleset(w.Body, g)
+		rd.Name = w.Name
+		d.Rulesets = append(d.Rulesets, rd)
+		if g.Body != nil {
+			if _, ok := g.Body["bypass_actors"]; !ok {
+				d.Unobserved = append(d.Unobserved, "ruleset "+w.Name+" の bypass_actors（write 権限の無い読み取りには返らない）")
+			}
 		}
 	}
 	declared := map[string]bool{}
@@ -120,12 +158,13 @@ func computeDiff(want desired, got live) diff {
 	return d
 }
 
-// diffRuleset は ruleset の差分を計算します。宣言が持つキーだけを比べ、応答にだけ在るキー（id 等）は見ません。
-func diffRuleset(want map[string]any, got live) rulesetDiff {
-	if got.Ruleset == nil {
+// diffRuleset は ruleset 1件の差分を計算します。got.Body が nil なら実在しない。宣言が持つキーだけを比べ、応答に
+// だけ在るキー（id 等）は見ません。
+func diffRuleset(want map[string]any, got liveRuleset) rulesetDiff {
+	if got.Body == nil {
 		return rulesetDiff{Missing: true, Findings: []string{"宣言の ruleset が実在しません"}}
 	}
-	rd := rulesetDiff{ID: got.RulesetID}
+	rd := rulesetDiff{ID: got.ID}
 	keys := make([]string, 0, len(want))
 	for k := range want {
 		keys = append(keys, k)
@@ -134,15 +173,15 @@ func diffRuleset(want map[string]any, got live) rulesetDiff {
 	for _, k := range keys {
 		switch k {
 		case "rules":
-			findings, exceptions := diffRules(want[k], got.Ruleset[k])
+			findings, exceptions := diffRules(want[k], got.Body[k])
 			rd.Findings = append(rd.Findings, findings...)
 			rd.Exceptions = append(rd.Exceptions, exceptions...)
 		case "bypass_actors":
-			if v, ok := got.Ruleset[k]; ok && !subsetMatch(want[k], v) {
+			if v, ok := got.Body[k]; ok && !subsetMatch(want[k], v) {
 				rd.Findings = append(rd.Findings, "bypass_actors が宣言と異なります")
 			}
 		default:
-			if !subsetMatch(want[k], got.Ruleset[k]) {
+			if !subsetMatch(want[k], got.Body[k]) {
 				rd.Findings = append(rd.Findings, k+" が宣言と異なります")
 			}
 		}
@@ -429,17 +468,24 @@ const (
 )
 
 // planRequests は ruleset か environment の差分を、only が指す側について、それを解消する要求列へ変えます。
-// 差分が無いか、only がその2つのどちらでもなければ空を返します。
+// 差分が無いか、only がその2つのどちらでもなければ空を返します。ruleset は宣言の順に、無ければ POST、ずれていれば
+// PUT を組みます。宣言に無い ruleset と environment を消す要求は組みません。
 func planRequests(d diff, want desired, repo, only string) []request {
 	var out []request
 	base := "/repos/" + repo
 	switch only {
 	case onlyRuleset:
-		switch {
-		case d.Ruleset.Missing:
-			out = append(out, request{Method: "POST", Path: base + "/rulesets", Body: want.Ruleset})
-		case len(d.Ruleset.Findings) > 0 || len(d.Ruleset.Exceptions) > 0:
-			out = append(out, request{Method: "PUT", Path: fmt.Sprintf("%s/rulesets/%d", base, d.Ruleset.ID), Body: want.Ruleset})
+		bodies := map[string]map[string]any{}
+		for _, r := range want.Rulesets {
+			bodies[r.Name] = r.Body
+		}
+		for _, rd := range d.Rulesets {
+			switch {
+			case rd.Missing:
+				out = append(out, request{Method: "POST", Path: base + "/rulesets", Body: bodies[rd.Name]})
+			case len(rd.Findings) > 0 || len(rd.Exceptions) > 0:
+				out = append(out, request{Method: "PUT", Path: fmt.Sprintf("%s/rulesets/%d", base, rd.ID), Body: bodies[rd.Name]})
+			}
 		}
 		return out
 	case onlyEnvironments:

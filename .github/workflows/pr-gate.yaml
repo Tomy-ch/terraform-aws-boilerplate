@@ -1,0 +1,550 @@
+name: PR Gate
+
+# 線と env を持たないデプロイブランチへ入る Pull Request の検査を、1つの gate が判定する（ADR-0603 決定17・18・35・36。
+# 流れは .github/workflows/README.md の「Pull Request の gate」）。
+#
+# edited でも起動する。判定は base に依るので、base の付け替えで走り直す。title だけの編集を job の if: で飛ばすと
+# gate が skipped（成功と数えられる）になり、失敗した gate を上書きできるので、飛ばさない。
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+    branches: # branch-set: gate
+      - 'production'
+      - 'staging'
+      - 'develop'
+      - 'release/**'
+      - 'hotfix/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # 走るべき検査を、宣言（base の commit の checks.json。検査の増減だけは Pull Request の木のもの）と Pull Request の差分から決める。
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      run: ${{ steps.changes.outputs.run }}
+    steps:
+      - name: Harden the runner
+        id: harden-runner
+        continue-on-error: true
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
+      - name: Harden the runner (retry)
+        id: harden-runner-retry
+        if: steps.harden-runner.outcome != 'success'
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
+        with:
+          go-version-file: scripts/go.mod
+          cache: true
+          cache-dependency-path: scripts/go.sum
+
+      - name: Select the checks to run
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.base_ref }}
+        run: make ci-changes RUNNER_MODE=host
+
+  # changes が success でなければ、検査は fail open で走る（判定は gate が失敗にする）。
+  call-actions-lint:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'actions-lint')) }}
+    uses: ./.github/workflows/actions-lint.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+
+  call-commitlint:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'commitlint')) }}
+    uses: ./.github/workflows/commitlint.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+
+  call-docker-lint:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'docker-lint')) }}
+    uses: ./.github/workflows/docker-lint.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+
+  call-egress-check:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'egress-check')) }}
+    uses: ./.github/workflows/egress-check.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+
+  call-hygiene:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'hygiene')) }}
+    uses: ./.github/workflows/hygiene.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+
+  call-md-lint:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'md-lint')) }}
+    uses: ./.github/workflows/md-lint.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+
+  call-pin-actions-check:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'pin-actions-check')) }}
+    uses: ./.github/workflows/pin-actions-check.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+
+  call-pin-images-check:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'pin-images-check')) }}
+    uses: ./.github/workflows/pin-images-check.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+
+  call-pin-runners-check:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'pin-runners-check')) }}
+    uses: ./.github/workflows/pin-runners-check.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+
+  call-repo-settings-check:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'repo-settings-check')) }}
+    uses: ./.github/workflows/repo-settings.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+
+  # sample:begin
+  call-sample-remove-check:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'sample-remove-check')) }}
+    uses: ./.github/workflows/sample-remove-check.yaml
+    permissions:
+      contents: read
+  # sample:end
+
+  call-secret-scan:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'secret-scan')) }}
+    uses: ./.github/workflows/secret-scan.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+
+  call-tool-cooldown:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'tool-cooldown')) }}
+    uses: ./.github/workflows/tool-cooldown.yaml
+    permissions:
+      contents: read
+
+  call-go-cooldown:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'go-cooldown')) }}
+    uses: ./.github/workflows/go-cooldown.yaml
+    permissions:
+      contents: read
+
+  call-versions-check:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'versions-check')) }}
+    uses: ./.github/workflows/versions-check.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+
+  call-zizmor:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'zizmor')) }}
+    uses: ./.github/workflows/zizmor.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+      security-events: write
+
+  call-go-lint:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'go-lint')) }}
+    uses: ./.github/workflows/go-lint.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+
+  call-go-test:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'go-test')) }}
+    uses: ./.github/workflows/go-test.yaml
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+
+  call-tidy-check:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'tidy-check')) }}
+    uses: ./.github/workflows/tidy-check.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+      security-events: write
+
+  call-terraform-gates:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'terraform-gates')) }}
+    uses: ./.github/workflows/terraform-gates.yaml
+    permissions:
+      contents: read
+
+  call-terraform-plan-admin:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'terraform-plan-admin')) }}
+    uses: ./.github/workflows/terraform-plan.yaml
+    permissions:
+      contents: read
+      id-token: write
+
+  call-checkov:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'checkov')) }}
+    uses: ./.github/workflows/checkov.yaml
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+      security-events: write
+
+  call-kics:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'kics')) }}
+    uses: ./.github/workflows/kics.yaml
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+      security-events: write
+
+  call-semgrep:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'semgrep')) }}
+    uses: ./.github/workflows/semgrep.yaml
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+      security-events: write
+
+  call-trivy-config:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'trivy-config')) }}
+    uses: ./.github/workflows/trivy-config.yaml
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+      security-events: write
+
+  # sample:begin
+  call-dependency-review:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'dependency-review')) }}
+    uses: ./.github/workflows/dependency-review.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+  # sample:end
+
+  call-govulncheck:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'govulncheck')) }}
+    uses: ./.github/workflows/govulncheck.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+
+  # sample:begin
+  call-sonarcloud:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'sonarcloud')) }}
+    uses: ./.github/workflows/sonarcloud.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+  # sample:end
+
+  call-trivy-fs:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'trivy-fs')) }}
+    uses: ./.github/workflows/trivy-fs.yaml
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+      security-events: write
+
+  call-trivy-secret:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'trivy-secret')) }}
+    uses: ./.github/workflows/trivy-secret.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+
+  call-trivy-release-gate:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'trivy-release-gate')) }}
+    uses: ./.github/workflows/trivy-release-gate.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+
+  gate:
+    needs:
+      - changes
+      - call-actions-lint
+      - call-commitlint
+      - call-docker-lint
+      - call-egress-check
+      - call-hygiene
+      - call-md-lint
+      - call-pin-actions-check
+      - call-pin-images-check
+      - call-pin-runners-check
+      - call-repo-settings-check
+      - call-sample-remove-check # sample:line
+      - call-secret-scan
+      - call-tool-cooldown
+      - call-go-cooldown
+      - call-versions-check
+      - call-zizmor
+      - call-go-lint
+      - call-go-test
+      - call-tidy-check
+      - call-terraform-gates
+      - call-terraform-plan-admin
+      - call-checkov
+      - call-kics
+      - call-semgrep
+      - call-trivy-config
+      - call-dependency-review # sample:line
+      - call-govulncheck
+      - call-sonarcloud # sample:line
+      - call-trivy-fs
+      - call-trivy-secret
+      - call-trivy-release-gate
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner
+        id: harden-runner
+        continue-on-error: true
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
+      - name: Harden the runner (retry)
+        id: harden-runner-retry
+        if: steps.harden-runner.outcome != 'success'
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
+        with:
+          go-version-file: scripts/go.mod
+          cache: true
+          cache-dependency-path: scripts/go.sum
+
+      - name: Judge the checks
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.base_ref }}
+        run: make ci-gate RUNNER_MODE=host

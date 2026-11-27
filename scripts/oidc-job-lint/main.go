@@ -29,7 +29,7 @@
 //     step の env: は拒否の step と入口が読む名前（stepEnvKeys）に限り、run: を持つ step は資格情報より前の
 //     役割の拒否の step・資格情報を取る step・CI の入口に限る —— どれも
 //     入口を実行させないか、道具を替えるか、失敗を成功として報告させる
-//   - plan の job は、workflow の起動が pull_request だけで、id が refuse-untrusted で if: と continue-on-error: を持たない step を
+//   - plan の job は、workflow の起動が workflow_call だけか、deploy-gate.yaml の pull_request だけで、id が refuse-untrusted で if: と continue-on-error: を持たない step を
 //     資格情報の取得より前に置き（ADR-0602 決定14）、terraform を `make ci-plan-*` でだけ、ちょうど1回走らせる
 //     （lock を取らない経路。ADR-0604 決定8）。資格情報を取った後で plan の入口より前に
 //     `make ci-assume-denied CI_ENV=<env> RUNNER_MODE=host` だけの run: をちょうど1回持ち、その CI_ENV は資格情報と
@@ -69,6 +69,10 @@
 //     届いた後に issue の印を書く `mark-report`（needs に report と notify-drift、if: は決めた形だけ、資格情報を持たず
 //     upsert-report-issue を使う）を持つ
 //
+// job の直下の uses: で reusable workflow を呼び、permissions に id-token: write を持つ job は対象の job に数えず、
+// このリポジトリの ./.github/workflows/ の下の、workflow_call だけで起動する workflow を呼び、permissions を
+// contents: read と id-token: write に限ることを要求する。呼ばれた側の job が、それ自身として上の規則を受ける。
+//
 // CI の入口（登録簿の種別の `make ci-<種別>-*`）を走らせる job が対象でなければ違反にし、
 // 入口の行をファイル全体で別に数えて、job の行として読めない行があれば落とす。root の網羅も、対象の job だけを数える。
 //
@@ -83,6 +87,7 @@ import (
 	"log"
 	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -104,6 +109,10 @@ const (
 	refuseUntrusted         = "refuse-untrusted"
 	refuseStale             = "refuse-stale"
 	refuseOffDefault        = "refuse-off-default"
+	// deployGateFile は、pull_request で起動して plan の job を持てる唯一の workflow（デプロイブランチへ入る Pull Request
+	// の検査）。線の Pull Request の plan は、gate が workflow_call で呼ぶ workflow が持つ。
+	deployGateFile    = "deploy-gate.yaml"
+	eventWorkflowCall = "workflow_call"
 )
 
 var (
@@ -196,6 +205,7 @@ var (
 	checkoutUses  = regexp.MustCompile(`^ {6}(?:- | {2})uses:[ \t]*["']?actions/checkout@`)
 	noPersist     = regexp.MustCompile(`^ {10}persist-credentials:[ \t]*["']?false["']?[ \t]*(?:#.*)?$`)
 	commentLine   = regexp.MustCompile(`^\s*#`)
+	localWorkflow = regexp.MustCompile(`^\./\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml$`)
 )
 
 // stepEnvKeys は、資格情報を取る job の step が env: に置いてよい名前です。拒否の step が読む値と、
@@ -284,6 +294,7 @@ func run(dir, envFile, rulesetFile, rootsDir string, out io.Writer) error {
 			}
 		}
 	}
+	findings = append(findings, checkCallees(dir, sources)...)
 	findings = append(findings, checkUnlockIsolation(groups)...)
 	findings = append(findings, checkHoldPairing(groups)...)
 	findings = append(findings, checkDriftIsolation(groups)...)
@@ -456,7 +467,7 @@ func check(file, source string, envs []string) (int, []lintreport.Finding) {
 		}
 	}
 	on, onLine := triggers(split.Preamble)
-	w := workflowInfo{on: on, onLine: onLine, preamble: split.Preamble, jobs: split.Jobs}
+	w := workflowInfo{file: file, on: on, onLine: onLine, preamble: split.Preamble, jobs: split.Jobs}
 	targets := 0
 	// entries は、CI の入口の行のうち、job の行として読めた行の数。
 	entries := 0
@@ -468,6 +479,11 @@ func check(file, source string, envs []string) (int, []lintreport.Finding) {
 			attributed++
 			findings = append(findings, lintreport.Finding{File: file, Line: at,
 				Message: fmt.Sprintf("job %s の permissions を読めません。write-all と1行の {} は使わず、権限を1行ずつ書いてください", job.ID)})
+			continue
+		}
+		if _, _, ok := reusableCall(job); ok && assumesRole(job) {
+			attributed++
+			findings = append(findings, checkCaller(file, job, values, w)...)
 			continue
 		}
 		if !assumesRole(job) {
@@ -559,6 +575,7 @@ func unreadable(values []string) bool {
 }
 
 type workflowInfo struct {
+	file     string
 	on       map[string][]workflow.Line
 	onLine   int
 	preamble []workflow.Line
@@ -651,12 +668,84 @@ func jobKind(job workflow.Job, role string) string {
 
 func checkPlan(job workflow.Job, cred workflow.Line, w workflowInfo, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
 	var findings []lintreport.Finding
-	if keys := triggerNames(w.on); !eventsAllowed(keys, kindOf[cientry.Plan]) {
-		findings = append(findings, finding(w.onLine, "plan の job を持つ workflow の起動は pull_request だけにしてください（%s）", strings.Join(keys, ", ")))
+	if keys := triggerNames(w.on); !planTriggerAllowed(w.file, keys) {
+		findings = append(findings, finding(w.onLine, "plan の job を持つ workflow の起動は、workflow_call だけか、%s の pull_request だけにしてください（%s）", deployGateFile, strings.Join(keys, ", ")))
 	}
 	findings = append(findings, checkRefusal(job, cred, refuseUntrusted, finding)...)
 	findings = append(findings, checkDenied(job, cred, cientry.Plan, finding)...)
 	return append(findings, checkTerraform(job, cientry.Plan, finding)...)
+}
+
+// planTriggerAllowed は、plan の job を持つ workflow の起動のイベント keys が、workflow_call だけか、file が
+// deployGateFile で plan の種別の起動のイベント（pull_request）だけであるかを返します。workflow_call だけの workflow の
+// 呼び出し元は checkCallees が限る。
+func planTriggerAllowed(file string, keys []string) bool {
+	if slices.Equal(keys, []string{eventWorkflowCall}) {
+		return true
+	}
+	return filepath.Base(file) == deployGateFile && eventsAllowed(keys, kindOf[cientry.Plan])
+}
+
+func reusableCall(job workflow.Job) (string, int, bool) {
+	v, at, ok := jobKey(job, "uses")
+	return strings.Trim(v, `"'`), at, ok
+}
+
+// checkCaller は、id-token: write を持って reusable workflow を呼ぶ job が、同じリポジトリの workflow を呼び、
+// permissions を contents: read と id-token: write に限ることを検査します。呼ばれた側の job はそれ自身として
+// この検査の対象になり、呼び出し先の起動は checkCallees が見る。呼ばれた側は workflow_call だけで起動するので、
+// 資格情報を取れるのは plan の job に限られる（checkPlan）。そのため caller の workflow w の起動も plan の種別の
+// 起動（pull_request）に限り、job が with: と secrets: で呼ばれた側の入力と secret を変えないことも課す。
+func checkCaller(file string, job workflow.Job, permissions []string, w workflowInfo) []lintreport.Finding {
+	var findings []lintreport.Finding
+	callee, at, _ := reusableCall(job)
+	if !localWorkflow.MatchString(callee) {
+		findings = append(findings, lintreport.Finding{File: file, Line: at,
+			Message: fmt.Sprintf("job %s: id-token: write を渡して呼ぶ workflow は、このリポジトリの ./.github/workflows/ の下のものにしてください（%s）", job.ID, callee)})
+	}
+	for _, v := range permissions {
+		if v != "contents: read" && !idToken.MatchString(v) {
+			findings = append(findings, lintreport.Finding{File: file, Line: job.Number,
+				Message: fmt.Sprintf("job %s: id-token: write を渡して workflow を呼ぶ job の permissions は contents: read と id-token: write だけにしてください（%s）", job.ID, v)})
+		}
+	}
+	if keys := triggerNames(w.on); !eventsAllowed(keys, kindOf[cientry.Plan]) {
+		findings = append(findings, lintreport.Finding{File: file, Line: w.onLine,
+			Message: fmt.Sprintf("job %s: id-token: write を渡して workflow を呼ぶ job を持つ workflow の起動は %s だけにしてください（%s）", job.ID, strings.Join(kindOf[cientry.Plan].Events, ", "), strings.Join(keys, ", "))})
+	}
+	for _, key := range []string{"with", "secrets"} {
+		if _, line, ok := jobKey(job, key); ok {
+			findings = append(findings, lintreport.Finding{File: file, Line: line,
+				Message: fmt.Sprintf("job %s: id-token: write を渡して workflow を呼ぶ job に %s: を置かないでください。呼ばれた側の入力と secret は、呼ぶ側ごとに変えません", job.ID, key)})
+		}
+	}
+	return findings
+}
+
+// checkCallees は、id-token: write を渡して呼ばれる workflow が、dir の中に在り、workflow_call だけで起動することを
+// 検査します。ほかの起動を持つと、呼ばれた側の job が caller の起動の制限を経ずに資格情報を取る。
+func checkCallees(dir string, sources map[string]string) []lintreport.Finding {
+	var findings []lintreport.Finding
+	for _, file := range slices.Sorted(maps.Keys(sources)) {
+		for _, job := range workflow.SplitJobs(sources[file]).Jobs {
+			callee, at, ok := reusableCall(job)
+			if !ok || !assumesRole(job) || !localWorkflow.MatchString(callee) {
+				continue
+			}
+			src, found := sources[filepath.Join(dir, path.Base(callee))]
+			if !found {
+				findings = append(findings, lintreport.Finding{File: file, Line: at,
+					Message: fmt.Sprintf("job %s: 呼び出し先 %s が %s にありません", job.ID, callee, dir)})
+				continue
+			}
+			on, _ := triggers(workflow.SplitJobs(src).Preamble)
+			if keys := triggerNames(on); !slices.Equal(keys, []string{eventWorkflowCall}) {
+				findings = append(findings, lintreport.Finding{File: file, Line: at,
+					Message: fmt.Sprintf("job %s: id-token: write を渡して呼ぶ %s の起動は workflow_call だけにしてください（%s）", job.ID, callee, strings.Join(keys, ", "))})
+			}
+		}
+	}
+	return findings
 }
 
 // checkDenied は、plan の role を取る job（種別 kind の plan か drift）が `make ci-assume-denied` をちょうど1回、資格情報を

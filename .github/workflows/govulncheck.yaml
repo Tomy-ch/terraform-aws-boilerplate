@@ -28,15 +28,26 @@ on:
       - 'scripts/**/*.go'
       - 'scripts/go.mod'
       - 'scripts/go.sum'
-  schedule:
-    - cron: '15 0 * * 1'
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      called:
+        description: workflow_call で呼ばれたこと。呼ばれたときは、走らせるかどうかを呼んだ側が決めます。
+        type: boolean
+        default: true
+    outputs:
+      count:
+        description: 到達できる脆弱性の件数。
+        value: ${{ jobs.govulncheck.outputs.count }}
+      detail:
+        description: 検出の通知に載せる、脆弱性の識別子の一覧（Markdown）。
+        value: ${{ jobs.govulncheck.outputs.detail }}
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  group: govulncheck-${{ github.event_name }}-${{ inputs.called && github.run_id || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -208,24 +219,3 @@ jobs:
           title: "${{ steps.summarize.outputs.title || '## ⚠️ Go Vulnerability Scan: CUT OFF (no result produced)' }}"
           body-file: govulncheck-summary.md
           details-summary: '📄 Summary'
-
-  # 報告のみの job なので、検出の通知はスケジュール実行だけが出す。理由は README.md の「通知の起動条件」。
-  notify-detection:
-    needs: govulncheck
-    if: ${{ github.event_name == 'schedule' && needs.govulncheck.outputs.count != '' && needs.govulncheck.outputs.count != '0' }}
-    uses: ./.github/workflows/notify.yaml
-    with:
-      detected: govulncheck found ${{ needs.govulncheck.outputs.count }} reachable vulnerabilities
-      details: ${{ needs.govulncheck.outputs.detail }}
-    secrets:
-      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_SECURITY }}
-
-  # 理由は README.md の「通知の起動条件」。
-  notify-failure:
-    needs: govulncheck
-    if: ${{ always() && github.event_name == 'schedule' && contains(fromJSON('["failure", "cancelled"]'), needs.govulncheck.result) }}
-    uses: ./.github/workflows/notify.yaml
-    with:
-      failed-job: govulncheck
-    secrets:
-      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_SECURITY }}

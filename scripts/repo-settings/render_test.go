@@ -194,7 +194,7 @@ func Test_checkRuleset(t *testing.T) {
 
 	t.Run("ADR-0603 の項目をすべて持つ宣言は通る", func(t *testing.T) {
 		t.Parallel()
-		require.NoError(t, checkRuleset([]byte(rulesetFixture)))
+		require.NoError(t, checkRuleset([]byte(rulesetFixture), legacySpec))
 	})
 
 	cases := []struct {
@@ -232,7 +232,45 @@ func Test_checkRuleset(t *testing.T) {
 			t.Parallel()
 			src := strings.Replace(rulesetFixture, tc.from, tc.to, 1)
 			require.NotEqual(t, rulesetFixture, src)
-			err := checkRuleset([]byte(src))
+			err := checkRuleset([]byte(src), legacySpec)
+			require.ErrorIs(t, err, errRulesetPolicy)
+			assert.Contains(t, err.Error(), tc.message)
+		})
+	}
+
+	roleCases := []struct {
+		name    string
+		src     string
+		spec    rulesetSpec
+		message string
+	}{
+		{"common は required_status_checks を持たなくても通る", commonFixture, commonSpec, ""},
+		{"lines は required_status_checks だけで通る", syncedLines, linesSpec, ""},
+		{"生成した deploy-* は通る", deployMainFixture, deploySpec, ""},
+		{"common に pull_request が無ければ拒む", strings.Replace(commonFixture, `"type": "pull_request"`, `"type": "other"`, 1), commonSpec, "ルール pull_request がありません"},
+		{"common に deletion が無ければ拒む", strings.Replace(commonFixture, `{"type": "deletion"},`, ``, 1), commonSpec, "ルール deletion がありません"},
+		{"common に non_fast_forward が無ければ拒む", strings.Replace(commonFixture, `{"type": "non_fast_forward"},`, ``, 1), commonSpec, "ルール non_fast_forward がありません"},
+		{"common の bypass の列挙は拒む", strings.Replace(commonFixture, `"bypass_actors": []`, `"bypass_actors": [{"actor_id": 5}]`, 1), commonSpec, "bypass_actors"},
+		{"lines に required_status_checks が無ければ拒む", strings.Replace(syncedLines, `"type": "required_status_checks"`, `"type": "other"`, 1), linesSpec, "ルール required_status_checks がありません"},
+		{"lines の context が0件なら拒む", strings.Replace(syncedLines, `[{"context": "gate", "integration_id": 15368}]`, `[]`, 1), linesSpec, "context が1件も"},
+		{"lines の報告元が GitHub Actions でなければ拒む", strings.Replace(syncedLines, `"integration_id": 15368`, `"integration_id": 1`, 1), linesSpec, "gate の integration_id"},
+		{"lines の enforcement が active でなければ拒む", strings.Replace(syncedLines, `"enforcement": "active"`, `"enforcement": "evaluate"`, 1), linesSpec, "enforcement"},
+		{"lines の exclude に値があれば拒む", strings.Replace(syncedLines, `"exclude": []`, `"exclude": ["refs/heads/x"]`, 1), linesSpec, "exclude"},
+		{"lines の target が branch でなければ拒む", strings.Replace(syncedLines, `"target": "branch"`, `"target": "tag"`, 1), linesSpec, "target"},
+		{"deploy-* に required_status_checks が無ければ拒む", strings.Replace(deployMainFixture, `"type": "required_status_checks"`, `"type": "other"`, 1), deploySpec, "ルール required_status_checks がありません"},
+		{"deploy-* の bypass の列挙は拒む", strings.Replace(deployMainFixture, `"bypass_actors": []`, `"bypass_actors": [{"actor_id": 5}]`, 1), deploySpec, "bypass_actors"},
+		{"lines の pull_request も、在れば決定23 の項目を課す", strings.Replace(syncedLines, `"rules": [`, `"rules": [{"type": "pull_request", "parameters": {"required_approving_review_count": 1}},`, 1), linesSpec, "required_review_thread_resolution"},
+		{"name がファイル名と違えば拒む", rulesetFixture, commonSpec, `name が "common" ではありません`},
+		{"未知の役割は拒む", commonFixture, rulesetSpec{path: commonRulesetFile, name: "common", role: "other"}, `未知の役割 "other"`},
+	}
+	for _, tc := range roleCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := checkRuleset([]byte(tc.src), tc.spec)
+			if tc.message == "" {
+				require.NoError(t, err)
+				return
+			}
 			require.ErrorIs(t, err, errRulesetPolicy)
 			assert.Contains(t, err.Error(), tc.message)
 		})
@@ -242,19 +280,19 @@ func Test_checkRuleset(t *testing.T) {
 		t.Parallel()
 		src := strings.Replace(rulesetFixture, `"required_approving_review_count": 1`, `"required_approving_review_count": 2`, 1)
 		require.NotEqual(t, rulesetFixture, src)
-		require.NoError(t, checkRuleset([]byte(src)))
+		require.NoError(t, checkRuleset([]byte(src), legacySpec))
 	})
 
 	t.Run("pull_request のルールが無ければ拒む", func(t *testing.T) {
 		t.Parallel()
-		err := checkRuleset([]byte(`{"bypass_actors": [], "rules": [{"type": "deletion"}, {"type": "non_fast_forward"}, {"type": "required_status_checks"}]}`))
+		err := checkRuleset([]byte(`{"bypass_actors": [], "rules": [{"type": "deletion"}, {"type": "non_fast_forward"}, {"type": "required_status_checks"}]}`), legacySpec)
 		require.ErrorIs(t, err, errRulesetPolicy)
 		assert.Contains(t, err.Error(), "pull_request")
 	})
 
 	t.Run("JSON でなければ拒む", func(t *testing.T) {
 		t.Parallel()
-		require.ErrorIs(t, checkRuleset([]byte(`x`)), errRulesetPolicy)
+		require.ErrorIs(t, checkRuleset([]byte(`x`), legacySpec), errRulesetPolicy)
 	})
 }
 

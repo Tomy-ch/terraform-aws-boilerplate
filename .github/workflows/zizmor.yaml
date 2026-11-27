@@ -20,15 +20,19 @@ on:
       - '.makefiles/security/zizmor.mk'
       - 'mise.toml'
       - 'mise.lock'
-  schedule:
-    - cron: '0 2 * * 1'
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      called:
+        description: workflow_call で呼ばれたこと。呼ばれたときは、走らせるかどうかを呼んだ側が決めます。
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  group: zizmor-${{ github.event_name }}-${{ inputs.called && github.run_id || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -205,13 +209,3 @@ jobs:
       - name: Fail if zizmor reported findings
         if: (steps.harden-runner.outcome == 'success' || steps.harden-runner-retry.outcome == 'success') && always() && steps.zizmor.outputs.status != 'success'
         run: exit 1
-
-  # See README.md の「通知の起動条件」.
-  notify-failure:
-    needs: zizmor
-    if: ${{ always() && github.event_name == 'schedule' && contains(fromJSON('["failure", "cancelled"]'), needs.zizmor.result) }}
-    uses: ./.github/workflows/notify.yaml
-    with:
-      failed-job: zizmor
-    secrets:
-      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_SECURITY }}

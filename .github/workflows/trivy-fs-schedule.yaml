@@ -1,0 +1,59 @@
+name: Dependency Scan (schedule)
+
+# trivy-fs.yaml の定期実行と、その通知。検査の中身は trivy-fs.yaml が持つ。
+#
+# job ごとの通知は、呼んだ workflow が出力する job の status で見分ける。出力が空のとき（その job が status を
+# 書く前に終わった）は、呼んだ job 全体の result で代える。
+
+on:
+  schedule:
+    - cron: '0 0 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    uses: ./.github/workflows/trivy-fs.yaml
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+      pull-requests: write
+
+  # 報告のみの job なので、検出の通知はスケジュール実行だけが出す。理由は README.md の「通知の起動条件」。
+  notify-detection:
+    needs: scan
+    if: ${{ github.event_name == 'schedule' && needs.scan.outputs.count != '' && needs.scan.outputs.count != '0' }}
+    uses: ./.github/workflows/notify.yaml
+    with:
+      detected: Trivy FS found ${{ needs.scan.outputs.count }} fixable vulnerabilities
+      details: ${{ needs.scan.outputs.detail }}
+    secrets:
+      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_SECURITY }}
+
+  # See README.md の「通知の起動条件」.
+  notify-failure:
+    needs: scan
+    if: ${{ always() && github.event_name == 'schedule' && contains(fromJSON('["failure", "cancelled"]'), needs.scan.outputs.trivy-fs-status || needs.scan.result) }}
+    uses: ./.github/workflows/notify.yaml
+    with:
+      failed-job: trivy-fs
+    secrets:
+      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_SECURITY }}
+
+  # The license job never fails on a finding, so reaching here means the scanner
+  # itself broke — exactly the silent weekly breakage this notification exists for.
+  notify-failure-license:
+    needs: scan
+    if: ${{ always() && github.event_name == 'schedule' && contains(fromJSON('["failure", "cancelled"]'), needs.scan.outputs.trivy-license-status || needs.scan.result) }}
+    uses: ./.github/workflows/notify.yaml
+    with:
+      failed-job: trivy-license
+    secrets:
+      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_SECURITY }}

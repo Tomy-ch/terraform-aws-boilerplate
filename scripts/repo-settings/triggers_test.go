@@ -302,10 +302,12 @@ func Test_triggerPatterns(t *testing.T) {
 		want    []string
 		wantErr bool
 	}{
-		"ruleset はデプロイブランチと線": {setRuleset, []string{"admin", "prod", "rel/**", "hot/**"}, false},
-		"deploy はデプロイブランチだけ":  {setDeploy, []string{"admin", "prod"}, false},
-		"lines は線だけ":          {setLines, []string{"rel/**", "hot/**"}, false},
-		"未知の集合は拒む":            {"protected", nil, true},
+		"ruleset はデプロイブランチと線":            {setRuleset, []string{"admin", "prod", "rel/**", "hot/**"}, false},
+		"deploy はデプロイブランチだけ":             {setDeploy, []string{"admin", "prod"}, false},
+		"lines は線だけ":                     {setLines, []string{"rel/**", "hot/**"}, false},
+		"gate は env を持たないデプロイブランチと線":     {setGate, []string{"prod", "rel/**", "hot/**"}, false},
+		"deploy-env は env を持つデプロイブランチだけ": {setDeployEnv, []string{"admin"}, false},
+		"未知の集合は拒む":                       {"protected", nil, true},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -324,6 +326,24 @@ func Test_triggerPatterns(t *testing.T) {
 		t.Parallel()
 		_, err := triggerPatterns(branches{Lines: setDecl.Lines}, setDeploy)
 		require.ErrorIs(t, err, errBranchSet)
+	})
+
+	t.Run("env を持つデプロイブランチが無ければ deploy-env の展開は0件として拒む", func(t *testing.T) {
+		t.Parallel()
+		_, err := triggerPatterns(branches{Deploy: []branchdecl.DeployBranch{{Branch: "prod"}}, Lines: setDecl.Lines}, setDeployEnv)
+		require.ErrorIs(t, err, errBranchSet)
+	})
+
+	// 線の ruleset の対象と gate の集合は、同じ分岐を指す（ADR-0603 決定16）。
+	t.Run("gate の集合は線の ruleset の include と同じ分岐を指す", func(t *testing.T) {
+		t.Parallel()
+		got, err := triggerPatterns(setDecl, setGate)
+		require.NoError(t, err)
+		var want []string
+		for _, inc := range linesIncludes(setDecl) {
+			want = append(want, strings.TrimSuffix(strings.TrimPrefix(inc, "refs/heads/"), "/*"))
+		}
+		assert.Equal(t, want, got)
 	})
 }
 

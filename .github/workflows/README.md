@@ -10,10 +10,12 @@ CI の workflow 定義。Pull Request を止めるゲート、供給網のクー
 
 | 群 | いつ走るか | 何をするか |
 | --- | --- | --- |
-| Pull Request のゲート | すべての Pull Request | lint / テスト / 宣言と実体のずれで merge を止める |
+| Pull Request の gate | 線と env を持たないデプロイブランチ宛の Pull Request | `pr-gate.yaml` が、その Pull Request で走るべき検査を呼び、lint / テスト / 宣言と実体のずれで merge を止める |
+| 線の検証 | 線への push | `line-verify.yaml` が、木だけで決まる検査を path で絞らずにすべて走らせる。デプロイブランチへの昇格はその成功を待つ |
+| デプロイブランチへの経路 | すべての Pull Request | `deploy-gate.yaml` が、デプロイブランチへ入る commit の出所と、env の plan を報告する |
 | 供給網のクールダウン | Pull Request と週次 | 公開直後のバージョンの採用を窓で止め、バイパスの期限を回収する |
-| 走査 | Pull Request と週次 | 秘密・誤設定・依存の脆弱性・workflow 自身の穴を報告する |
-| リポジトリの衛生 | すべての Pull Request | 綴りと `.editorconfig` の宣言とのずれで merge を止める |
+| 走査 | Pull Request と週次（`<x>-schedule.yaml`） | 秘密・誤設定・依存の脆弱性・workflow 自身の穴を報告する |
+| リポジトリの衛生 | Pull Request（gate が呼ぶ） | 綴りと `.editorconfig` の宣言とのずれで merge を止める |
 | 供給網の衛生の報告 | 週次と既定ブランチ（線のどれか）への push | OpenSSF Scorecard の所見を code scanning へ送る。何も止めない |
 | 上流の報告 | 週次と手動 | 宣言より新しい版や、手で写した一覧と上流とのずれを issue へ書く。何も止めない |
 | apply | デプロイブランチ `admin` への push | 管理アカウントの identity root と workload root を、この順に apply する。失敗を通知し、失敗を戻す revert のブランチを用意する |
@@ -31,54 +33,124 @@ CI の workflow 定義。Pull Request を止めるゲート、供給網のクー
 | `ruleset` | デプロイブランチと各線（`<接頭辞>**`）。ruleset が保護する集合と同じ | `branches:` |
 | `deploy` | デプロイブランチ | `branches:`、`contains(fromJSON('[...]'), <ref>)` を持つ `if:` |
 | `lines` | 各線（`<接頭辞>**`） | `branches:`、`(startsWith(<ref>, '<接頭辞>') \|\| ...)` を持つ `if:` |
+| `gate` | env を持たないデプロイブランチと各線（`<接頭辞>**`）。線の ruleset（`lines`）の対象と同じ | `branches:` |
+| `deploy-env` | env を持つデプロイブランチ。その ruleset（`deploy-<branch>`）の対象を合わせたものと同じ | `branches:` |
 
 印の無い `branches:` / `branches-ignore:` の一覧（apply の workflow のものを除く）と、ブランチの名前か ref を値に持つ
 値（`github` と `inputs` の下の値と、それを関数や演算で加工した値）を式の中で作った文字列と比べる式（印の行で生成した
 項を除く）と、式として読めない式は、`repo-settings-check` が落とす。見分ける規則は検査が持つ（[`scripts/README.md`](../../scripts/README.md)
 の `repo-settings/` の行）。`env:` や step・job の出力へ移した値の比較と、シェルの中の比較は見ない。
 
-## 必須検査はすべての Pull Request で報告される
+## Pull Request の gate
 
-[`branch-protection.json`](../settings/branch-protection.json) が名指しする context は、merge の前に
-**報告されなければならない。** GitHub は報告の無い check を「該当しない」とは読まず、待ち続ける ——
-その Pull Request は恒久的に merge 可能にならない。
+線と env を持たないデプロイブランチ（印 `# branch-set: gate`）宛の Pull Request の検査は、`pr-gate.yaml` が1つの run で呼び、job `gate` が1つの context で
+判定する（ADR-0603 決定17・18）。線と env を持たないデプロイブランチの ruleset（`lines`）が required とするのは
+`gate` だけである。どの検査をどの path で走らせるかは [`checks.json`](../settings/checks.json) が持つ（キーの意味は
+[`.github/settings/README.md`](../settings/README.md) の「checks.json」）。判定は `scripts/ci-gate` が持つ。
 
-したがって、必須 context を報告する workflow は `pull_request` の起動を**一切絞らない。**
-`paths:` も `branches:` も、そこでは「run が起きるかどうか」を決めてしまい、起きなかった run は
-何も報告しない。
+- **走らせる条件は gate だけが持つ。** job `changes`（`make ci-changes`）が、宣言と Pull Request の差分（base と
+  head の merge-base から head まで）から走るべき検査を決め、検査ごとの job `call-<name>` がそれに当たるものだけを
+  reusable workflow として呼ぶ。呼ばれる workflow は `workflow_call` で起動し、走らせるかどうかを自分で決めない
+- **宣言は base の commit から読む。** `changes` と `gate` は、`checks.json` と `branches.json` を Pull Request の
+  base の commit の木から読み、両方に在る検査を base の値で判定する。Pull Request の木で判定すると、その Pull Request
+  が宣言を1行変えるだけで自分の検査を省ける
+- **検査の増減だけは Pull Request の木の宣言から読む。** Pull Request の木の `checks.json` にだけ在る検査（足した
+  検査）は、その値で走らせて判定し、`needs` に在ることを求める。base にだけ在る検査（外した検査）はその Pull Request
+  では判定せず、`needs` に無くてよく、表に「宣言から外した」と載せる。どちらの宣言にも無い `call-<name>` が `needs` に
+  在れば失敗する。外したことは宣言の差分に現れ、code owner の review が受け止める（ADR-0603 の保証しないこと）
+- **gate は走るべき検査を決め直す。** job `gate`（`make ci-gate`）は、走るべき検査を `changes` と同じ規則で決め直し、
+  `changes` の出力と照らす。走るべき検査の `success` と、走るべきでない検査の `skipped` か `success` だけを合格とし、
+  `changes` が成功しなかったこと、`needs` の job の集合が宣言と食い違うことも失敗とする。`required` が `false` の
+  検査は判定の表に載せるが、合否に数えない。合否に数える検査が1件も無ければ失敗する。表は job summary に全件を出す
+- **`changes` が成功しなければ、検査は省かれない。** `call-<name>` の `if:` は
+  `!cancelled() && (needs.changes.result != 'success' || ...)` で、判定に届かなかった `changes` は検査を呼ばせる。
+  そのとき gate は失敗する
+- **gate は取り消されても判定を報告する。** job `gate` の `if:` は `always()` で、取り消された run では失敗を報告する
+- **`edited` でも起動する。** 判定は base に依るので、base の付け替えで走り直す。title だけの編集を job の `if:` で飛ばすと、`gate` が skipped（成功と数える）になり失敗した `gate` を上書きできるので、飛ばさない。同じ SHA に `gate` の check が並ぶことは受け入れる（ADR-0603 の保証しないこと）
 
-起動条件は代わりに job の `if:` に置く。GitHub はそこでは逆の結論を出す ——
-**`if:` で skip された job は `skipped` を報告し、required check はそれを成功として数える。**
-path で絞る workflow は [`dorny/paths-filter`](https://github.com/dorny/paths-filter) を使う
-`changes` job で条件を計算し、報告する job をその出力でゲートする。リリース昇格のゲートは
-`github.base_ref` を `if:` で直接読む —— 条件がブランチ名であり、ファイル一覧を要さない。
+### 線の検証
 
-`repo-settings.yaml` の `deploy-source-check` は、対象かどうかを job の中で決める。デプロイブランチ宛でない
-Pull Request では「対象外」と出力して成功する（ADR-0603 決定31-32）。判定は base に依るので、`repo-settings.yaml` は
-`pull_request` の `edited`（base の付け替えを含む）でも走り直す。付け替える前の「対象外」の成功が、付け替えた後の
-デプロイブランチ宛の Pull Request を通さない。この job は Pull Request の base の
-commit を checkout し（`ref: github.event.pull_request.base.sha`、`fetch-depth: 0`）、そこにある宣言と
-`scripts/repo-settings` で判定する。Pull Request は検査のコードと宣言を書き換えられない。job の定義そのものは
-Pull Request の側のもので、書き換えうる。`repo-settings.yaml` と `scripts/repo-settings/` は code owner の
-対象に置く（ADR-0603 の保証しないこと）。
+`line-verify.yaml` は、線（印 `# branch-set: lines`）への push ごとに、その commit の木に対して、`checks.json` の
+検査のうち `scope` が `tree` で `required` が `true`、`plan_env` を持たないものを path で絞らずにすべて呼ぶ。job
+`line-gate`（`make ci-line-gate`）が1つの context で報告する（ADR-0603 決定37・38）。宣言は push した commit の
+木から読む。
 
-ゲートは **fail open** で書く。
+- 合格は、呼んだ検査がすべて `success` のときだけである。push 以外のイベントと、線でない ref では失敗する
+- env を持つデプロイブランチの ruleset（`deploy-<branch>`）は `line-gate` を required とし、`gate` を required と
+  しない。昇格の Pull Request の head は線の先頭の commit で、その push の `line-gate` を待つ。線の先頭に
+  ならなかった commit は `line-gate` を持たず、デプロイブランチへ入らない
+- plan は呼ばない。AWS の状態に依って木だけでは決まらず、Pull Request でだけ走る（「plan の job」）
+- `line-verify.yaml` は push だけで起動し、push を path で絞らない。job の id `line-gate` はこの workflow の外に
+  置かない —— skip された job の check は、同じ commit の同じ名前の required の context を成功として満たす
 
-```yaml
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }}
-```
+### デプロイブランチへの経路
 
-`relevant` はフィルタが判定に到達しなかった場所では空になる（pull_request 以外のイベントで skip
-された、あるいは失敗した）。空は `false` ではないので、仕事は走る。逆に書くと静かに壊れる ——
-skip が誰も稼いでいない緑を必須 context へ渡し、**フィルタが壊れた瞬間こそがそれの起きる瞬間**である。
+`deploy-gate.yaml` は、env を持つデプロイブランチの ruleset が直接 required とする context を、native の job で
+報告する。reusable workflow の中の job の context には caller の名前が前に付き、required の名前と合わない。
 
-`push` 側の起動は自分の `paths:` を保つ。そちらは context を報告しないので、絞っても何も塞がない。
+| job | 報告するもの |
+| --- | --- |
+| `deploy-source-check` | デプロイブランチへ入る commit の出所（ADR-0603 決定31。判定の内容は「apply の job」）。デプロイブランチ宛でない Pull Request では「対象外」と出力して成功する |
+| `plan-admin-identity`・`plan-admin-workload` | env `admin` の plan（「plan の job」） |
 
-`make required-check-lint` が、すべての必須 context がちょうど1つの job から宣言されていることと、
-その workflow の `pull_request` にフィルタが無いことを見る。**後半がこの行き止まりを閉じている。**
-そして条件が1箇所にしか書かれていないからこそ検査できる。フィルタとその否定へ割ると、不変条件は
-2つの一覧の一致へ移り、それを突き合わせられるものはここに無い。
+- `deploy-source-check` は Pull Request の base の commit を checkout し（`ref: github.event.pull_request.base.sha`、
+  `fetch-depth: 0`）、そこにある宣言と `scripts/repo-settings` で判定する。Pull Request は検査のコードと宣言を
+  書き換えられない。job の定義そのものは Pull Request の側のもので、書き換えうる。`deploy-gate.yaml` と
+  `scripts/repo-settings/` は code owner の対象に置く（ADR-0603 の保証しないこと）
+- 判定は base に依るので、`deploy-gate.yaml` は `pull_request` の `edited`（base の付け替えを含む）でも走り直す。
+  付け替える前の「対象外」の成功が、付け替えた後のデプロイブランチ宛の Pull Request を通さない
+- `call-trivy-release-gate` は、デプロイブランチ宛の Pull Request で `trivy-release-gate.yaml` を呼ぶ
+
+### 直接 required とする context は必ず報告される
+
+ruleset が直接 required とする context は、merge の前に**報告されなければならない。** GitHub は報告の無い check を
+「該当しない」とは読まず、待ち続ける —— その Pull Request は恒久的に merge 可能にならない。そこで、その context を
+報告する workflow の `pull_request` に `paths:` を置かず、`branches:` は印 `# branch-set: <集合>` で `branches.json`
+から生成した一覧に限る（ADR-0603 決定16）。`line-gate` は push で報告する。
+
+`make required-check-lint` が、`rulesets/` の宣言と `checks.json` を入力に次を見る（ADR-0603 決定19・20。規則の
+全体は [`scripts/README.md`](../../scripts/README.md) の `required-check-lint/` の行）。
+
+- 直接 required とする各 context を報告する job がちょうど1つあり、reusable workflow を呼ばず、`name:` を持たず、
+  その workflow が `workflow_call` を持たず、`pull_request` が上の形であること。`branches:` を置くなら、その印の
+  集合は context を required とする ruleset の対象と同じもの（`lines` は `gate`、`deploy-<branch>` は `deploy-env`）
+  であること。古い宣言にも在る context はフィルタ無しを求められるので、印の集合を課さない
+- 線の ruleset の required が `gate` の1つだけであること
+- `pr-gate.yaml` と `line-verify.yaml` の `call-<name>` の job の集合が、それぞれが呼ぶべき宣言の検査と両方向で
+  一致し、`gate`・`line-gate` の `needs` がそれらをすべて持ち、`if:` が `always()` であること
+- `gate`・`line-gate`・`changes` の job の steps に、`make ci-gate`・`make ci-line-gate`・`make ci-changes`
+  （`RUNNER_MODE=host`）をそのまま起動する step がちょうど1つあり、その step と job が `continue-on-error` を、
+  step が `if:` を持たず、判定の step が env の `NEEDS` に `${{ toJSON(needs) }}` を受け取ること
+- `call-<name>` の job が `with:` を持たず、`secrets:` は呼ばれる側の `workflow_call.secrets` の名前へ
+  `${{ secrets.<名前> }}` を渡す形に限ること。`pr-gate.yaml` では `needs: changes` と、自分の名前を
+  `contains(fromJSON(needs.changes.outputs.run), '<name>')` で見る決まった形の `if:` を持ち、`line-verify.yaml`
+  では `if:` を持たないこと
+- `checks.json` が名指す workflow が `workflow_call` を持ち、concurrency の group に `github.workflow`（索引の記法を含む）を含まないこと
+  —— 呼ばれた workflow の中では caller の名前になり、同じ gate が呼ぶ検査どうしが互いを取り消す
+- `line-verify.yaml` が push だけで起動し、job の id `gate`・`line-gate` がそれぞれの workflow の外に無く、
+  `call-<name>` の id が required の context と同じ名前でないこと
+
+### 必須検査はすべての Pull Request で報告される（並行期間）
+
+**この節は並行期間の間だけの形で、後の変更で外す。** 外す条件は、新しい ruleset の適用と、新旧の判定の照合が
+済んだときである。
+
+- 古い単一の ruleset の宣言 [`branch-protection.json`](../settings/branch-protection.json) が残り、`rulesets/` と
+  並べて適用される。それが required とする context を報告するため、各検査の workflow は `pull_request` の起動を
+  残し、`workflow_call` の入力 `called` を持つ。呼ばれたときは、中の path の判定（job `changes`）を外す
+- 古い宣言の context を報告する workflow は `pull_request` を絞らず、起動条件を job の `if:` に置く —— `if:` で
+  skip された job は `skipped` を報告し、required check はそれを成功として数える。path で絞る workflow は
+  [`dorny/paths-filter`](https://github.com/dorny/paths-filter) の `changes` job で条件を計算し、報告する job を
+  fail open（`!cancelled() && needs.changes.outputs.relevant != 'false'`）でゲートする。`relevant` は、フィルタが
+  判定に届かなかったとき（呼ばれて `changes` が skip されたときを含む）空になり、空は `false` ではないので仕事は
+  走る。`push` 側の起動は自分の `paths:` を保つ
+- 古い宣言の `deploy-source-check`・`plan-admin-identity`・`plan-admin-workload` を報告する job は、`deploy-gate.yaml`
+  の同名の job である。この workflow は base で絞らずに起動し、その job も base で skip しない
+- `make required-check-lint` は、古い宣言の context ごとに報告する job がちょうど1つで、その workflow の
+  `pull_request` にフィルタが無いことを見る。呼ばれる workflow の `pull_request` の起動と job の `if:` は、古い宣言が
+  在る間は違反にせず、無くなれば違反にする
+
+## Terraform を実行する job
 
 ### インフラ内コードの検出への依存
 
@@ -86,14 +158,21 @@ skip が誰も稼いでいない緑を必須 context へ渡し、**フィルタ�
 （ADR-0601 決定9、ADR-0103）。`needs:` は workflow をまたげないので、その job を置く workflow の中に
 `make infra-code-gate` を走らせる job を置き、`needs:` で依存する。条件は
 `needs.<id>.result == 'success'` と書き、上の fail open の形を使わない —— fail open で書くと、検出が
-落ちても credentials を伴う job が走る。検出の job は path で絞らない。判定を変える入力（宣言、Rego、
-ADR、code owner の宣言）が広く、skip された required check は成功として数えられるためである。
+落ちても credentials を伴う job が走る。検出の job は、その workflow の中で path で絞らない。判定を変える入力
+（宣言、Rego、ADR、code owner の宣言）が広いためである。gate が呼ぶ workflow の中の検出は、gate がその workflow を
+呼んだときに走る。
 
 ### plan の job
 
-`terraform-gates.yaml` の `plan-admin-identity` と `plan-admin-workload` は、environment `admin-plan` の下で OIDC により plan の
-role を assume し（ADR-0602 決定14）、管理アカウントの identity root と workload root を plan する。path で絞らない
-—— AWS の側の状態は、どのファイルを変えたかと無関係に plan を変える。
+plan の job は、environment `admin-plan` の下で OIDC により plan の role を assume し（ADR-0602 決定14）、管理アカウントの
+identity root と workload root を plan する。置き場は2つある。
+
+| job | 起動 | 判定 |
+| --- | --- | --- |
+| `terraform-plan.yaml` の `admin-identity`・`admin-workload` | gate が `call-terraform-plan-admin` で呼ぶ（`checks.json` の `terraform-plan-admin`）。`plan_env` が `admin` なので、base が `admin` の `from` の線で、変更したファイルが `paths` に当たる Pull Request でだけ走る | gate の合否に数える |
+| `deploy-gate.yaml` の `plan-admin-identity`・`plan-admin-workload` | すべての Pull Request。path で絞らない —— AWS の側の状態は、どのファイルを変えたかと無関係に plan を変える | `deploy-admin` の ruleset が直接 required とする（`checks.json` の `terraform-plan-admin` の `contexts`） |
+
+線の検証は plan を呼ばない（「線の検証」）。
 
 - **公開されるログに plan の全文を出さない。** 全文は plan の出力の Bucket へ置き、ログと job summary
   には終了コード・件数・object の key・SHA-256・版 ID と、全文から導いた値のうち許可の文法
@@ -127,6 +206,10 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
   （ADR-0603 決定13）。その差分は、リリース線の Pull Request が足す変更より大きいことがある
 - job の形（environment、取る role、起動条件、拒否の step、拒否の確認、terraform の経路、`run:` と `env:` に置けるもの）は
   `make oidc-job-lint` が見る。拒否の step の本文はシェルなので字面からは選べず、code owner のレビューが持つ
+- **plan の job を持つ workflow の起動は、`workflow_call` だけか、`deploy-gate.yaml` の `pull_request` だけである。**
+  `id-token: write` を渡して reusable workflow を呼ぶ job（`call-terraform-plan-admin`）は、このリポジトリの
+  `./.github/workflows/` の下の、`workflow_call` だけで起動する workflow を呼び、permissions を `contents: read` と
+  `id-token: write` に限る。呼ばれた側の job は、それ自身として plan の job の規則を受ける（`make oidc-job-lint`）
 
 ### apply の job
 
@@ -144,8 +227,8 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
 - **変更は昇格で当てる。** 変更はまずリリース線へ merge し、そのリリース線から `admin` への Pull Request を
   merge すると apply が走る。`admin` 宛の Pull Request でも必須検査と plan が走る。`admin` は Pull Request の
   merge でだけ進む（ruleset）
-- **`admin` へ入れてよい commit は、ブランチ名ではなく到達性で決まる。** required の `deploy-source-check` が、
-  次をすべて満たす Pull Request だけを通す（ADR-0603 決定31）。head のブランチ名は見ない —— 保護パターンに
+- **`admin` へ入れてよい commit は、ブランチ名ではなく到達性で決まる。** `deploy-admin` の ruleset が required とする
+  `deploy-source-check`（`deploy-gate.yaml`）が、次をすべて満たす Pull Request だけを通す（ADR-0603 決定31）。head のブランチ名は見ない —— 保護パターンに
   当たるブランチは書き込み権限で作れるが、デフォルトブランチを変えられるのは管理者だけである
   - デフォルトブランチが `admin` の `from` の線（`release/`）のどれかであり、デプロイブランチ自身でない
   - head の commit が `origin/<デフォルトブランチ>` の祖先である
@@ -153,6 +236,9 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
 
   これにより `admin` の木は、常にリリース線でレビューされた commit の木と一致する。feature のブランチと
   hotfix の線からは `admin` へ入れられない
+- **昇格は、線の検証が成功した commit だけを運ぶ。** `deploy-admin` の ruleset は `deploy-source-check`・plan・
+  `line-gate` を required とし、`gate` を required としない。昇格の Pull Request はコードの検査を走らせ直さず、
+  head の commit の `line-gate`（「線の検証」）を待つ（ADR-0601 決定10）
 - **止めるときは、`admin` 宛の Pull Request を merge しない。** 後続の apply は `admin` への merge でだけ起きる
   （ADR-0601 決定19）。デフォルトブランチは動かさない
 - **昇格は開くときに承認し、緑ならすぐ merge する。** どのデプロイブランチでも同じである。CI が緑で、plan の行と
@@ -225,7 +311,7 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
 保証しないこと:
 
 - **Pull Request の plan と、apply の plan が同じであること。** 必須検査は base の更新を要求しない
-  （`branch-protection.json` の `strict_required_status_checks_policy: false`）ので、merge された木は
+  （ruleset の宣言の `strict_required_status_checks_policy: false`）ので、merge された木は
   最後に plan された木と違いうる。apply の job の plan と Policy が最後の関門である
 - **新しいリリース線を、そのまま `admin` へ昇格できること。** 新しい線は `production` から切る。`admin` が
   新しい線に無い変更を持つと（古い線をリリースする前に新しい線を切った、など）、merge の結果の木が head の木と
@@ -584,16 +670,16 @@ truthy 側へ置く。
 | `notify.yaml:notify`、`tool-outdated-report.yaml:report`、`partitions-drift-report.yaml:report` | 15 | 実測できる完了 run が無い |
 | `md-lint.yaml:adr-lint`、`md-lint.yaml:skill-lint`、`md-lint.yaml:ref-record-lint`、`go-test.yaml:test-mapping` | 15 | 同上（新設） |
 | `go-lint.yaml:go-lint`、`go-lint.yaml:go-fmt-check` | 15 | 同上（新設） |
-| `terraform-gates.yaml` の `changes` と plan の2 job を除く6 job、`terraform-apply.yaml:apply-infra-code-gate`、`terraform-apply.yaml:apply-resource-order-check`、`terraform-apply.yaml:apply-layer-check`、`terraform-apply.yaml:apply-root-check` | 15 | 同上（新設） |
+| `terraform-gates.yaml` の `changes` を除く5 job、`deploy-gate.yaml:detect-infra-code`、`terraform-plan.yaml:detect-infra-code`、`terraform-apply.yaml:apply-infra-code-gate`、`terraform-apply.yaml:apply-resource-order-check`、`terraform-apply.yaml:apply-layer-check`、`terraform-apply.yaml:apply-root-check` | 15 | 同上（新設） |
 | `terraform-unlock.yaml` の3 job | 15 | 同上（新設）。apply の job と違い terraform を呼ばない |
 | `terraform-apply.yaml:revert-plan`、`terraform-apply.yaml:revert-push` | 15 | 同上（新設）。terraform を呼ばない |
-| `terraform-gates.yaml` の plan の2 job、`terraform-apply.yaml` の apply の2 job、`terraform-drift.yaml` の drift の2 job | 30 | AWS の API を呼ぶ。role の session（3600 秒）より短く置く |
+| `deploy-gate.yaml` の plan の2 job、`terraform-plan.yaml` の plan の2 job、`terraform-apply.yaml` の apply の2 job、`terraform-drift.yaml` の drift の2 job | 30 | AWS の API を呼ぶ。role の session（3600 秒）より短く置く |
 | `terraform-drift.yaml:drift-target-admin`、`terraform-drift.yaml:drift-infra-code-gate-admin`、`terraform-drift.yaml:report`、`terraform-drift.yaml:mark-report` | 15 | 実測できる完了 run が無い（新設） |
-| `sonarcloud.yaml` の3 job、`sample-remove-check.yaml:sample-remove-check` | 15 | 同上（新設） <!-- sample:line --> |
-| `checkov.yaml:checkov`、`kics.yaml:kics`、`semgrep.yaml:semgrep` | 15 | 実測できる完了 run が無い（新設） |
-| `secret-scan.yaml` | 15 | 実測は Pull Request のみ。週次は履歴全体を走査し、完了 run が無い |
+| `sonarcloud.yaml` の2 job、`sample-remove-check.yaml:sample-remove-check` | 15 | 同上（新設） <!-- sample:line --> |
+| `checkov.yaml:checkov`、`kics.yaml:kics`、`semgrep.yaml:semgrep`、`trivy-secret.yaml:trivy-secret` | 15 | 実測できる完了 run が無い（新設） |
+| `secret-scan.yaml` | 15 | 実測は Pull Request のみ。週次（`secret-scan-schedule.yaml` が呼ぶ）は履歴全体を走査し、完了 run が無い |
 | `hygiene.yaml` の2 job、`scorecard.yaml:scorecard` | 15 | 実測できる完了 run が無い（新設） |
-| `repo-settings.yaml:repo-settings-check`、`repo-settings.yaml:deploy-source-check` | 15 | 同上（新設） |
+| `repo-settings.yaml:repo-settings-check`、`deploy-gate.yaml:deploy-source-check` | 15 | 同上（新設） |
 | `api-budget.yaml:api-budget` | 15 | 同上（新設） |
 
 限界に触れ始めた job は実測を追い越している。数字を小突かず、測り直して式を当て直す。
@@ -610,7 +696,7 @@ truthy 側へ置く。
 
 | 系統 | 送るもの |
 | --- | --- |
-| セキュリティ | 走査（`govulncheck.yaml`・`secret-scan.yaml`・`trivy-fs.yaml`・`zizmor.yaml`・`scorecard.yaml`）の失敗と検出 |
+| セキュリティ | 走査の定期実行（`govulncheck-schedule.yaml`・`secret-scan-schedule.yaml`・`trivy-fs-schedule.yaml`・`trivy-secret-schedule.yaml`・`zizmor-schedule.yaml`）と `scorecard.yaml` の失敗と検出 |
 | critical の deploy | 管理アカウント（admin）と本番（prd）の apply の成功と失敗と、drift の検出の変化と失敗 |
 | promotion の deploy | 本番へ上がる途中の段（dev・stg）の apply の成功と失敗 |
 | validation の deploy | 検証の器（sandbox）の apply の成功と失敗 |
@@ -635,8 +721,10 @@ role を通じてすべての環境へ響く。env を足すときは、その�
   outputs で渡り、terraform の出力は含まない
 - promotion と validation の系統は、dev・stg と sandbox の apply の job を足す変更が配線し、その通知の job を宣言に足す
 
-スケジュール（週次）を持つ走査は、job が `failure` または `cancelled` で終わったとき `notify.yaml` を
-呼ぶ。Pull Request の失敗は作者に見えている。**スケジュールの失敗は誰にも見えない** —— それが
+走査の定期実行（週次）は、検査の workflow `<x>.yaml` を `workflow_call` で呼ぶ `<x>-schedule.yaml` が持つ。検査の
+workflow は通知を持たず、`<x>-schedule.yaml` が、呼んだ job の結果（呼ばれた workflow が job ごとの status を出力する
+ならそれ、空なら呼んだ job 全体の result）が `failure` または `cancelled` のとき、schedule の起動に限って
+`notify.yaml` を呼ぶ。Pull Request の失敗は作者に見えている。**スケジュールの失敗は誰にも見えない** —— それが
 通知の存在理由である。`cancelled` を含めるのは、timeout やランナー障害で殺された job が `failure`
 ではなくそちらを報告するため。
 
@@ -651,8 +739,8 @@ webhook の secret が未設定なら配信を省いて run を緑のままに�
 
 | workflow | 発火条件 | 起動 |
 | --- | --- | --- |
-| `trivy-fs.yaml` | 修正版のある CRITICAL / HIGH / MEDIUM | schedule |
-| `govulncheck.yaml` | 運用機構（`scripts/`）の Go のコードの呼び出し経路が届く既知脆弱性 | schedule |
+| `trivy-fs-schedule.yaml` | 修正版のある CRITICAL / HIGH / MEDIUM | schedule |
+| `govulncheck-schedule.yaml` | 運用機構（`scripts/`）の Go のコードの呼び出し経路が届く既知脆弱性 | schedule |
 
 `tool-outdated-report.yaml` は `notify.yaml` を呼ばず、宣言より新しい版が上流に在ることを issue へ書く。
 `partitions-drift-report.yaml` は、写しと上流のずれと、上流と比べられなかったことを issue へ書き、比べられなかった回は
@@ -744,7 +832,7 @@ job の先頭に並んでいないこと、本体と再試行の間が生成し�
 | クラス | 宛先 | 当たるもの |
 | --- | --- | --- |
 | `base` | GitHub API / web / codeload、`objects` / `raw` / `release-assets.githubusercontent.com`、`*.actions.githubusercontent.com`、結果と cache の置き場のうち bullfrog の agent が既定で許さない番号の `productionresultssa<N>.blob.core.windows.net`（足し方は宣言のコメント）。IP は `127.0.0.100`（理由と外す条件は宣言のコメント。IP はドメインの判定を経ずに通すので、宣言の検査が `127.0.0.0/8` の外を拒む） | **すべての job に暗黙に適用される。** `classes` に書かない |
-| `mise` | mise 自身の配布元と、`mise.toml` が解決するすべての backend —— aqua / GitHub releases、Go の toolchain と module proxy、node の配布元、npm レジストリ（npm の道具を lockfile から入れる pnpm と、`npm:` の宣言の公開時刻を引く tool-cooldown が使う）、Terraform Registry（provider の公開時刻と一覧を引く tool-cooldown の job が `extra` で足す）、および Sigstore（mise が artifact attestation を検証する） | 道具を導入するすべての job |
+| `mise` | mise 自身の配布元と、`mise.toml` が解決するすべての backend —— aqua / GitHub releases、Go の toolchain と module proxy、node の配布元、npm レジストリ（npm の道具を lockfile から入れる pnpm と、`npm:` の宣言の公開時刻を引く tool-cooldown が使う）、Terraform Registry（provider の公開時刻と一覧を引く tool-cooldown の job が `extra` で足す）、および Sigstore（mise が artifact attestation を検証する） | 道具を導入するすべての job。`setup-go` で Go を入れて `scripts/` の道具を建てる gate・線の検証・`deploy-source-check` の job も、このクラスを宣言する |
 | `go` | mise が Go の版の一覧を引く先、Go の toolchain の配布元、module proxy（`mise` の部分集合） | Go だけを入れて `scripts/` の道具をビルドし、他の道具を入れない job（Checkov / KICS / Semgrep） |
 | `terraform` | Terraform Registry と provider の配布元 | Terraform を実行する job（[ADR-0205](../../docs/adr/0205-module-dependency-policy.md) により外部 module は引かない） |
 | `trivy` | 脆弱性 DB と checks バンドルの OCI の配布元 | Trivy を実行する job |
@@ -753,6 +841,7 @@ job の先頭に並んでいないこと、本体と再試行の間が生成し�
 | `aws-state` | STS・S3 の endpoint（region と wildcard の理由は宣言のコメント） | OIDC で role を assume し、state の Bucket に触れる job（lock の解除の job） |
 | `aws` | `aws-state` に加えて IAM・KMS・S3 Control の endpoint | Terraform で AWS の API を呼ぶ job |
 | `aws-notify` | `aws` に加えて SNS・EventBridge Scheduler・Chatbot の endpoint | 通知の構成物を持つ workload root を Terraform で扱う job |
+| `aws-governance` | `aws` に加えて GuardDuty・Inspector・Security Hub（`default-regions` の集合の各 region）と CloudTrail の endpoint | 委任管理者の指定を持つ identity root を Terraform で扱う job（identity root の plan・apply・lock を残す job） |
 
 1つの job に固有のものは、その job の `extra` へ置く —— 走査のデータ源、通知先の `hooks.slack.com`。
 2つ目の job の `extra` に現れた宛先は、クラスへ移す。

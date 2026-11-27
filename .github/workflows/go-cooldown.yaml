@@ -3,18 +3,23 @@ name: Go Cooldown
 # Go has no resolver-side cooldown, so this workflow is the guard itself rather than a
 # detector for a bypassed one — README.md の「Go のクールダウン」.
 
-# Why the trigger condition lives in a job: README.md の「必須検査はすべての Pull Request で報告される」.
 on:
   pull_request:
   schedule:
     - cron: '15 2 * * 1'
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      called:
+        description: workflow_call で呼ばれたこと。呼ばれたときは、走らせるかどうかを呼んだ側が決めます。
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  group: go-cooldown-${{ github.event_name }}-${{ inputs.called && github.run_id || github.ref }}
   cancel-in-progress: true
 
 jobs:

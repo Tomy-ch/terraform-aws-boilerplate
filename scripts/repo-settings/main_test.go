@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/checksdecl"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cooldown"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 )
@@ -55,16 +56,16 @@ jobs:
 
 // editorconfig-checker-enable
 
-var syncedRuleset = strings.Replace(rulesetFixture,
-	"[\n        \"refs/heads/old\"\n      ]",
-	"[\n        \"refs/heads/main\",\n        \"refs/heads/release/**/*\",\n        \"refs/heads/hotfix/**/*\"\n      ]", 1)
-
-func writeRepo(t *testing.T, ruleset string) string {
+// writeRepo は、common.json を common とし、ほかの ruleset の宣言を生成どおりに置いた宣言の一式を建てます。
+func writeRepo(t *testing.T, common string) string {
 	t.Helper()
 	root := t.TempDir()
 	writeFile(t, root, branchesFile, branchesFixture)
 	writeFile(t, root, environmentsFile, environmentsFixture)
-	writeFile(t, root, rulesetFile, ruleset)
+	writeFile(t, root, commonRulesetFile, common)
+	writeFile(t, root, linesRulesetFile, syncedLines)
+	writeFile(t, root, deployMainFile, deployMainFixture)
+	writeFile(t, root, checksdecl.File, checksFixture)
 	writeFile(t, root, vulnerabilityReportingFile, `{"enabled": true}`)
 	writeFile(t, root, dependabotFile, dependabotFixture)
 	writeFile(t, root, labelsFile, labelsFixture)
@@ -74,16 +75,25 @@ func writeRepo(t *testing.T, ruleset string) string {
 	return root
 }
 
-func liveRoutes(t *testing.T) map[string]fakeResponse {
+func liveBody(t *testing.T, src string, id float64) string {
 	t.Helper()
 	var ruleset map[string]any
-	require.NoError(t, json.Unmarshal([]byte(syncedRuleset), &ruleset))
-	ruleset["id"] = 7.0
+	require.NoError(t, json.Unmarshal([]byte(src), &ruleset))
+	ruleset["id"] = id
 	body, err := json.Marshal(ruleset)
 	require.NoError(t, err)
+	return string(body)
+}
+
+const liveRulesetList = `{"id": 7, "name": "common", "source_type": "Repository"}, {"id": 8, "name": "lines", "source_type": "Repository"}, {"id": 9, "name": "deploy-main", "source_type": "Repository"}`
+
+func liveRoutes(t *testing.T) map[string]fakeResponse {
+	t.Helper()
 	return map[string]fakeResponse{
-		rulesetListPath(1):                         ok(`[{"id": 7, "name": "branch-protection", "source_type": "Repository"}]`),
-		"GET /repos/o/r/rulesets/7":                ok(string(body)),
+		rulesetListPath(1):                         ok("[" + liveRulesetList + "]"),
+		"GET /repos/o/r/rulesets/7":                ok(liveBody(t, syncedCommon, 7)),
+		"GET /repos/o/r/rulesets/8":                ok(liveBody(t, syncedLines, 8)),
+		"GET /repos/o/r/rulesets/9":                ok(liveBody(t, deployMainFixture, 9)),
 		"GET /repos/o/r":                           ok(`{"visibility": "public"}`),
 		"GET " + vulnerabilityReportingPath("o/r"): ok(`{"enabled": true}`),
 		envListPath(1): ok(`{"total_count": 6, "environments": [
@@ -206,7 +216,7 @@ func Test_run(t *testing.T) {
 
 	t.Run("source と deploy-branch を呼ぶ", func(t *testing.T) {
 		t.Parallel()
-		root := writeRepo(t, syncedRuleset)
+		root := writeRepo(t, syncedCommon)
 		var out bytes.Buffer
 		require.NoError(t, run([]string{"source", "-base", "release/v1"}, fixedWD(root), githubClient{}, &out))
 		assert.Contains(t, out.String(), "対象外")
@@ -216,7 +226,7 @@ func Test_run(t *testing.T) {
 	})
 	t.Run("source は -base-sha と -head-sha と -default を検査へ渡す", func(t *testing.T) {
 		t.Parallel()
-		root := writeRepo(t, syncedRuleset)
+		root := writeRepo(t, syncedCommon)
 		gitT(t, root, "init", "-q", "-b", "main")
 		gitT(t, root, "add", ".")
 		gitT(t, root, "commit", "-q", "-m", "base")
@@ -248,7 +258,7 @@ func Test_run(t *testing.T) {
 	for _, tc := range usageCases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			err := run(tc.args, fixedWD(writeRepo(t, syncedRuleset)), githubClient{}, &bytes.Buffer{})
+			err := run(tc.args, fixedWD(writeRepo(t, syncedCommon)), githubClient{}, &bytes.Buffer{})
 			require.ErrorIs(t, err, errUsage)
 		})
 	}
@@ -264,7 +274,7 @@ func Test_run(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			f, c := newFakeGitHub(t, liveRoutes(t))
-			err := run(tc.args, fixedWD(writeRepo(t, syncedRuleset)), c, &bytes.Buffer{})
+			err := run(tc.args, fixedWD(writeRepo(t, syncedCommon)), c, &bytes.Buffer{})
 			require.ErrorIs(t, err, errNoRepo)
 			assert.Empty(t, f.requests)
 		})
@@ -279,11 +289,11 @@ func Test_run(t *testing.T) {
 
 	t.Run("check と apply を呼ぶ", func(t *testing.T) {
 		t.Parallel()
-		root := writeRepo(t, rulesetFixture)
-		require.ErrorIs(t, run([]string{"check"}, fixedWD(root), githubClient{}, &bytes.Buffer{}), errIncludeDrift)
+		root := writeRepo(t, commonFixture)
+		require.ErrorIs(t, run([]string{"check"}, fixedWD(root), githubClient{}, &bytes.Buffer{}), errRulesetDrift)
 		var out bytes.Buffer
 		require.NoError(t, run([]string{"apply"}, fixedWD(root), githubClient{}, &out))
-		assert.Contains(t, out.String(), rulesetFile+" を書き換えました")
+		assert.Contains(t, out.String(), commonRulesetFile+" を書き換えました")
 		require.NoError(t, run([]string{"check"}, fixedWD(root), githubClient{}, &bytes.Buffer{}))
 	})
 
@@ -291,17 +301,17 @@ func Test_run(t *testing.T) {
 		t.Parallel()
 		f, c := newFakeGitHub(t, liveRoutes(t))
 		var out bytes.Buffer
-		require.NoError(t, run([]string{"drift", "-repo=o/r"}, fixedWD(writeRepo(t, syncedRuleset)), c, &out))
+		require.NoError(t, run([]string{"drift", "-repo=o/r"}, fixedWD(writeRepo(t, syncedCommon)), c, &out))
 		require.NotEmpty(t, f.requests)
 		assert.Equal(t, rulesetListPath(1), "GET "+f.requests[0].target)
-		assert.Equal(t, "✅ repo-settings: o/r の ruleset 1 件と environment 6 件（実在 6 件）と Private Vulnerability Reporting が宣言どおりです\n", out.String())
+		assert.Equal(t, "✅ repo-settings: o/r の ruleset 3 件と environment 6 件（実在 6 件）と Private Vulnerability Reporting が宣言どおりです\n", out.String())
 	})
 
 	t.Run("sync は GITHUB_TOKEN が無ければ何も送らずに失敗する", func(t *testing.T) {
 		t.Parallel()
 		f, c := newFakeGitHub(t, liveRoutes(t))
 		c.token = ""
-		err := run([]string{"sync", "-repo=o/r", "-only", onlyRuleset}, fixedWD(writeRepo(t, syncedRuleset)), c, &bytes.Buffer{})
+		err := run([]string{"sync", "-repo=o/r", "-only", onlyRuleset}, fixedWD(writeRepo(t, syncedCommon)), c, &bytes.Buffer{})
 		require.ErrorIs(t, err, errNoToken)
 		assert.Empty(t, f.requests)
 	})
@@ -310,7 +320,7 @@ func Test_run(t *testing.T) {
 		t.Parallel()
 		_, c := newFakeGitHub(t, liveRoutes(t))
 		var out bytes.Buffer
-		require.NoError(t, run([]string{"sync", "-repo=o/r", "-only", onlyVulnerabilityReporting}, fixedWD(writeRepo(t, syncedRuleset)), c, &out))
+		require.NoError(t, run([]string{"sync", "-repo=o/r", "-only", onlyVulnerabilityReporting}, fixedWD(writeRepo(t, syncedCommon)), c, &out))
 		assert.Equal(t, "✅ repo-settings: o/r の vulnerability-reporting へ送る要求はありません\n", out.String())
 	})
 
@@ -318,7 +328,7 @@ func Test_run(t *testing.T) {
 		t.Parallel()
 		_, c := newFakeGitHub(t, liveRoutes(t))
 		var out bytes.Buffer
-		require.NoError(t, run([]string{"sync", "-repo=o/r", "-only", onlyEnvironments}, fixedWD(writeRepo(t, syncedRuleset)), c, &out))
+		require.NoError(t, run([]string{"sync", "-repo=o/r", "-only", onlyEnvironments}, fixedWD(writeRepo(t, syncedCommon)), c, &out))
 		assert.Equal(t, "✅ repo-settings: o/r の environments へ送る要求はありません\n", out.String())
 	})
 }
@@ -328,13 +338,17 @@ func Test_readDeclarations(t *testing.T) {
 
 	t.Run("宣言を読み、include を生成し直す", func(t *testing.T) {
 		t.Parallel()
-		decl, err := readDeclarations(writeRepo(t, rulesetFixture))
+		decl, err := readDeclarations(writeRepo(t, commonFixture))
 		require.NoError(t, err)
 		assert.Equal(t, []string{"main"}, decl.branches.DeployNames())
 		assert.Len(t, decl.environments, 6)
 		assert.True(t, decl.vulnerabilityReporting)
-		assert.Equal(t, rulesetFixture, string(decl.ruleset))
-		assert.Equal(t, syncedRuleset, string(decl.rendered))
+		require.Len(t, decl.rulesets, 3)
+		assert.Equal(t, commonRulesetFile, decl.rulesets[0].spec.path)
+		assert.Equal(t, commonFixture, string(decl.rulesets[0].current))
+		assert.Equal(t, syncedCommon, string(decl.rulesets[0].rendered))
+		assert.Equal(t, linesRulesetFile, decl.rulesets[1].spec.path)
+		assert.Equal(t, deployMainFile, decl.rulesets[2].spec.path)
 		assert.Len(t, decl.workflows, 1)
 		assert.Len(t, decl.sets, 1)
 		assert.Equal(t, 1, decl.marks)
@@ -375,11 +389,11 @@ func Test_readDeclarations(t *testing.T) {
 		{"labels.json が無ければ失敗する", func(root string) {
 			require.NoError(t, os.Remove(filepath.Join(root, labelsFile)))
 		}, os.ErrNotExist},
-		{"branch-protection.json が無ければ失敗する", func(root string) {
-			require.NoError(t, os.Remove(filepath.Join(root, rulesetFile)))
+		{"common.json が無ければ失敗する", func(root string) {
+			require.NoError(t, os.Remove(filepath.Join(root, commonRulesetFile)))
 		}, os.ErrNotExist},
-		{"branch-protection.json が ADR-0603 を満たさなければ失敗する", func(root string) {
-			writeFile(t, root, rulesetFile, strings.Replace(rulesetFixture, `"bypass_actors": []`, `"bypass_actors": [1]`, 1))
+		{"common.json が ADR-0603 を満たさなければ失敗する", func(root string) {
+			writeFile(t, root, commonRulesetFile, strings.Replace(commonFixture, `"bypass_actors": []`, `"bypass_actors": [1]`, 1))
 		}, errRulesetPolicy},
 		{"信頼条件の environment が宣言に揃っていなければ失敗する", func(root string) {
 			writeFile(t, root, "env/y/identity/main.tf", strings.Replace(identityRootFixture, `"x"`, `"y"`, 1))
@@ -409,13 +423,13 @@ func Test_readDeclarations(t *testing.T) {
 			writeFile(t, root, ".github/workflows/lint.yaml", "on:\n  pull_request:\nconcurrency:\n  group: ${{ github.ref }}\n")
 		}, errBranchSet},
 		{"include を定められなければ失敗する", func(root string) {
-			writeFile(t, root, rulesetFile, strings.Replace(rulesetFixture, `"include"`, `"included"`, 1))
+			writeFile(t, root, commonRulesetFile, strings.Replace(commonFixture, `"include"`, `"included"`, 1))
 		}, errInclude},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			root := writeRepo(t, rulesetFixture)
+			root := writeRepo(t, commonFixture)
 			tc.mutate(root)
 			_, err := readDeclarations(root)
 			require.ErrorIs(t, err, tc.wantErr)
@@ -431,7 +445,7 @@ func Test_readDeclarations(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			root := writeRepo(t, rulesetFixture)
+			root := writeRepo(t, commonFixture)
 			appendFile(t, root, c.file, c.body)
 			_, err := readDeclarations(root)
 			require.ErrorIs(t, err, errBranchSet)
@@ -445,9 +459,14 @@ func Test_loadDesired(t *testing.T) {
 
 	t.Run("宣言からあるべき実態を組む", func(t *testing.T) {
 		t.Parallel()
-		want, err := loadDesired(writeRepo(t, syncedRuleset))
+		want, err := loadDesired(writeRepo(t, syncedCommon))
 		require.NoError(t, err)
-		assert.Equal(t, "branch-protection", want.Ruleset["name"])
+		names := make([]string, 0, len(want.Rulesets))
+		for _, r := range want.Rulesets {
+			names = append(names, r.Name)
+		}
+		assert.Equal(t, []string{"common", "lines", "deploy-main"}, names)
+		assert.Equal(t, "refs/heads/main", want.Rulesets[2].Body["conditions"].(map[string]any)["ref_name"].(map[string]any)["include"].([]any)[0])
 		assert.Equal(t, []desiredEnv{
 			{Name: "x-plan", Patterns: []string{"main", "release/*", "hotfix/*", pullRequestRef}},
 			{Name: "x-apply", Patterns: []string{"main"}},
@@ -460,7 +479,7 @@ func Test_loadDesired(t *testing.T) {
 
 	t.Run("Private Vulnerability Reporting の宣言を渡す", func(t *testing.T) {
 		t.Parallel()
-		root := writeRepo(t, syncedRuleset)
+		root := writeRepo(t, syncedCommon)
 		writeFile(t, root, vulnerabilityReportingFile, `{"enabled": false}`)
 		want, err := loadDesired(root)
 		require.NoError(t, err)
@@ -469,16 +488,57 @@ func Test_loadDesired(t *testing.T) {
 
 	t.Run("include がずれていれば失敗する", func(t *testing.T) {
 		t.Parallel()
-		_, err := loadDesired(writeRepo(t, rulesetFixture))
-		require.ErrorIs(t, err, errIncludeDrift)
+		_, err := loadDesired(writeRepo(t, commonFixture))
+		require.ErrorIs(t, err, errRulesetDrift)
+		assert.ErrorContains(t, err, commonRulesetFile)
+	})
+
+	t.Run("deploy-* が無ければ失敗する", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, syncedCommon)
+		require.NoError(t, os.Remove(filepath.Join(root, deployMainFile)))
+		_, err := loadDesired(root)
+		require.ErrorIs(t, err, errRulesetDrift)
+		assert.ErrorContains(t, err, deployMainFile)
+	})
+
+	t.Run("branch-protection.json が在れば、最後の ruleset として含める", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, syncedCommon)
+		writeFile(t, root, legacyRulesetFile, syncedLegacy)
+		want, err := loadDesired(root)
+		require.NoError(t, err)
+		require.Len(t, want.Rulesets, 4)
+		assert.Equal(t, "branch-protection", want.Rulesets[3].Name)
+		assert.Equal(t, "branch-protection", want.Rulesets[3].Body["name"])
 	})
 
 	t.Run("宣言を読めなければ失敗する", func(t *testing.T) {
 		t.Parallel()
-		root := writeRepo(t, syncedRuleset)
+		root := writeRepo(t, syncedCommon)
 		writeFile(t, root, branchesFile, `x`)
 		_, err := loadDesired(root)
 		require.ErrorIs(t, err, errDeclaration)
+	})
+}
+
+func Test_driftedRulesets(t *testing.T) {
+	t.Parallel()
+
+	t.Run("生成し直した内容が今の内容と異なるものを、宣言の順に返す", func(t *testing.T) {
+		t.Parallel()
+		decls := []rulesetDecl{
+			{spec: commonSpec, current: []byte("a"), rendered: []byte("b")},
+			{spec: linesSpec, current: []byte("a"), rendered: []byte("a")},
+			{spec: deploySpec, current: nil, rendered: []byte("a")},
+		}
+		assert.Equal(t, []string{commonRulesetFile, deployMainFile}, driftedRulesets(decls))
+	})
+
+	t.Run("ずれが無ければ空", func(t *testing.T) {
+		t.Parallel()
+		assert.Empty(t, driftedRulesets([]rulesetDecl{{spec: commonSpec, current: []byte("a"), rendered: []byte("a")}}))
+		assert.Empty(t, driftedRulesets(nil))
 	})
 }
 
@@ -487,19 +547,19 @@ func Test_applyOrCheck(t *testing.T) {
 
 	t.Run("apply は include の区間を書き換える", func(t *testing.T) {
 		t.Parallel()
-		root := writeRepo(t, rulesetFixture)
+		root := writeRepo(t, commonFixture)
 		var out bytes.Buffer
 		require.NoError(t, applyOrCheck(root, false, &out))
-		got, err := os.ReadFile(filepath.Join(root, rulesetFile))
+		got, err := os.ReadFile(filepath.Join(root, commonRulesetFile))
 		require.NoError(t, err)
-		assert.Equal(t, syncedRuleset, string(got))
-		assert.Contains(t, out.String(), "保護対象 3 件、environment 6 件、Private Vulnerability Reporting の宣言（enabled=true）、apply の workflow 1 件")
-		assert.Contains(t, out.String(), rulesetFile+" を書き換えました")
+		assert.Equal(t, syncedCommon, string(got))
+		assert.Contains(t, out.String(), "保護対象 3 件、ruleset 3 件、environment 6 件、Private Vulnerability Reporting の宣言（enabled=true）、apply の workflow 1 件")
+		assert.Contains(t, out.String(), commonRulesetFile+" を書き換えました")
 	})
 
 	t.Run("apply は apply の workflow の起動条件を書き換える", func(t *testing.T) {
 		t.Parallel()
-		root := writeRepo(t, syncedRuleset)
+		root := writeRepo(t, syncedCommon)
 		writeFile(t, root, ".github/workflows/apply.yaml", strings.Replace(applyWorkflowFixture, "      - main", "      - 'release/*'", 1))
 		var out bytes.Buffer
 		require.NoError(t, applyOrCheck(root, false, &out))
@@ -511,7 +571,7 @@ func Test_applyOrCheck(t *testing.T) {
 
 	t.Run("check は起動条件のずれを報せ、書かない", func(t *testing.T) {
 		t.Parallel()
-		root := writeRepo(t, syncedRuleset)
+		root := writeRepo(t, syncedCommon)
 		drifted := strings.Replace(applyWorkflowFixture, "      - main", "      - 'release/*'", 1)
 		writeFile(t, root, ".github/workflows/apply.yaml", drifted)
 		err := applyOrCheck(root, true, &bytes.Buffer{})
@@ -524,7 +584,7 @@ func Test_applyOrCheck(t *testing.T) {
 
 	t.Run("apply は印 branch-set の行を生成し直して書き換える", func(t *testing.T) {
 		t.Parallel()
-		root := writeRepo(t, syncedRuleset)
+		root := writeRepo(t, syncedCommon)
 		synced, err := os.ReadFile(filepath.Join(root, ".github/workflows/lint.yaml"))
 		require.NoError(t, err)
 		writeFile(t, root, ".github/workflows/lint.yaml", strings.Replace(string(synced), "      - 'main'", "      - 'old'", 1))
@@ -539,7 +599,7 @@ func Test_applyOrCheck(t *testing.T) {
 
 	t.Run("check は印 branch-set の行のずれを報せ、書かない", func(t *testing.T) {
 		t.Parallel()
-		root := writeRepo(t, syncedRuleset)
+		root := writeRepo(t, syncedCommon)
 		synced, err := os.ReadFile(filepath.Join(root, ".github/workflows/lint.yaml"))
 		require.NoError(t, err)
 		drifted := strings.Replace(string(synced), "      - 'main'", "      - 'old'", 1)
@@ -554,14 +614,14 @@ func Test_applyOrCheck(t *testing.T) {
 
 	t.Run("include と起動条件と印が同時にずれていれば、check は include を先に報せ、次に起動条件を報せる", func(t *testing.T) {
 		t.Parallel()
-		root := writeRepo(t, rulesetFixture)
+		root := writeRepo(t, commonFixture)
 		writeFile(t, root, ".github/workflows/apply.yaml", strings.Replace(applyWorkflowFixture, "      - main", "      - 'release/*'", 1))
 		synced, err := os.ReadFile(filepath.Join(root, ".github/workflows/lint.yaml"))
 		require.NoError(t, err)
 		writeFile(t, root, ".github/workflows/lint.yaml", strings.Replace(string(synced), "      - 'main'", "      - 'old'", 1))
-		require.ErrorIs(t, applyOrCheck(root, true, &bytes.Buffer{}), errIncludeDrift)
+		require.ErrorIs(t, applyOrCheck(root, true, &bytes.Buffer{}), errRulesetDrift)
 
-		writeFile(t, root, rulesetFile, syncedRuleset)
+		writeFile(t, root, commonRulesetFile, syncedCommon)
 		err = applyOrCheck(root, true, &bytes.Buffer{})
 		require.ErrorIs(t, err, errTriggerDrift)
 		assert.NotErrorIs(t, err, errSetDrift)
@@ -569,29 +629,29 @@ func Test_applyOrCheck(t *testing.T) {
 
 	t.Run("include と起動条件が同時にずれていれば、apply は両方を書き換える", func(t *testing.T) {
 		t.Parallel()
-		root := writeRepo(t, rulesetFixture)
+		root := writeRepo(t, commonFixture)
 		writeFile(t, root, ".github/workflows/apply.yaml", strings.Replace(applyWorkflowFixture, "      - main", "      - 'release/*'", 1))
 		var out bytes.Buffer
 		require.NoError(t, applyOrCheck(root, false, &out))
-		ruleset, err := os.ReadFile(filepath.Join(root, rulesetFile))
+		ruleset, err := os.ReadFile(filepath.Join(root, commonRulesetFile))
 		require.NoError(t, err)
-		assert.Equal(t, syncedRuleset, string(ruleset))
+		assert.Equal(t, syncedCommon, string(ruleset))
 		wf, err := os.ReadFile(filepath.Join(root, ".github/workflows/apply.yaml"))
 		require.NoError(t, err)
 		assert.Equal(t, applyWorkflowFixture, string(wf))
-		assert.Contains(t, out.String(), rulesetFile)
+		assert.Contains(t, out.String(), commonRulesetFile)
 		assert.Contains(t, out.String(), ".github/workflows/apply.yaml")
 	})
 
 	t.Run("include と起動条件が同時にずれていれば、check は include のずれを報せ、どちらも書かない", func(t *testing.T) {
 		t.Parallel()
-		root := writeRepo(t, rulesetFixture)
+		root := writeRepo(t, commonFixture)
 		drifted := strings.Replace(applyWorkflowFixture, "      - main", "      - 'release/*'", 1)
 		writeFile(t, root, ".github/workflows/apply.yaml", drifted)
-		require.ErrorIs(t, applyOrCheck(root, true, &bytes.Buffer{}), errIncludeDrift)
-		ruleset, err := os.ReadFile(filepath.Join(root, rulesetFile))
+		require.ErrorIs(t, applyOrCheck(root, true, &bytes.Buffer{}), errRulesetDrift)
+		ruleset, err := os.ReadFile(filepath.Join(root, commonRulesetFile))
 		require.NoError(t, err)
-		assert.Equal(t, rulesetFixture, string(ruleset))
+		assert.Equal(t, commonFixture, string(ruleset))
 		wf, err := os.ReadFile(filepath.Join(root, ".github/workflows/apply.yaml"))
 		require.NoError(t, err)
 		assert.Equal(t, drifted, string(wf))
@@ -599,13 +659,13 @@ func Test_applyOrCheck(t *testing.T) {
 
 	t.Run("workflow の起動条件を生成できなければ、apply は include のずれも書かない", func(t *testing.T) {
 		t.Parallel()
-		root := writeRepo(t, rulesetFixture)
+		root := writeRepo(t, commonFixture)
 		invalid := strings.Replace(applyWorkflowFixture, "    branches:\n      - main", "    branches: [main]", 1)
 		writeFile(t, root, ".github/workflows/apply.yaml", invalid)
 		require.ErrorIs(t, applyOrCheck(root, false, &bytes.Buffer{}), errTrigger)
-		ruleset, err := os.ReadFile(filepath.Join(root, rulesetFile))
+		ruleset, err := os.ReadFile(filepath.Join(root, commonRulesetFile))
 		require.NoError(t, err)
-		assert.Equal(t, rulesetFixture, string(ruleset))
+		assert.Equal(t, commonFixture, string(ruleset))
 		wf, err := os.ReadFile(filepath.Join(root, ".github/workflows/apply.yaml"))
 		require.NoError(t, err)
 		assert.Equal(t, invalid, string(wf))
@@ -613,8 +673,8 @@ func Test_applyOrCheck(t *testing.T) {
 
 	t.Run("ずれが無ければ apply は何も書かない", func(t *testing.T) {
 		t.Parallel()
-		root := writeRepo(t, syncedRuleset)
-		p := filepath.Join(root, rulesetFile)
+		root := writeRepo(t, syncedCommon)
+		p := filepath.Join(root, commonRulesetFile)
 		before, err := os.Stat(p)
 		require.NoError(t, err)
 		var out bytes.Buffer
@@ -623,71 +683,149 @@ func Test_applyOrCheck(t *testing.T) {
 		require.NoError(t, err)
 		// 書き込みは rename なので、書けば別のファイルになる。
 		assert.True(t, os.SameFile(before, after))
-		assert.Equal(t, "✅ repo-settings: 保護対象 3 件、environment 6 件、Private Vulnerability Reporting の宣言（enabled=true）、apply の workflow 1 件、分岐の集合の印 1 件（workflow 1 件）、ref を比べる式の検査 1 件、labels.json にある Dependabot のラベル 2 件、窓を下回らない Dependabot の cooldown 4 件。生成する区間は宣言どおりです\n", out.String())
+		assert.Equal(t, "✅ repo-settings: 保護対象 3 件、ruleset 3 件、environment 6 件、Private Vulnerability Reporting の宣言（enabled=true）、apply の workflow 1 件、分岐の集合の印 1 件（workflow 1 件）、ref を比べる式の検査 1 件、labels.json にある Dependabot のラベル 2 件、窓を下回らない Dependabot の cooldown 4 件。生成する区間は宣言どおりです\n", out.String())
 	})
 
 	t.Run("check はずれを報せ、書かない", func(t *testing.T) {
 		t.Parallel()
-		root := writeRepo(t, rulesetFixture)
-		require.ErrorIs(t, applyOrCheck(root, true, &bytes.Buffer{}), errIncludeDrift)
-		got, err := os.ReadFile(filepath.Join(root, rulesetFile))
+		root := writeRepo(t, commonFixture)
+		require.ErrorIs(t, applyOrCheck(root, true, &bytes.Buffer{}), errRulesetDrift)
+		got, err := os.ReadFile(filepath.Join(root, commonRulesetFile))
 		require.NoError(t, err)
-		assert.Equal(t, rulesetFixture, string(got))
+		assert.Equal(t, commonFixture, string(got))
 	})
 
 	t.Run("宣言が不正なら apply は何も書かない", func(t *testing.T) {
 		t.Parallel()
-		root := writeRepo(t, rulesetFixture)
+		root := writeRepo(t, commonFixture)
 		writeFile(t, root, environmentsFile, `[]`)
 		require.ErrorIs(t, applyOrCheck(root, false, &bytes.Buffer{}), errEmptyDeclaration)
-		got, err := os.ReadFile(filepath.Join(root, rulesetFile))
+		got, err := os.ReadFile(filepath.Join(root, commonRulesetFile))
 		require.NoError(t, err)
-		assert.Equal(t, rulesetFixture, string(got))
+		assert.Equal(t, commonFixture, string(got))
 	})
 
 	t.Run("Private Vulnerability Reporting の宣言が不正なら apply は include の区間も書き換えない", func(t *testing.T) {
 		t.Parallel()
-		root := writeRepo(t, rulesetFixture)
+		root := writeRepo(t, commonFixture)
 		writeFile(t, root, vulnerabilityReportingFile, `{"enabled": null}`)
 		require.ErrorIs(t, applyOrCheck(root, false, &bytes.Buffer{}), errDeclaration)
-		got, err := os.ReadFile(filepath.Join(root, rulesetFile))
+		got, err := os.ReadFile(filepath.Join(root, commonRulesetFile))
 		require.NoError(t, err)
-		assert.Equal(t, rulesetFixture, string(got))
+		assert.Equal(t, commonFixture, string(got))
 	})
 
 	t.Run("Dependabot のラベルが labels.json に無ければ、apply は include の区間も起動条件も書き換えない", func(t *testing.T) {
 		t.Parallel()
-		root := writeRepo(t, rulesetFixture)
+		root := writeRepo(t, commonFixture)
 		drifted := strings.Replace(applyWorkflowFixture, "      - main", "      - 'release/*'", 1)
 		writeFile(t, root, ".github/workflows/apply.yaml", drifted)
 		writeFile(t, root, labelsFile, `[{"name": "bug", "color": "d73a4a"}]`)
 		require.ErrorIs(t, applyOrCheck(root, false, &bytes.Buffer{}), errDependabotLabels)
-		ruleset, err := os.ReadFile(filepath.Join(root, rulesetFile))
+		ruleset, err := os.ReadFile(filepath.Join(root, commonRulesetFile))
 		require.NoError(t, err)
-		assert.Equal(t, rulesetFixture, string(ruleset))
+		assert.Equal(t, commonFixture, string(ruleset))
 		wf, err := os.ReadFile(filepath.Join(root, ".github/workflows/apply.yaml"))
 		require.NoError(t, err)
 		assert.Equal(t, drifted, string(wf))
 	})
 
+	t.Run("apply は無い deploy-* を生成し、check はそれを通す", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, syncedCommon)
+		require.NoError(t, os.Remove(filepath.Join(root, deployMainFile)))
+		err := applyOrCheck(root, true, &bytes.Buffer{})
+		require.ErrorIs(t, err, errRulesetDrift)
+		assert.ErrorContains(t, err, deployMainFile)
+		assert.NoFileExists(t, filepath.Join(root, deployMainFile))
+		var out bytes.Buffer
+		require.NoError(t, applyOrCheck(root, false, &out))
+		got, err := os.ReadFile(filepath.Join(root, deployMainFile))
+		require.NoError(t, err)
+		assert.Equal(t, deployMainFixture, string(got))
+		assert.Contains(t, out.String(), deployMainFile+" を書き換えました")
+		require.NoError(t, applyOrCheck(root, true, &bytes.Buffer{}))
+	})
+
+	t.Run("check は deploy-* の手で書き換えた内容をずれとして報せ、書かない", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, syncedCommon)
+		edited := strings.Replace(deployMainFixture, `"context": "line-gate"`, `"context": "other"`, 1)
+		writeFile(t, root, deployMainFile, edited)
+		err := applyOrCheck(root, true, &bytes.Buffer{})
+		require.ErrorIs(t, err, errRulesetDrift)
+		assert.ErrorContains(t, err, deployMainFile)
+		got, err := os.ReadFile(filepath.Join(root, deployMainFile))
+		require.NoError(t, err)
+		assert.Equal(t, edited, string(got))
+	})
+
+	t.Run("checks.json の plan の context が変われば、check は deploy-* のずれを報せる", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, syncedCommon)
+		writeFile(t, root, checksdecl.File, strings.Replace(checksFixture, `"plan-x-workload"`, `"plan-x-other"`, 1))
+		err := applyOrCheck(root, true, &bytes.Buffer{})
+		require.ErrorIs(t, err, errRulesetDrift)
+		assert.ErrorContains(t, err, deployMainFile)
+	})
+
+	t.Run("lines の include がずれていれば apply が書き換える", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, syncedCommon)
+		writeFile(t, root, linesRulesetFile, linesFixture)
+		require.ErrorIs(t, applyOrCheck(root, true, &bytes.Buffer{}), errRulesetDrift)
+		require.NoError(t, applyOrCheck(root, false, &bytes.Buffer{}))
+		got, err := os.ReadFile(filepath.Join(root, linesRulesetFile))
+		require.NoError(t, err)
+		assert.Equal(t, syncedLines, string(got))
+	})
+
+	t.Run("branch-protection.json が在れば、その include も生成し直し、件数に数える", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, syncedCommon)
+		writeFile(t, root, legacyRulesetFile, rulesetFixture)
+		require.ErrorIs(t, applyOrCheck(root, true, &bytes.Buffer{}), errRulesetDrift)
+		var out bytes.Buffer
+		require.NoError(t, applyOrCheck(root, false, &out))
+		got, err := os.ReadFile(filepath.Join(root, legacyRulesetFile))
+		require.NoError(t, err)
+		assert.Equal(t, syncedLegacy, string(got))
+		assert.Contains(t, out.String(), "保護対象 3 件、ruleset 4 件、")
+	})
+
+	for _, dryRun := range []bool{false, true} {
+		t.Run(fmt.Sprintf("宣言に無い deploy-*.json があれば、dryRun=%t でも失敗し、何も書かない", dryRun), func(t *testing.T) {
+			t.Parallel()
+			root := writeRepo(t, commonFixture)
+			stale := writeFile(t, root, rulesetsDir+"/deploy-old.json", deployMainFixture)
+			err := applyOrCheck(root, dryRun, &bytes.Buffer{})
+			require.ErrorIs(t, err, errStaleRuleset)
+			assert.ErrorContains(t, err, rulesetsDir+"/deploy-old.json")
+			got, err := os.ReadFile(filepath.Join(root, commonRulesetFile))
+			require.NoError(t, err)
+			assert.Equal(t, commonFixture, string(got))
+			assert.FileExists(t, stale)
+		})
+	}
+
 	t.Run("書き込めなければ失敗し、ファイルは元のまま", func(t *testing.T) {
 		t.Parallel()
 		testenv.RequireNonRoot(t, "読み取り専用のディレクトリへの書き込みの失敗を作る")
-		root := writeRepo(t, rulesetFixture)
-		dir := filepath.Dir(filepath.Join(root, rulesetFile))
+		root := writeRepo(t, commonFixture)
+		dir := filepath.Dir(filepath.Join(root, commonRulesetFile))
 		require.NoError(t, os.Chmod(dir, 0o500))       //nolint:gosec // 書き込み失敗を作るため
 		t.Cleanup(func() { _ = os.Chmod(dir, 0o750) }) //nolint:gosec // 後始末
 		require.ErrorIs(t, applyOrCheck(root, false, &bytes.Buffer{}), fs.ErrPermission)
-		got, err := os.ReadFile(filepath.Join(root, rulesetFile))
+		got, err := os.ReadFile(filepath.Join(root, commonRulesetFile))
 		require.NoError(t, err)
-		assert.Equal(t, rulesetFixture, string(got))
+		assert.Equal(t, commonFixture, string(got))
 		entries, err := os.ReadDir(dir)
 		require.NoError(t, err)
 		names := make([]string, 0, len(entries))
 		for _, e := range entries {
 			names = append(names, e.Name())
 		}
-		assert.ElementsMatch(t, []string{"branches.json", "environments.json", "branch-protection.json", "private-vulnerability-reporting.json", "labels.json"}, names)
+		assert.ElementsMatch(t, []string{"common.json", "lines.json", "deploy-main.json"}, names)
 	})
 }
 
@@ -696,17 +834,17 @@ func Test_drift(t *testing.T) {
 
 	t.Run("一致すれば件数を報せて成功する", func(t *testing.T) {
 		t.Parallel()
-		root := writeRepo(t, syncedRuleset)
+		root := writeRepo(t, syncedCommon)
 		f, c := newFakeGitHub(t, liveRoutes(t))
 		var out bytes.Buffer
 		require.NoError(t, drift(context.Background(), root, c, repo, &out))
-		assert.Equal(t, "✅ repo-settings: o/r の ruleset 1 件と environment 6 件（実在 6 件）と Private Vulnerability Reporting が宣言どおりです\n", out.String())
+		assert.Equal(t, "✅ repo-settings: o/r の ruleset 3 件と environment 6 件（実在 6 件）と Private Vulnerability Reporting が宣言どおりです\n", out.String())
 		assert.Empty(t, f.writes())
 	})
 
 	t.Run("ずれをすべて出力して失敗する", func(t *testing.T) {
 		t.Parallel()
-		root := writeRepo(t, syncedRuleset)
+		root := writeRepo(t, syncedCommon)
 		routes := liveRoutes(t)
 		routes[envListPath(1)] = ok(`{"total_count": 6, "environments": [
 			` + applyEnvsJSON + `
@@ -728,7 +866,7 @@ func Test_drift(t *testing.T) {
 	approvalRoutes := func(t *testing.T, from, to string) map[string]fakeResponse {
 		t.Helper()
 		var ruleset map[string]any
-		require.NoError(t, json.Unmarshal([]byte(strings.Replace(syncedRuleset, from, to, 1)), &ruleset))
+		require.NoError(t, json.Unmarshal([]byte(strings.Replace(syncedCommon, from, to, 1)), &ruleset))
 		ruleset["id"] = 7.0
 		body, err := json.Marshal(ruleset)
 		require.NoError(t, err)
@@ -742,11 +880,11 @@ func Test_drift(t *testing.T) {
 		routes := approvalRoutes(t, `"required_approving_review_count": 1`, `"required_approving_review_count": 0`)
 		f, c := newFakeGitHub(t, routes)
 		var out bytes.Buffer
-		require.ErrorIs(t, drift(context.Background(), writeRepo(t, syncedRuleset), c, repo, &out), errDrift)
+		require.ErrorIs(t, drift(context.Background(), writeRepo(t, syncedCommon), c, repo, &out), errDrift)
 		assert.Equal(t, strings.Join([]string{
 			"❌ repo-settings: o/r で宣言と実態のずれが 1 件あります",
 			"  ADR-0603 決定7 の例外（承認者数の要件）に当たるずれ:",
-			"  - ruleset: ルール pull_request の required_approving_review_count が宣言と異なります",
+			"  - ruleset common: ルール pull_request の required_approving_review_count が宣言と異なります",
 		}, "\n")+"\n", out.String())
 		assert.Empty(t, f.writes())
 	})
@@ -758,33 +896,83 @@ func Test_drift(t *testing.T) {
 			"\"required_review_thread_resolution\": false,\n      \"required_approving_review_count\": 0")
 		_, c := newFakeGitHub(t, routes)
 		var out bytes.Buffer
-		require.ErrorIs(t, drift(context.Background(), writeRepo(t, syncedRuleset), c, repo, &out), errDrift)
+		require.ErrorIs(t, drift(context.Background(), writeRepo(t, syncedCommon), c, repo, &out), errDrift)
 		assert.Equal(t, strings.Join([]string{
 			"❌ repo-settings: o/r で宣言と実態のずれが 2 件あります",
-			"  - ruleset: ルール pull_request が宣言と異なります",
+			"  - ruleset common: ルール pull_request が宣言と異なります",
 			"  ADR-0603 決定7 の例外（承認者数の要件）に当たるずれ:",
-			"  - ruleset: ルール pull_request の required_approving_review_count が宣言と異なります",
+			"  - ruleset common: ルール pull_request の required_approving_review_count が宣言と異なります",
 		}, "\n")+"\n", out.String())
 	})
 
 	t.Run("観測できなかったものを出力する", func(t *testing.T) {
 		t.Parallel()
-		root := writeRepo(t, syncedRuleset)
+		root := writeRepo(t, syncedCommon)
 		routes := liveRoutes(t)
-		routes["GET /repos/o/r/rulesets/7"] = ok(strings.Replace(syncedRuleset, ",\n  \"bypass_actors\": []", "", 1))
+		routes["GET /repos/o/r/rulesets/7"] = ok(strings.Replace(syncedCommon, ",\n  \"bypass_actors\": []", "", 1))
 		_, c := newFakeGitHub(t, routes)
 		var out bytes.Buffer
 		require.NoError(t, drift(context.Background(), root, c, repo, &out))
 		assert.Equal(t, strings.Join([]string{
-			"⚠️ 突合の対象外（観測できない）: ruleset の bypass_actors（write 権限の無い読み取りには返らない）",
-			"✅ repo-settings: o/r の ruleset 1 件と environment 6 件（実在 6 件）と Private Vulnerability Reporting が宣言どおりです（突合の対象外 1 件を除く）",
+			"⚠️ 突合の対象外（観測できない）: ruleset common の bypass_actors（write 権限の無い読み取りには返らない）",
+			"✅ repo-settings: o/r の ruleset 3 件と environment 6 件（実在 6 件）と Private Vulnerability Reporting が宣言どおりです（突合の対象外 1 件を除く）",
 		}, "\n")+"\n", out.String())
+	})
+
+	t.Run("宣言に無い ruleset と、実在しない宣言の ruleset を報せて失敗する", func(t *testing.T) {
+		t.Parallel()
+		routes := liveRoutes(t)
+		routes[rulesetListPath(1)] = ok(`[{"id": 7, "name": "common", "source_type": "Repository"}, {"id": 8, "name": "lines", "source_type": "Repository"},
+			{"id": 3, "name": "old", "source_type": "Repository"}, {"id": 4, "name": "org", "source_type": "Organization"}]`)
+		f, c := newFakeGitHub(t, routes)
+		var out bytes.Buffer
+		require.ErrorIs(t, drift(context.Background(), writeRepo(t, syncedCommon), c, repo, &out), errDrift)
+		assert.Equal(t, strings.Join([]string{
+			"❌ repo-settings: o/r で宣言と実態のずれが 2 件あります",
+			"  - ruleset deploy-main: 宣言の ruleset が実在しません",
+			"  - ruleset old: 宣言に無い ruleset が実在します",
+		}, "\n")+"\n", out.String())
+		assert.Empty(t, f.writes())
+	})
+
+	t.Run("ruleset ごとのずれを、名前を前置して出力する", func(t *testing.T) {
+		t.Parallel()
+		routes := liveRoutes(t)
+		routes["GET /repos/o/r/rulesets/9"] = ok(liveBody(t, strings.Replace(deployMainFixture, `"context": "line-gate"`, `"context": "other"`, 1), 9))
+		_, c := newFakeGitHub(t, routes)
+		var out bytes.Buffer
+		require.ErrorIs(t, drift(context.Background(), writeRepo(t, syncedCommon), c, repo, &out), errDrift)
+		assert.Equal(t, strings.Join([]string{
+			"❌ repo-settings: o/r で宣言と実態のずれが 1 件あります",
+			"  - ruleset deploy-main: ルール required_status_checks が宣言と異なります（実態に無い context: line-gate。宣言に無い context: other）",
+		}, "\n")+"\n", out.String())
+	})
+
+	t.Run("同名の ruleset が2件あれば失敗する", func(t *testing.T) {
+		t.Parallel()
+		routes := liveRoutes(t)
+		routes[rulesetListPath(1)] = ok("[" + liveRulesetList + `, {"id": 10, "name": "lines", "source_type": "Repository"}]`)
+		_, c := newFakeGitHub(t, routes)
+		require.ErrorIs(t, drift(context.Background(), writeRepo(t, syncedCommon), c, repo, &bytes.Buffer{}), errAmbiguousRuleset)
+	})
+
+	t.Run("branch-protection.json が在れば、それも突き合わせる", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, syncedCommon)
+		writeFile(t, root, legacyRulesetFile, syncedLegacy)
+		routes := liveRoutes(t)
+		routes[rulesetListPath(1)] = ok("[" + liveRulesetList + `, {"id": 6, "name": "branch-protection", "source_type": "Repository"}]`)
+		routes["GET /repos/o/r/rulesets/6"] = ok(liveBody(t, syncedLegacy, 6))
+		_, c := newFakeGitHub(t, routes)
+		var out bytes.Buffer
+		require.NoError(t, drift(context.Background(), root, c, repo, &out))
+		assert.Equal(t, "✅ repo-settings: o/r の ruleset 4 件と environment 6 件（実在 6 件）と Private Vulnerability Reporting が宣言どおりです\n", out.String())
 	})
 
 	t.Run("実態を読めなければ失敗する", func(t *testing.T) {
 		t.Parallel()
 		_, c := newFakeGitHub(t, map[string]fakeResponse{})
-		require.ErrorIs(t, drift(context.Background(), writeRepo(t, syncedRuleset), c, repo, &bytes.Buffer{}), errHTTP)
+		require.ErrorIs(t, drift(context.Background(), writeRepo(t, syncedCommon), c, repo, &bytes.Buffer{}), errHTTP)
 	})
 
 	t.Run("Private Vulnerability Reporting のずれを出力して失敗する", func(t *testing.T) {
@@ -793,7 +981,7 @@ func Test_drift(t *testing.T) {
 		routes["GET "+vulnerabilityReportingPath(repo)] = ok(`{"enabled": false}`)
 		f, c := newFakeGitHub(t, routes)
 		var out bytes.Buffer
-		require.ErrorIs(t, drift(context.Background(), writeRepo(t, syncedRuleset), c, repo, &out), errDrift)
+		require.ErrorIs(t, drift(context.Background(), writeRepo(t, syncedCommon), c, repo, &out), errDrift)
 		assert.Equal(t, strings.Join([]string{
 			"❌ repo-settings: o/r で宣言と実態のずれが 1 件あります",
 			"  - Private Vulnerability Reporting: enabled が宣言の true と異なります",
@@ -807,7 +995,7 @@ func Test_drift(t *testing.T) {
 		routes["GET /repos/o/r"] = ok(`{"visibility": "private"}`)
 		_, c := newFakeGitHub(t, routes)
 		var out bytes.Buffer
-		require.ErrorIs(t, drift(context.Background(), writeRepo(t, syncedRuleset), c, repo, &out), errDrift)
+		require.ErrorIs(t, drift(context.Background(), writeRepo(t, syncedCommon), c, repo, &out), errDrift)
 		assert.Equal(t, strings.Join([]string{
 			"❌ repo-settings: o/r で宣言と実態のずれが 1 件あります",
 			"  - Private Vulnerability Reporting: 公開でないリポジトリでは使えません",
@@ -816,7 +1004,7 @@ func Test_drift(t *testing.T) {
 
 	t.Run("公開でないリポジトリが無効を宣言していれば、突合の対象外として数え、一致に含めない", func(t *testing.T) {
 		t.Parallel()
-		root := writeRepo(t, syncedRuleset)
+		root := writeRepo(t, syncedCommon)
 		writeFile(t, root, vulnerabilityReportingFile, `{"enabled": false}`)
 		routes := liveRoutes(t)
 		routes["GET /repos/o/r"] = ok(`{"visibility": "private"}`)
@@ -825,7 +1013,7 @@ func Test_drift(t *testing.T) {
 		require.NoError(t, drift(context.Background(), root, c, repo, &out))
 		assert.Equal(t, strings.Join([]string{
 			"⚠️ 突合の対象外（観測できない）: Private Vulnerability Reporting（公開でないリポジトリには提供されない）",
-			"✅ repo-settings: o/r の ruleset 1 件と environment 6 件（実在 6 件）が宣言どおりです（突合の対象外 1 件を除く）",
+			"✅ repo-settings: o/r の ruleset 3 件と environment 6 件（実在 6 件）が宣言どおりです（突合の対象外 1 件を除く）",
 		}, "\n")+"\n", out.String())
 	})
 
@@ -835,9 +1023,9 @@ func Test_drift(t *testing.T) {
 		routes["GET "+vulnerabilityReportingPath(repo)] = fakeResponse{status: http.StatusForbidden, body: `{"message": "Resource not accessible"}`}
 		_, c := newFakeGitHub(t, routes)
 		var out bytes.Buffer
-		err := drift(context.Background(), writeRepo(t, syncedRuleset), c, repo, &out)
+		err := drift(context.Background(), writeRepo(t, syncedCommon), c, repo, &out)
 		require.ErrorIs(t, err, errHTTP)
-		assert.Equal(t, "❌ repo-settings: o/r の ruleset 1 件と environment 6 件（実在 6 件）は宣言どおりですが、Private Vulnerability Reporting の実態を読めませんでした\n", out.String())
+		assert.Equal(t, "❌ repo-settings: o/r の ruleset 3 件と environment 6 件（実在 6 件）は宣言どおりですが、Private Vulnerability Reporting の実態を読めませんでした\n", out.String())
 		assert.ErrorContains(t, err, "Private Vulnerability Reporting の実態の読み取り")
 	})
 
@@ -851,7 +1039,7 @@ func Test_drift(t *testing.T) {
 			{"name": "x-plan", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}}]}`)
 		_, c := newFakeGitHub(t, routes)
 		var out bytes.Buffer
-		require.ErrorIs(t, drift(context.Background(), writeRepo(t, syncedRuleset), c, repo, &out), errDrift)
+		require.ErrorIs(t, drift(context.Background(), writeRepo(t, syncedCommon), c, repo, &out), errDrift)
 		assert.Contains(t, out.String(), "  - environment copilot: 管理者による保護の迂回が有効です\n")
 		assert.Contains(t, out.String(), "❌ repo-settings: Private Vulnerability Reporting の実態を読めませんでした: ")
 	})
@@ -864,7 +1052,7 @@ func Test_syncSettings(t *testing.T) {
 		t.Parallel()
 		f, c := newFakeGitHub(t, liveRoutes(t))
 		var out bytes.Buffer
-		require.NoError(t, syncSettings(context.Background(), writeRepo(t, syncedRuleset), c, repo, onlyRuleset, &out))
+		require.NoError(t, syncSettings(context.Background(), writeRepo(t, syncedCommon), c, repo, onlyRuleset, &out))
 		assert.Empty(t, f.writes())
 		assert.Equal(t, "✅ repo-settings: o/r の ruleset へ送る要求はありません\n", out.String())
 	})
@@ -881,7 +1069,7 @@ func Test_syncSettings(t *testing.T) {
 		routes["POST /repos/o/r/environments/x-plan/deployment-branch-policies"] = ok(`{}`)
 		f, c := newFakeGitHub(t, routes)
 		var out bytes.Buffer
-		require.NoError(t, syncSettings(context.Background(), writeRepo(t, syncedRuleset), c, repo, onlyEnvironments, &out))
+		require.NoError(t, syncSettings(context.Background(), writeRepo(t, syncedCommon), c, repo, onlyEnvironments, &out))
 		writes := f.writes()
 		targets := make([]string, 0, len(writes))
 		for _, w := range writes {
@@ -920,7 +1108,7 @@ func Test_syncSettings(t *testing.T) {
 			{"name": "other", "protection_rules": [], "can_admins_bypass": false}]}`)
 		f, c := newFakeGitHub(t, routes)
 		var out bytes.Buffer
-		require.NoError(t, syncSettings(context.Background(), writeRepo(t, syncedRuleset), c, repo, onlyEnvironments, &out))
+		require.NoError(t, syncSettings(context.Background(), writeRepo(t, syncedCommon), c, repo, onlyEnvironments, &out))
 		assert.Empty(t, f.writes())
 		assert.Equal(t, strings.Join([]string{
 			"⚠️ 宣言に無い environment は消していません（make repo-settings-drift はこれをずれとして報せます）: other",
@@ -938,20 +1126,63 @@ func Test_syncSettings(t *testing.T) {
 			{"name": "other", "protection_rules": [], "can_admins_bypass": false}]}`)
 		_, c := newFakeGitHub(t, routes)
 		var out bytes.Buffer
-		require.NoError(t, syncSettings(context.Background(), writeRepo(t, syncedRuleset), c, repo, onlyRuleset, &out))
+		require.NoError(t, syncSettings(context.Background(), writeRepo(t, syncedCommon), c, repo, onlyRuleset, &out))
 		assert.Equal(t, "✅ repo-settings: o/r の ruleset へ送る要求はありません\n", out.String())
 	})
 
 	t.Run("ruleset の差分を PUT で解消する", func(t *testing.T) {
 		t.Parallel()
 		routes := liveRoutes(t)
-		routes["GET /repos/o/r/rulesets/7"] = ok(`{"name": "branch-protection", "rules": []}`)
+		routes["GET /repos/o/r/rulesets/7"] = ok(`{"name": "common", "rules": []}`)
 		routes["PUT /repos/o/r/rulesets/7"] = ok(`{}`)
 		f, c := newFakeGitHub(t, routes)
-		require.NoError(t, syncSettings(context.Background(), writeRepo(t, syncedRuleset), c, repo, onlyRuleset, &bytes.Buffer{}))
+		require.NoError(t, syncSettings(context.Background(), writeRepo(t, syncedCommon), c, repo, onlyRuleset, &bytes.Buffer{}))
 		writes := f.writes()
 		require.Len(t, writes, 1)
-		assert.JSONEq(t, compactJSON(t, syncedRuleset), writes[0].body)
+		assert.JSONEq(t, compactJSON(t, syncedCommon), writes[0].body)
+	})
+
+	t.Run("実在しない ruleset を POST で作り、宣言に無い ruleset は消さずに報せる", func(t *testing.T) {
+		t.Parallel()
+		routes := liveRoutes(t)
+		routes[rulesetListPath(1)] = ok(`[{"id": 7, "name": "common", "source_type": "Repository"}, {"id": 8, "name": "lines", "source_type": "Repository"}, {"id": 3, "name": "old", "source_type": "Repository"}]`)
+		routes["POST /repos/o/r/rulesets"] = fakeResponse{status: http.StatusCreated, body: `{}`}
+		f, c := newFakeGitHub(t, routes)
+		var out bytes.Buffer
+		require.NoError(t, syncSettings(context.Background(), writeRepo(t, syncedCommon), c, repo, onlyRuleset, &out))
+		writes := f.writes()
+		require.Len(t, writes, 1)
+		assert.Equal(t, "POST /repos/o/r/rulesets", writes[0].method+" "+writes[0].target)
+		assert.JSONEq(t, compactJSON(t, deployMainFixture), writes[0].body)
+		assert.Equal(t, strings.Join([]string{
+			"🔧 POST /repos/o/r/rulesets",
+			"⚠️ 宣言に無い ruleset は消していません（make repo-settings-drift はこれをずれとして報せます）: old",
+			"✅ repo-settings: o/r へ 1 件の要求を送りました。make repo-settings-drift で結果を確かめてください",
+		}, "\n")+"\n", out.String())
+	})
+
+	t.Run("宣言に無い ruleset だけがずれていれば、何も送らずにそれを報せる", func(t *testing.T) {
+		t.Parallel()
+		routes := liveRoutes(t)
+		routes[rulesetListPath(1)] = ok("[" + liveRulesetList + `, {"id": 3, "name": "old", "source_type": "Repository"}]`)
+		f, c := newFakeGitHub(t, routes)
+		var out bytes.Buffer
+		require.NoError(t, syncSettings(context.Background(), writeRepo(t, syncedCommon), c, repo, onlyRuleset, &out))
+		assert.Empty(t, f.writes())
+		assert.Equal(t, strings.Join([]string{
+			"⚠️ 宣言に無い ruleset は消していません（make repo-settings-drift はこれをずれとして報せます）: old",
+			"✅ repo-settings: o/r の ruleset へ送る要求はありません",
+		}, "\n")+"\n", out.String())
+	})
+
+	t.Run("environment だけを扱うときは、宣言に無い ruleset を報せない", func(t *testing.T) {
+		t.Parallel()
+		routes := liveRoutes(t)
+		routes[rulesetListPath(1)] = ok("[" + liveRulesetList + `, {"id": 3, "name": "old", "source_type": "Repository"}]`)
+		_, c := newFakeGitHub(t, routes)
+		var out bytes.Buffer
+		require.NoError(t, syncSettings(context.Background(), writeRepo(t, syncedCommon), c, repo, onlyEnvironments, &out))
+		assert.Equal(t, "✅ repo-settings: o/r の environments へ送る要求はありません\n", out.String())
 	})
 
 	t.Run("書き込みが失敗すれば、後の要求を送らずに止まる", func(t *testing.T) {
@@ -962,7 +1193,7 @@ func Test_syncSettings(t *testing.T) {
 			` + applyEnvsJSON + `
 			{"name": "copilot", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": null}]}`)
 		f, c := newFakeGitHub(t, routes)
-		err := syncSettings(context.Background(), writeRepo(t, syncedRuleset), c, repo, onlyEnvironments, &bytes.Buffer{})
+		err := syncSettings(context.Background(), writeRepo(t, syncedCommon), c, repo, onlyEnvironments, &bytes.Buffer{})
 		require.ErrorIs(t, err, errHTTP)
 		writes := f.writes()
 		require.Len(t, writes, 1)
@@ -972,7 +1203,7 @@ func Test_syncSettings(t *testing.T) {
 	t.Run("宣言を読めなければ何も送らない", func(t *testing.T) {
 		t.Parallel()
 		f, c := newFakeGitHub(t, liveRoutes(t))
-		require.ErrorIs(t, syncSettings(context.Background(), writeRepo(t, rulesetFixture), c, repo, onlyRuleset, &bytes.Buffer{}), errIncludeDrift)
+		require.ErrorIs(t, syncSettings(context.Background(), writeRepo(t, commonFixture), c, repo, onlyRuleset, &bytes.Buffer{}), errRulesetDrift)
 		assert.Empty(t, f.requests)
 	})
 
@@ -983,7 +1214,7 @@ func Test_syncSettings(t *testing.T) {
 			routes["GET /repos/o/r"] = fakeResponse{status: http.StatusForbidden, body: `{}`}
 			routes["GET "+vulnerabilityReportingPath(repo)] = fakeResponse{status: http.StatusForbidden, body: `{}`}
 			f, c := newFakeGitHub(t, routes)
-			require.NoError(t, syncSettings(context.Background(), writeRepo(t, syncedRuleset), c, repo, only, &bytes.Buffer{}))
+			require.NoError(t, syncSettings(context.Background(), writeRepo(t, syncedCommon), c, repo, only, &bytes.Buffer{}))
 			for _, r := range f.requests {
 				assert.NotEqual(t, "/repos/o/r", r.target)
 				assert.NotEqual(t, vulnerabilityReportingPath(repo), r.target)
@@ -997,7 +1228,7 @@ func Test_syncSettings(t *testing.T) {
 		routes["GET "+vulnerabilityReportingPath(repo)] = ok(`{"enabled": false}`)
 		routes["PUT "+vulnerabilityReportingPath(repo)] = fakeResponse{status: http.StatusNoContent}
 		f, c := newFakeGitHub(t, routes)
-		require.NoError(t, syncSettings(context.Background(), writeRepo(t, syncedRuleset), c, repo, onlyVulnerabilityReporting, &bytes.Buffer{}))
+		require.NoError(t, syncSettings(context.Background(), writeRepo(t, syncedCommon), c, repo, onlyVulnerabilityReporting, &bytes.Buffer{}))
 		targets := make([]string, 0, len(f.requests))
 		for _, r := range f.requests {
 			targets = append(targets, r.method+" "+r.target)
@@ -1015,7 +1246,7 @@ func Test_syncVulnerabilityReporting(t *testing.T) {
 		t.Parallel()
 		f, c := newFakeGitHub(t, liveRoutes(t))
 		var out bytes.Buffer
-		require.NoError(t, syncVulnerabilityReporting(context.Background(), writeRepo(t, syncedRuleset), c, repo, &out))
+		require.NoError(t, syncVulnerabilityReporting(context.Background(), writeRepo(t, syncedCommon), c, repo, &out))
 		assert.Empty(t, f.writes())
 		assert.Equal(t, "✅ repo-settings: o/r の vulnerability-reporting へ送る要求はありません\n", out.String())
 	})
@@ -1032,7 +1263,7 @@ func Test_syncVulnerabilityReporting(t *testing.T) {
 	for _, tc := range writeCases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			root := writeRepo(t, syncedRuleset)
+			root := writeRepo(t, syncedCommon)
 			writeFile(t, root, vulnerabilityReportingFile, tc.declared)
 			routes := liveRoutes(t)
 			routes["GET "+pvr] = ok(tc.live)
@@ -1056,7 +1287,7 @@ func Test_syncVulnerabilityReporting(t *testing.T) {
 		routes := liveRoutes(t)
 		routes["GET /repos/o/r"] = ok(`{"visibility": "private"}`)
 		f, c := newFakeGitHub(t, routes)
-		err := syncVulnerabilityReporting(context.Background(), writeRepo(t, syncedRuleset), c, repo, &bytes.Buffer{})
+		err := syncVulnerabilityReporting(context.Background(), writeRepo(t, syncedCommon), c, repo, &bytes.Buffer{})
 		require.ErrorIs(t, err, errVulnerabilityReportingUnavailable)
 		assert.Contains(t, err.Error(), vulnerabilityReportingFile+" の enabled を false にして commit")
 		assert.Empty(t, f.writes())
@@ -1064,7 +1295,7 @@ func Test_syncVulnerabilityReporting(t *testing.T) {
 
 	t.Run("公開でないリポジトリが無効を宣言していれば、何も送らずに対象外と報せる", func(t *testing.T) {
 		t.Parallel()
-		root := writeRepo(t, syncedRuleset)
+		root := writeRepo(t, syncedCommon)
 		writeFile(t, root, vulnerabilityReportingFile, `{"enabled": false}`)
 		routes := liveRoutes(t)
 		routes["GET /repos/o/r"] = ok(`{"visibility": "internal"}`)
@@ -1083,7 +1314,7 @@ func Test_syncVulnerabilityReporting(t *testing.T) {
 		routes := liveRoutes(t)
 		routes["GET "+pvr] = fakeResponse{status: http.StatusForbidden, body: `{}`}
 		f, c := newFakeGitHub(t, routes)
-		require.ErrorIs(t, syncVulnerabilityReporting(context.Background(), writeRepo(t, syncedRuleset), c, repo, &bytes.Buffer{}), errHTTP)
+		require.ErrorIs(t, syncVulnerabilityReporting(context.Background(), writeRepo(t, syncedCommon), c, repo, &bytes.Buffer{}), errHTTP)
 		assert.Empty(t, f.writes())
 	})
 
@@ -1092,12 +1323,12 @@ func Test_syncVulnerabilityReporting(t *testing.T) {
 		routes := liveRoutes(t)
 		routes["GET "+pvr] = ok(`{"enabled": false}`)
 		_, c := newFakeGitHub(t, routes)
-		require.ErrorIs(t, syncVulnerabilityReporting(context.Background(), writeRepo(t, syncedRuleset), c, repo, &bytes.Buffer{}), errHTTP)
+		require.ErrorIs(t, syncVulnerabilityReporting(context.Background(), writeRepo(t, syncedCommon), c, repo, &bytes.Buffer{}), errHTTP)
 	})
 
 	t.Run("宣言を読めなければ GitHub へ問わない", func(t *testing.T) {
 		t.Parallel()
-		root := writeRepo(t, syncedRuleset)
+		root := writeRepo(t, syncedCommon)
 		writeFile(t, root, vulnerabilityReportingFile, `{}`)
 		f, c := newFakeGitHub(t, liveRoutes(t))
 		require.ErrorIs(t, syncVulnerabilityReporting(context.Background(), root, c, repo, &bytes.Buffer{}), errDeclaration)
@@ -1118,7 +1349,7 @@ func Test_observe(t *testing.T) {
 	t.Run("宣言と実態と差分を返す", func(t *testing.T) {
 		t.Parallel()
 		_, c := newFakeGitHub(t, liveRoutes(t))
-		want, got, d, err := observe(context.Background(), writeRepo(t, syncedRuleset), c, repo)
+		want, got, d, err := observe(context.Background(), writeRepo(t, syncedCommon), c, repo)
 		require.NoError(t, err)
 		assert.Len(t, want.Envs, 6)
 		assert.Len(t, got.Envs, 6)
@@ -1128,15 +1359,15 @@ func Test_observe(t *testing.T) {
 	t.Run("宣言を読めなければ GitHub へ問わない", func(t *testing.T) {
 		t.Parallel()
 		f, c := newFakeGitHub(t, liveRoutes(t))
-		_, _, _, err := observe(context.Background(), writeRepo(t, rulesetFixture), c, repo)
-		require.ErrorIs(t, err, errIncludeDrift)
+		_, _, _, err := observe(context.Background(), writeRepo(t, commonFixture), c, repo)
+		require.ErrorIs(t, err, errRulesetDrift)
 		assert.Empty(t, f.requests)
 	})
 
 	t.Run("実態を読めなければ失敗する", func(t *testing.T) {
 		t.Parallel()
 		_, c := newFakeGitHub(t, map[string]fakeResponse{})
-		_, _, _, err := observe(context.Background(), writeRepo(t, syncedRuleset), c, repo)
+		_, _, _, err := observe(context.Background(), writeRepo(t, syncedCommon), c, repo)
 		require.ErrorIs(t, err, errHTTP)
 	})
 }

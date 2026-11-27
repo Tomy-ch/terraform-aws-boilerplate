@@ -206,6 +206,29 @@ func Test_requiredDeployFrom(t *testing.T) {
 	}
 }
 
+func Test_deployNamesByEnv(t *testing.T) {
+	t.Parallel()
+
+	b := branches{Deploy: []branchdecl.DeployBranch{
+		{Branch: "admin", Env: "admin"}, {Branch: "production"}, {Branch: "security", Env: "security"}, {Branch: "develop"},
+	}}
+
+	t.Run("env を持つデプロイブランチを宣言の順に返す", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, []string{"admin", "security"}, deployNamesByEnv(b, true))
+	})
+
+	t.Run("env を持たないデプロイブランチを宣言の順に返す", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, []string{"production", "develop"}, deployNamesByEnv(b, false))
+	})
+
+	t.Run("当たるものが無ければ空を返す", func(t *testing.T) {
+		t.Parallel()
+		assert.Empty(t, deployNamesByEnv(branches{Deploy: []branchdecl.DeployBranch{{Branch: "production"}}}, true))
+	})
+}
+
 func Test_rulesetIncludes(t *testing.T) {
 	t.Parallel()
 

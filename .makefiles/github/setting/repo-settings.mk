@@ -2,13 +2,16 @@
 ##
 ## 判定は scripts/repo-settings が持つ。apply-* は GitHub の実態を書き換えるので、管理者の資格情報を
 ## 持つ人が実行する（ADR-0603 決定30）。突合（drift）は読み取りの権限だけで動く（ADR-0603 決定6）。
-.PHONY: repo-settings-apply ## branches.json から branch-protection.json の include と workflow の起動条件（apply の workflow と印 branch-set の行）を生成
+.PHONY: repo-settings-apply ## branches.json と checks.json から ruleset の宣言（rulesets/ と、在れば branch-protection.json）の生成する区間と workflow の起動条件（apply の workflow と印 branch-set の行）を生成
 .PHONY: repo-settings-check ## 保護設定の宣言が整合しているか検証（書き換えなし・CI/hook用）
 .PHONY: repo-settings-drift ## 保護設定の宣言と GitHub の実態を突き合わせる（読み取りのみ）
-.PHONY: apply-branch-protection ## branch-protection.json を対象リポジトリの ruleset へ適用
+.PHONY: apply-branch-protection ## ruleset の宣言（rulesets/ と、在れば branch-protection.json）を対象リポジトリの ruleset へ適用（宣言に無い ruleset は消さない）
 .PHONY: apply-environments ## environments.json を対象リポジトリの environment へ適用
 .PHONY: apply-vulnerability-reporting ## private-vulnerability-reporting.json を対象リポジトリの Private Vulnerability Reporting へ適用
 .PHONY: deploy-source-check ## [CI] デプロイブランチへ入る Pull Request の head を検査する（ADR-0603 決定31）
+.PHONY: ci-changes ## [CI] Pull Request の gate で走るべき検査を決め、GITHUB_OUTPUT の run へ書く（ADR-0603 決定17）
+.PHONY: ci-gate ## [CI] Pull Request の gate の判定（ADR-0603 決定17・18）
+.PHONY: ci-line-gate ## [CI] 線への push の検証の判定（ADR-0603 決定37・38）
 .PHONY: create-deploy-branch ## DEPLOY_ENV のデプロイブランチを、デフォルトブランチの先頭から作る（管理者が bootstrap で1回）
 .PHONY: deploy-branch-exists ## DEPLOY_ENV のデプロイブランチが在ることを確かめる（読み取りのみ。bootstrap の段4 の apply の前）
 
@@ -36,11 +39,21 @@ apply-environments:
 apply-vulnerability-reporting:
 	@$(call REPO_SETTINGS_REMOTE,sync -only vulnerability-reporting)
 
-# 引数は RUN_SCRIPT_HOST の sh が環境変数から展開する。
+# 引数は RUN_SCRIPT_HOST の sh が環境変数から展開する。ci-changes・ci-gate・ci-line-gate・create-deploy-branch も同じ。
 deploy-source-check:
 	@$(call RUN_SCRIPT_HOST,repo-settings,source -base "$${BASE_REF:-}" -base-sha "$${BASE_SHA:-}" -head-sha "$${HEAD_SHA:-}" -default "$${DEFAULT_BRANCH:-}")
 
-# DEPLOY_ENV は人が渡す値なので、deploy-source-check と同じく RUN_SCRIPT_HOST の sh が環境変数から展開する。
+# 判定は scripts/ci-gate が持つ。git の履歴を読むので、ツールランナーを経由しない。宣言は base の commit（線の検証では push した commit）の木から読む。
+ci-changes:
+	@$(call RUN_SCRIPT_HOST,ci-gate,changes --decl-rev "$${BASE_SHA:-}" --base "$${BASE_SHA:-}" --head "$${HEAD_SHA:-}" --base-ref "$${BASE_REF:-}" --output "$${GITHUB_OUTPUT:-}")
+
+ci-gate:
+	@$(call RUN_SCRIPT_HOST,ci-gate,judge --decl-rev "$${BASE_SHA:-}" --base "$${BASE_SHA:-}" --head "$${HEAD_SHA:-}" --base-ref "$${BASE_REF:-}" --summary "$${GITHUB_STEP_SUMMARY:-}")
+
+ci-line-gate:
+	@$(call RUN_SCRIPT_HOST,ci-gate,line --decl-rev "$${GITHUB_SHA:-}" --event "$${GITHUB_EVENT_NAME:-}" --ref "$${GITHUB_REF:-}" --summary "$${GITHUB_STEP_SUMMARY:-}")
+
+# DEPLOY_ENV は人が渡す値。展開の形は deploy-source-check の注記のとおり。
 create-deploy-branch:
 	@$(call REPO_SETTINGS_REMOTE,create-deploy-branch -env "$${DEPLOY_ENV:-}")
 

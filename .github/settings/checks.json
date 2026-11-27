@@ -1,0 +1,416 @@
+{
+  "checks": [
+    {
+      "name": "actions-lint",
+      "workflow": "actions-lint.yaml",
+      "paths": [],
+      "scope": "tree",
+      "required": true
+    },
+    {
+      "name": "commitlint",
+      "workflow": "commitlint.yaml",
+      "paths": [],
+      "scope": "change",
+      "required": true
+    },
+    {
+      "name": "docker-lint",
+      "workflow": "docker-lint.yaml",
+      "paths": [],
+      "scope": "tree",
+      "required": true
+    },
+    {
+      "name": "egress-check",
+      "workflow": "egress-check.yaml",
+      "paths": [],
+      "scope": "tree",
+      "required": true
+    },
+    {
+      "name": "hygiene",
+      "workflow": "hygiene.yaml",
+      "paths": [],
+      "scope": "tree",
+      "required": true
+    },
+    {
+      "name": "md-lint",
+      "workflow": "md-lint.yaml",
+      "paths": [],
+      "scope": "tree",
+      "required": true
+    },
+    {
+      "name": "pin-actions-check",
+      "workflow": "pin-actions-check.yaml",
+      "paths": [],
+      "scope": "tree",
+      "required": true
+    },
+    {
+      "name": "pin-images-check",
+      "workflow": "pin-images-check.yaml",
+      "paths": [],
+      "scope": "tree",
+      "required": true
+    },
+    {
+      "name": "pin-runners-check",
+      "workflow": "pin-runners-check.yaml",
+      "paths": [],
+      "scope": "tree",
+      "required": true
+    },
+    {
+      "name": "repo-settings-check",
+      "workflow": "repo-settings.yaml",
+      "paths": [],
+      "scope": "tree",
+      "required": true
+    },
+    {
+      "name": "sample-remove-check",
+      "workflow": "sample-remove-check.yaml",
+      "paths": [],
+      "scope": "tree",
+      "required": true
+    },
+    {
+      "name": "secret-scan",
+      "workflow": "secret-scan.yaml",
+      "paths": [],
+      "scope": "tree",
+      "required": true
+    },
+    {
+      "name": "tool-cooldown",
+      "workflow": "tool-cooldown.yaml",
+      "paths": [],
+      "scope": "change",
+      "required": true
+    },
+    {
+      "name": "go-cooldown",
+      "workflow": "go-cooldown.yaml",
+      "paths": [],
+      "scope": "change",
+      "required": true
+    },
+    {
+      "name": "versions-check",
+      "workflow": "versions-check.yaml",
+      "paths": [],
+      "scope": "tree",
+      "required": true
+    },
+    {
+      "name": "zizmor",
+      "workflow": "zizmor.yaml",
+      "paths": [],
+      "scope": "tree",
+      "required": true
+    },
+    {
+      "name": "go-lint",
+      "workflow": "go-lint.yaml",
+      "paths": [
+        ".github/workflows/go-lint.yaml",
+        ".github/workflows/pr-gate.yaml",
+        ".github/settings/checks.json",
+        "scripts/**/*.go",
+        "scripts/go.mod",
+        "scripts/go.sum",
+        ".golangci.yaml",
+        ".makefiles/go/**",
+        "Makefile",
+        "mise.toml",
+        "mise.lock"
+      ],
+      "scope": "tree",
+      "required": true
+    },
+    {
+      "name": "go-test",
+      "workflow": "go-test.yaml",
+      "paths": [
+        ".github/workflows/go-test.yaml",
+        ".github/workflows/pr-gate.yaml",
+        ".github/settings/checks.json",
+        ".github/workflows/**",
+        "**/*.go",
+        "scripts/go.mod",
+        "scripts/go.sum",
+        ".makefiles/**",
+        "Makefile",
+        "env/**",
+        "usecases/state-backend/**",
+        "usecases/deployment-identity/**",
+        "modules/s3/**",
+        "docs/setup/bootstrap.md",
+        "conftest/plan/decl.json",
+        "mise.toml",
+        "mise.lock"
+      ],
+      "scope": "tree",
+      "required": true
+    },
+    {
+      "name": "tidy-check",
+      "workflow": "tidy-check.yaml",
+      "paths": [
+        ".github/workflows/tidy-check.yaml",
+        ".github/workflows/pr-gate.yaml",
+        ".github/settings/checks.json",
+        "**/*.go",
+        "scripts/go.mod",
+        "scripts/go.sum"
+      ],
+      "scope": "tree",
+      "required": true
+    },
+    {
+      "name": "terraform-gates",
+      "workflow": "terraform-gates.yaml",
+      "paths": [
+        ".github/workflows/terraform-gates.yaml",
+        ".github/workflows/pr-gate.yaml",
+        ".github/settings/checks.json",
+        ".github/actions/setup-mise/**",
+        "usecases/**",
+        "modules/**",
+        "env/**",
+        "**/.terraform.lock.hcl",
+        "providers/**",
+        ".tflint.hcl",
+        ".tf-validate-ignore.yaml",
+        "mise.toml",
+        "mise.lock",
+        ".makefiles/**",
+        "Makefile",
+        "scripts/tool-cooldown/**",
+        "scripts/infra-code-gate/**",
+        "scripts/tf-local/**",
+        "scripts/bootstrap-check/**",
+        "scripts/hcl-input/**",
+        "scripts/hcl-tally/**",
+        "scripts/provider-schema/**",
+        "scripts/tf-policy/**",
+        "scripts/tf-gates/**",
+        "scripts/lib/**",
+        "scripts/go.mod",
+        "scripts/go.sum",
+        "conftest/plan/**",
+        "conftest/hcl/**",
+        "docs/setup/scripts/check-plan.*"
+      ],
+      "scope": "tree",
+      "required": true
+    },
+    {
+      "name": "terraform-plan-admin",
+      "workflow": "terraform-plan.yaml",
+      "paths": [
+        ".github/workflows/terraform-plan.yaml",
+        ".github/workflows/pr-gate.yaml",
+        ".github/settings/checks.json",
+        ".github/actions/setup-mise/**",
+        "usecases/**",
+        "modules/**",
+        "env/**",
+        "**/.terraform.lock.hcl",
+        "providers/**",
+        ".tflint.hcl",
+        ".tf-validate-ignore.yaml",
+        "mise.toml",
+        "mise.lock",
+        ".makefiles/**",
+        "Makefile",
+        "scripts/tool-cooldown/**",
+        "scripts/infra-code-gate/**",
+        "scripts/tf-local/**",
+        "scripts/bootstrap-check/**",
+        "scripts/hcl-input/**",
+        "scripts/hcl-tally/**",
+        "scripts/provider-schema/**",
+        "scripts/tf-policy/**",
+        "scripts/tf-gates/**",
+        "scripts/lib/**",
+        "scripts/go.mod",
+        "scripts/go.sum",
+        "conftest/plan/**",
+        "conftest/hcl/**",
+        "docs/setup/scripts/check-plan.*"
+      ],
+      "scope": "tree",
+      "required": true,
+      "plan_env": "admin",
+      "contexts": [
+        "plan-admin-identity",
+        "plan-admin-workload"
+      ]
+    },
+    {
+      "name": "checkov",
+      "workflow": "checkov.yaml",
+      "paths": [
+        ".github/workflows/checkov.yaml",
+        ".github/workflows/pr-gate.yaml",
+        ".github/settings/checks.json",
+        ".makefiles/security/checkov.mk",
+        ".makefiles/runner.mk",
+        ".makefiles/terraform/gates.mk",
+        "Makefile",
+        "docker-compose.yaml",
+        "docker/images-pin.toml",
+        "scripts/iac-scan/**",
+        "scripts/lib/**",
+        "scripts/go.mod",
+        "scripts/go.sum",
+        ".github/actions/setup-mise/**",
+        "mise.toml",
+        "mise.lock",
+        "usecases/**",
+        "modules/**",
+        "env/**"
+      ],
+      "scope": "tree",
+      "required": true
+    },
+    {
+      "name": "kics",
+      "workflow": "kics.yaml",
+      "paths": [
+        ".github/workflows/kics.yaml",
+        ".github/workflows/pr-gate.yaml",
+        ".github/settings/checks.json",
+        ".makefiles/security/kics.mk",
+        ".makefiles/runner.mk",
+        ".makefiles/terraform/gates.mk",
+        "Makefile",
+        "docker-compose.yaml",
+        "docker/images-pin.toml",
+        "scripts/iac-scan/**",
+        "scripts/lib/**",
+        "scripts/go.mod",
+        "scripts/go.sum",
+        ".github/actions/setup-mise/**",
+        "mise.toml",
+        "mise.lock",
+        "usecases/**",
+        "modules/**",
+        "env/**"
+      ],
+      "scope": "tree",
+      "required": true
+    },
+    {
+      "name": "semgrep",
+      "workflow": "semgrep.yaml",
+      "paths": [
+        ".github/workflows/semgrep.yaml",
+        ".github/workflows/pr-gate.yaml",
+        ".github/settings/checks.json",
+        ".makefiles/security/semgrep.mk",
+        ".makefiles/runner.mk",
+        ".makefiles/terraform/gates.mk",
+        "Makefile",
+        "docker-compose.yaml",
+        "docker/images-pin.toml",
+        "scripts/iac-scan/**",
+        "scripts/lib/**",
+        "scripts/go.mod",
+        "scripts/go.sum",
+        ".github/actions/setup-mise/**",
+        "mise.toml",
+        "mise.lock",
+        "usecases/**",
+        "modules/**",
+        "env/**"
+      ],
+      "scope": "tree",
+      "required": true
+    },
+    {
+      "name": "trivy-config",
+      "workflow": "trivy-config.yaml",
+      "paths": [
+        ".github/workflows/trivy-config.yaml",
+        ".github/workflows/pr-gate.yaml",
+        ".github/settings/checks.json",
+        ".makefiles/security/trivy.mk",
+        ".makefiles/terraform/gates.mk",
+        ".makefiles/runner.mk",
+        "scripts/iac-scan/**",
+        "scripts/lib/**",
+        "scripts/go.mod",
+        "scripts/go.sum",
+        ".trivyignore.yaml",
+        ".github/actions/setup-mise/**",
+        "mise.toml",
+        "mise.lock",
+        "Makefile",
+        "docker/**/Dockerfile",
+        "usecases/**",
+        "modules/**",
+        "env/**"
+      ],
+      "scope": "tree",
+      "required": true
+    },
+    {
+      "name": "dependency-review",
+      "workflow": "dependency-review.yaml",
+      "paths": [],
+      "scope": "change",
+      "required": false
+    },
+    {
+      "name": "govulncheck",
+      "workflow": "govulncheck.yaml",
+      "paths": [
+        ".github/workflows/govulncheck.yaml",
+        ".github/workflows/pr-gate.yaml",
+        ".github/settings/checks.json",
+        "**/*.go",
+        "scripts/go.mod",
+        "scripts/go.sum",
+        "mise.toml"
+      ],
+      "scope": "tree",
+      "required": false
+    },
+    {
+      "name": "sonarcloud",
+      "workflow": "sonarcloud.yaml",
+      "paths": [],
+      "scope": "tree",
+      "required": false
+    },
+    {
+      "name": "trivy-fs",
+      "workflow": "trivy-fs.yaml",
+      "paths": [],
+      "scope": "tree",
+      "required": false
+    },
+    {
+      "name": "trivy-secret",
+      "workflow": "trivy-secret.yaml",
+      "paths": [],
+      "scope": "tree",
+      "required": false
+    },
+    {
+      "name": "trivy-release-gate",
+      "workflow": "trivy-release-gate.yaml",
+      "paths": [],
+      "scope": "tree",
+      "required": false,
+      "bases": [
+        "deploy"
+      ]
+    }
+  ]
+}

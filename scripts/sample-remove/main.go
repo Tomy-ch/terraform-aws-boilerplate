@@ -13,6 +13,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -20,11 +21,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/atomicwrite"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/checksdecl"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/markers"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
@@ -48,6 +51,8 @@ type domain struct {
 	actions []string
 	// contexts は、このサンプルが必須検査の宣言へ持ち込んだ context。
 	contexts []string
+	// checks は、このサンプルが gate の検査の宣言（checks.json）へ持ち込んだ検査の名前。
+	checks []string
 }
 
 // manifest の最後の domain は、このツール自身を消す。
@@ -56,11 +61,13 @@ var manifest = []domain{
 		name:    "sonarcloud",
 		paths:   []string{".github/workflows/sonarcloud.yaml", "sonar-project.properties"},
 		actions: []string{"SonarSource/sonarqube-scan-action"},
+		checks:  []string{"sonarcloud"},
 	},
 	{
 		name:    "dependency-review",
 		paths:   []string{".github/workflows/dependency-review.yaml"},
 		actions: []string{"actions/dependency-review-action"},
+		checks:  []string{"dependency-review"},
 	},
 	{
 		name: "sample-remove",
@@ -71,6 +78,7 @@ var manifest = []domain{
 			".makefiles/github/operation/sample-remove.mk",
 		},
 		contexts: []string{"sample-remove-check"},
+		checks:   []string{"sample-remove-check"},
 	},
 }
 
@@ -85,6 +93,7 @@ var (
 	errVersionedAction = xerrors.New("❌ manifest の action に版を書いています（版は " + pinFile + " が持ちます）")
 	errBadMarker       = xerrors.New("❌ sample: の印を解釈できません")
 	errMissingContext  = xerrors.New("❌ manifest の context が " + protectionFile + " にありません")
+	errMissingCheck    = xerrors.New("❌ manifest の検査が " + checksdecl.File + " にありません")
 	errRead            = xerrors.New("❌ ファイルを読めません")
 )
 
@@ -100,6 +109,7 @@ type plan struct {
 	markedFiles     []string
 	droppedPins     []string
 	droppedContexts []string
+	droppedChecks   []string
 }
 
 func main() {
@@ -113,7 +123,6 @@ func main() {
 	}
 }
 
-// gitLsFiles は、root で追跡されているファイルの一覧を返します。
 func gitLsFiles(root string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
@@ -132,7 +141,6 @@ func gitLsFiles(root string) ([]string, error) {
 	return files, nil
 }
 
-// run は、サブコマンドを選んで実行します。
 func run(args []string, root string, ds []domain, list func(string) ([]string, error), w io.Writer) error {
 	if len(args) == 0 {
 		return errUsage
@@ -162,7 +170,6 @@ func run(args []string, root string, ds []domain, list func(string) ([]string, e
 	}
 }
 
-// countActions は、manifest が宣言する pin の action の数を返します。
 func countActions(ds []domain) int {
 	n := 0
 	for _, d := range ds {
@@ -221,6 +228,9 @@ func build(root string, ds []domain, list func(string) ([]string, error)) (plan,
 		return plan{}, err
 	}
 	if err := dropContexts(root, ds, &p); err != nil {
+		return plan{}, err
+	}
+	if err := dropChecks(root, ds, &p); err != nil {
 		return plan{}, err
 	}
 	return p, nil
@@ -350,6 +360,62 @@ func dropContexts(root string, ds []domain, p *plan) error {
 	return nil
 }
 
+// dropChecks は、manifest の検査を gate の検査の宣言から外す書き換えを p へ加えます。宣言は lib/checksdecl で
+// 読み、外した後も同じ読み手で読め、線の検証が走らせる検査（TreeChecks）が残ることを確かめてから書く。宣言に
+// 無い名前は、外したつもりで残る経路になるのでエラーにする。複数の domain が名指す検査は1度だけ外す。
+func dropChecks(root string, ds []domain, p *plan) error {
+	var targets []string
+	for _, d := range ds {
+		for _, c := range d.checks {
+			if !slices.Contains(targets, c) {
+				targets = append(targets, c)
+			}
+		}
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+	b, err := os.ReadFile(filepath.Clean(filepath.Join(root, checksdecl.File)))
+	if err != nil {
+		return xerrors.Wrapf(errRead, "%s: %v", checksdecl.File, err)
+	}
+	decl, err := checksdecl.Parse(b)
+	if err != nil {
+		return xerrors.Join(errRead, xerrors.Wrap(err, checksdecl.File))
+	}
+	drop := map[string]bool{}
+	for _, name := range targets {
+		if !slices.Contains(decl.Names(), name) {
+			return xerrors.Wrap(errMissingCheck, name)
+		}
+		drop[name] = true
+	}
+	kept := decl.Checks[:0:0]
+	for _, c := range decl.Checks {
+		if !drop[c.Name] {
+			kept = append(kept, c)
+		}
+	}
+	decl.Checks = kept
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(decl); err != nil {
+		return xerrors.Wrapf(errRead, "%s: %v", checksdecl.File, err)
+	}
+	after, err := checksdecl.Parse(buf.Bytes())
+	if err != nil {
+		return xerrors.Join(errRead, xerrors.Wrapf(err, "%s を外した後", checksdecl.File))
+	}
+	if len(after.TreeChecks()) == 0 {
+		return xerrors.Wrapf(checksdecl.ErrNoChecks, "❌ %s を外した後に scope が tree で required の検査がありません（線の検証が何も見ません）", checksdecl.File)
+	}
+	p.droppedChecks = append(p.droppedChecks, targets...)
+	p.writes[checksdecl.File] = buf.String()
+	return nil
+}
+
 // under は、path が prefixes のいずれか（またはその配下）に当たるかを返します。
 func under(path string, prefixes []string) bool {
 	for _, pre := range prefixes {
@@ -360,7 +426,6 @@ func under(path string, prefixes []string) bool {
 	return false
 }
 
-// report は、plan の内容を書き出します。
 func report(w io.Writer, p plan) {
 	fmt.Fprintf(w, "消すパス（%d 件）:\n", len(p.deletes))
 	for _, d := range p.deletes {
@@ -378,6 +443,10 @@ func report(w io.Writer, p plan) {
 	}
 	fmt.Fprintf(w, "必須検査から外す context（%d 件）:\n", len(p.droppedContexts))
 	for _, c := range p.droppedContexts {
+		fmt.Fprintf(w, "  - %s\n", c)
+	}
+	fmt.Fprintf(w, "gate の検査から外すもの（%d 件）:\n", len(p.droppedChecks))
+	for _, c := range p.droppedChecks {
 		fmt.Fprintf(w, "  - %s\n", c)
 	}
 }

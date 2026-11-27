@@ -1,6 +1,6 @@
-## CI が Terraform を動かす入口（.github/workflows/terraform-gates.yaml の plan と、terraform-apply.yaml の apply と、
-## terraform-drift.yaml の drift の検出）と、state に残った lock を外す入口（terraform-unlock.yaml）と、lock を外さずに残す
-## 入口（terraform-lock-hold.yaml）
+## CI が Terraform を動かす入口（.github/workflows/deploy-gate.yaml と terraform-plan.yaml の plan と、terraform-apply.yaml の
+## apply と、terraform-drift.yaml の drift の検出）と、state に残った lock を外す入口（terraform-unlock.yaml）と、lock を外さずに
+## 残す入口（terraform-lock-hold.yaml）
 ##
 ## ここは scripts/tf-local の段を起動する順序だけを持つ。段は1回の起動で1つの目的の道具だけを固定の引数で起動し、
 ## 値の算出と判定を持ち、段の間の値は CI_STATE のファイルで運ぶ（ADR-0702 決定3・24）。資格情報は ci-credentials が

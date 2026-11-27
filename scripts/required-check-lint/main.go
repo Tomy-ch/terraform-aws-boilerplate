@@ -1,5 +1,6 @@
 // required-check-lint は、保護設定が required とした context を報告する job が実在し、その workflow の
-// 起動条件が check を取りこぼさない形であることを検査します。
+// 起動条件が check を取りこぼさない形であることと、gate と線の検証の workflow が検査の宣言と一致することを
+// 検査します（ADR-0603 決定16-20・38）。
 //
 // 解いている問題:
 //
@@ -7,22 +8,30 @@
 // 1件も起動しません。GitHub は報告されなかった context を「該当しない」とは解釈せず、報告を待ち続けます。
 // **その Pull Request は恒久的にマージ可能になりません。**
 //
-// 起動条件は on: から外し、job の if: で表現します。skip された job は skipped を報告し、
-// required check はそれを成功として数えます。
+// 検査を走らせるかどうかの条件は gate だけが持ち、gate が呼ぶ検査は call-<name> の job として同じ run に並びます。
+// gate の needs と call-* の集合が宣言からずれると、gate は呼ばれなかった検査を見ないまま判定します。
 //
-// 検査の入力は保護設定の宣言そのものです。検査が独自の一覧を持つと、宣言を変えたときに片方だけが動きます。
+// 検査の入力は保護設定の宣言と検査の宣言そのものです。検査が独自の一覧を持つと、宣言を変えたときに片方だけが
+// 動きます。
 package main
 
 import (
+	"bytes"
+	"context"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
+	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/checksdecl"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/gitenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lintreport"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/requiredchecks"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
@@ -30,15 +39,24 @@ import (
 )
 
 const (
-	defaultRulesetPath  = ".github/settings/branch-protection.json"
+	defaultRulesetsDir  = ".github/settings/rulesets"
+	defaultLegacyPath   = ".github/settings/branch-protection.json"
 	defaultWorkflowsDir = ".github/workflows"
+	gitTimeout          = 60 * time.Second
+)
+
+var (
+	// errNoFiles は、リポジトリの木のファイルの一覧が空であることを表す。宣言の path が何にも当たらないことを確かめられない。
+	errNoFiles = xerrors.New("リポジトリの木のファイルが1件もありません")
+	// errLsFiles は、git ls-files でリポジトリの木のファイルの一覧を得られないことを表す。
+	errLsFiles = xerrors.New("git ls-files でファイルの一覧を得られません")
 )
 
 func main() {
 	log.SetFlags(0)
-	if err := run(os.Args[1:], os.Stdout); err != nil {
+	if err := run(os.Args[1:], func() ([]string, error) { return gitLsFiles(".") }, os.Stdout); err != nil {
 		// 0件は違反（1）とは別の終了コードで返す（ADR-0702 決定13）。
-		if xerrors.Is(err, requiredchecks.ErrNone) {
+		if xerrors.Is(err, requiredchecks.ErrNone) || xerrors.Is(err, checksdecl.ErrNoChecks) || xerrors.Is(err, errNoFiles) {
 			log.Printf("❌ required-check-lint: %v", err)
 			os.Exit(2)
 		}
@@ -46,18 +64,70 @@ func main() {
 	}
 }
 
-func run(args []string, out io.Writer) error {
+// gitLsFiles は、root のリポジトリが追跡するファイルを、root からの `/` 区切りの path で返します。
+func gitLsFiles(root string) ([]string, error) {
+	env, err := gitenv.Env(os.Environ())
+	if err != nil {
+		return nil, xerrors.Wrapf(errLsFiles, "%s: %v", root, err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "ls-files", "-z")
+	cmd.Dir = root
+	cmd.Env = env
+	raw, err := cmd.Output()
+	if err != nil {
+		return nil, xerrors.Wrapf(errLsFiles, "%s: %v", root, err)
+	}
+	var files []string
+	for _, f := range bytes.Split(raw, []byte{0}) {
+		if len(f) > 0 {
+			files = append(files, string(f))
+		}
+	}
+	return files, nil
+}
+
+// run は検査を走らせます。files はリポジトリの木のファイルの一覧を返し、宣言の path の突き合わせに使います。
+func run(args []string, files func() ([]string, error), out io.Writer) error {
 	fs := flag.NewFlagSet("required-check-lint", flag.ContinueOnError)
 	fs.SetOutput(out)
-	rulesetPath := fs.String("ruleset", defaultRulesetPath, "保護設定の宣言のパス")
+	rulesetsDir := fs.String("rulesets", defaultRulesetsDir, "役割ごとの ruleset の宣言を置くディレクトリ")
+	legacyPath := fs.String("legacy-ruleset", defaultLegacyPath, "役割ごとの ruleset と並べて適用する単一の ruleset の宣言のパス（無ければ読まない）")
+	checksPath := fs.String("checks", checksdecl.File, "gate が呼ぶ検査と path の対応の宣言のパス")
 	workflowsDir := fs.String("workflows", defaultWorkflowsDir, "workflow を探すディレクトリ")
 	if err := fs.Parse(args); err != nil {
 		return xerrors.Wrap(err, "引数の解釈")
 	}
 
-	contexts, err := requiredchecks.Read(*rulesetPath)
+	contexts, err := requiredchecks.ReadDir(*rulesetsDir)
 	if err != nil {
-		return xerrors.Wrap(err, "required の context の読み取り")
+		return xerrors.Wrap(err, "ruleset の required の context の読み取り")
+	}
+
+	legacy, err := readLegacy(*legacyPath)
+	if err != nil {
+		return err
+	}
+
+	raw, err := os.ReadFile(filepath.Clean(*checksPath))
+	if err != nil {
+		return xerrors.Wrapf(checksdecl.ErrDecl, "%s: %v", *checksPath, err)
+	}
+	decl, err := checksdecl.Parse(raw)
+	if err != nil {
+		return xerrors.Wrapf(err, "%s", *checksPath)
+	}
+	if len(treeChecks(decl)) == 0 {
+		return xerrors.Wrapf(checksdecl.ErrNoChecks, "%s: scope が tree で required の検査がありません（線の検証が何も見ません）", *checksPath)
+	}
+
+	tree, err := files()
+	if err != nil {
+		return err
+	}
+	if len(tree) == 0 {
+		return errNoFiles
 	}
 
 	sources, err := readWorkflows(*workflowsDir)
@@ -65,15 +135,53 @@ func run(args []string, out io.Writer) error {
 		return err
 	}
 
-	findings := check(contexts, sources, *rulesetPath)
+	findings := gateFindings(gateInput{
+		contexts: contexts, legacy: legacy, decl: decl, checksPath: *checksPath, workflowsDir: *workflowsDir, rulesetsDir: *rulesetsDir,
+	}, sources)
+	findings = append(findings, pathFindings(decl, *checksPath, tree)...)
+	if legacy != nil {
+		findings = append(findings, check(legacy, sources, *legacyPath)...)
+	}
 	if len(findings) > 0 {
+		lintreport.Sort(findings)
 		fmt.Fprintf(out, "❌ required-check-lint: %d 件の不整合\n\n", len(findings))
 		fmt.Fprintln(out, lintreport.Format(findings))
 		return xerrors.Newf("%d 件の不整合", len(findings))
 	}
 
-	fmt.Fprintf(out, "✅ required-check-lint: required context %d 件の報告 job と起動条件を確認しました\n", len(contexts))
+	fmt.Fprintf(out, "✅ required-check-lint: ruleset の required context %d 件、古い宣言の required context %d 件、検査 %d 件と workflow %d 件を確認しました\n",
+		len(contexts), len(legacy), len(decl.Checks), len(sources))
 	return nil
+}
+
+// pathFindings は、宣言の各検査の paths の pattern がそれぞれ木のファイル files のどれかに当たることを検査します。
+// 何にも当たらない pattern は、その検査を走らせるはずの変更を見落とす。paths が空の検査は常に走るので対象外。
+func pathFindings(decl checksdecl.Decl, checksPath string, files []string) []lintreport.Finding {
+	var findings []lintreport.Finding
+	for _, c := range decl.Checks {
+		for _, p := range c.Paths {
+			if !slices.ContainsFunc(files, func(f string) bool { return checksdecl.MatchGlob(p, f) }) {
+				findings = append(findings, lintreport.Finding{
+					File: checksPath, Line: 1,
+					Message: fmt.Sprintf("検査 `%s` の paths の `%s` が、リポジトリの木のどのファイルにも当たりません", c.Name, p),
+				})
+			}
+		}
+	}
+	return findings
+}
+
+// readLegacy は、役割ごとの ruleset と並べて適用する単一の ruleset の宣言の required の context を返します。
+// ファイルが無ければ nil を返し、在るのに読めないか0件ならエラーにします。
+func readLegacy(path string) ([]string, error) {
+	if _, err := os.Stat(path); xerrors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	contexts, err := requiredchecks.Read(path)
+	if err != nil {
+		return nil, xerrors.Wrap(err, "古い ruleset の required の context の読み取り")
+	}
+	return contexts, nil
 }
 
 // Source は検査対象の workflow 1件です。

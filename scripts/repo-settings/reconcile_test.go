@@ -46,14 +46,22 @@ func Test_diff_findings(t *testing.T) {
 	t.Parallel()
 
 	d := diff{
-		Ruleset: rulesetDiff{Findings: []string{"r1"}},
-		Envs:    []envDiff{{Name: "e", Findings: []string{"f1", "f2"}}},
-		Extra:   []string{"x"},
+		Rulesets: []rulesetDiff{
+			{Name: "common", Findings: []string{"r1"}, Exceptions: []string{"承認者数"}},
+			{Name: "lines"},
+			{Name: "deploy-main", Findings: []string{"r2", "r3"}},
+		},
+		UndeclaredRulesets: []string{"old"},
+		Envs:               []envDiff{{Name: "e", Findings: []string{"f1", "f2"}}},
+		Extra:              []string{"x"},
 	}
-	t.Run("ruleset・environment・宣言に無い environment の順に1行ずつ並べる", func(t *testing.T) {
+	t.Run("宣言の ruleset・宣言に無い ruleset・environment・宣言に無い environment の順に1行ずつ並べる", func(t *testing.T) {
 		t.Parallel()
 		assert.Equal(t, []string{
-			"ruleset: r1",
+			"ruleset common: r1",
+			"ruleset deploy-main: r2",
+			"ruleset deploy-main: r3",
+			"ruleset old: 宣言に無い ruleset が実在します",
 			"environment e: f1",
 			"environment e: f2",
 			"environment x: 宣言に無い environment が実在します",
@@ -66,19 +74,36 @@ func Test_diff_findings(t *testing.T) {
 	})
 }
 
+func Test_diff_exceptions(t *testing.T) {
+	t.Parallel()
+
+	t.Run("ruleset の名前を前置し、宣言の順に並べる", func(t *testing.T) {
+		t.Parallel()
+		d := diff{Rulesets: []rulesetDiff{
+			{Name: "common", Findings: []string{"ほかのずれ"}, Exceptions: []string{"e1"}},
+			{Name: "branch-protection", Exceptions: []string{"e2"}},
+		}}
+		assert.Equal(t, []string{"ruleset common: e1", "ruleset branch-protection: e2"}, d.exceptions())
+	})
+
+	t.Run("例外が無ければ空", func(t *testing.T) {
+		t.Parallel()
+		assert.Empty(t, diff{Rulesets: []rulesetDiff{{Name: "common", Findings: []string{"x"}}}}.exceptions())
+	})
+}
+
 func Test_computeDiff(t *testing.T) {
 	t.Parallel()
 
 	want := desired{
-		Ruleset: decodeAny(t, wantRulesetJSON),
+		Rulesets: []desiredRuleset{{Name: "branch-protection", Body: decodeAny(t, wantRulesetJSON)}},
 		Envs: []desiredEnv{
 			{Name: "a-plan", Patterns: []string{"main", pullRequestRef}},
 			{Name: "copilot"},
 		},
 	}
 	matching := live{
-		Ruleset:   decodeAny(t, liveRulesetJSON),
-		RulesetID: 7,
+		Rulesets: map[string]liveRuleset{"branch-protection": {ID: 7, Body: decodeAny(t, liveRulesetJSON)}},
 		Envs: map[string]liveEnv{
 			"a-plan":  {CanAdminsBypass: boolPtr(false), Policy: &customOnly, Patterns: map[string]int64{"main": 1, pullRequestRef: 2}},
 			"copilot": {CanAdminsBypass: boolPtr(false)},
@@ -92,6 +117,35 @@ func Test_computeDiff(t *testing.T) {
 		assert.Empty(t, d.Unobserved)
 	})
 
+	t.Run("宣言の ruleset ごとに、差分が無くても名前つきで並べる", func(t *testing.T) {
+		t.Parallel()
+		d := computeDiff(want, matching)
+		require.Len(t, d.Rulesets, 1)
+		assert.Equal(t, "branch-protection", d.Rulesets[0].Name)
+		assert.Equal(t, int64(7), d.Rulesets[0].ID)
+		assert.False(t, d.Rulesets[0].Missing)
+	})
+
+	t.Run("実在しない宣言の ruleset は Missing として名前つきで報せる", func(t *testing.T) {
+		t.Parallel()
+		w := want
+		w.Rulesets = append([]desiredRuleset{}, want.Rulesets...)
+		w.Rulesets = append(w.Rulesets, desiredRuleset{Name: "lines", Body: decodeAny(t, wantRulesetJSON)})
+		d := computeDiff(w, matching)
+		require.Len(t, d.Rulesets, 2)
+		assert.True(t, d.Rulesets[1].Missing)
+		assert.Equal(t, []string{"ruleset lines: 宣言の ruleset が実在しません"}, d.findings())
+	})
+
+	t.Run("宣言に無い ruleset を UndeclaredRulesets へ渡す", func(t *testing.T) {
+		t.Parallel()
+		got := matching
+		got.UndeclaredRulesets = []string{"old"}
+		d := computeDiff(want, got)
+		assert.Equal(t, []string{"old"}, d.UndeclaredRulesets)
+		assert.Equal(t, []string{"ruleset old: 宣言に無い ruleset が実在します"}, d.findings())
+	})
+
 	t.Run("宣言に無い environment は Extra に入る", func(t *testing.T) {
 		t.Parallel()
 		got := matching
@@ -103,12 +157,12 @@ func Test_computeDiff(t *testing.T) {
 	t.Run("bypass_actors が応答に無ければ観測できなかったと記録し、ずれとはしない", func(t *testing.T) {
 		t.Parallel()
 		got := matching
-		got.Ruleset = decodeAny(t, liveRulesetJSON)
-		delete(got.Ruleset, "bypass_actors")
+		body := decodeAny(t, liveRulesetJSON)
+		delete(body, "bypass_actors")
+		got.Rulesets = map[string]liveRuleset{"branch-protection": {ID: 7, Body: body}}
 		d := computeDiff(want, got)
 		assert.Empty(t, d.findings())
-		require.Len(t, d.Unobserved, 1)
-		assert.Contains(t, d.Unobserved[0], "bypass_actors")
+		assert.Equal(t, []string{"ruleset branch-protection の bypass_actors（write 権限の無い読み取りには返らない）"}, d.Unobserved)
 	})
 
 	t.Run("environment の差分を集める", func(t *testing.T) {
@@ -129,14 +183,14 @@ func Test_diffRuleset(t *testing.T) {
 
 	t.Run("ruleset が無ければ Missing", func(t *testing.T) {
 		t.Parallel()
-		rd := diffRuleset(want, live{})
+		rd := diffRuleset(want, liveRuleset{})
 		assert.True(t, rd.Missing)
 		assert.Equal(t, []string{"宣言の ruleset が実在しません"}, rd.Findings)
 	})
 
 	t.Run("宣言が持つキーだけを比べる", func(t *testing.T) {
 		t.Parallel()
-		rd := diffRuleset(want, live{Ruleset: decodeAny(t, liveRulesetJSON), RulesetID: 7})
+		rd := diffRuleset(want, liveRuleset{ID: 7, Body: decodeAny(t, liveRulesetJSON)})
 		assert.False(t, rd.Missing)
 		assert.Equal(t, int64(7), rd.ID)
 		assert.Empty(t, rd.Findings)
@@ -146,7 +200,7 @@ func Test_diffRuleset(t *testing.T) {
 		t.Parallel()
 		got := decodeAny(t, liveRulesetJSON)
 		got["enforcement"] = "disabled"
-		rd := diffRuleset(want, live{Ruleset: got})
+		rd := diffRuleset(want, liveRuleset{Body: got})
 		assert.Equal(t, []string{"enforcement が宣言と異なります"}, rd.Findings)
 	})
 
@@ -157,7 +211,7 @@ func Test_diffRuleset(t *testing.T) {
 		w["target"] = "branch"
 		got := decodeAny(t, liveRulesetJSON)
 		got["conditions"] = map[string]any{"ref_name": map[string]any{"include": []any{"refs/heads/other"}}}
-		rd := diffRuleset(w, live{Ruleset: got})
+		rd := diffRuleset(w, liveRuleset{Body: got})
 		assert.Equal(t, []string{"conditions が宣言と異なります", "target が宣言と異なります"}, rd.Findings)
 	})
 
@@ -166,7 +220,7 @@ func Test_diffRuleset(t *testing.T) {
 		pr := func(count float64) map[string]any {
 			return map[string]any{"rules": []any{map[string]any{"type": "pull_request", "parameters": map[string]any{"required_approving_review_count": count}}}}
 		}
-		rd := diffRuleset(pr(1), live{Ruleset: pr(0)})
+		rd := diffRuleset(pr(1), liveRuleset{Body: pr(0)})
 		assert.Empty(t, rd.Findings)
 		assert.Equal(t, []string{"ルール pull_request の required_approving_review_count が宣言と異なります"}, rd.Exceptions)
 	})
@@ -175,7 +229,7 @@ func Test_diffRuleset(t *testing.T) {
 		t.Parallel()
 		got := decodeAny(t, liveRulesetJSON)
 		got["bypass_actors"] = []any{map[string]any{"actor_id": 1.0}}
-		rd := diffRuleset(want, live{Ruleset: got})
+		rd := diffRuleset(want, liveRuleset{Body: got})
 		assert.Equal(t, []string{"bypass_actors が宣言と異なります"}, rd.Findings)
 	})
 
@@ -183,7 +237,7 @@ func Test_diffRuleset(t *testing.T) {
 		t.Parallel()
 		got := decodeAny(t, liveRulesetJSON)
 		delete(got, "bypass_actors")
-		rd := diffRuleset(want, live{Ruleset: got})
+		rd := diffRuleset(want, liveRuleset{Body: got})
 		assert.Empty(t, rd.Findings)
 	})
 }
@@ -618,8 +672,11 @@ func Test_planRequests(t *testing.T) {
 	t.Parallel()
 
 	want := desired{
-		Ruleset: map[string]any{"name": "branch-protection"},
-		Envs:    []desiredEnv{{Name: "a plan", Patterns: []string{"main"}}, {Name: "copilot"}},
+		Rulesets: []desiredRuleset{
+			{Name: "common", Body: map[string]any{"name": "common"}},
+			{Name: "lines", Body: map[string]any{"name": "lines"}},
+		},
+		Envs: []desiredEnv{{Name: "a plan", Patterns: []string{"main"}}, {Name: "copilot"}},
 	}
 
 	t.Run("差分が無ければ要求を出さない", func(t *testing.T) {
@@ -631,8 +688,8 @@ func Test_planRequests(t *testing.T) {
 	t.Run("ruleset と environments のどちらでもなければ、どちらの差分も送らない", func(t *testing.T) {
 		t.Parallel()
 		d := diff{
-			Ruleset: rulesetDiff{Missing: true, Findings: []string{"x"}},
-			Envs:    []envDiff{{Name: "copilot", Put: true, Findings: []string{"x"}}},
+			Rulesets: []rulesetDiff{{Name: "common", Missing: true, Findings: []string{"x"}}},
+			Envs:     []envDiff{{Name: "copilot", Put: true, Findings: []string{"x"}}},
 		}
 		assert.Empty(t, planRequests(d, want, "o/r", onlyVulnerabilityReporting))
 		assert.Empty(t, planRequests(d, want, "o/r", "labels"))
@@ -640,26 +697,47 @@ func Test_planRequests(t *testing.T) {
 
 	t.Run("environments だけを対象にすると ruleset の差分を送らない", func(t *testing.T) {
 		t.Parallel()
-		d := diff{Ruleset: rulesetDiff{Missing: true, Findings: []string{"x"}}}
+		d := diff{Rulesets: []rulesetDiff{{Name: "common", Missing: true, Findings: []string{"x"}}}}
 		assert.Empty(t, planRequests(d, want, "o/r", onlyEnvironments))
 	})
 
 	t.Run("ruleset が無ければ POST で作る", func(t *testing.T) {
 		t.Parallel()
-		reqs := planRequests(diff{Ruleset: rulesetDiff{Missing: true, Findings: []string{"x"}}}, want, "o/r", onlyRuleset)
-		assert.Equal(t, []request{{Method: "POST", Path: "/repos/o/r/rulesets", Body: want.Ruleset}}, reqs)
+		reqs := planRequests(diff{Rulesets: []rulesetDiff{{Name: "lines", Missing: true, Findings: []string{"x"}}}}, want, "o/r", onlyRuleset)
+		assert.Equal(t, []request{{Method: "POST", Path: "/repos/o/r/rulesets", Body: want.Rulesets[1].Body}}, reqs)
 	})
 
 	t.Run("ruleset がずれていれば PUT で置き換える", func(t *testing.T) {
 		t.Parallel()
-		reqs := planRequests(diff{Ruleset: rulesetDiff{ID: 3, Findings: []string{"x"}}}, want, "o/r", onlyRuleset)
-		assert.Equal(t, []request{{Method: "PUT", Path: "/repos/o/r/rulesets/3", Body: want.Ruleset}}, reqs)
+		reqs := planRequests(diff{Rulesets: []rulesetDiff{{Name: "common", ID: 3, Findings: []string{"x"}}}}, want, "o/r", onlyRuleset)
+		assert.Equal(t, []request{{Method: "PUT", Path: "/repos/o/r/rulesets/3", Body: want.Rulesets[0].Body}}, reqs)
 	})
 
 	t.Run("ruleset のずれが決定7 の例外だけでも PUT で置き換える", func(t *testing.T) {
 		t.Parallel()
-		reqs := planRequests(diff{Ruleset: rulesetDiff{ID: 3, Exceptions: []string{"x"}}}, want, "o/r", onlyRuleset)
-		assert.Equal(t, []request{{Method: "PUT", Path: "/repos/o/r/rulesets/3", Body: want.Ruleset}}, reqs)
+		reqs := planRequests(diff{Rulesets: []rulesetDiff{{Name: "common", ID: 3, Exceptions: []string{"x"}}}}, want, "o/r", onlyRuleset)
+		assert.Equal(t, []request{{Method: "PUT", Path: "/repos/o/r/rulesets/3", Body: want.Rulesets[0].Body}}, reqs)
+	})
+
+	t.Run("ruleset ごとに、無いものは POST、ずれたものは PUT を宣言の順に組み、一致するものは送らない", func(t *testing.T) {
+		t.Parallel()
+		w := want
+		w.Rulesets = append(append([]desiredRuleset{}, want.Rulesets...), desiredRuleset{Name: "deploy-main", Body: map[string]any{"name": "deploy-main"}})
+		d := diff{Rulesets: []rulesetDiff{
+			{Name: "common", ID: 3, Findings: []string{"x"}},
+			{Name: "lines", ID: 4},
+			{Name: "deploy-main", Missing: true, Findings: []string{"x"}},
+		}}
+		assert.Equal(t, []request{
+			{Method: "PUT", Path: "/repos/o/r/rulesets/3", Body: map[string]any{"name": "common"}},
+			{Method: "POST", Path: "/repos/o/r/rulesets", Body: map[string]any{"name": "deploy-main"}},
+		}, planRequests(d, w, "o/r", onlyRuleset))
+	})
+
+	t.Run("宣言に無い ruleset を消す要求は組まない", func(t *testing.T) {
+		t.Parallel()
+		d := diff{Rulesets: []rulesetDiff{{Name: "common", ID: 3}}, UndeclaredRulesets: []string{"old"}}
+		assert.Empty(t, planRequests(d, want, "o/r", onlyRuleset))
 	})
 
 	t.Run("ruleset だけを対象にすると environment の差分を送らない", func(t *testing.T) {
@@ -671,7 +749,7 @@ func Test_planRequests(t *testing.T) {
 	t.Run("environment を PUT し、パターンを消してから足す", func(t *testing.T) {
 		t.Parallel()
 		d := diff{
-			Ruleset: rulesetDiff{Findings: []string{"ruleset は対象外"}},
+			Rulesets: []rulesetDiff{{Name: "common", Findings: []string{"ruleset は対象外"}}},
 			Envs: []envDiff{
 				{Name: "a plan", Put: true, AddPatterns: []string{"main"}, RemovePatterns: []int64{4}, Findings: []string{"x"}},
 				{Name: "copilot", Put: true, Findings: []string{"x"}},
