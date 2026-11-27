@@ -1372,13 +1372,13 @@ func Test_checkPlanPermissions(t *testing.T) {
 		assert.Equal(t, "# 結果: "+strconv.Itoa(planPermTotal)+" 件のうち NG 2 件", lines(out)[len(lines(out))-1])
 	})
 
-	t.Run("arn の型の context の行の ValidationError は、本文を出しても ARN・ID・context の値を出さない", func(t *testing.T) {
+	t.Run("context の行の ValidationError は、本文を出しても ARN・ID・context の値を出さない", func(t *testing.T) {
 		t.Parallel()
 
 		f, d := setup(t, identityPlanChanges(), nil)
 		inner := f.handler
 		f.handler = func(args []string) (awsResult, bool) {
-			if slices.ContainsFunc(args, func(a string) bool { return strings.HasSuffix(a, ",ContextKeyType=arn") }) {
+			if slices.ContainsFunc(args, func(a string) bool { return strings.HasPrefix(a, "ContextKeyName=iam:PolicyARN,") }) {
 				entry := args[slices.Index(args, "--context-entries")+1]
 
 				return failed("\nAn error occurred (ValidationError) when calling the SimulateCustomPolicy operation: Invalid context entry " + entry +

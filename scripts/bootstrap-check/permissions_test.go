@@ -378,15 +378,15 @@ var permRowActions = []string{
 	// 統制の構成物
 	"$manage",
 	"iam:CreatePolicy iam:CreatePolicyVersion iam:GetPolicy",
-	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-identity-governance (arn)",
-	"iam:AttachRolePolicy ; iam:PolicyARN = arn:aws:iam::aws:policy/AdministratorAccess (arn)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-identity-governance (string)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = arn:aws:iam::aws:policy/AdministratorAccess (string)",
 	"$manage",
-	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-identity-manage (arn)",
-	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-identity-manage (arn)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-identity-manage (string)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-identity-manage (string)",
 	"iam:GetPolicy iam:GetPolicyVersion",
 	"iam:CreatePolicyVersion",
 	"$manage",
-	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-identity-members (arn)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-identity-members (string)",
 	"iam:GetPolicy iam:GetPolicyVersion",
 	"iam:CreatePolicyVersion",
 	"sts:AssumeRole",
@@ -401,7 +401,7 @@ var permRowActions = []string{
 	"iam:CreatePolicyVersion",
 	"$inst cloudformation:DeleteStackInstances",
 	"organizations:CreateOrganization organizations:DescribeOrganization iam:UpdateAccountPasswordPolicy",
-	"iam:AttachRolePolicy ; iam:PolicyARN = arn:aws:iam::aws:policy/AdministratorAccess (arn)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = arn:aws:iam::aws:policy/AdministratorAccess (string)",
 	"organizations:DeleteOrganization",
 	"iam:DeleteRole",
 	"$inst",
@@ -433,7 +433,7 @@ var permRowActions = []string{
 	"cloudformation:UpdateStackSet",
 	// 委任管理者の指定
 	"$manage",
-	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-identity-governance-2 (arn)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-identity-governance-2 (string)",
 	"organizations:ListDelegatedAdministrators",
 	"organizations:DescribeAccount",
 	"organizations:DescribeOrganizationalUnit",
@@ -474,13 +474,13 @@ var permRowActions = []string{
 	"$manage",
 	"$manage",
 	"$manage",
-	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-workload (arn)",
-	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-workload-read (arn)",
-	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-workload-2 (arn)",
-	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/boundary-ops-notification (arn)",
-	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-workload-read (arn)",
-	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-workload (arn)",
-	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-workload-2 (arn)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-workload (string)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-workload-read (string)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-workload-2 (string)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/boundary-ops-notification (string)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-workload-read (string)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-workload (string)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-workload-2 (string)",
 	"iam:GetPolicy iam:GetPolicyVersion",
 	"iam:GetPolicy iam:GetPolicyVersion",
 	"sns:GetTopicAttributes sns:ListTagsForResource",
@@ -495,9 +495,9 @@ var permRowActions = []string{
 	"iam:CreateRole iam:PassRole",
 	"iam:DeleteRolePermissionsBoundary",
 	"kms:CreateKey kms:PutKeyPolicy ; kms:BypassPolicyLockoutSafetyCheck = true (boolean)",
-	"iam:CreateRole iam:PutRolePolicy iam:DeleteRole ; iam:PermissionsBoundary = $policy/boundary-ops-notification (arn)",
+	"iam:CreateRole iam:PutRolePolicy iam:DeleteRole ; iam:PermissionsBoundary = $policy/boundary-ops-notification (string)",
 	"iam:CreateRole iam:PutRolePolicy",
-	"iam:CreateRole ; iam:PermissionsBoundary = $policy/boundary-ops-notification (arn)",
+	"iam:CreateRole ; iam:PermissionsBoundary = $policy/boundary-ops-notification (string)",
 	"iam:PassRole ; iam:PassedToService = scheduler.amazonaws.com (string)",
 	"iam:PassRole ; iam:PassedToService = lambda.amazonaws.com (string)",
 	"sns:CreateTopic sns:SetTopicAttributes",
@@ -1160,6 +1160,25 @@ func Test_permissionSections(t *testing.T) {
 
 	n := testNames("")
 	sections := permissionSections(n, testKeyARN, "")
+
+	t.Run("context の型は ContextKeyType の enum の値だけを使う（arn を使うと simulate-custom-policy が ValidationError で拒む）", func(t *testing.T) {
+		t.Parallel()
+
+		enum := []string{"string", "stringList", "numeric", "numericList", "boolean", "booleanList", "ip", "ipList", "binary", "binaryList", "date", "dateList"}
+		seen := 0
+
+		for _, r := range allRows(n, testKeyARN) {
+			for _, c := range r.context {
+				i := strings.LastIndex(c, ",ContextKeyType=")
+				require.GreaterOrEqual(t, i, 0, c)
+				assert.Contains(t, enum, c[i+len(",ContextKeyType="):], r.desc())
+
+				seen++
+			}
+		}
+
+		require.Positive(t, seen)
+	})
 
 	t.Run("どの行も action を1つ以上持ち、判定・role・resource が決まっている", func(t *testing.T) {
 		t.Parallel()

@@ -339,7 +339,9 @@ func permissionSections(n names, sk, skReason string) []section {
 	ab := "arn:aws:s3:::" + n.applyBucket
 	iam := "arn:aws:iam::" + n.account
 	other := "arn:aws:kms:" + n.region + ":" + n.account + ":key/00000000-0000-0000-0000-0000000000a0"
-	policyARN := func(arn string) []string { return []string{ctxEntry("iam:PolicyARN", arn, "arn")} }
+	// ARN の条件キーも string で与える。ContextKeyType の enum に arn は無く、simulate-custom-policy は ValidationError で拒む
+	// （ArnEquals・ArnLike は string の値で評価される）。
+	policyARN := func(arn string) []string { return []string{ctxEntry("iam:PolicyARN", arn, "string")} }
 	bypass := []string{ctxEntry("kms:BypassPolicyLockoutSafetyCheck", "true", "boolean")}
 	manage := []string{"iam:CreatePolicy", "iam:CreatePolicyVersion", "iam:DeletePolicyVersion", "iam:SetDefaultPolicyVersion", "iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyVersions"}
 
@@ -397,7 +399,7 @@ func permissionSections(n names, sk, skReason string) []section {
 		}
 	}
 	or := iam + ":role/" + n.prefix + "-ops-heartbeat"
-	boundary := []string{ctxEntry("iam:PermissionsBoundary", bp, "arn")}
+	boundary := []string{ctxEntry("iam:PermissionsBoundary", bp, "string")}
 	passed := func(svc string) []string { return []string{ctxEntry("iam:PassedToService", svc, "string")} }
 
 	budget := "arn:aws:budgets::" + n.account + ":budget/" + n.prefix + "-x"
