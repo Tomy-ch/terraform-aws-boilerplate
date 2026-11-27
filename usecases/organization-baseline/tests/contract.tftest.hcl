@@ -12,10 +12,11 @@ mock_provider "aws" {
   mock_data "aws_region" {
     defaults = { region = "ap-northeast-1" }
   }
+  # 管理アカウントの ID を、caller と入力の ARN の 111111111111 と変え、組織から引く配線を見分ける。
   mock_resource "aws_organizations_organization" {
     defaults = {
       id                = "o-exampleorg1"
-      master_account_id = "111111111111"
+      master_account_id = "444444444444"
       roots             = [{ id = "r-exam", arn = "arn:aws:organizations::111111111111:root/o-exampleorg1/r-exam", name = "Root", policy_types = [] }]
     }
   }
@@ -134,14 +135,14 @@ run "identity_center_outputs" {
 
   assert {
     condition = module.access[0].assignment_target_ids == {
-      management = { "organization_admin/owner" = module.organization.management_account_id }
+      management = { "organization_admin/owner" = "444444444444" }
       member     = { "security/read_only/operators" = output.account_ids["security"] }
     }
     error_message = "割当の対象が、組織の管理アカウントと、env から引いたメンバーアカウントになっていません。"
   }
 
   assert {
-    condition     = module.organization.management_account_id == "111111111111" && output.account_ids["security"] == "222222222222"
+    condition     = module.organization.management_account_id == "444444444444" && output.account_ids["security"] == "222222222222"
     error_message = "組織の管理アカウントとメンバーアカウントの ID が、mock の値と違います。"
   }
 
@@ -149,8 +150,43 @@ run "identity_center_outputs" {
     condition = (
       module.access[0].organization_admin_deny_resources.DenyBootstrapBucketChange == flatten([for b in [var.state_bucket_arn, var.plan_output_bucket_arn, var.apply_output_bucket_arn] : [b, "${b}/*"]])
       && module.access[0].organization_admin_deny_resources.DenyStateKeyChange == var.state_key_arn
-      && module.access[0].organization_admin_deny_resources.DenyCiIdentityChange[0] == "arn:aws:iam::111111111111:role/tabp-admin-ci-*"
+      && module.access[0].organization_admin_deny_resources.DenyCiIdentityChange == [
+        "arn:aws:iam::444444444444:role/tabp-admin-ci-*",
+        "arn:aws:iam::444444444444:policy/tabp-admin-ci-*",
+        "arn:aws:iam::444444444444:oidc-provider/token.actions.githubusercontent.com",
+      ]
     )
     error_message = "organization_admin の Deny が、渡した3つの Bucket・state の鍵と、組織の管理アカウントの CI の role を名指していません。"
+  }
+}
+
+# partition を data.aws_partition から渡す配線を見分ける。対象の partition は aws だけなので、リージョンの集合を差し替えて
+# 別の partition の値を通す。
+run "identity_center_partition" {
+  command = plan
+
+  variables {
+    identity_center = {
+      management_assignments = [{ permission_set = "organization_admin", user = "owner" }]
+    }
+  }
+
+  override_module {
+    target  = module.default_regions
+    outputs = { by_partition = { "aws-us-gov" = toset(["us-gov-west-1"]) } }
+  }
+
+  override_data {
+    target = data.aws_partition.current
+    values = { partition = "aws-us-gov" }
+  }
+
+  assert {
+    condition = module.access[0].organization_admin_deny_resources.DenyCiIdentityChange == [
+      "arn:aws-us-gov:iam::444444444444:role/tabp-admin-ci-*",
+      "arn:aws-us-gov:iam::444444444444:policy/tabp-admin-ci-*",
+      "arn:aws-us-gov:iam::444444444444:oidc-provider/token.actions.githubusercontent.com",
+    ]
+    error_message = "organization_admin の Deny が、data.aws_partition の partition で CI の role・policy・OIDC provider の ARN を組んでいません。"
   }
 }

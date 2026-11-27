@@ -148,7 +148,7 @@ run "organization_admin_denies" {
 }
 
 # 入力の境界（project 13文字、最も長い partition、Bucket 名 63文字）で、permission set の inline policy の上限（空白を除いて
-# 10,240 文字）に収まる。境界の長さを固定するので、文書を変えたら上限に収まることを確かめて値を直す。
+# 10,240 文字）に収まり、Deny を足す余地を残す。
 run "inline_policy_length" {
   command = apply
 
@@ -165,8 +165,13 @@ run "inline_policy_length" {
   }
 
   assert {
-    condition     = length(aws_ssoadmin_permission_set_inline_policy.organization_admin.inline_policy) == 1256
-    error_message = "organization_admin の inline policy の入力の境界での長さが ${length(aws_ssoadmin_permission_set_inline_policy.organization_admin.inline_policy)} 文字に変わりました。10,240 文字に収まることを確かめて値を直してください。"
+    condition     = length(aws_ssoadmin_permission_set_inline_policy.organization_admin.inline_policy) <= 10240
+    error_message = "organization_admin の inline policy が、入力の境界で ${length(aws_ssoadmin_permission_set_inline_policy.organization_admin.inline_policy)} 文字になり、上限の 10,240 文字を超えます。"
+  }
+
+  assert {
+    condition     = length(aws_ssoadmin_permission_set_inline_policy.organization_admin.inline_policy) <= 8000
+    error_message = "organization_admin の inline policy が、入力の境界で ${length(aws_ssoadmin_permission_set_inline_policy.organization_admin.inline_policy)} 文字になり、上限の 10,240 文字までの余地が 2,240 文字を切りました。"
   }
 
   assert {
@@ -385,7 +390,8 @@ run "rejects_missing_group_label" {
   expect_failures = [data.aws_ssm_parameter.principals]
 }
 
-# 以下の parameter は、postcondition のうち名前のとおりの1つだけを落とす形にする。
+# expect_failures は data 単位で見るので、どの postcondition で落ちたかはここでは見分けない。以下の parameter は、
+# 名前のとおりの1つだけが落ちる形を狙って作る。
 run "rejects_empty_principals" {
   command = plan
 
@@ -505,6 +511,64 @@ run "rejects_33_character_group_label" {
   expect_failures = [data.aws_ssm_parameter.principals]
 }
 
+run "accepts_1_character_label" {
+  command = plan
+
+  variables {
+    management_assignments = [{ permission_set = "organization_admin", user = "o" }]
+    member_assignments     = [{ account = "security", permission_set = "read_only", group = "g" }]
+  }
+
+  override_data {
+    target = data.aws_ssm_parameter.principals
+    values = { value = "{\"users\":{\"o\":\"00000000-0000-0000-0000-000000000001\"},\"groups\":{\"g\":\"00000000-0000-0000-0000-000000000002\"}}" }
+  }
+}
+
+run "rejects_label_with_leading_digit" {
+  command = plan
+
+  override_data {
+    target = data.aws_ssm_parameter.principals
+    values = { value = "{\"users\":{\"owner\":\"00000000-0000-0000-0000-000000000001\",\"1owner\":\"00000000-0000-0000-0000-000000000003\"},\"groups\":{\"operators\":\"00000000-0000-0000-0000-000000000002\"}}" }
+  }
+
+  expect_failures = [data.aws_ssm_parameter.principals]
+}
+
+run "rejects_label_with_leading_hyphen" {
+  command = plan
+
+  override_data {
+    target = data.aws_ssm_parameter.principals
+    values = { value = "{\"users\":{\"owner\":\"00000000-0000-0000-0000-000000000001\"},\"groups\":{\"operators\":\"00000000-0000-0000-0000-000000000002\",\"-ops\":\"00000000-0000-0000-0000-000000000004\"}}" }
+  }
+
+  expect_failures = [data.aws_ssm_parameter.principals]
+}
+
+run "rejects_principal_id_prefix_9_characters" {
+  command = plan
+
+  override_data {
+    target = data.aws_ssm_parameter.principals
+    values = { value = "{\"users\":{\"owner\":\"00000000-0000-0000-0000-000000000001\"},\"groups\":{\"operators\":\"000000000-00000000-0000-0000-0000-000000000002\"}}" }
+  }
+
+  expect_failures = [data.aws_ssm_parameter.principals]
+}
+
+run "rejects_principal_id_prefix_11_characters" {
+  command = plan
+
+  override_data {
+    target = data.aws_ssm_parameter.principals
+    values = { value = "{\"users\":{\"owner\":\"00000000000-00000000-0000-0000-0000-000000000001\"},\"groups\":{\"operators\":\"00000000-0000-0000-0000-000000000002\"}}" }
+  }
+
+  expect_failures = [data.aws_ssm_parameter.principals]
+}
+
 # 理由は organization-baseline/ADR-0204 決定8。
 run "rejects_label_in_users_and_groups" {
   command = plan
@@ -517,12 +581,39 @@ run "rejects_label_in_users_and_groups" {
   expect_failures = [data.aws_ssm_parameter.principals]
 }
 
-run "rejects_empty_users_and_groups" {
+run "rejects_principals_users_null" {
   command = plan
 
   override_data {
     target = data.aws_ssm_parameter.principals
-    values = { value = "{\"users\":{},\"groups\":{}}" }
+    values = { value = "{\"users\":null,\"groups\":{\"operators\":\"0000000000-00000000-0000-0000-0000-000000000002\"}}" }
+  }
+
+  expect_failures = [data.aws_ssm_parameter.principals]
+}
+
+# メンバーへの割当が無いと、groups の null を割当の postcondition が見ないので、形の postcondition だけが落とす。
+run "rejects_principals_groups_null" {
+  command = plan
+
+  variables {
+    member_assignments = []
+  }
+
+  override_data {
+    target = data.aws_ssm_parameter.principals
+    values = { value = "{\"users\":{\"owner\":\"00000000-0000-0000-0000-000000000001\"},\"groups\":null}" }
+  }
+
+  expect_failures = [data.aws_ssm_parameter.principals]
+}
+
+run "rejects_null_principal_id" {
+  command = plan
+
+  override_data {
+    target = data.aws_ssm_parameter.principals
+    values = { value = "{\"users\":{\"owner\":null},\"groups\":{\"operators\":\"0000000000-00000000-0000-0000-0000-000000000002\"}}" }
   }
 
   expect_failures = [data.aws_ssm_parameter.principals]

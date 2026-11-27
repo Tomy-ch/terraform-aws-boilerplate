@@ -34,7 +34,13 @@ organization := "module.o.aws_organizations_organization.this"
 
 ci_module := "module.deployment_identity."
 
-decl := {"deployment_identity": {"module": ci_module}, "organization_baseline": {
+ci_decl := {
+	"module": ci_module,
+	"roles": [sprintf("%smodule.g.aws_iam_role.this", [ci_module])],
+	"oidc_provider": sprintf("%smodule.g.aws_iam_openid_connect_provider.this", [ci_module]),
+}
+
+decl := {"deployment_identity": ci_decl, "organization_baseline": {
 	"organization": organization,
 	"access": {
 		"permission_sets": {k: {
@@ -114,7 +120,7 @@ test_pass_reference_shape if {
 
 # 00: 宣言と入力の欠け。どれも何も見ないまま通さない。
 test_violation_malformed_decl if {
-	d := {"deployment_identity": {"module": ci_module}, "organization_baseline": {"organization": organization, "access": object.remove(decl.organization_baseline.access, ["protected_resources"])}}
+	d := {"deployment_identity": ci_decl, "organization_baseline": {"organization": organization, "access": object.remove(decl.organization_baseline.access, ["protected_resources"])}}
 	fixture.has("[PLAN-IDC-00] 宣言 organization_baseline.access の形が違います", p.deny) with input as fixture.plan(valid_rcs) with data.policy_plan as d
 }
 
@@ -123,7 +129,7 @@ test_violation_missing_decl if {
 }
 
 test_violation_decl_four_sets if {
-	d := {"deployment_identity": {"module": ci_module}, "organization_baseline": {"organization": organization, "access": object.union(object.remove(decl.organization_baseline.access, ["permission_sets"]), {"permission_sets": object.remove(decl.organization_baseline.access.permission_sets, ["billing"])})}}
+	d := {"deployment_identity": ci_decl, "organization_baseline": {"organization": organization, "access": object.union(object.remove(decl.organization_baseline.access, ["permission_sets"]), {"permission_sets": object.remove(decl.organization_baseline.access.permission_sets, ["billing"])})}}
 	fixture.has("[PLAN-IDC-00] 宣言 organization_baseline.access の形が違います", p.deny) with input as fixture.plan(valid_rcs) with data.policy_plan as d
 }
 
@@ -265,8 +271,10 @@ test_violation_conditional_deny if {
 
 test_violation_write_in_notaction if {
 	leaky := {"Sid": "DenyBootstrapBucketChange", "Effect": "Deny", "NotAction": ["s3:Get*", "s3:List*", "s3:PutBucketPolicy"], "Resource": ["arn:aws:s3:::state", "arn:aws:s3:::state/*"]}
-	rs := rcs_with(base_sets, base_exclusives, [inline(array.concat([s | some s in valid_statements; s.Sid != "DenyBootstrapBucketChange"], [leaky]))], valid_assignments)
-	fixture.has(sprintf("[PLAN-IDC-03] %s の inline policy の Deny DenyBootstrapBucketChange の NotAction に、読みの動詞のほかの s3:putbucketpolicy があります", [inline_address]), messages(rs))
+	msgs := messages(rcs_with(base_sets, base_exclusives, [inline(array.concat([s | some s in valid_statements; s.Sid != "DenyBootstrapBucketChange"], [leaky]))], valid_assignments))
+	fixture.has(sprintf("[PLAN-IDC-03] %s の inline policy の Deny DenyBootstrapBucketChange の NotAction に、読みの動詞のほかの s3:putbucketpolicy があります", [inline_address]), msgs)
+	fixture.has("[PLAN-IDC-03] AdministratorAccess を付ける permission set の inline policy が、arn:aws:s3:::state の書き込みを拒んでいません", msgs)
+	fixture.has("[PLAN-IDC-03] AdministratorAccess を付ける permission set の inline policy が、arn:aws:s3:::state/* の書き込みを拒んでいません", msgs)
 }
 
 test_violation_protected_resource_not_denied if {
@@ -313,7 +321,7 @@ test_violation_admin_policy_on_member_set if {
 # 00: 宣言の中身の欠け。
 shape_message := "[PLAN-IDC-00] 宣言 organization_baseline.access の形が違います"
 
-with_access(a) := {"deployment_identity": {"module": ci_module}, "organization_baseline": {"organization": organization, "access": a}}
+with_access(a) := {"deployment_identity": ci_decl, "organization_baseline": {"organization": organization, "access": a}}
 
 with_set_field(k, field, value) := with_access(object.union(decl.organization_baseline.access, {"permission_sets": object.union(decl.organization_baseline.access.permission_sets, {k: object.union(decl.organization_baseline.access.permission_sets[k], {field: value})})}))
 
@@ -509,12 +517,18 @@ with_state_key_deny(statement) := rcs_with(base_sets, base_exclusives, [inline(a
 
 state_key := "arn:aws:kms:ap-northeast-1:111111111111:key/k"
 
+state_key_not_denied := sprintf("[PLAN-IDC-03] AdministratorAccess を付ける permission set の inline policy が、%s の書き込みを拒んでいません", [state_key])
+
+state_key_deny_shape := sprintf("[PLAN-IDC-03] %s の inline policy の Deny DenyStateKeyChange が %s を、条件なしで NotAction の読みの動詞だけを残す形で拒んでいません", [inline_address, state_key])
+
 test_pass_not_action_string if {
 	count([msg | some msg in messages(with_state_key_deny({"Sid": "DenyStateKeyChange", "Effect": "Deny", "NotAction": "kms:Describe*", "Resource": state_key})); startswith(msg, "[PLAN-IDC-03]")]) == 0
 }
 
 test_violation_kms_write_in_notaction if {
-	fixture.has(sprintf("[PLAN-IDC-03] %s の inline policy の Deny DenyStateKeyChange の NotAction に、読みの動詞のほかの kms:decrypt があります", [inline_address]), messages(with_state_key_deny({"Sid": "DenyStateKeyChange", "Effect": "Deny", "NotAction": ["kms:Describe*", "kms:Decrypt"], "Resource": state_key})))
+	msgs := messages(with_state_key_deny({"Sid": "DenyStateKeyChange", "Effect": "Deny", "NotAction": ["kms:Describe*", "kms:Decrypt"], "Resource": state_key}))
+	fixture.has(sprintf("[PLAN-IDC-03] %s の inline policy の Deny DenyStateKeyChange の NotAction に、読みの動詞のほかの kms:decrypt があります", [inline_address]), msgs)
+	fixture.has(state_key_not_denied, msgs)
 }
 
 test_violation_protected_by_action if {
@@ -569,4 +583,143 @@ test_violation_unknown_ci_role_name if {
 
 test_pass_ci_identities_covered if {
 	count([msg | some msg in messages(valid_rcs); contains(msg, "管理アカウントの CI の")]) == 0
+}
+
+test_violation_protected_by_empty_not_action if {
+	msgs := messages(with_state_key_deny({"Sid": "DenyStateKeyChange", "Effect": "Deny", "NotAction": [], "Resource": state_key}))
+	fixture.has(state_key_deny_shape, msgs)
+	fixture.has(state_key_not_denied, msgs)
+}
+
+test_violation_protected_by_deny_without_action if {
+	msgs := messages(with_state_key_deny({"Sid": "DenyStateKeyChange", "Effect": "Deny", "Resource": state_key}))
+	fixture.has(state_key_deny_shape, msgs)
+	fixture.has(state_key_not_denied, msgs)
+}
+
+test_violation_protected_only_by_allow if {
+	msgs := messages(with_state_key_deny({"Sid": "AllowStateKeyRead", "Effect": "Allow", "NotAction": ["kms:Describe*"], "Resource": state_key}))
+	fixture.has(state_key_not_denied, msgs)
+}
+
+test_violation_protected_only_on_non_admin_set if {
+	other := inline_on(sprintf("%s.aws_ssoadmin_permission_set_inline_policy.read_only", [m]), sets.read_only.arn, [{"Sid": "DenyStateKeyChange", "Effect": "Deny", "NotAction": ["kms:Describe*"], "Resource": state_key}])
+	rs := rcs_with(base_sets, base_exclusives, [inline([s | some s in valid_statements; s.Sid != "DenyStateKeyChange"]), other], valid_assignments)
+	fixture.has(state_key_not_denied, messages(rs))
+}
+
+test_violation_protected_deny_without_resource if {
+	fixture.has(state_key_not_denied, messages(with_state_key_deny({"Sid": "DenyStateKeyChange", "Effect": "Deny", "NotAction": ["kms:Describe*"]})))
+}
+
+test_violation_inline_statement_not_object if {
+	fixture.has(unreadable_message, messages(rcs_with(base_sets, base_exclusives, [inline(array.concat(valid_statements, ["Deny"]))], valid_assignments)))
+}
+
+test_violation_management_assignment_without_principal_type if {
+	a := object.union(object.remove(valid_assignments[1], ["change"]), {"change": {"actions": ["create"], "after": object.remove(valid_assignments[1].change.after, ["principal_type"]), "after_unknown": {}}})
+	msgs := messages(rcs_with(base_sets, base_exclusives, [inline(valid_statements)], [valid_assignments[0], a, valid_assignments[2]]))
+	fixture.has("[PLAN-IDC-00] 割当 module.a.aws_ssoadmin_account_assignment.this[\"read_only/owner\"] の principal_type が plan で決まりません", msgs)
+	fixture.has("[PLAN-IDC-04] module.a.aws_ssoadmin_account_assignment.this[\"read_only/owner\"] が、管理アカウントへ USER の外で割り当てます", msgs)
+}
+
+test_violation_unknown_management_account_after_unknown if {
+	unknown := {"address": organization, "type": "aws_organizations_organization", "change": {"actions": ["create"], "after": {}, "after_unknown": {"master_account_id": true}}}
+	fixture.has("[PLAN-IDC-00] 組織の管理アカウントの ID が入力で決まりません", messages(array.concat([unknown], [r | some r in valid_rcs; r.address != organization])))
+}
+
+# 00: CI の宣言と入力の欠け。
+with_ci_decl(d) := object.union(object.remove(decl, ["deployment_identity"]), {"deployment_identity": d})
+
+ci_decl_message := "[PLAN-IDC-00] 宣言 deployment_identity の module・roles・oidc_provider が、空でない文字列（roles は空でない配列）ではありません"
+
+ci_absent_message := "[PLAN-IDC-00] 管理アカウントの CI の role・policy・OIDC provider（宣言 deployment_identity.module の下）が入力にありません"
+
+ci_unnamed_message(address) := sprintf("[PLAN-IDC-00] 管理アカウントの CI の %s の名前が plan で決まりません", [address])
+
+test_violation_decl_without_deployment_identity if {
+	msgs := p.deny with input as fixture.plan(valid_rcs) with data.policy_plan as object.remove(decl, ["deployment_identity"])
+	fixture.has(ci_decl_message, msgs)
+	fixture.has(ci_absent_message, msgs)
+}
+
+test_violation_decl_empty_ci_module if {
+	msgs := p.deny with input as fixture.plan(valid_rcs) with data.policy_plan as with_ci_decl(object.union(ci_decl, {"module": ""}))
+	fixture.has(ci_decl_message, msgs)
+	fixture.has(ci_absent_message, msgs)
+}
+
+test_violation_decl_ci_module_not_string if {
+	msgs := p.deny with input as fixture.plan(valid_rcs) with data.policy_plan as with_ci_decl(object.union(ci_decl, {"module": ["module.deployment_identity."]}))
+	fixture.has(ci_decl_message, msgs)
+	fixture.has(ci_absent_message, msgs)
+}
+
+test_violation_decl_without_oidc_provider if {
+	fixture.has(ci_decl_message, p.deny) with input as fixture.plan(valid_rcs) with data.policy_plan as with_ci_decl(object.remove(ci_decl, ["oidc_provider"]))
+}
+
+test_violation_decl_empty_roles if {
+	fixture.has(ci_decl_message, p.deny) with input as fixture.plan(valid_rcs) with data.policy_plan as with_ci_decl(object.union(ci_decl, {"roles": []}))
+}
+
+test_violation_missing_ci_oidc_provider if {
+	fixture.has(sprintf("[PLAN-IDC-00] 宣言した管理アカウントの CI の %s が入力にありません", [ci_decl.oidc_provider]), messages(without_ci(ci_oidc.address)))
+}
+
+test_violation_missing_ci_roles if {
+	rs := [r | some r in valid_rcs; r.type != "aws_iam_role"]
+	fixture.has(sprintf("[PLAN-IDC-00] 宣言した管理アカウントの CI の %s が入力にありません", [ci_decl.roles[0]]), messages(rs))
+}
+
+test_violation_unknown_ci_oidc_url if {
+	unknown := {"address": ci_oidc.address, "type": "aws_iam_openid_connect_provider", "change": {"actions": ["create"], "after": {}, "after_unknown": {"url": true}}}
+	fixture.has(ci_unnamed_message(unknown.address), messages(array.concat(without_ci(unknown.address), [unknown])))
+}
+
+test_violation_missing_ci_oidc_url if {
+	nameless := change(ci_oidc.address, "aws_iam_openid_connect_provider", {})
+	fixture.has(ci_unnamed_message(nameless.address), messages(array.concat(without_ci(nameless.address), [nameless])))
+}
+
+ci_policy_address := sprintf("%smodule.g.aws_iam_policy.manage", [ci_module])
+
+test_violation_unknown_ci_policy_name if {
+	unknown := {"address": ci_policy_address, "type": "aws_iam_policy", "change": {"actions": ["create"], "after": {"path": "/"}, "after_unknown": {"name": true}}}
+	fixture.has(ci_unnamed_message(ci_policy_address), messages(array.concat(without_ci(ci_policy_address), [unknown])))
+}
+
+test_violation_missing_ci_policy_name if {
+	nameless := change(ci_policy_address, "aws_iam_policy", {"path": "/"})
+	fixture.has(ci_unnamed_message(ci_policy_address), messages(array.concat(without_ci(ci_policy_address), [nameless])))
+}
+
+ci_plan_role_address := sprintf("%smodule.g.aws_iam_role.this[\"plan\"]", [ci_module])
+
+test_violation_missing_ci_role_name if {
+	nameless := change(ci_plan_role_address, "aws_iam_role", {"path": "/"})
+	fixture.has(ci_unnamed_message(ci_plan_role_address), messages(array.concat(without_ci(ci_plan_role_address), [nameless])))
+}
+
+test_violation_unknown_ci_role_path if {
+	unknown := {"address": ci_plan_role_address, "type": "aws_iam_role", "change": {"actions": ["create"], "after": {"name": "tabp-admin-ci-plan"}, "after_unknown": {"path": true}}}
+	fixture.has(ci_unnamed_message(ci_plan_role_address), messages(array.concat(without_ci(ci_plan_role_address), [unknown])))
+}
+
+with_protected(resources) := with_access(object.union(decl.organization_baseline.access, {"protected_resources": resources}))
+
+ci_outside_message(address, r) := sprintf("[PLAN-IDC-03] 管理アカウントの CI の %s（%s）が、organization_admin の Deny が守る ARN の pattern の外にあります", [address, r])
+
+test_violation_protected_without_iam_arn if {
+	msgs := p.deny with input as fixture.plan(valid_rcs) with data.policy_plan as with_protected([r | some r in protected_resources; not contains(r, ":iam::")])
+	fixture.has(ci_outside_message(ci_plan_role_address, "role/tabp-admin-ci-plan"), msgs)
+	fixture.has(ci_outside_message(ci_policy_address, "policy/tabp-admin-ci-apply-identity-manage"), msgs)
+	fixture.has(ci_outside_message(ci_oidc.address, "oidc-provider/token.actions.githubusercontent.com"), msgs)
+}
+
+test_violation_protected_iam_arn_short_account if {
+	resources := array.concat(["arn:aws:iam::11111111111:role/tabp-admin-ci-*"], [r | some r in protected_resources; not contains(r, ":role/")])
+	msgs := p.deny with input as fixture.plan(valid_rcs) with data.policy_plan as with_protected(resources)
+	fixture.has(ci_outside_message(ci_plan_role_address, "role/tabp-admin-ci-plan"), msgs)
+	not fixture.has(ci_outside_message(ci_policy_address, "policy/tabp-admin-ci-apply-identity-manage"), msgs)
 }

@@ -318,6 +318,47 @@ run "rejects_email_as_label" {
   expect_failures = [var.identity_center]
 }
 
+run "accepts_1_character_labels" {
+  command = plan
+
+  variables {
+    identity_center = {
+      management_assignments = [{ permission_set = "organization_admin", user = "o" }]
+      member_assignments     = [{ account = "security", permission_set = "read_only", group = "g" }]
+    }
+  }
+
+  override_data {
+    target = module.access[0].data.aws_ssm_parameter.principals
+    values = { value = "{\"users\":{\"o\":\"00000000-0000-0000-0000-000000000001\"},\"groups\":{\"g\":\"00000000-0000-0000-0000-000000000002\"}}" }
+  }
+}
+
+run "rejects_label_with_leading_digit" {
+  command = plan
+
+  variables {
+    identity_center = {
+      management_assignments = [{ permission_set = "organization_admin", user = "1owner" }]
+    }
+  }
+
+  expect_failures = [var.identity_center]
+}
+
+run "rejects_label_with_leading_hyphen" {
+  command = plan
+
+  variables {
+    identity_center = {
+      management_assignments = [{ permission_set = "organization_admin", user = "owner" }]
+      member_assignments     = [{ account = "security", permission_set = "read_only", group = "-operators" }]
+    }
+  }
+
+  expect_failures = [var.identity_center]
+}
+
 run "rejects_duplicate_assignment" {
   command = plan
 
@@ -427,4 +468,32 @@ run "rejects_64_character_apply_output_bucket" {
   }
 
   expect_failures = [var.apply_output_bucket_arn]
+}
+
+run "accepts_3_character_bucket_name" {
+  command = plan
+
+  variables {
+    state_bucket_arn = "arn:aws:s3:::abc"
+  }
+}
+
+run "rejects_2_character_bucket_name" {
+  command = plan
+
+  variables {
+    state_bucket_arn = "arn:aws:s3:::ab"
+  }
+
+  expect_failures = [var.state_bucket_arn]
+}
+
+run "rejects_empty_bucket_name" {
+  command = plan
+
+  variables {
+    state_bucket_arn = "arn:aws:s3:::"
+  }
+
+  expect_failures = [var.state_bucket_arn]
 }
