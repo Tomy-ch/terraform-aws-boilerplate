@@ -5,14 +5,16 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/checksdecl"
 )
 
-func judgeDecl() decl {
-	return decl{Checks: []check{
-		{Name: "a", Paths: []string{}, Scope: scopeTree, Required: boolp(true)},
-		{Name: "b", Paths: []string{"b/**"}, Scope: scopeTree, Required: boolp(true)},
-		{Name: "c", Paths: []string{}, Scope: scopeChange, Required: boolp(true)},
-		{Name: "info", Paths: []string{}, Scope: scopeTree, Required: boolp(false)},
+func judgeDecl() checksdecl.Decl {
+	return checksdecl.Decl{Checks: []checksdecl.Check{
+		{Name: "a", Paths: []string{}, Scope: checksdecl.ScopeTree, Required: boolp(true)},
+		{Name: "b", Paths: []string{"b/**"}, Scope: checksdecl.ScopeTree, Required: boolp(true)},
+		{Name: "c", Paths: []string{}, Scope: checksdecl.ScopeChange, Required: boolp(true)},
+		{Name: "info", Paths: []string{}, Scope: checksdecl.ScopeTree, Required: boolp(false)},
 	}}
 }
 
@@ -202,9 +204,9 @@ func Test_judgeLine(t *testing.T) {
 
 		t.Run("木の検査が宣言に無ければ合格と区別する", func(t *testing.T) {
 			t.Parallel()
-			d := decl{Checks: []check{{Name: "c", Paths: []string{}, Scope: scopeChange, Required: boolp(true)}}}
+			d := checksdecl.Decl{Checks: []checksdecl.Check{{Name: "c", Paths: []string{}, Scope: checksdecl.ScopeChange, Required: boolp(true)}}}
 			_, err := judgeLine(d, map[string]need{"c": {Result: "success"}})
-			require.ErrorIs(t, err, errNoChecks)
+			require.ErrorIs(t, err, checksdecl.ErrNoChecks)
 		})
 	})
 }

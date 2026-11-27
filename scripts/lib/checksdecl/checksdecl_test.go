@@ -1,4 +1,4 @@
-package main
+package checksdecl
 
 import (
 	"testing"
@@ -13,7 +13,7 @@ const validDecl = `{"checks": [
   {"name": "trivy-fs", "workflow": "trivy-fs.yaml", "paths": [], "scope": "tree", "required": false}
 ]}`
 
-func Test_parseDecl(t *testing.T) {
+func TestParse(t *testing.T) {
 	t.Parallel()
 
 	t.Run("正常系", func(t *testing.T) {
@@ -21,11 +21,11 @@ func Test_parseDecl(t *testing.T) {
 
 		t.Run("宣言の順に検査を読む", func(t *testing.T) {
 			t.Parallel()
-			d, err := parseDecl([]byte(validDecl))
+			d, err := Parse([]byte(validDecl))
 			require.NoError(t, err)
-			assert.Equal(t, []string{"go-test", "commitlint", "trivy-fs"}, d.names())
-			assert.True(t, d.Checks[0].required())
-			assert.False(t, d.Checks[2].required())
+			assert.Equal(t, []string{"go-test", "commitlint", "trivy-fs"}, d.Names())
+			assert.True(t, d.Checks[0].IsRequired())
+			assert.False(t, d.Checks[2].IsRequired())
 		})
 	})
 
@@ -50,21 +50,21 @@ func Test_parseDecl(t *testing.T) {
 		} {
 			t.Run(name+"なら誤りにする", func(t *testing.T) {
 				t.Parallel()
-				_, err := parseDecl([]byte(body))
-				require.ErrorIs(t, err, errDecl)
+				_, err := Parse([]byte(body))
+				require.ErrorIs(t, err, ErrDecl)
 			})
 		}
 
 		// 検査が0件の宣言を合格として読むと、gate は何も見ずに成功する。
 		t.Run("検査が0件なら合格と区別する", func(t *testing.T) {
 			t.Parallel()
-			_, err := parseDecl([]byte(`{"checks": []}`))
-			require.ErrorIs(t, err, errNoChecks)
+			_, err := Parse([]byte(`{"checks": []}`))
+			require.ErrorIs(t, err, ErrNoChecks)
 		})
 	})
 }
 
-func Test_check_required(t *testing.T) {
+func TestCheck_IsRequired(t *testing.T) {
 	t.Parallel()
 
 	t.Run("正常系", func(t *testing.T) {
@@ -73,14 +73,14 @@ func Test_check_required(t *testing.T) {
 		yes, no := true, false
 		t.Run("true のときだけ真を返す", func(t *testing.T) {
 			t.Parallel()
-			assert.True(t, check{Required: &yes}.required())
-			assert.False(t, check{Required: &no}.required())
-			assert.False(t, check{}.required())
+			assert.True(t, Check{Required: &yes}.IsRequired())
+			assert.False(t, Check{Required: &no}.IsRequired())
+			assert.False(t, Check{}.IsRequired())
 		})
 	})
 }
 
-func Test_decl_names(t *testing.T) {
+func TestDecl_Names(t *testing.T) {
 	t.Parallel()
 
 	t.Run("正常系", func(t *testing.T) {
@@ -88,12 +88,12 @@ func Test_decl_names(t *testing.T) {
 
 		t.Run("宣言の順に名前を返す", func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, []string{"b", "a"}, decl{Checks: []check{{Name: "b"}, {Name: "a"}}}.names())
+			assert.Equal(t, []string{"b", "a"}, Decl{Checks: []Check{{Name: "b"}, {Name: "a"}}}.Names())
 		})
 	})
 }
 
-func Test_joinNames(t *testing.T) {
+func TestJoinNames(t *testing.T) {
 	t.Parallel()
 
 	t.Run("正常系", func(t *testing.T) {
@@ -101,8 +101,8 @@ func Test_joinNames(t *testing.T) {
 
 		t.Run("読点と空白で繋ぐ", func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, "a, b", joinNames([]string{"a", "b"}))
-			assert.Empty(t, joinNames(nil))
+			assert.Equal(t, "a, b", JoinNames([]string{"a", "b"}))
+			assert.Empty(t, JoinNames(nil))
 		})
 	})
 }
@@ -124,7 +124,7 @@ func Test_validBases(t *testing.T) {
 	})
 }
 
-func Test_check_runsOn(t *testing.T) {
+func TestCheck_RunsOn(t *testing.T) {
 	t.Parallel()
 
 	t.Run("正常系", func(t *testing.T) {
@@ -132,10 +132,10 @@ func Test_check_runsOn(t *testing.T) {
 
 		t.Run("bases が無ければどの役割でも走り、あれば含む役割でだけ走る", func(t *testing.T) {
 			t.Parallel()
-			assert.True(t, check{}.runsOn(baseLine))
-			assert.True(t, check{}.runsOn(baseDeploy))
-			assert.True(t, check{Bases: []string{baseDeploy}}.runsOn(baseDeploy))
-			assert.False(t, check{Bases: []string{baseDeploy}}.runsOn(baseLine))
+			assert.True(t, Check{}.RunsOn(BaseLine))
+			assert.True(t, Check{}.RunsOn(BaseDeploy))
+			assert.True(t, Check{Bases: []string{BaseDeploy}}.RunsOn(BaseDeploy))
+			assert.False(t, Check{Bases: []string{BaseDeploy}}.RunsOn(BaseLine))
 		})
 	})
 }

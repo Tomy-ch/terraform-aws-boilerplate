@@ -10,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/checksdecl"
 )
 
 const branchesFixture = `{
@@ -49,7 +51,7 @@ func useRepo(t *testing.T, declBody string, files map[string]string) (string, st
 	t.Helper()
 	dir := t.TempDir()
 	gitIn(t, dir, "init", "-q")
-	writeFile(t, dir, declFile, declBody)
+	writeFile(t, dir, checksdecl.File, declBody)
 	writeFile(t, dir, ".github/settings/branches.json", branchesFixture)
 	writeFile(t, dir, "README.md", "x\n")
 	gitIn(t, dir, "add", "-A")
@@ -110,8 +112,8 @@ func Test_run(t *testing.T) {
 		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
 		t.Run("宣言を PR の木ではなく decl-rev の木から読む", func(t *testing.T) {
 			base, head := useRepo(t, repoDecl, map[string]string{
-				"a/b.go": "package b\n",
-				declFile: `{"checks": [{"name": "always", "workflow": "always.yaml", "paths": [], "scope": "change", "required": true}]}`,
+				"a/b.go":        "package b\n",
+				checksdecl.File: `{"checks": [{"name": "always", "workflow": "always.yaml", "paths": [], "scope": "change", "required": true}]}`,
 			})
 			needs := `{"changes": {"result": "success", "outputs": {"run": "[\"always\"]"}}, "always": {"result": "success"}}`
 			var out bytes.Buffer
@@ -156,7 +158,7 @@ func Test_run(t *testing.T) {
 			_, head := useRepo(t, `{"checks": []}`, nil)
 			var out bytes.Buffer
 			err := run([]string{"line", "--decl-rev", head, "--event", "push", "--ref", "refs/heads/release/v0.2.0"}, envOf(nil), &out)
-			require.ErrorIs(t, err, errNoChecks)
+			require.ErrorIs(t, err, checksdecl.ErrNoChecks)
 		})
 
 		for name, args := range map[string][]string{
@@ -184,7 +186,7 @@ func Test_readDecls(t *testing.T) {
 			_, head := useRepo(t, repoDecl, nil)
 			d, b, err := readDecls(head)
 			require.NoError(t, err)
-			assert.Equal(t, []string{"always", "go"}, d.names())
+			assert.Equal(t, []string{"always", "go"}, d.Names())
 			assert.True(t, b.IsLine("release/v0.2.0"))
 		})
 	})
@@ -207,9 +209,9 @@ func Test_readDecls(t *testing.T) {
 
 		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
 		t.Run("検査の宣言を解釈できなければ誤りにする", func(t *testing.T) {
-			_, head := useRepo(t, repoDecl, map[string]string{declFile: "{"})
+			_, head := useRepo(t, repoDecl, map[string]string{checksdecl.File: "{"})
 			_, _, err := readDecls(head)
-			require.ErrorIs(t, err, errDecl)
+			require.ErrorIs(t, err, checksdecl.ErrDecl)
 		})
 	})
 }

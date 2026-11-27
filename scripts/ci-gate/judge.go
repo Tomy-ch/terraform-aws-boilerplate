@@ -5,6 +5,7 @@ import (
 	"slices"
 	"sort"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/checksdecl"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -61,7 +62,7 @@ func sameSet(want []string, got map[string]need) error {
 	}
 	if len(missing) > 0 || len(extra) > 0 {
 		sort.Strings(extra)
-		return xerrors.Wrapf(errNeeds, "宣言にあり needs に無い: [%s] / needs にあり宣言に無い: [%s]", joinNames(missing), joinNames(extra))
+		return xerrors.Wrapf(errNeeds, "宣言にあり needs に無い: [%s] / needs にあり宣言に無い: [%s]", checksdecl.JoinNames(missing), checksdecl.JoinNames(extra))
 	}
 	return nil
 }
@@ -75,8 +76,8 @@ func sameSet(want []string, got map[string]need) error {
 //   - required の検査のうち、走るべきものは success、走るべきでないものは skipped か success。
 //
 // required でない検査は表に載せるが、合否に数えない。
-func judgePR(d decl, should []string, needs map[string]need) ([]row, error) {
-	if err := sameSet(append([]string{changesJob}, d.names()...), needs); err != nil {
+func judgePR(d checksdecl.Decl, should []string, needs map[string]need) ([]row, error) {
+	if err := sameSet(append([]string{changesJob}, d.Names()...), needs); err != nil {
 		return nil, err
 	}
 	ch := needs[changesJob]
@@ -95,7 +96,7 @@ func judgePR(d decl, should []string, needs map[string]need) ([]row, error) {
 		}
 	}
 	for _, c := range d.Checks {
-		r := row{Name: c.Name, Required: c.required(), Should: slices.Contains(should, c.Name), Result: needs[c.Name].Result}
+		r := row{Name: c.Name, Required: c.IsRequired(), Should: slices.Contains(should, c.Name), Result: needs[c.Name].Result}
 		switch {
 		case r.Should:
 			r.OK = r.Result == "success"
@@ -118,10 +119,10 @@ func judgePR(d decl, should []string, needs map[string]need) ([]row, error) {
 }
 
 // treeChecks は、線の検証が走らせる検査（scope が tree で required のもの）の名前を宣言の順に返す。
-func treeChecks(d decl) []string {
+func treeChecks(d checksdecl.Decl) []string {
 	var out []string
 	for _, c := range d.Checks {
-		if c.Scope == scopeTree && c.required() {
+		if c.Scope == checksdecl.ScopeTree && c.IsRequired() {
 			out = append(out, c.Name)
 		}
 	}
@@ -129,10 +130,10 @@ func treeChecks(d decl) []string {
 }
 
 // judgeLine は、線の検証の判定。needs の集合が treeChecks と一致し、すべて success のときだけ合格する。
-func judgeLine(d decl, needs map[string]need) ([]row, error) {
+func judgeLine(d checksdecl.Decl, needs map[string]need) ([]row, error) {
 	want := treeChecks(d)
 	if len(want) == 0 {
-		return nil, xerrors.Wrap(errNoChecks, "scope が tree の required の検査がありません")
+		return nil, xerrors.Wrap(checksdecl.ErrNoChecks, "scope が tree の required の検査がありません")
 	}
 	if err := sameSet(want, needs); err != nil {
 		return nil, err

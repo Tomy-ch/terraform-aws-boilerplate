@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/branchdecl"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/checksdecl"
 )
 
 func testBranches() branchdecl.Branches {
@@ -26,11 +27,11 @@ func boolp(v bool) *bool { return &v }
 func Test_selectChecks(t *testing.T) {
 	t.Parallel()
 
-	d := decl{Checks: []check{
-		{Name: "always", Paths: []string{}, Scope: scopeChange, Required: boolp(true)},
-		{Name: "go", Paths: []string{"**/*.go"}, Scope: scopeTree, Required: boolp(true)},
-		{Name: "plan", Paths: []string{"env/**"}, Scope: scopeTree, Required: boolp(true), PlanEnv: "admin", Contexts: []string{"plan-admin"}},
-		{Name: "release", Paths: []string{}, Scope: scopeTree, Required: boolp(false), Bases: []string{baseDeploy}},
+	d := checksdecl.Decl{Checks: []checksdecl.Check{
+		{Name: "always", Paths: []string{}, Scope: checksdecl.ScopeChange, Required: boolp(true)},
+		{Name: "go", Paths: []string{"**/*.go"}, Scope: checksdecl.ScopeTree, Required: boolp(true)},
+		{Name: "plan", Paths: []string{"env/**"}, Scope: checksdecl.ScopeTree, Required: boolp(true), PlanEnv: "admin", Contexts: []string{"plan-admin"}},
+		{Name: "release", Paths: []string{}, Scope: checksdecl.ScopeTree, Required: boolp(false), Bases: []string{checksdecl.BaseDeploy}},
 	}}
 
 	t.Run("正常系", func(t *testing.T) {
@@ -76,7 +77,7 @@ func Test_selectChecks(t *testing.T) {
 
 		t.Run("plan_env の env を持つデプロイブランチが無ければ誤りにする", func(t *testing.T) {
 			t.Parallel()
-			bad := decl{Checks: []check{{Name: "plan", Paths: []string{}, Scope: scopeTree, Required: boolp(true), PlanEnv: "security", Contexts: []string{"plan-security"}}}}
+			bad := checksdecl.Decl{Checks: []checksdecl.Check{{Name: "plan", Paths: []string{}, Scope: checksdecl.ScopeTree, Required: boolp(true), PlanEnv: "security", Contexts: []string{"plan-security"}}}}
 			_, err := selectChecks(bad, nil, "release/v0.2.0", testBranches())
 			require.ErrorIs(t, err, errPlanEnv)
 		})
@@ -133,7 +134,7 @@ func Test_baseRole(t *testing.T) {
 
 		t.Run("線とデプロイブランチを見分ける", func(t *testing.T) {
 			t.Parallel()
-			for base, want := range map[string]string{"release/v0.2.0": baseLine, "hotfix/v0.2.1": baseLine, "admin": baseDeploy, "production": baseDeploy} {
+			for base, want := range map[string]string{"release/v0.2.0": checksdecl.BaseLine, "hotfix/v0.2.1": checksdecl.BaseLine, "admin": checksdecl.BaseDeploy, "production": checksdecl.BaseDeploy} {
 				got, err := baseRole(testBranches(), base)
 				require.NoError(t, err)
 				assert.Equal(t, want, got, base)

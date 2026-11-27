@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/branchdecl"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/checksdecl"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -22,14 +23,14 @@ var (
 //   - bases を持つ検査は、base の役割（線か、デプロイブランチか）がそこに含まれるときだけ走る。
 //
 // 変更したファイルが0件の Pull Request でも、常に走る検査は走る。
-func selectChecks(d decl, files []string, baseRef string, b branchdecl.Branches) ([]string, error) {
+func selectChecks(d checksdecl.Decl, files []string, baseRef string, b branchdecl.Branches) ([]string, error) {
 	role, err := baseRole(b, baseRef)
 	if err != nil {
 		return nil, err
 	}
 	var out []string
 	for _, c := range d.Checks {
-		if !c.runsOn(role) {
+		if !c.RunsOn(role) {
 			continue
 		}
 		if c.PlanEnv != "" {
@@ -51,7 +52,7 @@ func selectChecks(d decl, files []string, baseRef string, b branchdecl.Branches)
 func touches(patterns, files []string) bool {
 	for _, f := range files {
 		for _, p := range patterns {
-			if matchGlob(p, f) {
+			if checksdecl.MatchGlob(p, f) {
 				return true
 			}
 		}
@@ -78,11 +79,11 @@ func feedsEnv(b branchdecl.Branches, env, baseRef string) (bool, error) {
 
 func baseRole(b branchdecl.Branches, baseRef string) (string, error) {
 	if b.IsLine(baseRef) {
-		return baseLine, nil
+		return checksdecl.BaseLine, nil
 	}
 	for _, name := range b.DeployNames() {
 		if name == baseRef {
-			return baseDeploy, nil
+			return checksdecl.BaseDeploy, nil
 		}
 	}
 	return "", xerrors.Wrapf(errBase, "%q", baseRef)

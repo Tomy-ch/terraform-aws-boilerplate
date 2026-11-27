@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/branchdecl"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/checksdecl"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workdir"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
@@ -34,7 +35,7 @@ func main() {
 	log.SetFlags(0)
 	if err := run(os.Args[1:], os.Getenv, os.Stdout); err != nil {
 		log.Printf("❌ ci-gate: %v", err)
-		if xerrors.Is(err, errNoChecks) {
+		if xerrors.Is(err, checksdecl.ErrNoChecks) {
 			os.Exit(2)
 		}
 		os.Exit(1)
@@ -121,34 +122,34 @@ func run(args []string, getenv func(string) string, out io.Writer) error {
 }
 
 // readDecls は、rev の木から検査の宣言と分岐の宣言を読む。
-func readDecls(rev string) (decl, branchdecl.Branches, error) {
-	raw, err := fileAt(rev, declFile)
+func readDecls(rev string) (checksdecl.Decl, branchdecl.Branches, error) {
+	raw, err := fileAt(rev, checksdecl.File)
 	if err != nil {
-		return decl{}, branchdecl.Branches{}, err
+		return checksdecl.Decl{}, branchdecl.Branches{}, err
 	}
-	d, err := parseDecl(raw)
+	d, err := checksdecl.Parse(raw)
 	if err != nil {
-		return decl{}, branchdecl.Branches{}, xerrors.Wrapf(err, "%s:%s", rev, declFile)
+		return checksdecl.Decl{}, branchdecl.Branches{}, xerrors.Wrapf(err, "%s:%s", rev, checksdecl.File)
 	}
 	braw, err := fileAt(rev, branchdecl.File)
 	if err != nil {
-		return decl{}, branchdecl.Branches{}, err
+		return checksdecl.Decl{}, branchdecl.Branches{}, err
 	}
 	tmp, cleanup, err := workdir.Temp("", "ci-gate-")
 	if err != nil {
-		return decl{}, branchdecl.Branches{}, xerrors.Wrap(err, "作業ディレクトリ")
+		return checksdecl.Decl{}, branchdecl.Branches{}, xerrors.Wrap(err, "作業ディレクトリ")
 	}
 	defer cleanup()
 	p := filepath.Join(tmp, "branches.json")
 	if err := os.WriteFile(p, braw, 0o600); err != nil {
-		return decl{}, branchdecl.Branches{}, xerrors.Wrap(err, "分岐の宣言の写し")
+		return checksdecl.Decl{}, branchdecl.Branches{}, xerrors.Wrap(err, "分岐の宣言の写し")
 	}
 	b, err := branchdecl.Read(p)
 	if err != nil {
-		return decl{}, branchdecl.Branches{}, xerrors.Wrapf(err, "%s:%s", rev, branchdecl.File)
+		return checksdecl.Decl{}, branchdecl.Branches{}, xerrors.Wrapf(err, "%s:%s", rev, branchdecl.File)
 	}
 	if err := branchdecl.Validate(b); err != nil {
-		return decl{}, branchdecl.Branches{}, xerrors.Wrapf(err, "%s:%s", rev, branchdecl.File)
+		return checksdecl.Decl{}, branchdecl.Branches{}, xerrors.Wrapf(err, "%s:%s", rev, branchdecl.File)
 	}
 	return d, b, nil
 }
@@ -158,7 +159,7 @@ func writeChanges(output string, should []string, nFiles int, out io.Writer) err
 	if err != nil {
 		return xerrors.Wrap(err, "出力の組み立て")
 	}
-	fmt.Fprintf(out, "ℹ️ ci-gate changes: 変更したファイル %d 件、走るべき検査 %d 件: %s\n", nFiles, len(should), joinNames(should))
+	fmt.Fprintf(out, "ℹ️ ci-gate changes: 変更したファイル %d 件、走るべき検査 %d 件: %s\n", nFiles, len(should), checksdecl.JoinNames(should))
 	if output == "" {
 		return nil
 	}
