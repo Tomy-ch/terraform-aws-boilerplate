@@ -838,24 +838,24 @@ func Test_apply(t *testing.T) {
 }
 
 const fixtureChecks = `{
-  "checks": [
-    {
-      "name": "a",
-      "workflow": "a.yaml",
-      "paths": [],
-      "scope": "tree",
-      "required": true
-    },
-    {
-      "name": "scan-check",
-      "workflow": "scan-check.yaml",
-      "paths": [
-        "x/**"
-      ],
-      "scope": "tree",
-      "required": false
-    }
-  ]
+	"checks": [
+		{
+			"name": "a",
+			"workflow": "a.yaml",
+			"paths": [],
+			"scope": "tree",
+			"required": true
+		},
+		{
+			"name": "scan-check",
+			"workflow": "scan-check.yaml",
+			"paths": [
+				"x/**"
+			],
+			"scope": "tree",
+			"required": false
+		}
+	]
 }
 `
 
@@ -941,9 +941,9 @@ func Test_dropChecks(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			writeTree(t, root, map[string]string{checksdecl.File: `{"checks": [
-  {"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true},
-  {"name": "c", "workflow": "c.yaml", "paths": [], "scope": "change", "required": true},
-  {"name": "info", "workflow": "info.yaml", "paths": [], "scope": "tree", "required": false}
+	{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true},
+	{"name": "c", "workflow": "c.yaml", "paths": [], "scope": "change", "required": true},
+	{"name": "info", "workflow": "info.yaml", "paths": [], "scope": "tree", "required": false}
 ]}`})
 			p := plan{writes: map[string]string{}}
 			err := dropChecks(root, []domain{{name: "x", checks: []string{"a"}}}, &p)

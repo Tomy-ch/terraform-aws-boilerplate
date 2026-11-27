@@ -8,10 +8,10 @@ import (
 )
 
 const validDecl = `{"checks": [
-  {"name": "go-test", "workflow": "go-test.yaml", "paths": ["**/*.go"], "scope": "tree", "required": true},
-  {"name": "commitlint", "workflow": "commitlint.yaml", "paths": [], "scope": "change", "required": true},
-  {"name": "trivy-fs", "workflow": "trivy-fs.yaml", "paths": [], "scope": "tree", "required": false, "bases": ["deploy"]},
-  {"name": "plan-admin", "workflow": "plan.yaml", "paths": ["env/admin/**"], "scope": "tree", "required": true, "plan_env": "admin", "contexts": ["plan-admin-identity", "plan-admin-workload"]}
+	{"name": "go-test", "workflow": "go-test.yaml", "paths": ["**/*.go"], "scope": "tree", "required": true},
+	{"name": "commitlint", "workflow": "commitlint.yaml", "paths": [], "scope": "change", "required": true},
+	{"name": "trivy-fs", "workflow": "trivy-fs.yaml", "paths": [], "scope": "tree", "required": false, "bases": ["deploy"]},
+	{"name": "plan-admin", "workflow": "plan.yaml", "paths": ["env/admin/**"], "scope": "tree", "required": true, "plan_env": "admin", "contexts": ["plan-admin-identity", "plan-admin-workload"]}
 ]}`
 
 func TestParse(t *testing.T) {

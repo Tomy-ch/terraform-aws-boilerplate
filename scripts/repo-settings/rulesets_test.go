@@ -398,8 +398,8 @@ func Test_deployRulesets(t *testing.T) {
 	t.Run("2つの plan が同じ context を名指せば失敗する", func(t *testing.T) {
 		t.Parallel()
 		dup, err := checksdecl.Parse([]byte(`{"checks": [
-  {"name": "plan-x-a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true, "plan_env": "x", "contexts": ["c1"]},
-  {"name": "plan-x-b", "workflow": "b.yaml", "paths": [], "scope": "tree", "required": true, "plan_env": "x", "contexts": ["c1"]}
+	{"name": "plan-x-a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true, "plan_env": "x", "contexts": ["c1"]},
+	{"name": "plan-x-b", "workflow": "b.yaml", "paths": [], "scope": "tree", "required": true, "plan_env": "x", "contexts": ["c1"]}
 ]}`))
 		require.NoError(t, err)
 		_, err = deployRulesets(t.TempDir(), lineBranches(branchdecl.DeployBranch{Branch: "main", Env: "x"}), dup)
@@ -421,9 +421,9 @@ func Test_deployContexts(t *testing.T) {
 	t.Parallel()
 
 	checks, err := checksdecl.Parse([]byte(`{"checks": [
-  {"name": "plan-x-a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true, "plan_env": "x", "contexts": ["a1", "a2"]},
-  {"name": "plan-y", "workflow": "y.yaml", "paths": [], "scope": "tree", "required": true, "plan_env": "y", "contexts": ["y1"]},
-  {"name": "plan-x-b", "workflow": "b.yaml", "paths": [], "scope": "tree", "required": true, "plan_env": "x", "contexts": ["b1"]}
+	{"name": "plan-x-a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true, "plan_env": "x", "contexts": ["a1", "a2"]},
+	{"name": "plan-y", "workflow": "y.yaml", "paths": [], "scope": "tree", "required": true, "plan_env": "y", "contexts": ["y1"]},
+	{"name": "plan-x-b", "workflow": "b.yaml", "paths": [], "scope": "tree", "required": true, "plan_env": "x", "contexts": ["b1"]}
 ]}`))
 	require.NoError(t, err)
 
@@ -564,8 +564,7 @@ func Test_checkCoverage(t *testing.T) {
 
 	t.Run("common の include が保護対象を重ねて含めば失敗する", func(t *testing.T) {
 		t.Parallel()
-		doubled := strings.Replace(syncedCommon, `"refs/heads/main",`, `"refs/heads/main",
-        "refs/heads/main",`, 1)
+		doubled := strings.Replace(syncedCommon, `"refs/heads/main",`, "\"refs/heads/main\",\n        \"refs/heads/main\",", 1)
 		require.NotEqual(t, syncedCommon, doubled)
 		err := checkCoverage([]rulesetDecl{decl(commonSpec, doubled)}, protected)
 		require.ErrorIs(t, err, errRulesetPolicy)

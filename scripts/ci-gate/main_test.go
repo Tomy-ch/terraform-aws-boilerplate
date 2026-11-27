@@ -19,25 +19,25 @@ import (
 )
 
 const branchesFixture = `{
-  "deploy": [
-    { "branch": "admin", "env": "admin", "from": ["release/"] },
-    { "branch": "production", "release_base": true }
-  ],
-  "lines": { "release": "release/", "hotfix": "hotfix/" },
-  "line_version": "v<major>.<minor>.<patch>",
-  "revert": "revert/"
+	"deploy": [
+		{ "branch": "admin", "env": "admin", "from": ["release/"] },
+		{ "branch": "production", "release_base": true }
+	],
+	"lines": { "release": "release/", "hotfix": "hotfix/" },
+	"line_version": "v<major>.<minor>.<patch>",
+	"revert": "revert/"
 }`
 
 const repoDecl = `{"checks": [
-  {"name": "always", "workflow": "always.yaml", "paths": [], "scope": "change", "required": true},
-  {"name": "go", "workflow": "go.yaml", "paths": ["**/*.go"], "scope": "tree", "required": true}
+	{"name": "always", "workflow": "always.yaml", "paths": [], "scope": "change", "required": true},
+	{"name": "go", "workflow": "go.yaml", "paths": ["**/*.go"], "scope": "tree", "required": true}
 ]}`
 
 // addedDecl は、repoDecl に、paths の無い required の検査 new を足した宣言。
 const addedDecl = `{"checks": [
-  {"name": "always", "workflow": "always.yaml", "paths": [], "scope": "change", "required": true},
-  {"name": "go", "workflow": "go.yaml", "paths": ["**/*.go"], "scope": "tree", "required": true},
-  {"name": "new", "workflow": "new.yaml", "paths": [], "scope": "tree", "required": true}
+	{"name": "always", "workflow": "always.yaml", "paths": [], "scope": "change", "required": true},
+	{"name": "go", "workflow": "go.yaml", "paths": ["**/*.go"], "scope": "tree", "required": true},
+	{"name": "new", "workflow": "new.yaml", "paths": [], "scope": "tree", "required": true}
 ]}`
 
 // fakeGit は、rev ごとの木と、rng の差分で変わったファイルを持つ偽の git。numstat が nil でなければ、--numstat は
@@ -194,8 +194,8 @@ func Test_run(t *testing.T) {
 			g := repoOf(repoDecl, map[string]string{
 				"a/b.go": "package b\n",
 				checksdecl.File: `{"checks": [
-  {"name": "always", "workflow": "always.yaml", "paths": [], "scope": "change", "required": true},
-  {"name": "go", "workflow": "go.yaml", "paths": ["none/**"], "scope": "tree", "required": false}
+	{"name": "always", "workflow": "always.yaml", "paths": [], "scope": "change", "required": true},
+	{"name": "go", "workflow": "go.yaml", "paths": ["none/**"], "scope": "tree", "required": false}
 ]}`,
 			})
 			needs := `{"changes": {"result": "success", "outputs": {"run": "[\"always\",\"go\"]"}}, "call-always": {"result": "success"}, "call-go": {"result": "skipped"}}`
