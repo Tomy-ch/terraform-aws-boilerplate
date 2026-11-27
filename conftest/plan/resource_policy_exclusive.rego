@@ -125,6 +125,11 @@ kind_name := {"state_backend": "state-backend", "deployment_identity": "deployme
 
 # 宣言に無い instance の policy は、宣言した resource の唯一の policy として読まれない。
 deny contains msg if {
+	some e in lib.malformed_marker_entries
+	msg := sprintf("[PLAN-RPE-00] %s: %s は宣言に無い instance を見つける印の address なのに、change を object で持っていません", [e.path, e.address])
+}
+
+deny contains msg if {
 	some u in lib.undeclared_instances
 	msg := sprintf("[PLAN-RPE-00] %s: %s の instance（prefix %q）が宣言にありません。data.policy_plan.state_backend.instances[%q] に足してください", [u.path, kind_name[u.kind], u.prefix, lib.root_name(u.path)])
 }
