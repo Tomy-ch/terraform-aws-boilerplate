@@ -92,8 +92,8 @@ func Test_command(t *testing.T) {
 		stepCIPlanNoLock:   {"terraform", "plan", "-lock=false", "-input=false", "-no-color", "-json", "-detailed-exitcode"},
 		stepCIPlanLock:     {"terraform", "plan", "-input=false", "-no-color", "-json", "-detailed-exitcode"},
 		stepCIShow:         {"terraform", "show"},
-		stepCIShowText:     {"terraform", "show", "-no-color"},
-		stepCIApply:        {"terraform", "apply", "-json"},
+		stepCIShowText:     {"terraform", "show"},
+		stepCIApply:        {"terraform", "apply"},
 	} {
 		t.Run(step, func(t *testing.T) {
 			t.Parallel()

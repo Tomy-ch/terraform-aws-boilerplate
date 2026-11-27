@@ -71,9 +71,9 @@ func command(ctx context.Context, dir string, env []string, step string, _ ...st
 	case stepCIShow:
 		cmd = exec.CommandContext(ctx, "terraform", "show")
 	case stepCIShowText:
-		cmd = exec.CommandContext(ctx, "terraform", "show", "-no-color")
+		cmd = exec.CommandContext(ctx, "terraform", "show")
 	case stepCIApply:
-		cmd = exec.CommandContext(ctx, "terraform", "apply", "-json")
+		cmd = exec.CommandContext(ctx, "terraform", "apply")
 	case stepCIConftest:
 		cmd = exec.CommandContext(ctx, "conftest", "test", "--combine", "--all-namespaces", "--no-color", "-o", "json",
 			"--policy", "rego", "--data", "decl.json", "--data", "layer.json", policyInputDir)

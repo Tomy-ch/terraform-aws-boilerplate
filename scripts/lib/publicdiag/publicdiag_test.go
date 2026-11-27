@@ -37,6 +37,20 @@ func adversarial(r *rand.Rand) string {
 	return b.String()
 }
 
+// samples は、欄ごとの文法に当たる見本の値。
+var samples = map[string]string{
+	"kind": "iam-deny", "address": "aws_iam_role.this", "file": "main.tf", "line": "3", "summary": "Resource postcondition failed",
+	"service": "IAM", "operation": "CreateRole", "status": "403", "code": "AccessDenied", "action": "iam:CreateRole",
+	"reason": "implicit:scp", "rule": "[PLAN-SBW-10]", "namespace": "plan.p", "elapsed": "3s", "count": "1", "exit": "1", "masked": "2",
+}
+
+// pickShort は、SDK の文の欄に入れる短い値。半分は形に当たる語、残りは識別子を含む語。
+func pickShort(r *rand.Rand) string {
+	words := []string{"IAM", "S3", "CreateRole", "AccessDenied", "111111111111", "ops@example.com", "o-abc123defg", "A b"}
+
+	return words[r.IntN(len(words))]
+}
+
 func noSecret(t *testing.T, line string) {
 	t.Helper()
 
@@ -97,21 +111,31 @@ func TestFormat(t *testing.T) {
 
 		r := rand.New(rand.NewPCG(485, 1))
 		names := append(append([]string{}, order...), "detail", "message")
+		produced := 0
 
 		for range 5000 {
 			fields := make([]Field, r.IntN(6)+1)
 			for i := range fields {
-				fields[i] = Field{names[r.IntN(len(names))], adversarial(r)}
+				name := names[r.IntN(len(names))]
+				// 半分は文法に当たる見本の値のまま、残りは見本に敵対的な断片を前後へ足す。
+				value := samples[name]
+				if r.IntN(2) == 0 || value == "" {
+					value += adversarial(r)
+				}
+				fields[i] = Field{name, value}
 			}
 
 			line, masked := Format(fields...)
 			if line != "" {
+				produced++
 				require.True(t, Valid(line), line)
 				noSecret(t, line)
 			}
 
 			assert.LessOrEqual(t, masked, len(fields))
 		}
+
+		assert.Greater(t, produced, 1000, "検査した行が少なすぎる")
 	})
 }
 
@@ -232,6 +256,45 @@ func Test_allowed(t *testing.T) {
 		assert.False(t, allowed("operation", "A"+strings.Repeat("b", 64)))
 	})
 
+	t.Run("status は 100 と 599 を受け、99 と 600 を受けない", func(t *testing.T) {
+		t.Parallel()
+
+		assert.True(t, allowed("status", "100"))
+		assert.True(t, allowed("status", "599"))
+		assert.False(t, allowed("status", "99"))
+		assert.False(t, allowed("status", "600"))
+	})
+
+	t.Run("line は 1 と 999999 を受け、0 と 1000000 を受けない", func(t *testing.T) {
+		t.Parallel()
+
+		assert.True(t, allowed("line", "1"))
+		assert.True(t, allowed("line", "999999"))
+		assert.False(t, allowed("line", "0"))
+		assert.False(t, allowed("line", "1000000"))
+	})
+
+	t.Run("count は先頭の 0 を受けない", func(t *testing.T) {
+		t.Parallel()
+
+		assert.True(t, allowed("count", "0"))
+		assert.False(t, allowed("count", "01"))
+	})
+
+	t.Run("summary は固定の文だけを受け、ほかの英字の文を受けない", func(t *testing.T) {
+		t.Parallel()
+
+		assert.True(t, allowed("summary", "Error acquiring the state lock"))
+		assert.False(t, allowed("summary", "Reference to undeclared resource"))
+	})
+
+	t.Run("address は長さの上限まで受け、超えれば受けない", func(t *testing.T) {
+		t.Parallel()
+
+		assert.True(t, allowed("address", "a"+strings.Repeat("b", 511)))
+		assert.False(t, allowed("address", "a"+strings.Repeat("b", 512)))
+	})
+
 	t.Run("12桁の数字は文法の形でも受けない、11桁は受ける", func(t *testing.T) {
 		t.Parallel()
 
@@ -269,6 +332,16 @@ func TestSDK(t *testing.T) {
 		got, ok := SDK(`operation error IAM: CreateRole, https response error StatusCode: 409, RequestID: a, EntityAlreadyExists: Role with name x already exists.`)
 		require.True(t, ok)
 		assert.Equal(t, []Field{{"kind", "api-error"}, {"service", "IAM"}, {"operation", "CreateRole"}, {"status", "409"}, {"code", "EntityAlreadyExists"}}, got)
+	})
+
+	t.Run("S3 の HostID を code と取り違えない", func(t *testing.T) {
+		t.Parallel()
+
+		got, ok := SDK(`operation error S3: PutObject, https response error StatusCode: 403, RequestID: ABC, HostID: xyz/abc=, api error AccessDenied: ` +
+			`User: x is not authorized to perform: s3:PutObject`)
+		require.True(t, ok)
+		assert.Contains(t, got, Field{"code", "AccessDenied"})
+		assert.Contains(t, got, Field{"action", "s3:PutObject"})
 	})
 
 	t.Run("再試行が尽きた文も読む", func(t *testing.T) {
@@ -322,17 +395,27 @@ func TestSDK(t *testing.T) {
 		t.Parallel()
 
 		r := rand.New(rand.NewPCG(485, 2))
+		matched := 0
+
 		for range 5000 {
-			got, ok := SDK(adversarial(r))
+			// SDK の文の形の各欄に、敵対的な断片を入れる。
+			text := adversarial(r) + "operation error " + pickShort(r) + ": " + pickShort(r) + ", https response error StatusCode: 403, RequestID: " +
+				adversarial(r) + ", api error " + pickShort(r) + ": " + adversarial(r)
+
+			got, ok := SDK(text)
 			if !ok {
 				continue
 			}
+
+			matched++
 
 			if line, _ := Format(got...); line != "" {
 				require.True(t, Valid(line), line)
 				noSecret(t, line)
 			}
 		}
+
+		assert.Greater(t, matched, 100, "SDK の文に当たった入力が少なすぎる")
 	})
 }
 
@@ -355,6 +438,15 @@ func TestCLI(t *testing.T) {
 		assert.Contains(t, got, Field{"action", "s3:PutObject"})
 	})
 
+	t.Run("2つ目の一致は読まない", func(t *testing.T) {
+		t.Parallel()
+
+		got, ok := CLI("An error occurred (ValidationError) when calling the PutObject operation: An error occurred (AccessDenied) when calling the X operation")
+		require.True(t, ok)
+		assert.Contains(t, got, Field{"code", "ValidationError"})
+		assert.NotContains(t, got, Field{"code", "AccessDenied"})
+	})
+
 	t.Run("API の error でなければ false", func(t *testing.T) {
 		t.Parallel()
 
@@ -367,37 +459,44 @@ func Test_deny(t *testing.T) {
 	t.Parallel()
 
 	type tc struct {
+		name string
 		msg  string
 		want []Field
 	}
 
 	for _, c := range []tc{
 		{
+			name: "resource-based の暗黙の拒否",
 			msg:  "is not authorized to perform: kms:Decrypt on resource: x because no resource-based policy allows the kms:Decrypt action",
 			want: []Field{{"action", "kms:Decrypt"}, {"reason", "implicit:resource-based"}},
 		},
 		{
+			name: "permissions boundary の暗黙の拒否",
 			msg:  "is not authorized to perform: s3:GetObject because no permissions boundary allows the s3:GetObject action",
 			want: []Field{{"action", "s3:GetObject"}, {"reason", "implicit:permissions-boundary"}},
 		},
 		{
+			name: "role trust の明示の拒否",
 			msg:  "is not authorized to perform: s3:GetObject with an explicit deny in the role trust policy",
 			want: []Field{{"action", "s3:GetObject"}, {"reason", "explicit:role-trust"}},
 		},
 		{
+			name: "RCP の明示の拒否",
 			msg:  "is not authorized to perform: s3:GetObject with an explicit deny in a resource control policy: arn:x",
 			want: []Field{{"action", "s3:GetObject"}, {"reason", "explicit:rcp"}},
 		},
 		{
+			name: "理由の無い拒否は Action だけを出す",
 			msg:  "is not authorized to perform: s3:GetObject",
 			want: []Field{{"action", "s3:GetObject"}},
 		},
 		{
+			name: "Action の無い文は欄を出さない",
 			msg:  "Access Denied",
 			want: nil,
 		},
 	} {
-		t.Run(c.msg, func(t *testing.T) {
+		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 
 			assert.Equal(t, c.want, deny(c.msg))
@@ -408,48 +507,62 @@ func Test_deny(t *testing.T) {
 func TestMaskAddress(t *testing.T) {
 	t.Parallel()
 
-	registry := func(k string) bool { return k == "plan" || k == "admin" }
+	registry := func(k string) bool { return k == "plan" || k == "admin" || k == "a111111111111" }
 
 	type tc struct {
+		name string
 		in   string
 		want string
 	}
 
 	for _, c := range []tc{
 		{
+			name: "登録簿が受けても、識別子を含む key は伏せる",
+			in:   `aws_x.this["a111111111111"]`,
+			want: `aws_x.this[<伏せた key>]`,
+		},
+		{
+			name: "登録簿の role の key を残す",
 			in:   `module.ci["plan"].aws_iam_role.this`,
 			want: `module.ci["plan"].aws_iam_role.this`,
 		},
 		{
+			name: "リージョンの key を残す",
 			in:   `aws_cloudwatch_event_rule.this["us-east-1"]`,
 			want: `aws_cloudwatch_event_rule.this["us-east-1"]`,
 		},
 		{
+			name: "整数の index を残す",
 			in:   `aws_iam_role.this[0]`,
 			want: `aws_iam_role.this[0]`,
 		},
 		{
+			name: "OU の名前の key を伏せる",
 			in:   `aws_organizations_organizational_unit.this["Security"]`,
 			want: `aws_organizations_organizational_unit.this[<伏せた key>]`,
 		},
 		{
+			name: "ドメインの key を伏せる",
 			in:   `aws_route53_record.ds["example.com"]`,
 			want: `aws_route53_record.ds[<伏せた key>]`,
 		},
 		{
+			name: "アカウント ID の key を伏せる",
 			in:   `aws_organizations_account.this["111111111111"]`,
 			want: `aws_organizations_account.this[<伏せた key>]`,
 		},
 		{
+			name: "メールの key を伏せる",
 			in:   `aws_iam_user.this["ops@example.com"]`,
 			want: `aws_iam_user.this[<伏せた key>]`,
 		},
 		{
+			name: "key の外の識別子は address ごと伏せる",
 			in:   `module.m_111111111111.aws_iam_role.this`,
 			want: `<伏せた address>`,
 		},
 	} {
-		t.Run(c.in, func(t *testing.T) {
+		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 
 			got := MaskAddress(c.in, registry)

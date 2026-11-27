@@ -424,6 +424,10 @@ func ciRunInit(s ciState, d deps) error {
 		return err
 	}
 	defer func() { _ = f.Close() }()
+	before, err := readInRoot(s.Out)
+	if err != nil {
+		return xerrors.Wrap(err, "全文")
+	}
 	cmd := d.tool(context.Background(), s.Dir, localEnv(d.environ, s.Profile, "TF_CLI_ARGS_init="+strings.Join(s.InitArgs, " ")), stepCIInit)
 	cmd.Stdout, cmd.Stderr = f, f
 	code, err := toolrun.Exec(cmd)
@@ -431,6 +435,13 @@ func ciRunInit(s ciState, d deps) error {
 		return xerrors.Wrap(err, "init")
 	}
 	if code != 0 {
+		// init の失敗では全文を置かないので、診断の行だけが手がかりになる。
+		if out, rerr := readInRoot(s.Out); rerr == nil && len(out) >= len(before) {
+			if werr := writeLines(d.stderr, diagReport(readStream(out[len(before):]), code)); werr != nil {
+				return errors.Join(xerrors.Wrapf(errCIInit, "exit status %d", code), werr)
+			}
+		}
+
 		return xerrors.Wrapf(errCIInit, "exit status %d", code)
 	}
 
@@ -508,6 +519,12 @@ func ciRunPlan(s *ciState, d deps, stdout io.Writer) (string, error) {
 	if _, err := fmt.Fprintf(stdout, "plan の終了コード: %d\n", code); err != nil {
 		return "", err
 	}
+	// plan の stream は plan の終わりで決まる。show の stderr が全文に足される前に読む。
+	out, err := readInRoot(s.Out)
+	if err != nil || len(out) < len(before) {
+		return "", xerrors.Wrap(errCIState, "全文")
+	}
+	stream := readStream(out[len(before):])
 	show, err := openInRoot(s.JSON, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
 	if err != nil {
 		return "", xerrors.Wrap(err, "plan の JSON")
@@ -518,11 +535,6 @@ func ciRunPlan(s *ciState, d deps, stdout io.Writer) (string, error) {
 	if err := show.Close(); err != nil {
 		return "", xerrors.Wrap(err, "plan の JSON")
 	}
-	out, err := readInRoot(s.Out)
-	if err != nil || len(out) < len(before) {
-		return "", xerrors.Wrap(errCIState, "全文")
-	}
-	stream := readStream(out[len(before):])
 	// plan の終了コード 2 は変更があることで、失敗ではない。
 	failed := code
 	if code == 2 {
@@ -533,9 +545,14 @@ func ciRunPlan(s *ciState, d deps, stdout io.Writer) (string, error) {
 		return "", err
 	}
 	// 人の読む差分は stream に無いので、全文に足す。plan が失敗して tfplan が無ければ、show の失敗が全文に残るだけである。
-	cmd = d.tool(context.Background(), s.Dir, localEnv(d.environ, s.Profile, "TF_CLI_ARGS_show="+s.TFPlan), stepCIShowText)
+	// TF_CLI_ARGS_show は既存の引数の前へ入るので、-no-color も plan のファイルより前に置く。
+	cmd = d.tool(context.Background(), s.Dir, localEnv(d.environ, s.Profile, "TF_CLI_ARGS_show=-no-color "+s.TFPlan), stepCIShowText)
 	cmd.Stdout, cmd.Stderr = f, f
-	_ = cmd.Run()
+	if err := cmd.Run(); err != nil && code != 1 {
+		if _, werr := io.WriteString(stdout, "⚠️ 人の読む差分を全文に足せません\n"); werr != nil {
+			return "", werr
+		}
+	}
 	s.Stage = ""
 	s.fail(failureKind(stagePlan, code, out))
 	if code == 1 {
@@ -656,7 +673,8 @@ func ciRunPolicy(s ciState, d deps, stdout io.Writer, parent, policy, decl, laye
 	if err := appendPolicyOut(s, conftestErr.String()+policyMessages(entries)); err != nil {
 		return err
 	}
-	if n := strings.Count(strings.TrimSpace(conftestErr.String()), "\n"); conftestErr.Len() > 0 {
+	if trimmed := strings.TrimSpace(conftestErr.String()); trimmed != "" {
+		n := strings.Count(trimmed, "\n")
 		if _, err := fmt.Fprintf(stdout, "conftest の stderr（%d 行）は全文にあります\n", n+1); err != nil {
 			return err
 		}
@@ -931,7 +949,7 @@ func ciRunApply(s ciState, d deps, limit time.Duration) (int, error) {
 		return 0, err
 	}
 	defer func() { _ = f.Close() }()
-	cmd := d.tool(context.Background(), s.Dir, localEnv(d.environ, s.Profile, "TF_CLI_ARGS_apply=-input=false -no-color "+s.TFPlan), stepCIApply)
+	cmd := d.tool(context.Background(), s.Dir, localEnv(d.environ, s.Profile, "TF_CLI_ARGS_apply=-input=false -no-color -json "+s.TFPlan), stepCIApply)
 	cmd.Stdout, cmd.Stderr = f, f
 	if err := cmd.Start(); err != nil {
 		return 0, xerrors.Wrapf(toolrun.ErrTool, "apply: %v", err)

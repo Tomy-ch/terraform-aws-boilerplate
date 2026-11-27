@@ -123,7 +123,8 @@ func readStream(data []byte) streamDiag {
 }
 
 // diagnosticLine は、error の診断1つを公開の1行にします。address を持つ診断（provider の診断）は、summary と detail の
-// 固定の位置から AWS の error を取る。address を持たない診断は detail を読まず、summary の分類とファイルと行を出す。
+// 固定の位置から AWS の error を取る。address を持たない診断は detail を読まず、summary の AWS の error か分類と、
+// ファイルと行を出す。
 func diagnosticLine(diag streamDiagnostic) (string, int) {
 	var fields []publicdiag.Field
 
@@ -150,6 +151,10 @@ func diagnosticLine(diag streamDiagnostic) (string, int) {
 		}
 
 		fields = []publicdiag.Field{{Name: "kind", Value: kind}, {Name: "summary", Value: diag.Summary}}
+		// backend の init の失敗のように、address を持たない診断の summary にも AWS の error が入る。detail は読まない。
+		if extracted, ok := publicdiag.SDK(diag.Summary); ok {
+			fields = extracted
+		}
 		if diag.Range != nil && diag.Range.Start.Line > 0 {
 			fields = append(fields,
 				publicdiag.Field{Name: "file", Value: diag.Range.Filename},
@@ -166,13 +171,19 @@ func addressKey(key string) bool {
 }
 
 // changeSummary は、stream の change_summary をちょうど1つ読み、import・add・change・remove の件数を返します。
-// 0件か2件以上か、知らない欄か、数でない値があれば失敗します。
+// 0件か2件以上か、4つの欄の欠けか、知らない欄か、数でない値があれば失敗します（欠けを0件と読まない）。
 func changeSummary(d streamDiag) ([4]int, error) {
 	if len(d.Summaries) != 1 {
 		return [4]int{}, xerrors.Wrap(errChangeSummary, fmt.Sprintf("%d 件", len(d.Summaries)))
 	}
 
 	var counts [4]int
+
+	for _, k := range []string{"import", "add", "change", "remove"} {
+		if _, ok := d.Summaries[0][k]; !ok {
+			return [4]int{}, xerrors.Wrap(errChangeSummary, "欠けた欄")
+		}
+	}
 
 	for k, v := range d.Summaries[0] {
 		if !slices.Contains(changeSummaryFields, k) {
@@ -266,12 +277,16 @@ func policyMessages(entries []policyresult.Entry) string {
 	return b.String()
 }
 
-// ciRunTool は、CI の段で aws を起動する runTool です。stderr は公開のログへそのまま流さず、aws CLI の error の文の
-// 許可の文法に当たる欄だけを stderr へ出す（ADR-0602 決定13）。
+// ciRunTool は、CI の段で aws を起動する runTool です。stderr は公開のログへそのまま流さず、失敗したときだけ、aws CLI
+// の error の文の許可の文法に当たる欄を stderr へ出す（ADR-0602 決定13）。
 func ciRunTool(tool toolFunc, dir string, env []string, step string, stderr io.Writer) ([]byte, error) {
 	var buf bytes.Buffer
 
 	out, err := runTool(tool, dir, env, step, &buf)
+	if err == nil {
+		return out, nil
+	}
+
 	if line := cliLine(buf.String()); line != "" {
 		if _, werr := io.WriteString(stderr, line+"\n"); werr != nil {
 			return out, errors.Join(err, werr)

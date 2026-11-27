@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"math/rand/v2"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -64,6 +65,23 @@ func Test_readStream(t *testing.T) {
 		assert.Equal(t, 2, d.Masked)
 		assert.Equal(t, 1, d.Errors)
 		assert.True(t, d.reconciled())
+	})
+
+	t.Run("type を欠く JSON の error の行は、読めない error の行に数える", func(t *testing.T) {
+		t.Parallel()
+
+		d := readStream([]byte(`{"@level":"error","@message":"x"}`))
+		assert.Empty(t, d.Lines)
+		assert.Equal(t, 1, d.UnparsedErrors)
+		assert.True(t, d.reconciled())
+	})
+
+	t.Run("level が error でも diagnostic を欠く行は、件数が合わないと報告する", func(t *testing.T) {
+		t.Parallel()
+
+		d := readStream([]byte(`{"@level":"error","type":"diagnostic"}`))
+		assert.False(t, d.reconciled())
+		assert.Contains(t, strings.Join(diagReport(d, 1), "\n"), "診断の件数が合いません")
 	})
 
 	t.Run("空の stream は何も導かない", func(t *testing.T) {
@@ -165,6 +183,22 @@ func Test_diagnosticLine(t *testing.T) {
 		assert.Equal(t, "診断: kind=unparsed; address=aws_x.this", line)
 	})
 
+	t.Run("summary に AWS の error があれば detail を読まない", func(t *testing.T) {
+		t.Parallel()
+
+		line, _ := diagnosticLine(streamDiagnostic{Severity: "error", Address: "aws_iam_role.this",
+			Summary: "x: operation error IAM: GetRole, https response error StatusCode: 404, RequestID: a, api error NoSuchEntity: y", Detail: denyDetail})
+		assert.Contains(t, line, "code=NoSuchEntity")
+		assert.NotContains(t, line, "AccessDenied")
+	})
+
+	t.Run("line が 0 の range は file と line を出さない", func(t *testing.T) {
+		t.Parallel()
+
+		line, _ := diagnosticLine(streamDiagnostic{Severity: "error", Summary: "Invalid value for variable", Range: &streamRange{Filename: "main.tf"}})
+		assert.Equal(t, "診断: kind=condition; summary=Invalid value for variable", line)
+	})
+
 	t.Run("summary に AWS の error が無ければ detail から読む", func(t *testing.T) {
 		t.Parallel()
 
@@ -210,21 +244,39 @@ func Test_changeSummary(t *testing.T) {
 	t.Run("2件なら失敗する", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := changeSummary(streamDiag{Summaries: []map[string]any{{"add": 0.0}, {"add": 0.0}}})
+		_, err := changeSummary(streamDiag{Summaries: append(summaryOf(0, 0, 0, 0).Summaries, summaryOf(0, 0, 0, 0).Summaries...)})
 		require.ErrorIs(t, err, errChangeSummary)
 	})
 
 	t.Run("知らない欄があれば失敗する", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := changeSummary(streamDiag{Summaries: []map[string]any{{"add": 0.0, "forget": 1.0}}})
+		_, err := changeSummary(streamDiag{Summaries: []map[string]any{{"add": 0.0, "change": 0.0, "import": 0.0, "remove": 0.0, "forget": 1.0}}})
 		require.ErrorIs(t, err, errChangeSummary)
+	})
+
+	t.Run("4つの欄のどれかが欠ければ、0件と読まずに失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		for _, m := range []map[string]any{nil, {}, {"add": 0.0, "change": 0.0, "import": 0.0, "operation": "plan"}} {
+			_, err := changeSummary(streamDiag{Summaries: []map[string]any{m}})
+			require.ErrorIs(t, err, errChangeSummary)
+		}
+	})
+
+	t.Run("負の件数と小数の件数は失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		for _, v := range []float64{-1, 1.5} {
+			_, err := changeSummary(streamDiag{Summaries: []map[string]any{{"add": v, "change": 0.0, "import": 0.0, "remove": 0.0}}})
+			require.ErrorIs(t, err, errChangeSummary)
+		}
 	})
 
 	t.Run("数でない値なら失敗する", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := changeSummary(streamDiag{Summaries: []map[string]any{{"add": "1"}}})
+		_, err := changeSummary(streamDiag{Summaries: []map[string]any{{"add": "1", "change": 0.0, "import": 0.0, "remove": 0.0}}})
 		require.ErrorIs(t, err, errChangeSummary)
 	})
 }
@@ -322,31 +374,54 @@ func Test_policyMessages(t *testing.T) {
 func Test_ciRunTool(t *testing.T) {
 	t.Parallel()
 
-	t.Run("stderr は許可の文法に当たる欄だけを出し、stdout を返す", func(t *testing.T) {
+	t.Run("失敗したら、stderr の許可の文法に当たる欄だけを出す", func(t *testing.T) {
 		t.Parallel()
 
 		tool, _ := fakeFlow(t, map[string]string{
+			stepCallerIdentity + ".rc":     "254",
 			stepCallerIdentity + ".stderr": "An error occurred (ExpiredToken) when calling the GetCallerIdentity operation: arn:aws:iam::111111111111:x\n",
 		})
+
+		var stderr bytes.Buffer
+
+		_, err := ciRunTool(tool, t.TempDir(), nil, stepCallerIdentity, &stderr)
+		require.ErrorIs(t, err, errLocalAWS)
+		assert.Equal(t, "診断: kind=cli; operation=GetCallerIdentity; code=ExpiredToken\n", stderr.String())
+	})
+
+	t.Run("成功したら stderr を出さずに stdout を返す", func(t *testing.T) {
+		t.Parallel()
+
+		tool, _ := fakeFlow(t, map[string]string{stepCallerIdentity + ".stderr": "warning 111111111111\n"})
 
 		var stderr bytes.Buffer
 
 		out, err := ciRunTool(tool, t.TempDir(), nil, stepCallerIdentity, &stderr)
 		require.NoError(t, err)
 		assert.Equal(t, callerIdentity, string(out))
-		assert.Equal(t, "診断: kind=cli; operation=GetCallerIdentity; code=ExpiredToken\n", stderr.String())
+		assert.Empty(t, stderr.String())
 	})
 
 	t.Run("stderr が空なら何も出さない", func(t *testing.T) {
 		t.Parallel()
 
-		tool, _ := fakeFlow(t, nil)
+		tool, _ := fakeFlow(t, map[string]string{stepCallerIdentity + ".rc": "254"})
 
 		var stderr bytes.Buffer
 
 		_, err := ciRunTool(tool, t.TempDir(), nil, stepCallerIdentity, &stderr)
-		require.NoError(t, err)
+		require.ErrorIs(t, err, errLocalAWS)
 		assert.Empty(t, stderr.String())
+	})
+
+	t.Run("stderr へ書けなければ、aws の失敗と書き込みの失敗を両方返す", func(t *testing.T) {
+		t.Parallel()
+
+		tool, _ := fakeFlow(t, map[string]string{stepCallerIdentity + ".rc": "254", stepCallerIdentity + ".stderr": "x\n"})
+
+		_, err := ciRunTool(tool, t.TempDir(), nil, stepCallerIdentity, failingWriter{})
+		require.ErrorIs(t, err, errLocalAWS)
+		require.ErrorIs(t, err, errWrite)
 	})
 
 	t.Run("失敗しても終了コードの error を返す", func(t *testing.T) {
@@ -404,6 +479,12 @@ func Test_writeLines(t *testing.T) {
 		require.NoError(t, writeLines(&b, []string{"a", "b"}))
 		assert.Equal(t, "a\nb\n", b.String())
 	})
+
+	t.Run("書き込みに失敗したら error を返す", func(t *testing.T) {
+		t.Parallel()
+
+		require.ErrorIs(t, writeLines(failingWriter{}, []string{"a"}), errWrite)
+	})
 }
 
 func Test_appendPolicyOut(t *testing.T) {
@@ -423,12 +504,12 @@ func Test_appendPolicyOut(t *testing.T) {
 	t.Run("空なら全文を開かない", func(t *testing.T) {
 		t.Parallel()
 
-		require.NoError(t, appendPolicyOut(ciState{Out: "/none/o.txt"}, ""))
+		require.NoError(t, appendPolicyOut(ciState{Out: filepath.Join(t.TempDir(), "none", "o.txt")}, ""))
 	})
 
 	t.Run("全文を開けなければ失敗する", func(t *testing.T) {
 		t.Parallel()
 
-		require.Error(t, appendPolicyOut(ciState{Out: "/none/o.txt"}, "x"))
+		require.ErrorIs(t, appendPolicyOut(ciState{Out: filepath.Join(t.TempDir(), "none", "o.txt")}, "x"), os.ErrNotExist)
 	})
 }

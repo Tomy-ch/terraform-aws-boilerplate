@@ -234,7 +234,8 @@ func Test_ciFinishStep(t *testing.T) {
 		assert.JSONEq(t, `{"Bucket":"tabp-admin-tfplan-`+account+`-ap-northeast-1-an","Key":"pr/12/8-1-admin-identity.txt","ChecksumSHA256":"`+mustSHA(t, readKnob(t, f.k, "body.txt"))+`","ExpectedBucketOwner":"`+account+`"}`, strings.TrimSpace(readKnob(t, f.k, "upload.log")))
 		body := readKnob(t, f.k, "body.txt")
 		assert.True(t, strings.HasPrefix(body, "commit: "+commitSHA+"\n"), body)
-		assert.Contains(t, body, "init\n"+planSecret+"\n")
+		assert.Contains(t, body, "init\n"+planLog)
+		assert.NotContains(t, f.stdout.String(), publicdiag.Prefix, "成功した plan（終了コード 2）は診断の行を出さない")
 		assert.Contains(t, readKnob(t, filepath.Dir(f.summary), "summary"), "### admin-identity\n\nPlan: 0 to import, 1 to add, 0 to change, 0 to destroy.\n")
 		assert.Empty(t, readKnob(t, filepath.Dir(f.output), "output"))
 		assert.Contains(t, f.stdout.String(), "plan の終了コード: 2\n")
@@ -250,7 +251,7 @@ func Test_ciFinishStep(t *testing.T) {
 		calls := f.calls()
 		assert.Contains(t, calls, stepCIPlanLock+" identity profile=tabp-admin-ci-apply")
 		assert.NotContains(t, calls, stepCIPlanNoLock)
-		assert.Contains(t, calls, stepCIApply+" identity profile=tabp-admin-ci-apply region= init= plan= show= apply=-input=false -no-color /")
+		assert.Contains(t, calls, stepCIApply+" identity profile=tabp-admin-ci-apply region= init= plan= show= apply=-input=false -no-color -json /")
 		assert.Less(t, strings.Index(calls, stepCIConftest), strings.Index(calls, stepCIApply))
 		assert.Contains(t, readKnob(t, f.k, "upload.log"), `"Bucket":"tabp-admin-tfplan-`)
 		assert.Contains(t, readKnob(t, f.k, "upload.log"), `"Key":"apply/8-1-admin-identity.txt"`)
@@ -724,6 +725,19 @@ func Test_ciRunInit(t *testing.T) {
 		assert.NotErrorIs(t, err, errCIInit)
 		assert.Equal(t, 2, exitCode(err))
 	})
+
+	t.Run("init が失敗したら、許可の文法に当たる診断の行を stderr に出す", func(t *testing.T) {
+		t.Parallel()
+		f := newFlow(t, map[string]string{stepCIInit + ".rc": "1", stepCIInit + ".out": `{"@level":"error","type":"diagnostic","diagnostic":` +
+			`{"severity":"error","summary":"Failed to get existing workspaces: operation error S3: ListObjectsV2, https response error StatusCode: 403, ` +
+			`RequestID: a, HostID: b, api error AccessDenied: arn:aws:iam::` + account + `:role/x","address":""}}` + "\n"})
+		require.NoError(t, f.step("ci-prepare", "-mode", ciModePlan, "-project", "tabp", "-env", "admin", "-root", "identity",
+			"-profile", "p", "-base", f.base, "-header", f.header, "-state", f.state))
+		require.ErrorIs(t, f.step("ci-init", "-state", f.state), errCIInit)
+		stderr := f.d.stderr.(*bytes.Buffer).String()
+		assert.Contains(t, stderr, "診断: kind=api-error; service=S3; operation=ListObjectsV2; status=403; code=AccessDenied\n")
+		assert.NotContains(t, stderr, account)
+	})
 }
 
 func Test_ciPlanStep(t *testing.T) {
@@ -837,6 +851,22 @@ func Test_ciRunPlan(t *testing.T) {
 		assert.Contains(t, f.calls(), stepCIShowText+" identity profile=tabp-admin-ci-plan region= init= plan= show=")
 		assert.Contains(t, readKnob(t, f.k, "body.txt"), "Terraform will perform the following actions")
 		assert.NotContains(t, f.stdout.String(), "Terraform will perform")
+	})
+
+	t.Run("診断は plan が書いた区間からだけ読み、init の行を数えない", func(t *testing.T) {
+		t.Parallel()
+		initErr := `{"@level":"error","type":"diagnostic","diagnostic":{"severity":"error","summary":"Error acquiring the state lock"}}` + "\n"
+		f := newFlow(t, map[string]string{stepCIInit + ".out": initErr, stepCIPlanNoLock + ".rc": "1", stepCIPlanNoLock + ".out": planLog})
+		require.Error(t, f.all(ciModePlan, "identity"))
+		assert.Contains(t, f.stdout.String(), "診断: count=0; exit=1\n")
+		assert.NotContains(t, f.stdout.String(), "summary=")
+	})
+
+	t.Run("人の読む差分を足せなければ、そのことを1行出して plan の判定は変えない", func(t *testing.T) {
+		t.Parallel()
+		f := newFlow(t, map[string]string{stepCIShowText + ".rc": "1"})
+		require.NoError(t, f.all(ciModePlan, "identity"))
+		assert.Contains(t, f.stdout.String(), "⚠️ 人の読む差分を全文に足せません\n")
 	})
 }
 
@@ -1216,6 +1246,21 @@ func Test_ciRunPolicy(t *testing.T) {
 		assert.Contains(t, string(raw), "warn "+account)
 		assert.Contains(t, string(raw), "plan.p: [PLAN-P-01] "+account+" が書ける")
 	})
+
+	t.Run("conftest の stderr の行数を数え、空白だけなら行数を出さない", func(t *testing.T) {
+		t.Parallel()
+		for stderrText, want := range map[string]string{"a\nb\nc\n": "conftest の stderr（3 行）は全文にあります", " \n": ""} {
+			tool, _ := fakeFlow(t, map[string]string{stepCIConftest + ".out": `[{"namespace":"plan.p","successes":1}]`, stepCIConftest + ".stderr": stderrText})
+			s := ciState{Root: "admin-identity", Out: fileWith(t, ""), JSON: fileWith(t, "{}")}
+			var stdout bytes.Buffer
+			require.NoError(t, ciRunPolicy(s, deps{tool: tool, stderr: &bytes.Buffer{}, root: t.TempDir()}, &stdout, "tmp/ci-policy", policyDirWith(t, map[string]string{"p.rego": onePolicy}), fileWith(t, "{}"), fileWith(t, "{}"), []string{"plan.p"}))
+			if want == "" {
+				assert.NotContains(t, stdout.String(), "conftest の stderr")
+			} else {
+				assert.Contains(t, stdout.String(), want)
+			}
+		}
+	})
 }
 
 func Test_stringList_String(t *testing.T) {
@@ -1358,11 +1403,9 @@ func Test_ciRunUpload(t *testing.T) {
 
 	t.Run("aws の stderr は、許可の文法に当たる欄だけをログへ出す", func(t *testing.T) {
 		t.Parallel()
-		tool, _ := fakeFlow(t, map[string]string{
-			stepCIPutObject + ".rc": "254",
-			stepCIPutObject + ".stderr": "\naws: [ERROR]: An error occurred (AccessDenied) when calling the PutObject operation: User: arn:aws:sts::" +
-				account + ":assumed-role/x is not authorized to perform: s3:PutObject\n",
-		})
+		denied := "\naws: [ERROR]: An error occurred (AccessDenied) when calling the PutObject operation: User: arn:aws:sts::" +
+			account + ":assumed-role/x is not authorized to perform: s3:PutObject\n"
+		tool, _ := fakeFlow(t, map[string]string{stepCIPutObject + ".rc": "254", stepCIPutObject + ".stderr": denied})
 		var stderr bytes.Buffer
 		s := ciState{Out: fileWith(t, "x"), OutBucket: "b", Key: "k", Account: account, Region: "ap-northeast-1"}
 		require.Error(t, ciRunUpload(&s, deps{tool: tool, stderr: &stderr, root: t.TempDir()}, &bytes.Buffer{}))

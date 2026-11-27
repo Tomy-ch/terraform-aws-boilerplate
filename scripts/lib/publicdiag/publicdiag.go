@@ -32,8 +32,8 @@ var grammars = map[string]*regexp.Regexp{
 	"action":    regexp.MustCompile(`^[a-z0-9-]{1,32}:[A-Za-z0-9]{1,128}$`),
 	// 拒否の理由の種類。implicit は allow の無いもの、explicit は明示の Deny。
 	"reason": regexp.MustCompile(`^(?:implicit|explicit):(?:scp|rcp|vpc-endpoint|permissions-boundary|session|resource-based|role-trust|identity-based)$`),
-	// Terraform の diagnostic の summary。
-	"summary": regexp.MustCompile(`^[A-Za-z]+(?: [A-Za-z]+){0,11}$`),
+	// Terraform の diagnostic の summary のうち、構成の条件と lock の固定の文だけ。provider の summary は値を含みうる。
+	"summary": regexp.MustCompile(`^(?:(?:Resource|Module|Output|Data source) (?:pre|post)condition failed|Invalid value for variable|Check block assertion failed|Error acquiring the state lock)$`),
 	"file":    regexp.MustCompile(`^(?:\.\./)*(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+\.tf$`),
 	"line":    regexp.MustCompile(`^[1-9][0-9]{0,5}$`),
 	"address": addressPattern,
@@ -54,13 +54,14 @@ var (
 	identifierPattern = regexp.MustCompile(`[0-9]{12}|@`)
 
 	// addressPattern は、resource の address の形。key は登録簿の名前・リージョン・整数の index と、伏せた key に限る。
-	addressPattern = regexp.MustCompile(`^(?:` + addressSegment + `)(?:\.` + addressSegment + `){0,15}$`)
+	// 長さは maxAddress で限る（入れ子の繰り返しの回数を正規表現に書くと、Go の regexp の上限を超える）。
+	addressPattern = regexp.MustCompile(`^(?:` + addressSegment + `)(?:\.` + addressSegment + `)*$`)
 
 	addressKeyPattern = regexp.MustCompile(`\["(?:[^"\\]|\\.)*"\]`)
 	regionPattern     = regexp.MustCompile(`^[a-z]{2}(?:-gov|-iso[a-z]?)?-[a-z]+-[0-9]$`)
 
 	// sdkPattern は、aws-sdk-go-v2 の `OperationError` の文。
-	sdkPattern = regexp.MustCompile(`operation error ([A-Za-z0-9 ]{1,64}): ([A-Za-z0-9]{1,64}), (?:exceeded maximum number of attempts, [0-9]+, )?https response error StatusCode: ([0-9]{3}), RequestID: [^,]*, (?:api error )?([A-Za-z][A-Za-z0-9.]{0,63}): `)
+	sdkPattern = regexp.MustCompile(`operation error ([A-Za-z0-9 ]{1,64}): ([A-Za-z0-9]{1,64}), (?:exceeded maximum number of attempts, [0-9]+, )?https response error StatusCode: ([0-9]{3}), RequestID: [^,]*, (?:HostID: [^,]*, )?(?:api error )?([A-Za-z][A-Za-z0-9.]{0,63}): `)
 	// cliPattern は、aws CLI が API のエラーを stderr に書く文。行頭の接頭辞は CLI の版で変わるので見ない。
 	cliPattern = regexp.MustCompile(`An error occurred \(([A-Za-z][A-Za-z0-9.]{0,63})\) when calling the ([A-Za-z0-9]{1,64}) operation`)
 	// actionPattern と reasonPattern は、IAM の AccessDenied の文の固定の位置。
@@ -71,7 +72,10 @@ var (
 // reasonWords は、reasonTypes の key の語の選択。
 const reasonWords = `permissions boundary|resource control|service control|resource-based|identity-based|VPC endpoint|role trust|session`
 
-const addressSegment = `[A-Za-z_][A-Za-z0-9_-]{0,63}(?:\[[0-9]{1,6}\]|\["[a-z][a-z0-9]{0,31}(?:-[a-z0-9]{1,31}){0,4}"\]|\[<伏せた key>\])?`
+const addressSegment = `[A-Za-z_][A-Za-z0-9_-]*(?:\[[0-9]{1,6}\]|\["[a-z][a-z0-9]*(?:-[a-z0-9]+)*"\]|\[<伏せた key>\])?`
+
+// maxAddress は、公開する address の長さの上限。
+const maxAddress = 512
 
 // reasonTypes は、AccessDenied の文の policy の型の語と、公開する種類。
 var reasonTypes = map[string]string{
@@ -143,7 +147,7 @@ func Valid(line string) bool {
 func allowed(name, value string) bool {
 	g, ok := grammars[name]
 
-	return ok && g.MatchString(value) && !identifierPattern.MatchString(value)
+	return ok && (name != "address" || len(value) <= maxAddress) && g.MatchString(value) && !identifierPattern.MatchString(value)
 }
 
 // SDK は、aws-sdk-go-v2 の error の文から、service・operation・status・code と、AccessDenied なら Action と理由の
