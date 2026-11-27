@@ -109,14 +109,14 @@ allowed_group_statement(s) if {
 }
 
 # aws login の同じ端末の流れ（localhost）だけを、break-glass の user のアカウントの client に限って許す（ADR-0301 決定19）。
+# partition は role_pattern と administrator_access と同じく aws に限る。region は形だけを見る（provider の region との一致は terraform test が見る）。
 login_client(s) if {
 	resources := lib.as_array(s.Resource)
 	count(resources) == 1
-	m := regex.find_all_string_submatch_n(`^arn:(aws[a-z-]*):signin:[a-z]{2}(?:-[a-z]+)+-[0-9]+:([0-9]{12}):oauth2/public-client/localhost$`, resources[0], 1)
+	m := regex.find_all_string_submatch_n(`^arn:aws:signin:[a-z]{2,4}(?:-[a-z]+)+-[0-9]+:([0-9]{12}):oauth2/public-client/localhost$`, resources[0], 1)
 	count(m) == 1
 	some u in user_arns
-	m[0][1] == split(u, ":")[1]
-	m[0][2] == split(u, ":")[4]
+	m[0][1] == split(u, ":")[4]
 }
 
 allowed_group_statement(s) if {

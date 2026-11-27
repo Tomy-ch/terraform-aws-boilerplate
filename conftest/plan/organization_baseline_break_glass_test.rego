@@ -943,6 +943,11 @@ test_pass_login_action_case_insensitive if {
 	count(login_messages(upper, login_token)) == 0
 }
 
+test_pass_login_other_region_shape if {
+	other := "arn:aws:signin:eusc-de-east-1:111111111111:oauth2/public-client/localhost"
+	count(login_messages(object.union(login_authorize, {"Resource": other}), object.union(login_token, {"Resource": other}))) == 0
+}
+
 test_pass_login_single_element_arrays if {
 	arrays := object.union(login_authorize, {"Action": ["signin:AuthorizeOAuth2Access"], "Resource": [login_client]})
 	count(login_messages(arrays, login_token)) == 0
