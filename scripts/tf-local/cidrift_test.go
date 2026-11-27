@@ -62,7 +62,7 @@ func writeRepo(t *testing.T, root string, files map[string]string) {
 func driftKnobs(extra map[string]string) map[string]string {
 	k := map[string]string{
 		stepS3List + ".out":       noLock(),
-		stepCIPlanNoLock + ".out": planSecret + "\nNo changes.\n",
+		stepCIPlanNoLock + ".out": planLog + summaryLine(0, 0),
 		stepCIPlanNoLock + ".rc":  "0",
 		stepCIShow + ".out":       driftPlan(change("a.b", `"no-op"`), ""),
 	}
@@ -386,6 +386,24 @@ func Test_ciDriftLockStep(t *testing.T) {
 			assert.NotContains(t, readKnob(t, filepath.Dir(f.output), filepath.Base(f.output)), "result=")
 		})
 
+		t.Run("plan の失敗の診断は許可の文法の欄だけを job summary に出し、値と address の識別子を出さない", func(t *testing.T) {
+			t.Parallel()
+			diag := `{"@level":"error","@message":"Error: reading IAM Role","type":"diagnostic","diagnostic":{"severity":"error",` +
+				`"summary":"reading IAM Role (` + driftSecret + `): operation error IAM: GetRole, https response error StatusCode: 403, RequestID: r, ` +
+				`api error AccessDenied: User: arn:aws:sts::` + account + `:assumed-role/tabp-admin-ci-plan/gha is not authorized ` +
+				`to perform: iam:GetRole on resource: x because no identity-based policy allows the iam:GetRole action",` +
+				`"detail":"` + driftSecret + `","address":"aws_iam_role.this[\"` + account + `\"]"}}` + "\n"
+			f := newDriftFlow(t, map[string]string{stepCIPlanNoLock + ".rc": "1", stepCIPlanNoLock + ".out": planLog + diag})
+			require.ErrorIs(t, f.drift("identity"), errCIFailed)
+			summary := readKnob(t, filepath.Dir(f.summary), filepath.Base(f.summary))
+			assert.Contains(t, summary, "失敗の段: plan")
+			assert.Contains(t, summary, "address=aws_iam_role.this[&lt;伏せた key&gt;]")
+			assert.Contains(t, summary, "action=iam:GetRole")
+			assert.NotContains(t, readKnob(t, filepath.Dir(f.output), filepath.Base(f.output)), "result=")
+			f.secretFree()
+			assert.NotContains(t, summary, account)
+		})
+
 		t.Run("plan が失敗すれば後の lock を見ない", func(t *testing.T) {
 			t.Parallel()
 			f := newDriftFlow(t, map[string]string{stepCIPlanNoLock + ".rc": "1"})
@@ -455,7 +473,7 @@ func Test_ciDriftStep(t *testing.T) {
 			t.Parallel()
 			f := newDriftFlow(t, map[string]string{
 				stepCIPlanNoLock + ".rc":  "2",
-				stepCIPlanNoLock + ".out": planSecret + "\n" + planLineOne,
+				stepCIPlanNoLock + ".out": planLog + summaryOne,
 				stepCIShow + ".out":       driftPlan(change("aws_s3_bucket.logs", `"create"`), ""),
 			})
 			err := f.drift("identity")
@@ -506,7 +524,7 @@ func Test_ciDriftStep(t *testing.T) {
 			t.Parallel()
 			f := newDriftFlow(t, map[string]string{
 				stepCIPlanNoLock + ".rc":  "2",
-				stepCIPlanNoLock + ".out": planSecret + "\n" + planLineOne,
+				stepCIPlanNoLock + ".out": planLog + summaryOne,
 				stepCIShow + ".out": driftPlan(change("aws_s3_bucket.secretname", `"create"`),
 					drifted("aws_iam_role.other", "aws_iam_role", `"update"`, `{"inline_policy":"`+driftSecret+`"}`, `{"inline_policy":"b"}`)),
 			})

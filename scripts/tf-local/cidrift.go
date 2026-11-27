@@ -21,6 +21,7 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cientry"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/gitenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/ownedattrs"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/publicdiag"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workdir"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
@@ -422,7 +423,7 @@ func driftItems(data []byte, owned ownedattrs.Set) ([]driftItem, error) {
 		case "delete+create", "create+delete":
 			op = "replace"
 		}
-		item := driftItem{Op: op, Address: maskAddress(r.Address)}
+		item := driftItem{Op: op, Address: publicdiag.MaskAddress(r.Address, addressKey)}
 		if op == "update" {
 			attrs, err := changedAttrs(r.Change.Before, r.Change.After)
 			if err != nil {
@@ -502,6 +503,14 @@ func ciFinishDrift(s ciState, d deps) (string, error) {
 		if !s.Established {
 			err = xerrors.Wrapf(errCINotEstablished, "%v", err)
 		}
+		// plan と apply の入口と同じく、失敗の経路でも job summary に診断を書く。書けなくても失敗の種類は変えない。
+		failed := fmt.Sprintf("### %s\n\n失敗の段: %s\n\n%s", s.Root, s.Stage, diagSection(s.Diag))
+		if s.Key != "" && slices.Contains(s.Done, stageUpload) {
+			failed += fmt.Sprintf("- key: `%s`\n- sha256: `%s`\n- 版 ID: `%s`\n", s.Key, s.SHA, s.Version)
+		}
+		if werr := appendGitHub(envValue(d.environ, "GITHUB_STEP_SUMMARY"), failed); werr != nil {
+			_, _ = fmt.Fprintln(d.stderr, "⚠️ job summary に書けません")
+		}
 
 		return "", xerrors.Wrapf(err, "失敗の段: %s", s.Stage)
 	}
@@ -513,7 +522,7 @@ func ciFinishDrift(s ciState, d deps) (string, error) {
 		}
 		list = "<pre>\n" + html.EscapeString(strings.Join(lines, "\n")) + "\n</pre>\n\n"
 	}
-	summary := fmt.Sprintf("### %s\n\ndrift の判定: %s（%d 件）\n\n%s\n\n%s- key: `%s`\n- sha256: `%s`\n- 版 ID: `%s`\n", s.Root, s.Verdict, s.Count, s.Summary, list, s.Key, s.SHA, s.Version)
+	summary := fmt.Sprintf("### %s\n\ndrift の判定: %s（%d 件）\n\n%s\n\n%s%s- key: `%s`\n- sha256: `%s`\n- 版 ID: `%s`\n", s.Root, s.Verdict, s.Count, s.Summary, list, diagSection(s.Diag), s.Key, s.SHA, s.Version)
 	err := appendGitHub(envValue(d.environ, "GITHUB_STEP_SUMMARY"), summary)
 	err = xerrors.Join(err, appendGitHub(envValue(d.environ, "GITHUB_OUTPUT"), fmt.Sprintf("result=%s\ncount=%d\ndigest=%s\n", s.Verdict, s.Count, s.Digest)))
 	if err != nil {

@@ -397,9 +397,10 @@ workload root を plan し、drift を検出する（ADR-0601 決定12）。検�
   題名が同じで、`GITHUB_TOKEN` で作られ（作者が `app/github-actions`）、本文が upsert-report-issue の印で始まる開いた issue だけで
   ある（`gh issue list --author` と `ci-drift-report` の両方で確かめる）。誰でも開ける issue の本文の印で通知を止めさせない。
   開いた issue の一覧が `--limit` の件数に達した回は、前回の報告を見落としうるので報告の job が落ちる。変わる resource の
-  address（識別子を伏せたもの）と変わった最上位の属性の名前は、drift の job の job summary にだけ書く。属性の値はどこにも
-  書かない。plan の全文は plan の job と同じく plan の出力の Bucket の `branch/admin/` の下に置き、ログには key・SHA-256・
-  版 ID だけを出す
+  address（plan の job と同じく `lib/publicdiag` が、role の名前・リージョン・整数の index のほかの key を伏せる）と
+  変わった最上位の属性の名前は、drift の job の job summary にだけ書く。属性の値はどこにも書かない。plan が失敗した回の
+  job summary には、plan の job と同じく許可の文法の欄だけの診断を書く。plan の全文は plan の job と同じく plan の出力の
+  Bucket の `branch/admin/` の下に置き、ログには key・SHA-256・版 ID と診断の行だけを出す
 - **通知は critical の deploy の系統へ、drift の集合が変わったときだけ送る。** 新しく出たとき・変わったとき・解消したときに
   `notify-drift` が検出のモードで送り、同じ集合が続く間は送らない。失敗・取り消し・未確定は毎回 `notify-failure` が送る。
   報告の job が走らなかった run（取り消し）も失敗として送る
