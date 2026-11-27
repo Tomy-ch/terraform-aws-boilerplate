@@ -69,6 +69,7 @@ locals {
     "s3:GetEncryptionConfiguration",
     "s3:GetLifecycleConfiguration",
     "s3:GetReplicationConfiguration",
+    "s3:ListTagsForResource",
   ]
 
   bucket_configure_actions = [
@@ -128,8 +129,7 @@ locals {
   org_ou_arns    = ["${local.org_arn_prefix}:ou/o-*/ou-*"]
   org_policy_arn = "${local.org_arn_prefix}:policy/o-*/*/p-*"
   # メンバーアカウントの ID は作るまで決まらない。
-  org_account_arns = ["${local.org_arn_prefix}:account/o-*/*"]
-  # メンバーアカウントのメールは、organization-baseline が管理アカウントの parameter から読む（organization-baseline/README.md）。
+  org_account_arns                    = ["${local.org_arn_prefix}:account/o-*/*"]
   member_account_emails_parameter_arn = "arn:${data.aws_partition.current.partition}:ssm:${local.regional_arn_suffix}:parameter/${trimsuffix(var.name_prefix, "-${var.env}")}/organization-baseline/member-account-emails"
 
   break_glass_user_arns  = [for a in var.break_glass_arns : a if strcontains(a, ":user/")]
@@ -605,6 +605,7 @@ locals {
   }
   inspector_slr_arn           = "${local.iam_arn_prefix}:role/aws-service-role/inspector2.amazonaws.com/AWSServiceRoleForAmazonInspector2"
   inspector_agentless_slr_arn = "${local.iam_arn_prefix}:role/aws-service-role/agentless.inspector2.amazonaws.com/AWSServiceRoleForAmazonInspector2Agentless"
+  inspector_ami_slr_arn       = "${local.iam_arn_prefix}:role/aws-service-role/ami.inspector2.amazonaws.com/AWSServiceRoleForAmazonInspector2Ami"
   # GuardDuty・Inspector・Security Hub の指定はリージョンごとで、ADR-0209 の集合のすべてに置く。Security Hub の Action は
   # 管理アカウントの hub を resource に取る（Service Authorization Reference）。
   delegated_admin_regional_read_actions   = ["guardduty:ListOrganizationAdminAccounts", "inspector2:ListDelegatedAdminAccounts"]
@@ -655,7 +656,7 @@ locals {
       Resource  = arn
       Condition = { StringEquals = { "iam:AWSServiceName" = svc } }
     }],
-    # Inspector の指定は、Inspector の2つの SLR が無ければ呼び手の権限で作る。
+    # Inspector の指定は、Inspector の3つの SLR が無ければ呼び手の権限で作る。
     [for s in [{
       Sid       = "CreateInspectorServiceLinkedRole"
       Effect    = "Allow"
@@ -668,6 +669,12 @@ locals {
       Action    = "iam:CreateServiceLinkedRole"
       Resource  = local.inspector_agentless_slr_arn
       Condition = { StringEquals = { "iam:AWSServiceName" = "agentless.inspector2.amazonaws.com" } }
+      }, {
+      Sid       = "CreateInspectorAmiServiceLinkedRole"
+      Effect    = "Allow"
+      Action    = "iam:CreateServiceLinkedRole"
+      Resource  = local.inspector_ami_slr_arn
+      Condition = { StringEquals = { "iam:AWSServiceName" = "ami.inspector2.amazonaws.com" } }
     }] : s if local.baseline_supported],
     [for a in local.delegated_admin_regional_manage_actions : { Sid = replace(title(replace(a, ":", " ")), " ", ""), Effect = "Allow", Action = a, Resource = "*" } if local.baseline_supported],
     [for s in [{ Sid = "ManageSecurityHubAdminAccounts", Effect = "Allow", Action = local.securityhub_manage_actions, Resource = local.securityhub_hub_arn }] : s if local.baseline_supported],

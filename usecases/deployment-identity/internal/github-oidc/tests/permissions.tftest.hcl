@@ -175,6 +175,7 @@ run "policies" {
           "s3:GetEncryptionConfiguration",
           "s3:GetLifecycleConfiguration",
           "s3:GetReplicationConfiguration",
+          "s3:ListTagsForResource",
         ]
         Resource = [
           "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an",
@@ -591,6 +592,7 @@ run "policies" {
           "s3:GetEncryptionConfiguration",
           "s3:GetLifecycleConfiguration",
           "s3:GetReplicationConfiguration",
+          "s3:ListTagsForResource",
         ]
         Resource = [
           "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an",
@@ -1407,6 +1409,13 @@ run "policies" {
         Action    = "iam:CreateServiceLinkedRole"
         Resource  = "arn:aws:iam::123456789012:role/aws-service-role/agentless.inspector2.amazonaws.com/AWSServiceRoleForAmazonInspector2Agentless"
         Condition = { StringEquals = { "iam:AWSServiceName" = "agentless.inspector2.amazonaws.com" } }
+      },
+      {
+        Sid       = "CreateInspectorAmiServiceLinkedRole"
+        Effect    = "Allow"
+        Action    = "iam:CreateServiceLinkedRole"
+        Resource  = "arn:aws:iam::123456789012:role/aws-service-role/ami.inspector2.amazonaws.com/AWSServiceRoleForAmazonInspector2Ami"
+        Condition = { StringEquals = { "iam:AWSServiceName" = "ami.inspector2.amazonaws.com" } }
       },
       { Sid = "GuarddutyDisableOrganizationAdminAccount", Effect = "Allow", Action = "guardduty:DisableOrganizationAdminAccount", Resource = "*" },
       { Sid = "GuarddutyEnableOrganizationAdminAccount", Effect = "Allow", Action = "guardduty:EnableOrganizationAdminAccount", Resource = "*" },

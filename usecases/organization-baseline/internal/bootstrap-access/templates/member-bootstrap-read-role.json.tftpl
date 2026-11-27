@@ -41,6 +41,7 @@ ${jsonencode({
                   "s3:GetEncryptionConfiguration",
                   "s3:GetLifecycleConfiguration",
                   "s3:GetReplicationConfiguration",
+                  "s3:ListTagsForResource",
                 ]
                 Resource = [for s in ["tfstate", "tfplan", "tfapply"] : { "Fn::Sub" = "arn:$${AWS::Partition}:s3:::${project}-*-${s}-$${AWS::AccountId}-*" }]
               },
