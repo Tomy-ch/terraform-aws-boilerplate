@@ -371,3 +371,40 @@ test_violation_undeclared_policy_with_unknown_target_while_creating if {
 	msgs := gate.deny with input as admin_identity(array.concat(array.concat(array.concat(targets, declared), [creating(x) | some x in members]), [u]))
 	fixture.has("[PLAN-RPE-01] input/admin-identity.json: module.evil.aws_s3_bucket_policy.x がどの resource を指すかを plan で読めません", msgs)
 }
+
+member_statement_messages(plan_n, apply_n) := {m |
+	some m in gate.deny with input as admin_identity(array.concat(array.concat(targets, declared), array.concat(security(with_documents(plan_n, apply_n)), log_archive(array.concat(targets, declared)))))
+	startswith(m, "[PLAN-RPE-03]")
+}
+
+test_pass_member_statement_counts if {
+	count(member_statement_messages(5, 3)) == 0
+}
+
+test_violation_member_statement_counts if {
+	fixture.has(sprintf("[PLAN-RPE-03] input/admin-identity.json: %s の文が 4 件で、宣言（policy_plan.deployment_identity.apply_identity_role.output_bucket_policy_statements）の 5 件と一致しません", [security(output_bucket_policy)]), member_statement_messages(4, 3))
+	fixture.has(sprintf("[PLAN-RPE-03] input/admin-identity.json: %s の文が 4 件で、宣言（policy_plan.state_backend.apply_output_bucket_policy_statements）の 3 件と一致しません", [security(apply_bucket_policy)]), member_statement_messages(5, 4))
+}
+
+test_violation_member_counted_policy_not_read_as_document if {
+	msgs := gate.deny with input as admin_identity(array.concat(array.concat(targets, declared), members)) with data.policy_plan.documents as {}
+	fixture.has(sprintf("[PLAN-RPE-03] 文の数を宣言した %s が入力に在るのに、policy の文書として読まれていません", [security(apply_bucket_policy)]), msgs)
+	fixture.has(sprintf("[PLAN-RPE-03] 文の数を宣言した %s が入力に在るのに、policy の文書として読まれていません", [log_archive(output_bucket_policy)]), msgs)
+}
+
+# 立ち上げを閉じる PR は、メンバーの instance を removed（destroy = false）で管理から外す。宣言を外したメンバーの forget は数えない。
+test_pass_removed_members_forgotten if {
+	gone := [json.patch(x, [
+		{"op": "replace", "path": "/change/actions", "value": ["forget"]},
+		{"op": "add", "path": "/change/before", "value": x.change.after},
+		{"op": "replace", "path": "/change/after", "value": null},
+	]) | some x in members]
+	d := json.patch(data.policy_plan, [{"op": "remove", "path": "/state_backend/instances"}])
+	count(gate.deny) == 0 with input as admin_identity(array.concat(array.concat(targets, declared), gone)) with data.policy_plan as d
+}
+
+test_violation_removed_member_still_written if {
+	d := json.patch(data.policy_plan, [{"op": "remove", "path": "/state_backend/instances"}])
+	msgs := gate.deny with input as admin_identity(array.concat(array.concat(targets, declared), members)) with data.policy_plan as d
+	fixture.has("[PLAN-RPE-00] input/admin-identity.json: state-backend の instance（prefix \"module.state_backend_security.\"）が宣言にありません", msgs)
+}

@@ -192,18 +192,44 @@ present(addr, inst) if {
 	rc.address == addr
 }
 
-# 宣言の外の instance を見つける印。印の前の prefix が、正規の prefix でも、そのファイルの root に宣言した prefix でもなければ数える。
-instance_markers := {"state_backend": "module.plan_output.aws_s3_bucket.this", "deployment_identity": "module.github_oidc.aws_iam_role.apply_identity"}
+# 宣言の外の instance を見つける印。正規の宣言の address から正規の接頭辞を除いて導くので、usecase の module の
+# address が変われば、印も宣言と一緒に変わる（宣言が入力に無いことは各 package の 00 が落とす）。印の前の接頭辞が、
+# 正規の接頭辞でも、そのファイルの root に宣言した接頭辞でもなければ数える。
+marker_sources := {
+	"state_backend": {"path": "deployment_identity.apply_identity_role.output_bucket", "address": object.get(instance_di_cfg, ["apply_identity_role", "output_bucket"], null), "prefix": sb_module},
+	"deployment_identity": {"path": "deployment_identity.apply_identity_role.role", "address": object.get(instance_di_cfg, ["apply_identity_role", "role"], null), "prefix": di_module},
+}
 
+instance_markers[kind] := substring(m.address, count(m.prefix), -1) if {
+	some kind, m in marker_sources
+	is_string(m.address)
+	startswith(m.address, m.prefix)
+	count(m.address) > count(m.prefix)
+}
+
+instance_shape_errors contains msg if {
+	some kind, m in marker_sources
+	not instance_markers[kind]
+	msg := sprintf("data.policy_plan.%s が %s.module で始まる address ではありません。宣言に無い instance を見つける印を導けません", [m.path, kind])
+}
+
+# 書かない変更（削除と管理からの除外）は instance を残さない。立ち上げを閉じる PR の removed の forget を数えない。
 undeclared_instances contains {"path": f.path, "kind": kind, "prefix": prefix} if {
 	some f in input
 	some rc in f.contents.resource_changes
 	is_string(rc.address)
+	object.get(rc, "mode", "managed") == "managed"
+	is_object(object.get(rc.change, "after", null))
 	some kind, marker in instance_markers
 	endswith(rc.address, marker)
 	prefix := substring(rc.address, 0, count(rc.address) - count(marker))
+	boundary(prefix)
 	not known_prefix(kind, prefix, root_name(f.path))
 }
+
+boundary("")
+
+boundary(prefix) if endswith(prefix, ".")
 
 known_prefix("state_backend", prefix, _) if prefix == sb_module
 
