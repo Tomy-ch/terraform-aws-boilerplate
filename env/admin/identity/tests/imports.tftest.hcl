@@ -5,7 +5,10 @@ mock_provider "aws" {
     defaults = { value = "{\"security\":\"security@example.com\",\"log-archive\":\"log-archive@example.com\"}" }
   }
   mock_data "aws_caller_identity" {
-    defaults = { account_id = "123456789012" }
+    defaults = { account_id = "123456789012", arn = "arn:aws:sts::123456789012:assumed-role/tabp-admin-ci-plan/session" }
+  }
+  mock_data "aws_iam_session_context" {
+    defaults = { issuer_name = "tabp-admin-ci-plan" }
   }
   mock_data "aws_region" {
     defaults = { region = "ap-northeast-1" }
@@ -23,6 +26,34 @@ mock_provider "aws" {
   }
   mock_resource "aws_organizations_organizational_unit" {
     defaults = { id = "ou-exam-abcdefgh" }
+  }
+}
+
+mock_provider "aws" {
+  alias = "security"
+
+  mock_data "aws_caller_identity" {
+    defaults = { account_id = "111111111111" }
+  }
+  mock_data "aws_region" {
+    defaults = { region = "ap-northeast-1" }
+  }
+  mock_data "aws_partition" {
+    defaults = { partition = "aws" }
+  }
+}
+
+mock_provider "aws" {
+  alias = "log_archive"
+
+  mock_data "aws_caller_identity" {
+    defaults = { account_id = "111111111111" }
+  }
+  mock_data "aws_region" {
+    defaults = { region = "ap-northeast-1" }
+  }
+  mock_data "aws_partition" {
+    defaults = { partition = "aws" }
   }
 }
 
