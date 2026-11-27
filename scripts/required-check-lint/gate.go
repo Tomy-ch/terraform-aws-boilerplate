@@ -23,14 +23,33 @@ const (
 	gateJob             = "gate"
 	lineGateJob         = "line-gate"
 	localWorkflowPrefix = "./.github/workflows/"
+
+	// 判定と changes の step の run:。scripts/ci-gate を起動する make の入口（.makefiles/github/setting/repo-settings.mk）。
+	gateRun    = "make ci-gate RUNNER_MODE=host"
+	lineRun    = "make ci-line-gate RUNNER_MODE=host"
+	changesRun = "make ci-changes RUNNER_MODE=host"
+	// needsEnv は、判定の step が needs を受け取る env の値。
+	needsEnv = "${{ toJSON(needs) }}"
+
+	linesRulesetFile  = "lines.json"
+	deployRulesetStem = "deploy-"
+	// 直接 required の context を報告する workflow の pull_request の branches に置く印の集合（repo-settings が
+	// branches.json から展開する）。線の ruleset の対象は gate、env を持つデプロイブランチの ruleset の対象を合わせた
+	// ものは deploy-env である（決定16・35）。
+	setGate      = "gate"
+	setDeployEnv = "deploy-env"
 )
 
 var (
 	// branchSetMarker は、repo-settings が branches.json から生成する行の印（行末のコメント）。
-	branchSetMarker = regexp.MustCompile(`#\s*branch-set:\s*\S+\s*$`)
+	branchSetMarker = regexp.MustCompile(`#\s*branch-set:\s*(\S+)\s*$`)
 	// callerWorkflowRef は、呼ばれた workflow の中では caller の workflow を指す context。Actions の式は大文字小文字を
-	// 区別しない。
-	callerWorkflowRef = regexp.MustCompile(`(?i)\bgithub\.workflow(?:_ref)?\b`)
+	// 区別せず、property は索引の記法（github['workflow']）でも書ける。
+	callerWorkflowRef = regexp.MustCompile(`(?i)\bgithub\s*(?:\.\s*workflow(?:_ref)?\b|\[\s*['"]workflow(?:_ref)?['"]\s*\])`)
+	// makeTarget は、run: のうち make の入口を起動する部分。判定の step を数えるのに使う。
+	makeTarget = regexp.MustCompile(`\bmake\s+(ci-gate|ci-line-gate|ci-changes)\b`)
+	// secretRef は、call-* の job の secrets: に置ける値。呼ぶ側の secret を1つ名指す。
+	secretRef = regexp.MustCompile(`^\$\{\{\s*secrets\.[A-Za-z_][A-Za-z0-9_]*\s*\}\}$`)
 )
 
 // gateInput は、gate と線の検証の検査の入力。どれも宣言から読んだもので、検査が独自に持つ一覧は無い（決定20）。
@@ -40,6 +59,7 @@ type gateInput struct {
 	decl         checksdecl.Decl
 	checksPath   string
 	workflowsDir string
+	rulesetsDir  string
 }
 
 type wfDoc struct {
@@ -63,12 +83,15 @@ type wfJob struct {
 	node *yaml.Node
 }
 
-// gateSpec は、宣言の検査を call-<name> の job で呼び、1つの job で判定する workflow の形。
+// gateSpec は、宣言の検査を call-<name> の job で呼び、1つの job で判定する workflow の形。run は判定の step の run:。
+// gated は、call-* の job が changes の job の出力で走るかを決める（gate の workflow）ことを表す。
 type gateSpec struct {
 	file   string
 	job    string
+	run    string
 	fixed  []string
 	checks []checksdecl.Check
+	gated  bool
 }
 
 // gateFindings は、ruleset の宣言・検査の宣言・workflow を突き合わせ、決定16・19・38 の不変条件の違反を返します。
@@ -91,11 +114,12 @@ func gateFindings(in gateInput, sources []Source) []lintreport.Finding {
 		byName[filepath.Base(d.file)] = d
 	}
 
-	findings = append(findings, directFindings(in.contexts, docs)...)
+	findings = append(findings, directFindings(in.contexts, in.legacy, docs)...)
+	findings = append(findings, linesRulesetFindings(in)...)
 
 	for _, g := range []gateSpec{
-		{file: prGateFile, job: gateJob, fixed: []string{changesJob}, checks: in.decl.Checks},
-		{file: lineVerifyFile, job: lineGateJob, checks: treeChecks(in.decl)},
+		{file: prGateFile, job: gateJob, run: gateRun, fixed: []string{changesJob}, checks: in.decl.Checks, gated: true},
+		{file: lineVerifyFile, job: lineGateJob, run: lineRun, checks: treeChecks(in.decl)},
 	} {
 		d, ok := byName[g.file]
 		switch {
@@ -106,7 +130,7 @@ func gateFindings(in gateInput, sources []Source) []lintreport.Finding {
 				Message: fmt.Sprintf("%s がありません（job `%s` が %s の検査を呼びます）", g.file, g.job, in.checksPath),
 			})
 		default:
-			findings = append(findings, gateWorkflowFindings(g, d, in.checksPath)...)
+			findings = append(findings, gateWorkflowFindings(g, d, in.checksPath, byName)...)
 		}
 	}
 	if d, ok := byName[lineVerifyFile]; ok {
@@ -238,39 +262,111 @@ func treeChecks(d checksdecl.Decl) []checksdecl.Check {
 
 // directFindings は、ruleset が直接 required とする各 context について、報告する job がちょうど1つ在り、その job と
 // workflow が context を取りこぼさない形であることを検査します（決定16・19）。同じ context を複数の ruleset が
-// 名指すときは、最初に名指したファイルへ報告する。
-func directFindings(contexts []requiredchecks.Context, docs []wfDoc) []lintreport.Finding {
+// 名指すときは、最初に名指したファイルへ報告する。legacy は、役割ごとの ruleset と並べて適用する単一の ruleset の
+// context で、そこに在る context の起動条件は [check] がフィルタ無しを求めるので、印の集合を課さない。
+func directFindings(contexts []requiredchecks.Context, legacy []string, docs []wfDoc) []lintreport.Finding {
 	var findings []lintreport.Finding
-	seen := map[string]bool{}
+	inLegacy := map[string]bool{}
+	for _, c := range legacy {
+		inLegacy[c] = true
+	}
+	first := map[string]requiredchecks.Context{}
+	sets := map[string]map[string]bool{}
+	var order []string
 	for _, c := range contexts {
-		if seen[c.Name] {
-			continue
+		if _, ok := first[c.Name]; !ok {
+			first[c.Name] = c
+			sets[c.Name] = map[string]bool{}
+			order = append(order, c.Name)
 		}
-		seen[c.Name] = true
+		sets[c.Name][rulesetSet(c.File)] = true
+	}
+	for _, name := range order {
+		c := first[name]
+		want, conflict := "", false
+		switch {
+		case inLegacy[name]:
+			// 並行期間は古い宣言が同じ context を required とし、[check] がフィルタ無しを求める。deploy-gate.yaml の
+			// context はここに当たり、印の集合を課さない（決定40）。
+			want = setAny
+		case len(sets[name]) > 1:
+			conflict = true
+		default:
+			for set := range sets[name] {
+				want = set
+			}
+		}
+		if conflict {
+			findings = append(findings, lintreport.Finding{
+				File: c.File, Line: 1,
+				Message: fmt.Sprintf("required context `%s` を、対象の集合が違う ruleset が required としています。報告する workflow の branches を1つの集合に揃えられません", name),
+			})
+			want = setAny
+		}
 
 		n := 0
 		for _, d := range docs {
 			for _, j := range d.jobs {
-				if j.id != c.Name {
+				if j.id != name {
 					continue
 				}
 				n++
-				findings = append(findings, directJobFindings(c.Name, d, j)...)
+				findings = append(findings, directJobFindings(name, want, d, j)...)
 			}
 		}
 		if n != 1 {
 			findings = append(findings, lintreport.Finding{
 				File: c.File, Line: 1,
-				Message: fmt.Sprintf("required context `%s` を報告する job は 1 件必要です（実際: %d）", c.Name, n),
+				Message: fmt.Sprintf("required context `%s` を報告する job は 1 件必要です（実際: %d）", name, n),
 			})
 		}
 	}
 	return findings
 }
 
-// directJobFindings は、直接 required の context を報告する job 1つを検査します。線の検証の workflow の起動条件は
+// setNone と setAny は、[rulesetSet] と [directJobFindings] が使う、印の集合の代わりの値。setNone は branches を
+// 置けないこと、setAny は印さえあれば集合を問わないことを表す。
+const (
+	setNone = ""
+	setAny  = "*"
+)
+
+// rulesetSet は、ruleset の宣言 file が required とする context の workflow が、pull_request の branches に置ける印の
+// 集合を返します。線の ruleset は gate、env を持つデプロイブランチの ruleset は deploy-env で、ほかは branches を
+// 置けない。
+func rulesetSet(file string) string {
+	base := filepath.Base(file)
+	switch {
+	case base == linesRulesetFile:
+		return setGate
+	case strings.HasPrefix(base, deployRulesetStem):
+		return setDeployEnv
+	}
+	return setNone
+}
+
+// linesRulesetFindings は、線の ruleset の required の context がちょうど gate の1つであることを検査します
+// （決定35）。gate のほかの context は、gate が呼ぶ検査と二重に required になるか、gate の workflow の外で報告される。
+func linesRulesetFindings(in gateInput) []lintreport.Finding {
+	var got []string
+	for _, c := range in.contexts {
+		if filepath.Base(c.File) == linesRulesetFile {
+			got = append(got, c.Name)
+		}
+	}
+	if len(got) == 1 && got[0] == gateJob {
+		return nil
+	}
+	return []lintreport.Finding{{
+		File: filepath.Join(in.rulesetsDir, linesRulesetFile), Line: 1,
+		Message: fmt.Sprintf("線の ruleset の required context は `%s` の1つだけにします（実際: [%s]）", gateJob, strings.Join(got, ", ")),
+	}}
+}
+
+// directJobFindings は、直接 required の context を報告する job 1つを検査します。set は、その workflow の
+// pull_request の branches に置ける印の集合（[rulesetSet]）。線の検証の workflow の起動条件は
 // [lineVerifyTriggerFindings] が見る。
-func directJobFindings(context string, d wfDoc, j wfJob) []lintreport.Finding {
+func directJobFindings(context, set string, d wfDoc, j wfJob) []lintreport.Finding {
 	var findings []lintreport.Finding
 	add := func(line int, format string, args ...any) {
 		findings = append(findings, lintreport.Finding{
@@ -306,8 +402,17 @@ func directJobFindings(context string, d wfDoc, j wfJob) []lintreport.Finding {
 		case "paths", "paths-ignore", "branches-ignore":
 			add(k.Line, "の pull_request に `%s` が残っています（起動しなかった check は未報告のままマージを止めます）", k.Value)
 		case "branches":
-			if k.Line < 1 || k.Line > len(d.lines) || !branchSetMarker.MatchString(d.lines[k.Line-1]) {
+			var m []string
+			if k.Line >= 1 && k.Line <= len(d.lines) {
+				m = branchSetMarker.FindStringSubmatch(d.lines[k.Line-1])
+			}
+			switch {
+			case m == nil:
 				add(k.Line, "の pull_request の branches が、印 `# branch-set: <集合>` で branches.json から生成した一覧ではありません")
+			case set == setNone:
+				add(k.Line, "の pull_request に branches があります。この context を required とする ruleset の対象は、印の集合で表せません")
+			case set != setAny && m[1] != set:
+				add(k.Line, "の pull_request の branches の印は `# branch-set: %s` にします（実際: %s）。context を required とする ruleset の対象と同じ集合です", set, m[1])
 			}
 		}
 	}
@@ -315,40 +420,44 @@ func directJobFindings(context string, d wfDoc, j wfJob) []lintreport.Finding {
 }
 
 // gateWorkflowFindings は、gate の workflow の call-* の job の集合が宣言の検査と両方向で一致し、判定の job が
-// それらをすべて受け取り、取り消されても走る形であることを検査します（決定17-19・37）。
-func gateWorkflowFindings(s gateSpec, d wfDoc, checksPath string) []lintreport.Finding {
+// それらをすべて受け取り、取り消されても走る形であることを検査します（決定17-19・37）。byName は、call-* が呼ぶ
+// workflow を secrets: の検査のために引く。
+func gateWorkflowFindings(s gateSpec, d wfDoc, checksPath string, byName map[string]wfDoc) []lintreport.Finding {
 	var findings []lintreport.Finding
 	add := func(line int, format string, args ...any) {
 		findings = append(findings, lintreport.Finding{File: d.file, Line: line, Message: fmt.Sprintf(format, args...)})
 	}
 
-	want := make(map[string]string, len(s.checks))
+	want := make(map[string]checksdecl.Check, len(s.checks))
 	wantIDs := make([]string, 0, len(s.checks))
 	for _, c := range s.checks {
 		id := checksdecl.CallerPrefix + c.Name
-		want[id] = c.Workflow
+		want[id] = c
 		wantIDs = append(wantIDs, id)
 	}
 
 	got := map[string]bool{}
 	callers := 0
-	var judges []wfJob
+	var judges, changes []wfJob
 	for _, j := range d.jobs {
 		switch {
 		case j.id == s.job:
 			judges = append(judges, j)
+		case s.gated && j.id == changesJob:
+			changes = append(changes, j)
 		case strings.HasPrefix(j.id, checksdecl.CallerPrefix):
 			callers++
-			wf, ok := want[j.id]
+			c, ok := want[j.id]
 			if !ok {
 				add(j.line, "job `%s` は %s に無い検査を呼んでいます", j.id, checksPath)
 				continue
 			}
 			got[j.id] = true
 			_, uses := j.get("uses")
-			if exp := localWorkflowPrefix + wf; uses == nil || uses.Kind != yaml.ScalarNode || uses.Value != exp {
+			if exp := localWorkflowPrefix + c.Workflow; uses == nil || uses.Kind != yaml.ScalarNode || uses.Value != exp {
 				add(j.line, "job `%s` の uses: は `%s` にします", j.id, exp)
 			}
+			findings = append(findings, callerFindings(s, d.file, j, c, byName[c.Workflow])...)
 		}
 	}
 	for _, id := range wantIDs {
@@ -360,11 +469,144 @@ func gateWorkflowFindings(s gateSpec, d wfDoc, checksPath string) []lintreport.F
 		add(1, "%s* の job は %d 件、%s の検査は %d 件です", checksdecl.CallerPrefix, callers, checksPath, len(wantIDs))
 	}
 
+	if s.gated {
+		if len(changes) != 1 {
+			add(1, "job `%s` は 1 件必要です（実際: %d）", changesJob, len(changes))
+		} else {
+			findings = append(findings, stepFindings(changesJob, d.file, changes[0], changesRun, false)...)
+		}
+	}
+
 	if len(judges) != 1 {
 		add(1, "job `%s` は 1 件必要です（実際: %d）", s.job, len(judges))
 		return findings
 	}
-	return append(findings, judgeFindings(s.job, d.file, judges[0], append(append([]string{}, s.fixed...), wantIDs...))...)
+	findings = append(findings, judgeFindings(s.job, d.file, judges[0], append(append([]string{}, s.fixed...), wantIDs...))...)
+	return append(findings, stepFindings(s.job, d.file, judges[0], s.run, true)...)
+}
+
+// callerIf は、gate の workflow の call-<name> の job の if: の式（${{ }} の中身）。changes が success でなければ
+// fail open で走り、判定は gate が失敗にする。
+func callerIf(name string) string {
+	return "!cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), '" + name + "'))"
+}
+
+// callerFindings は、call-* の job 1つが、宣言の検査をそのまま呼ぶ形であることを検査します。with: は呼ばれる側の
+// 入力を変え、secrets: inherit は呼ばれる側へすべての secret を渡す。secrets: は、呼ばれる側 called が
+// workflow_call.secrets で宣言した名前へ secret を1つずつ渡す形だけを許す。gate の workflow では、needs: が changes
+// だけで、if: が [callerIf] であることも課す。線の検証は path で絞らないので、if: を置けない。
+func callerFindings(s gateSpec, file string, j wfJob, c checksdecl.Check, called wfDoc) []lintreport.Finding {
+	var findings []lintreport.Finding
+	add := func(line int, format string, args ...any) {
+		findings = append(findings, lintreport.Finding{File: file, Line: line, Message: fmt.Sprintf("job `%s` ", j.id) + fmt.Sprintf(format, args...)})
+	}
+
+	if k, _ := j.get("with"); k != nil {
+		add(k.Line, "に with: を置けません。検査は宣言の workflow をそのまま呼びます")
+	}
+	if k, v := j.get("secrets"); k != nil {
+		findings = append(findings, secretsFindings(j.id, file, k, v, called)...)
+	}
+
+	k, v := j.get("if")
+	if !s.gated {
+		if k != nil {
+			add(k.Line, "に if: を置けません。線の検証は検査を path で絞らず、すべて走らせます")
+		}
+		return findings
+	}
+	switch {
+	case k == nil:
+		add(j.line, "に if: がありません。`${{ %s }}` にします", callerIf(c.Name))
+	case v.Kind != yaml.ScalarNode || unwrapExpr(v.Value) != callerIf(c.Name):
+		add(k.Line, "の if: は `${{ %s }}` にします", callerIf(c.Name))
+	}
+	nk, nv := j.get("needs")
+	if nk == nil {
+		add(j.line, "に needs: がありません。`needs: %s` にします", changesJob)
+	} else if needs, ok := needsOf(nv); !ok || len(needs) != 1 || needs[0] != changesJob {
+		add(nk.Line, "の needs: は `%s` だけにします", changesJob)
+	}
+	return findings
+}
+
+// secretsFindings は、call-* の job の secrets: が、呼ばれる側の workflow_call.secrets の名前へ ${{ secrets.<名前> }}
+// を渡す mapping であることを検査します。
+func secretsFindings(id, file string, key, value *yaml.Node, called wfDoc) []lintreport.Finding {
+	var findings []lintreport.Finding
+	add := func(line int, format string, args ...any) {
+		findings = append(findings, lintreport.Finding{File: file, Line: line, Message: fmt.Sprintf("job `%s` の secrets: ", id) + fmt.Sprintf(format, args...)})
+	}
+	if value.Kind != yaml.MappingNode {
+		add(key.Line, "は、呼ばれる側が workflow_call.secrets で宣言した名前へ1つずつ渡す mapping にします（inherit は使えません）")
+		return findings
+	}
+	declared := map[string]bool{}
+	if e, ok := called.event("workflow_call"); ok {
+		_, sec := lookup(e.value, "secrets")
+		if sec != nil && sec.Kind == yaml.MappingNode {
+			for i := 0; i+1 < len(sec.Content); i += 2 {
+				declared[sec.Content[i].Value] = true
+			}
+		}
+	}
+	for i := 0; i+1 < len(value.Content); i += 2 {
+		k, v := value.Content[i], value.Content[i+1]
+		if !declared[k.Value] {
+			add(k.Line, "の `%s` は、呼ばれる workflow の workflow_call.secrets に宣言がありません", k.Value)
+		}
+		if v.Kind != yaml.ScalarNode || !secretRef.MatchString(strings.TrimSpace(v.Value)) {
+			add(k.Line, "の `%s` の値は `${{ secrets.<名前> }}` にします", k.Value)
+		}
+	}
+	return findings
+}
+
+// stepFindings は、job j の steps に make の入口 run をちょうど1つ起動する step が在り、その step と job が失敗を
+// 成功へ変えない形であることを検査します。needs が真なら、その step が env の NEEDS で needs を受け取ることも課す。
+// run: は字面で一致させるので、`||` や `;` の後続は一致しない。
+func stepFindings(id, file string, j wfJob, run string, needs bool) []lintreport.Finding {
+	var findings []lintreport.Finding
+	add := func(line int, format string, args ...any) {
+		findings = append(findings, lintreport.Finding{File: file, Line: line, Message: fmt.Sprintf("job `%s` ", id) + fmt.Sprintf(format, args...)})
+	}
+
+	if k, _ := j.get("continue-on-error"); k != nil {
+		add(k.Line, "に continue-on-error を置けません。判定の失敗が job の成功になります")
+	}
+	_, steps := j.get("steps")
+	if steps == nil || steps.Kind != yaml.SequenceNode {
+		add(j.line, "に steps の一覧がありません。`%s` を起動する step が要ります", run)
+		return findings
+	}
+	var hits []*yaml.Node
+	for _, st := range steps.Content {
+		if _, r := lookup(st, "run"); r != nil && r.Kind == yaml.ScalarNode && makeTarget.MatchString(r.Value) {
+			hits = append(hits, st)
+		}
+	}
+	if len(hits) != 1 {
+		add(j.line, "の steps に make の入口を起動する step は 1 件必要です（実際: %d）", len(hits))
+		return findings
+	}
+	st := hits[0]
+	if _, r := lookup(st, "run"); strings.TrimSpace(r.Value) != run {
+		add(r.Line, "の判定の step の run: は `%s` にします。後続のコマンドや別の入口は、判定の結果を変えます", run)
+	}
+	for _, key := range []string{"continue-on-error", "if"} {
+		if k, _ := lookup(st, key); k != nil {
+			add(k.Line, "の判定の step に %s: を置けません。判定の失敗か判定の不在が job の成功になります", key)
+		}
+	}
+	if !needs {
+		return findings
+	}
+	_, env := lookup(st, "env")
+	_, v := lookup(env, "NEEDS")
+	if v == nil || v.Kind != yaml.ScalarNode || strings.TrimSpace(v.Value) != needsEnv {
+		add(st.Line, "の判定の step の env の NEEDS は `%s` にします", needsEnv)
+	}
+	return findings
 }
 
 // judgeFindings は、判定の job の needs が want と両方向で一致し、if: が always() であることを検査します。
@@ -417,11 +659,16 @@ func isAlways(v *yaml.Node) bool {
 	if v == nil || v.Kind != yaml.ScalarNode {
 		return false
 	}
-	s := strings.TrimSpace(v.Value)
+	return unwrapExpr(v.Value) == "always()"
+}
+
+// unwrapExpr は、if: の値の前後の空白と、全体を囲む ${{ }} を除きます。
+func unwrapExpr(v string) string {
+	s := strings.TrimSpace(v)
 	if strings.HasPrefix(s, "${{") && strings.HasSuffix(s, "}}") {
 		s = strings.TrimSpace(s[3 : len(s)-2])
 	}
-	return s == "always()"
+	return s
 }
 
 // needsOf は needs: の単一値と配列を読みます。どちらでもないか、要素がスカラーでなければ false を返します。

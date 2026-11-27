@@ -38,30 +38,38 @@ const rulesetOneContext = `{
 // validTree は、すべての不変条件を満たす最小の木。ケースは、ここから1か所だけを差し替える。
 func validTree() map[string]string {
 	return map[string]string{
-		"rulesets/common.json": `{"rules": [{"type": "deletion"}]}`,
-		"rulesets/lines.json":  `{"rules": [{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "gate"}]}}]}`,
-		"rulesets/deploy.json": `{"rules": [{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "deploy-source-check"}, {"context": "line-gate"}]}}]}`,
+		"rulesets/common.json":       `{"rules": [{"type": "deletion"}]}`,
+		"rulesets/lines.json":        `{"rules": [{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "gate"}]}}]}`,
+		"rulesets/deploy-admin.json": `{"rules": [{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "deploy-source-check"}, {"context": "line-gate"}]}}]}`,
 		"checks.json": `{"checks": [
   {"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true},
   {"name": "b", "workflow": "b.yaml", "paths": ["x/**"], "scope": "change", "required": true}
 ]}`,
 		"wf/pr-gate.yaml": `on:
   pull_request:
-    branches: # branch-set: lines
+    branches: # branch-set: gate
       - 'main'
 jobs:
   changes:
     runs-on: x
+    steps:
+      - run: make ci-changes RUNNER_MODE=host
   call-a:
     needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'a')) }}
     uses: ./.github/workflows/a.yaml
   call-b:
     needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'b')) }}
     uses: ./.github/workflows/b.yaml
   gate:
     needs: [changes, call-a, call-b]
     if: ${{ always() }}
     runs-on: x
+    steps:
+      - env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: make ci-gate RUNNER_MODE=host
 `,
 		"wf/line-verify.yaml": `on:
   push:
@@ -74,10 +82,14 @@ jobs:
     needs: [call-a]
     if: always()
     runs-on: x
+    steps:
+      - env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: make ci-line-gate RUNNER_MODE=host
 `,
 		"wf/deploy-gate.yaml": `on:
   pull_request:
-    branches: # branch-set: deploy
+    branches: # branch-set: deploy-env
       - 'admin'
 jobs:
   deploy-source-check:
@@ -189,8 +201,8 @@ func Test_run(t *testing.T) {
 			files map[string]string
 			want  error
 		}{
-			"rulesets/ が無ければ読めない":       {map[string]string{"rulesets/common.json": "", "rulesets/lines.json": "", "rulesets/deploy.json": ""}, requiredchecks.ErrRead},
-			"rulesets/ が空なら0件":          {map[string]string{"rulesets/lines.json": "", "rulesets/deploy.json": "", "rulesets/README.md": "x", "rulesets/common.json": ""}, requiredchecks.ErrNone},
+			"rulesets/ が無ければ読めない":       {map[string]string{"rulesets/common.json": "", "rulesets/lines.json": "", "rulesets/deploy-admin.json": ""}, requiredchecks.ErrRead},
+			"rulesets/ が空なら0件":          {map[string]string{"rulesets/lines.json": "", "rulesets/deploy-admin.json": "", "rulesets/README.md": "x", "rulesets/common.json": ""}, requiredchecks.ErrNone},
 			"checks.json が無ければ読めない":     {map[string]string{"checks.json": ""}, checksdecl.ErrDecl},
 			"checks.json を解釈できなければ読めない": {map[string]string{"checks.json": "nope"}, checksdecl.ErrDecl},
 			"検査が0件なら0件":                 {map[string]string{"checks.json": `{"checks": []}`}, checksdecl.ErrNoChecks},

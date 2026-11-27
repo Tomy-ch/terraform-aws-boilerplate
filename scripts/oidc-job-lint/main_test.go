@@ -5284,17 +5284,33 @@ func Test_reusableCall(t *testing.T) {
 func Test_checkCaller(t *testing.T) {
 	t.Parallel()
 
-	t.Run("このリポジトリの workflow を contents: read と id-token: write で呼べば違反0件", func(t *testing.T) {
+	info := func(t *testing.T, src string) workflowInfo {
+		t.Helper()
+		split := workflow.SplitJobs(src)
+		on, onLine := triggers(split.Preamble)
+		return workflowInfo{file: "c.yaml", on: on, onLine: onLine, preamble: split.Preamble, jobs: split.Jobs}
+	}
+	check := func(t *testing.T, src string, perms []string) []lintreport.Finding {
+		t.Helper()
+		return checkCaller("c.yaml", jobOf(t, src, "call-plan"), perms, info(t, src))
+	}
+
+	t.Run("pull_request だけで起動する workflow から、このリポジトリの workflow を contents: read と id-token: write で呼べば違反0件", func(t *testing.T) {
 		t.Parallel()
 
-		assert.Empty(t, checkCaller("c.yaml", jobOf(t, callerWorkflow, "call-plan"), planPerms))
+		assert.Empty(t, check(t, callerWorkflow, planPerms))
+	})
+
+	t.Run("types を持つ pull_request も pull_request だけの起動とする", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Empty(t, check(t, replaced(t, callerWorkflow, "  pull_request:\n", "  pull_request:\n    types: [opened, synchronize]\n"), planPerms))
 	})
 
 	t.Run("ほかのリポジトリの workflow を呼べば違反", func(t *testing.T) {
 		t.Parallel()
 
-		job := jobOf(t, replaced(t, callerWorkflow, "uses: ./.github/workflows/plan.yaml", "uses: other/repo/.github/workflows/plan.yaml@main"), "call-plan")
-		f := checkCaller("c.yaml", job, planPerms)
+		f := check(t, replaced(t, callerWorkflow, "uses: ./.github/workflows/plan.yaml", "uses: other/repo/.github/workflows/plan.yaml@main"), planPerms)
 		require.Len(t, f, 1, messages(f))
 		assert.Contains(t, f[0].Message, "このリポジトリの ./.github/workflows/ の下のもの")
 		assert.Equal(t, 11, f[0].Line)
@@ -5303,10 +5319,57 @@ func Test_checkCaller(t *testing.T) {
 	t.Run("ほかの書き込みの権限を持てば違反", func(t *testing.T) {
 		t.Parallel()
 
-		f := checkCaller("c.yaml", jobOf(t, callerWorkflow, "call-plan"), append(slices.Clone(planPerms), "pull-requests: write"))
+		f := check(t, callerWorkflow, append(slices.Clone(planPerms), "pull-requests: write"))
 		require.Len(t, f, 1, messages(f))
 		assert.Contains(t, f[0].Message, "（pull-requests: write）")
 	})
+
+	for name, on := range map[string]string{
+		"push で起動する":                "  push:\n",
+		"pull_request に push を足す":   "  pull_request:\n  push:\n",
+		"pull_request_target で起動する": "  pull_request_target:\n",
+		"workflow_dispatch で起動する":   "  workflow_dispatch:\n",
+	} {
+		t.Run("caller の workflow が"+name+"なら違反", func(t *testing.T) {
+			t.Parallel()
+
+			src := replaced(t, callerWorkflow, "  pull_request:\n", on)
+			f := check(t, src, planPerms)
+			require.Len(t, f, 1, messages(f))
+			assert.Contains(t, f[0].Message, "起動は pull_request だけにしてください")
+			assert.Equal(t, 3, f[0].Line)
+		})
+	}
+
+	t.Run("caller の workflow に起動が無ければ違反", func(t *testing.T) {
+		t.Parallel()
+
+		src := replaced(t, callerWorkflow, "on:\n  pull_request:\n", "")
+		f := check(t, src, planPerms)
+		require.Len(t, f, 1, messages(f))
+		assert.Contains(t, f[0].Message, "起動は pull_request だけにしてください")
+	})
+
+	for name, c := range map[string]struct {
+		add  string
+		want string
+	}{
+		"with: を持つ":            {"    with:\n      env: admin\n", "with: を置かないでください"},
+		"secrets: inherit を持つ": {"    secrets: inherit\n", "secrets: を置かないでください"},
+		"secret を名指して渡す":       {"    secrets:\n      TOKEN: ${{ secrets.TOKEN }}\n", "secrets: を置かないでください"},
+		"引用符のキーの with: を持つ":    {"    \"with\":\n      env: admin\n", "with: を置かないでください"},
+	} {
+		t.Run("job が"+name+"なら違反", func(t *testing.T) {
+			t.Parallel()
+
+			src := replaced(t, callerWorkflow, "    uses: ./.github/workflows/plan.yaml\n", "    uses: ./.github/workflows/plan.yaml\n"+c.add)
+			f := check(t, src, planPerms)
+			require.Len(t, f, 1, messages(f))
+			assert.Contains(t, f[0].Message, "job call-plan: ")
+			assert.Contains(t, f[0].Message, c.want)
+			assert.Equal(t, 12, f[0].Line)
+		})
+	}
 }
 
 func Test_checkCallees(t *testing.T) {

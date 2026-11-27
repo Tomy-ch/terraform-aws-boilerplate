@@ -131,7 +131,22 @@ const (
 	setRuleset = "ruleset"
 	setDeploy  = "deploy"
 	setLines   = "lines"
+	// setGate は、線の ruleset の対象（env を持たないデプロイブランチと各線。[linesIncludes] と同じ集合）。
+	setGate = "gate"
+	// setDeployEnv は、env を持つデプロイブランチの集合（ruleset deploy-<branch> の対象を合わせたもの）。
+	setDeployEnv = "deploy-env"
 )
+
+// deployNamesByEnv は、env を持つ（withEnv が真）か持たないデプロイブランチの名前を宣言の順に返します。
+func deployNamesByEnv(b branches, withEnv bool) []string {
+	var out []string
+	for _, d := range b.Deploy {
+		if (d.Env != "") == withEnv {
+			out = append(out, d.Branch)
+		}
+	}
+	return out
+}
 
 // triggerPatterns は、workflow の on.<event>.branches に置く集合 set の値を返します。線は ruleset と同じく
 // 階層をまたぐ（<prefix>**）。
@@ -145,8 +160,13 @@ func triggerPatterns(b branches, set string) ([]string, error) {
 		out = append(out, b.DeployNames()...)
 	case setLines:
 		out = append(out, lineGlobs(b)...)
+	case setGate:
+		out = append(out, deployNamesByEnv(b, false)...)
+		out = append(out, lineGlobs(b)...)
+	case setDeployEnv:
+		out = append(out, deployNamesByEnv(b, true)...)
 	default:
-		return nil, xerrors.Wrapf(errBranchSet, "未知の集合 %q（%s / %s / %s）", set, setRuleset, setDeploy, setLines)
+		return nil, xerrors.Wrapf(errBranchSet, "未知の集合 %q（%s / %s / %s / %s / %s）", set, setRuleset, setDeploy, setLines, setGate, setDeployEnv)
 	}
 	if len(out) == 0 {
 		return nil, xerrors.Wrapf(errBranchSet, "集合 %s の展開が0件です", set)

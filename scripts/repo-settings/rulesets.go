@@ -143,11 +143,10 @@ func renderAuthored(spec rulesetSpec, src []byte, includes []string) (rulesetDec
 // linesIncludes は、線の ruleset の include を返します。env を持たないデプロイブランチを宣言の順に並べ、各線を続けます
 // （ADR-0603 決定36）。順は rulesetIncludes と揃える。
 func linesIncludes(b branches) []string {
-	var out []string
-	for _, d := range b.Deploy {
-		if d.Env == "" {
-			out = append(out, "refs/heads/"+d.Branch)
-		}
+	names := deployNamesByEnv(b, false)
+	out := make([]string, 0, len(names)+len(b.Lines.Prefixes()))
+	for _, name := range names {
+		out = append(out, "refs/heads/"+name)
 	}
 	for _, prefix := range b.Lines.Prefixes() {
 		out = append(out, "refs/heads/"+prefix+"**/*")

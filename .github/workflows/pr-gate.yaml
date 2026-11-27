@@ -1,6 +1,6 @@
 name: PR Gate
 
-# 保護対象のブランチへ入る Pull Request の検査を、1つの gate が判定する（ADR-0603 決定17・18。
+# 線と env を持たないデプロイブランチへ入る Pull Request の検査を、1つの gate が判定する（ADR-0603 決定17・18・35・36。
 # 流れは .github/workflows/README.md の「Pull Request の gate」）。
 #
 # edited は起動に含めない。title の編集で同じ commit を走り直すと、同じ SHA に gate の check が2つ並ぶ。
@@ -8,10 +8,7 @@ name: PR Gate
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-    branches: # branch-set: ruleset
-      - 'admin'
-      - 'security'
-      - 'log-archive'
+    branches: # branch-set: gate
       - 'production'
       - 'staging'
       - 'develop'
@@ -26,7 +23,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # 走るべき検査を、宣言（base の commit の checks.json）と Pull Request の差分から決める。
+  # 走るべき検査を、宣言（base の commit の checks.json。検査の増減だけは Pull Request の木のもの）と Pull Request の差分から決める。
   changes:
     runs-on: ubuntu-24.04
     timeout-minutes: 10

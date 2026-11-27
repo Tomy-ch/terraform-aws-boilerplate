@@ -5,7 +5,9 @@
 //	line:    線の検証の判定。線への push で、木の検査がすべて success であることを見る。
 //
 // 宣言（checks.json と branches.json）は、引数の rev の木から読む。gate は Pull Request の base の commit を渡す ——
-// Pull Request の木の宣言を読むと、その Pull Request が宣言を1行変えるだけで自分の検査を省ける。
+// Pull Request の木の宣言で判定すると、その Pull Request が宣言を1行変えるだけで自分の検査を省ける。changes と judge は
+// Pull Request の木（--head）の checks.json も読むが、使うのは検査の増減だけである（[mergeDecls]）。両方に在る検査は
+// base の宣言で判定するので、paths や required を緩めても効かない。
 //
 // 終了コードは、合格が 0、判定が不合格か入力が誤っているときが 1、宣言に検査が無いときが 2（ADR-0702 決定13）。
 package main
@@ -63,7 +65,7 @@ func run(args []string, getenv func(string) string, out io.Writer) error {
 	var o options
 	fs.StringVar(&o.declRev, "decl-rev", "", "宣言を読む rev（Pull Request では base の commit）")
 	fs.StringVar(&o.base, "base", "", "差分の基点の commit")
-	fs.StringVar(&o.head, "head", "", "差分の先の commit")
+	fs.StringVar(&o.head, "head", "", "差分の先の commit（changes・judge は検査の増減をこの木の宣言から読む）")
 	fs.StringVar(&o.baseRef, "base-ref", "", "Pull Request の base のブランチ名")
 	fs.StringVar(&o.event, "event", "", "line: 起動したイベント")
 	fs.StringVar(&o.ref, "ref", "", "line: 起動した ref")
@@ -85,11 +87,19 @@ func run(args []string, getenv func(string) string, out io.Writer) error {
 		if o.base == "" || o.head == "" || o.baseRef == "" {
 			return xerrors.Wrap(errUsage, "--base・--head・--base-ref が要ります")
 		}
+		if sub == "changes" && o.output == "" {
+			return xerrors.Wrap(errUsage, "changes には --output が要ります")
+		}
+		head, err := readChecks(o.head)
+		if err != nil {
+			return xerrors.Wrap(err, "Pull Request の木の検査の宣言")
+		}
+		judged, removed := mergeDecls(d, head)
 		files, err := changedFiles(o.base, o.head)
 		if err != nil {
 			return err
 		}
-		should, err := selectChecks(d, files, o.baseRef, b)
+		should, err := selectChecks(judged, files, o.baseRef, b)
 		if err != nil {
 			return err
 		}
@@ -100,7 +110,7 @@ func run(args []string, getenv func(string) string, out io.Writer) error {
 		if err != nil {
 			return err
 		}
-		rows, verdict := judgePR(d, should, needs)
+		rows, verdict := judgePR(judged, removed, should, needs)
 		return report(o.summary, "gate", rows, verdict, out)
 	case "line":
 		if o.event != "push" {
@@ -121,15 +131,24 @@ func run(args []string, getenv func(string) string, out io.Writer) error {
 	}
 }
 
-// readDecls は、rev の木から検査の宣言と分岐の宣言を読む。
-func readDecls(rev string) (checksdecl.Decl, branchdecl.Branches, error) {
+// readChecks は、rev の木から検査の宣言を読む。
+func readChecks(rev string) (checksdecl.Decl, error) {
 	raw, err := fileAt(rev, checksdecl.File)
 	if err != nil {
-		return checksdecl.Decl{}, branchdecl.Branches{}, err
+		return checksdecl.Decl{}, err
 	}
 	d, err := checksdecl.Parse(raw)
 	if err != nil {
-		return checksdecl.Decl{}, branchdecl.Branches{}, xerrors.Wrapf(err, "%s:%s", rev, checksdecl.File)
+		return checksdecl.Decl{}, xerrors.Wrapf(err, "%s:%s", rev, checksdecl.File)
+	}
+	return d, nil
+}
+
+// readDecls は、rev の木から検査の宣言と分岐の宣言を読む。
+func readDecls(rev string) (checksdecl.Decl, branchdecl.Branches, error) {
+	d, err := readChecks(rev)
+	if err != nil {
+		return checksdecl.Decl{}, branchdecl.Branches{}, err
 	}
 	braw, err := fileAt(rev, branchdecl.File)
 	if err != nil {
@@ -154,14 +173,18 @@ func readDecls(rev string) (checksdecl.Decl, branchdecl.Branches, error) {
 	return d, b, nil
 }
 
+// writeChanges は、走るべき検査を JSON の配列で output へ追記する。0件は null ではなく [] と書く。
 func writeChanges(output string, should []string, nFiles int, out io.Writer) error {
+	if should == nil {
+		should = []string{}
+	}
 	enc, err := json.Marshal(should)
 	if err != nil {
 		return xerrors.Wrap(err, "出力の組み立て")
 	}
 	fmt.Fprintf(out, "ℹ️ ci-gate changes: 変更したファイル %d 件、走るべき検査 %d 件: %s\n", nFiles, len(should), checksdecl.JoinNames(should))
 	if output == "" {
-		return nil
+		return xerrors.Wrap(errUsage, "出力先がありません")
 	}
 	f, err := os.OpenFile(filepath.Clean(output), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {

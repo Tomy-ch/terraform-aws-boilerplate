@@ -87,7 +87,7 @@
 
 生成する区間と `deploy-<branch>.json` を手で書き換えると `repo-settings-check` が落ちます。それ以外の値は手で書きます。`repo-settings-check` はあわせて次を落とします。
 
-- `name` がファイル名と違う、役割が持つべきルール（`common` は `deletion`・`non_fast_forward`・`pull_request`、`lines` と `deploy-<branch>` は `required_status_checks`、`branch-protection.json` はそのすべて）が無い
+- `name` がファイル名と違う、役割が持つべきルール（`common` は `deletion`・`non_fast_forward`・`pull_request`、`lines` と `deploy-<branch>` は `required_status_checks`、`branch-protection.json` は `deletion`・`non_fast_forward`・`pull_request`・`required_status_checks`）が無い。`code_quality` は持つことを課さない —— ADR-0603 決定23 が緩めないとする規則に含まれず、裏側の機能を有効にしていなければ全 Pull Request の merge を止めるので（下の「`code_quality` は裏側の機能が先に報告している必要がある」）、宣言に置くかは人が決める
 - `common.json` の include が保護対象の全集合と一致しない、ほかの ruleset の include が `common.json` の include の外を含む
 - `rulesets/` に、宣言の ruleset のほかの `.json` が在る（適用も突合もされず、消えたはずの保護が宣言に在るように読める）
 - `checks.json` の `plan_env` が、`env` を持つデプロイブランチの無い env を名指す（その plan がどこでも required にならない）

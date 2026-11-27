@@ -463,7 +463,7 @@ func check(file, source string, envs []string) (int, []lintreport.Finding) {
 		}
 		if _, _, ok := reusableCall(job); ok && assumesRole(job) {
 			attributed++
-			findings = append(findings, checkCaller(file, job, values)...)
+			findings = append(findings, checkCaller(file, job, values, w)...)
 			continue
 		}
 		if !assumesRole(job) {
@@ -667,8 +667,10 @@ func reusableCall(job workflow.Job) (string, int, bool) {
 
 // checkCaller は、id-token: write を持って reusable workflow を呼ぶ job が、同じリポジトリの workflow を呼び、
 // permissions を contents: read と id-token: write に限ることを検査します。呼ばれた側の job はそれ自身として
-// この検査の対象になり、呼び出し先の起動は checkCallees が見る。
-func checkCaller(file string, job workflow.Job, permissions []string) []lintreport.Finding {
+// この検査の対象になり、呼び出し先の起動は checkCallees が見る。呼ばれた側は workflow_call だけで起動するので、
+// 資格情報を取れるのは plan の job に限られる（checkPlan）。そのため caller の workflow w の起動も plan の種別の
+// 起動（pull_request）に限り、job が with: と secrets: で呼ばれた側の入力と secret を変えないことも課す。
+func checkCaller(file string, job workflow.Job, permissions []string, w workflowInfo) []lintreport.Finding {
 	var findings []lintreport.Finding
 	callee, at, _ := reusableCall(job)
 	if !localWorkflow.MatchString(callee) {
@@ -679,6 +681,16 @@ func checkCaller(file string, job workflow.Job, permissions []string) []lintrepo
 		if v != "contents: read" && !idToken.MatchString(v) {
 			findings = append(findings, lintreport.Finding{File: file, Line: job.Number,
 				Message: fmt.Sprintf("job %s: id-token: write を渡して workflow を呼ぶ job の permissions は contents: read と id-token: write だけにしてください（%s）", job.ID, v)})
+		}
+	}
+	if keys := triggerNames(w.on); !eventsAllowed(keys, kindOf[cientry.Plan]) {
+		findings = append(findings, lintreport.Finding{File: file, Line: w.onLine,
+			Message: fmt.Sprintf("job %s: id-token: write を渡して workflow を呼ぶ job を持つ workflow の起動は %s だけにしてください（%s）", job.ID, strings.Join(kindOf[cientry.Plan].Events, ", "), strings.Join(keys, ", "))})
+	}
+	for _, key := range []string{"with", "secrets"} {
+		if _, line, ok := jobKey(job, key); ok {
+			findings = append(findings, lintreport.Finding{File: file, Line: line,
+				Message: fmt.Sprintf("job %s: id-token: write を渡して workflow を呼ぶ job に %s: を置かないでください。呼ばれた側の入力と secret は、呼ぶ側ごとに変えません", job.ID, key)})
 		}
 	}
 	return findings

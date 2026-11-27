@@ -29,6 +29,13 @@ const repoDecl = `{"checks": [
   {"name": "go", "workflow": "go.yaml", "paths": ["**/*.go"], "scope": "tree", "required": true}
 ]}`
 
+// addedDecl は、repoDecl に、paths の無い required の検査 new を足した宣言。
+const addedDecl = `{"checks": [
+  {"name": "always", "workflow": "always.yaml", "paths": [], "scope": "change", "required": true},
+  {"name": "go", "workflow": "go.yaml", "paths": ["**/*.go"], "scope": "tree", "required": true},
+  {"name": "new", "workflow": "new.yaml", "paths": [], "scope": "tree", "required": true}
+]}`
+
 func gitIn(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	base := []string{"-C", dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "-c", "commit.gpgsign=false"}
@@ -87,6 +94,29 @@ func Test_run(t *testing.T) {
 		})
 
 		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("changes は PR の木で足した検査を head の宣言で選び、外した検査を run に入れない", func(t *testing.T) {
+			base, head := useRepo(t, repoDecl, map[string]string{"a/b.go": "package b\n", checksdecl.File: addedDecl})
+			outFile := filepath.Join(t.TempDir(), "out")
+			var out bytes.Buffer
+			require.NoError(t, run([]string{"changes", "--decl-rev", base, "--base", base, "--head", head, "--base-ref", "release/v0.2.0", "--output", outFile}, envOf(nil), &out))
+			got, err := os.ReadFile(outFile) //nolint:gosec // t.TempDir の下
+			require.NoError(t, err)
+			assert.Equal(t, "run=[\"always\",\"go\",\"new\"]\n", string(got))
+		})
+
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("judge は PR の木で外した検査を判定せず、表に載せる", func(t *testing.T) {
+			base, head := useRepo(t, repoDecl, map[string]string{
+				"a/b.go":        "package b\n",
+				checksdecl.File: `{"checks": [{"name": "always", "workflow": "always.yaml", "paths": [], "scope": "change", "required": true}]}`,
+			})
+			needs := `{"changes": {"result": "success", "outputs": {"run": "[\"always\"]"}}, "call-always": {"result": "success"}}`
+			var out bytes.Buffer
+			require.NoError(t, run([]string{"judge", "--decl-rev", base, "--base", base, "--head", head, "--base-ref", "release/v0.2.0"}, envOf(map[string]string{"NEEDS": needs}), &out))
+			assert.Contains(t, out.String(), "| go | いいえ | いいえ | 宣言から外した | ✅ |")
+		})
+
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
 		t.Run("judge は needs が決め直した集合と合えば合格し、表を summary へ書く", func(t *testing.T) {
 			base, head := useRepo(t, repoDecl, map[string]string{"docs/a.md": "x\n"})
 			summary := filepath.Join(t.TempDir(), "summary")
@@ -110,15 +140,65 @@ func Test_run(t *testing.T) {
 	//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
 	t.Run("異常系", func(t *testing.T) {
 		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
-		t.Run("宣言を PR の木ではなく decl-rev の木から読む", func(t *testing.T) {
+		t.Run("PR の木で paths と required を緩めても base の宣言で判定する", func(t *testing.T) {
 			base, head := useRepo(t, repoDecl, map[string]string{
-				"a/b.go":        "package b\n",
-				checksdecl.File: `{"checks": [{"name": "always", "workflow": "always.yaml", "paths": [], "scope": "change", "required": true}]}`,
+				"a/b.go": "package b\n",
+				checksdecl.File: `{"checks": [
+  {"name": "always", "workflow": "always.yaml", "paths": [], "scope": "change", "required": true},
+  {"name": "go", "workflow": "go.yaml", "paths": ["none/**"], "scope": "tree", "required": false}
+]}`,
 			})
-			needs := `{"changes": {"result": "success", "outputs": {"run": "[\"always\"]"}}, "call-always": {"result": "success"}}`
+			needs := `{"changes": {"result": "success", "outputs": {"run": "[\"always\",\"go\"]"}}, "call-always": {"result": "success"}, "call-go": {"result": "skipped"}}`
+			var out bytes.Buffer
+			err := run([]string{"judge", "--decl-rev", base, "--base", base, "--head", head, "--base-ref", "release/v0.2.0"}, envOf(map[string]string{"NEEDS": needs}), &out)
+			require.ErrorIs(t, err, errFailed)
+			assert.Contains(t, out.String(), "| go | はい | はい | skipped | ❌ |")
+		})
+
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("judge は PR の木で足した検査の job が needs に無ければ誤りにする", func(t *testing.T) {
+			base, head := useRepo(t, repoDecl, map[string]string{checksdecl.File: addedDecl})
+			needs := `{"changes": {"result": "success", "outputs": {"run": "[\"always\",\"new\"]"}}, "call-always": {"result": "success"}, "call-go": {"result": "skipped"}}`
 			var out bytes.Buffer
 			err := run([]string{"judge", "--decl-rev", base, "--base", base, "--head", head, "--base-ref", "release/v0.2.0"}, envOf(map[string]string{"NEEDS": needs}), &out)
 			require.ErrorIs(t, err, errNeeds)
+		})
+
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("judge は PR の木で足した required の検査が skipped なら不合格", func(t *testing.T) {
+			base, head := useRepo(t, repoDecl, map[string]string{checksdecl.File: addedDecl})
+			needs := `{"changes": {"result": "success", "outputs": {"run": "[\"always\",\"new\"]"}}, "call-always": {"result": "success"}, "call-go": {"result": "skipped"}, "call-new": {"result": "skipped"}}`
+			var out bytes.Buffer
+			err := run([]string{"judge", "--decl-rev", base, "--base", base, "--head", head, "--base-ref", "release/v0.2.0"}, envOf(map[string]string{"NEEDS": needs}), &out)
+			require.ErrorIs(t, err, errFailed)
+			assert.Contains(t, out.String(), "| new | はい | はい | skipped | ❌ |")
+		})
+
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("PR の木の検査の宣言を読めなければ誤りにする", func(t *testing.T) {
+			base, head := useRepo(t, repoDecl, map[string]string{checksdecl.File: "{"})
+			for _, sub := range []string{"changes", "judge"} {
+				var out bytes.Buffer
+				err := run([]string{sub, "--decl-rev", base, "--base", base, "--head", head, "--base-ref", "release/v0.2.0", "--output", filepath.Join(t.TempDir(), "out")},
+					envOf(map[string]string{"NEEDS": `{"changes": {"result": "success"}}`}), &out)
+				require.ErrorIs(t, err, checksdecl.ErrDecl, sub)
+			}
+		})
+
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("PR の木に検査の宣言が無ければ誤りにする", func(t *testing.T) {
+			base, _ := useRepo(t, repoDecl, nil)
+			var out bytes.Buffer
+			err := run([]string{"changes", "--decl-rev", base, "--base", base, "--head", "no-such-rev", "--base-ref", "release/v0.2.0", "--output", filepath.Join(t.TempDir(), "out")}, envOf(nil), &out)
+			require.ErrorIs(t, err, errGit)
+		})
+
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("changes は --output が空なら使い方の誤りにする", func(t *testing.T) {
+			base, head := useRepo(t, repoDecl, nil)
+			var out bytes.Buffer
+			err := run([]string{"changes", "--decl-rev", base, "--base", base, "--head", head, "--base-ref", "release/v0.2.0", "--output", ""}, envOf(nil), &out)
+			require.ErrorIs(t, err, errUsage)
 		})
 
 		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
@@ -175,6 +255,46 @@ func Test_run(t *testing.T) {
 				require.ErrorIs(t, run(args, envOf(nil), &out), errUsage)
 			})
 		}
+	})
+}
+
+func Test_readChecks(t *testing.T) {
+	//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+	t.Run("正常系", func(t *testing.T) {
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("rev の木の検査の宣言を読む", func(t *testing.T) {
+			base, head := useRepo(t, repoDecl, map[string]string{checksdecl.File: addedDecl})
+			d, err := readChecks(base)
+			require.NoError(t, err)
+			assert.Equal(t, []string{"always", "go"}, d.Names())
+			d, err = readChecks(head)
+			require.NoError(t, err)
+			assert.Equal(t, []string{"always", "go", "new"}, d.Names())
+		})
+	})
+
+	//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+	t.Run("異常系", func(t *testing.T) {
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("rev が無ければ git の誤りにする", func(t *testing.T) {
+			useRepo(t, repoDecl, nil)
+			_, err := readChecks("no-such-rev")
+			require.ErrorIs(t, err, errGit)
+		})
+
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("宣言を解釈できなければ誤りにする", func(t *testing.T) {
+			_, head := useRepo(t, repoDecl, map[string]string{checksdecl.File: `{"checks": [{"name": "a"}]}`})
+			_, err := readChecks(head)
+			require.ErrorIs(t, err, checksdecl.ErrDecl)
+		})
+
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("宣言に検査が無ければ合格と区別する", func(t *testing.T) {
+			_, head := useRepo(t, repoDecl, map[string]string{checksdecl.File: `{"checks": []}`})
+			_, err := readChecks(head)
+			require.ErrorIs(t, err, checksdecl.ErrNoChecks)
+		})
 	})
 }
 
@@ -336,16 +456,26 @@ func Test_writeChanges(t *testing.T) {
 			assert.Equal(t, "x=1\nrun=[\"a\"]\n", string(got))
 		})
 
-		t.Run("出力先が無ければ標準出力だけに書く", func(t *testing.T) {
+		t.Run("走るべき検査が0件なら null ではなく空の配列を書く", func(t *testing.T) {
 			t.Parallel()
+			p := filepath.Join(t.TempDir(), "out")
 			var out bytes.Buffer
-			require.NoError(t, writeChanges("", nil, 0, &out))
+			require.NoError(t, writeChanges(p, nil, 0, &out))
+			got, err := os.ReadFile(p) //nolint:gosec // t.TempDir の下
+			require.NoError(t, err)
+			assert.Equal(t, "run=[]\n", string(got))
 			assert.Contains(t, out.String(), "走るべき検査 0 件")
 		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
+
+		t.Run("出力先が無ければ使い方の誤りにする", func(t *testing.T) {
+			t.Parallel()
+			var out bytes.Buffer
+			require.ErrorIs(t, writeChanges("", nil, 0, &out), errUsage)
+		})
 
 		t.Run("出力先を開けなければ誤りにする", func(t *testing.T) {
 			t.Parallel()

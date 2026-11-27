@@ -89,7 +89,7 @@ func run(args []string, out io.Writer) error {
 	}
 
 	findings := gateFindings(gateInput{
-		contexts: contexts, legacy: legacy, decl: decl, checksPath: *checksPath, workflowsDir: *workflowsDir,
+		contexts: contexts, legacy: legacy, decl: decl, checksPath: *checksPath, workflowsDir: *workflowsDir, rulesetsDir: *rulesetsDir,
 	}, sources)
 	if legacy != nil {
 		findings = append(findings, check(legacy, sources, *legacyPath)...)

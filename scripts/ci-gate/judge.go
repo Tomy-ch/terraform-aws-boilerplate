@@ -56,8 +56,8 @@ func parseNeeds(raw string) (map[string]need, error) {
 	return n, nil
 }
 
-// sameSet は、want と got の key の集合が一致するかを両方向で見る。
-func sameSet(want []string, got map[string]need) error {
+// sameSet は、want と got の key の集合が一致するかを両方向で見る。optional は got に在っても無くてもよい key。
+func sameSet(want, optional []string, got map[string]need) error {
 	var missing, extra []string
 	for _, w := range want {
 		if _, ok := got[w]; !ok {
@@ -65,7 +65,7 @@ func sameSet(want []string, got map[string]need) error {
 		}
 	}
 	for g := range got {
-		if !slices.Contains(want, g) {
+		if !slices.Contains(want, g) && !slices.Contains(optional, g) {
 			extra = append(extra, g)
 		}
 	}
@@ -76,17 +76,52 @@ func sameSet(want []string, got map[string]need) error {
 	return nil
 }
 
-// judgePR は、Pull Request の gate の判定。should は gate が自分で決め直した走るべき検査で、changes の job の出力
-// （run）と一致しなければならない。changes の出力を信じて判定すると、それが過小なときに検査を省いたまま合格する。
+// mergeDecls は、base の commit の宣言 base と Pull Request の木の宣言 head から、その Pull Request で判定する検査と、
+// 宣言から外した検査の名前を返す。
+//
+//   - 両方に在る検査は、base の値で判定する。Pull Request の側で paths や required を緩めても効かない。
+//   - head にだけ在る検査（足した検査）は、head の値で判定する。base の宣言はその検査を知らない。
+//   - base にだけ在る検査（外した検査）は判定しない。外したことは宣言の差分に現れる。
+//
+// 判定する検査の順は、base の宣言の順のあとに head にだけ在る検査を head の順で並べる。
+func mergeDecls(base, head checksdecl.Decl) (checksdecl.Decl, []string) {
+	inHead := map[string]bool{}
+	for _, c := range head.Checks {
+		inHead[c.Name] = true
+	}
+	inBase := map[string]bool{}
+	var (
+		judged  checksdecl.Decl
+		removed []string
+	)
+	for _, c := range base.Checks {
+		inBase[c.Name] = true
+		if inHead[c.Name] {
+			judged.Checks = append(judged.Checks, c)
+		} else {
+			removed = append(removed, c.Name)
+		}
+	}
+	for _, c := range head.Checks {
+		if !inBase[c.Name] {
+			judged.Checks = append(judged.Checks, c)
+		}
+	}
+	return judged, removed
+}
+
+// judgePR は、Pull Request の gate の判定。d は [mergeDecls] が決めた判定する検査、removed は宣言から外した検査。
+// should は gate が自分で決め直した走るべき検査で、changes の job の出力（run）と一致しなければならない。changes の
+// 出力を信じて判定すると、それが過小なときに検査を省いたまま合格する。
 //
 // 合格の条件:
-//   - needs の job の集合が、宣言の検査と changes の job に一致する。
+//   - needs の job の集合が、判定する検査と changes の job に一致する。外した検査の job は在っても無くてもよい。
 //   - changes の job が success で、出力が should と一致する。
 //   - required の検査のうち、走るべきものは success、走るべきでないものは skipped か success。
 //
-// required でない検査は表に載せるが、合否に数えない。
-func judgePR(d checksdecl.Decl, should []string, needs map[string]need) ([]row, error) {
-	if err := sameSet(append([]string{changesJob}, callerJobs(d.Names())...), needs); err != nil {
+// required でない検査と外した検査は表に載せるが、合否に数えない。合否に数える検査が無ければ ErrNoChecks にする。
+func judgePR(d checksdecl.Decl, removed, should []string, needs map[string]need) ([]row, error) {
+	if err := sameSet(append([]string{changesJob}, callerJobs(d.Names())...), callerJobs(removed), needs); err != nil {
 		return nil, err
 	}
 	ch := needs[changesJob]
@@ -104,6 +139,7 @@ func judgePR(d checksdecl.Decl, should []string, needs map[string]need) ([]row, 
 			rows = append(rows, row{Name: changesJob, Required: true, Should: true, Result: ch.Result, OK: true})
 		}
 	}
+	counted := 0
 	for _, c := range d.Checks {
 		r := row{Name: c.Name, Required: c.IsRequired(), Should: slices.Contains(should, c.Name), Result: needs[callerJob(c.Name)].Result}
 		switch {
@@ -116,16 +152,30 @@ func judgePR(d checksdecl.Decl, should []string, needs map[string]need) ([]row, 
 			rows = append(rows, r)
 			continue
 		}
+		counted++
 		if !r.OK {
 			failed++
 		}
 		rows = append(rows, r)
+	}
+	for _, name := range removed {
+		result := removedResult
+		if n, ok := needs[callerJob(name)]; ok {
+			result += "（" + n.Result + "）"
+		}
+		rows = append(rows, row{Name: name, Result: result, OK: true})
+	}
+	if counted == 0 {
+		return rows, xerrors.Wrap(checksdecl.ErrNoChecks, "合否に数える検査がありません")
 	}
 	if failed > 0 {
 		return rows, xerrors.Wrapf(errFailed, "%d 件", failed)
 	}
 	return rows, nil
 }
+
+// removedResult は、宣言から外した検査の行の結果の欄。
+const removedResult = "宣言から外した"
 
 func treeChecks(d checksdecl.Decl) []string { return d.TreeChecks() }
 
@@ -135,7 +185,7 @@ func judgeLine(d checksdecl.Decl, needs map[string]need) ([]row, error) {
 	if len(want) == 0 {
 		return nil, xerrors.Wrap(checksdecl.ErrNoChecks, "scope が tree の required の検査がありません")
 	}
-	if err := sameSet(callerJobs(want), needs); err != nil {
+	if err := sameSet(callerJobs(want), nil, needs); err != nil {
 		return nil, err
 	}
 	var rows []row

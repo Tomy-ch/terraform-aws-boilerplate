@@ -10,7 +10,7 @@ CI の workflow 定義。Pull Request を止めるゲート、供給網のクー
 
 | 群 | いつ走るか | 何をするか |
 | --- | --- | --- |
-| Pull Request の gate | 保護対象のブランチ宛の Pull Request | `pr-gate.yaml` が、その Pull Request で走るべき検査を呼び、lint / テスト / 宣言と実体のずれで merge を止める |
+| Pull Request の gate | 線と env を持たないデプロイブランチ宛の Pull Request | `pr-gate.yaml` が、その Pull Request で走るべき検査を呼び、lint / テスト / 宣言と実体のずれで merge を止める |
 | 線の検証 | 線への push | `line-verify.yaml` が、木だけで決まる検査を path で絞らずにすべて走らせる。デプロイブランチへの昇格はその成功を待つ |
 | デプロイブランチへの経路 | すべての Pull Request | `deploy-gate.yaml` が、デプロイブランチへ入る commit の出所と、env の plan を報告する |
 | 供給網のクールダウン | Pull Request と週次 | 公開直後のバージョンの採用を窓で止め、バイパスの期限を回収する |
@@ -32,6 +32,8 @@ CI の workflow 定義。Pull Request を止めるゲート、供給網のクー
 | `ruleset` | デプロイブランチと各線（`<接頭辞>**`）。ruleset が保護する集合と同じ | `branches:` |
 | `deploy` | デプロイブランチ | `branches:`、`contains(fromJSON('[...]'), <ref>)` を持つ `if:` |
 | `lines` | 各線（`<接頭辞>**`） | `branches:`、`(startsWith(<ref>, '<接頭辞>') \|\| ...)` を持つ `if:` |
+| `gate` | env を持たないデプロイブランチと各線（`<接頭辞>**`）。線の ruleset（`lines`）の対象と同じ | `branches:` |
+| `deploy-env` | env を持つデプロイブランチ。その ruleset（`deploy-<branch>`）の対象を合わせたものと同じ | `branches:` |
 
 印の無い `branches:` / `branches-ignore:` の一覧（apply の workflow のものを除く）と、ブランチの名前か ref を値に持つ
 値（`github` と `inputs` の下の値と、それを関数や演算で加工した値）を式の中で作った文字列と比べる式（印の行で生成した
@@ -40,7 +42,7 @@ CI の workflow 定義。Pull Request を止めるゲート、供給網のクー
 
 ## Pull Request の gate
 
-保護対象のブランチ宛の Pull Request の検査は、`pr-gate.yaml` が1つの run で呼び、job `gate` が1つの context で
+線と env を持たないデプロイブランチ（印 `# branch-set: gate`）宛の Pull Request の検査は、`pr-gate.yaml` が1つの run で呼び、job `gate` が1つの context で
 判定する（ADR-0603 決定17・18）。線と env を持たないデプロイブランチの ruleset（`lines`）が required とするのは
 `gate` だけである。どの検査をどの path で走らせるかは [`checks.json`](../settings/checks.json) が持つ（キーの意味は
 [`.github/settings/README.md`](../settings/README.md) の「checks.json」）。判定は `scripts/ci-gate` が持つ。
@@ -49,12 +51,16 @@ CI の workflow 定義。Pull Request を止めるゲート、供給網のクー
   head の merge-base から head まで）から走るべき検査を決め、検査ごとの job `call-<name>` がそれに当たるものだけを
   reusable workflow として呼ぶ。呼ばれる workflow は `workflow_call` で起動し、走らせるかどうかを自分で決めない
 - **宣言は base の commit から読む。** `changes` と `gate` は、`checks.json` と `branches.json` を Pull Request の
-  base の commit の木から読む。Pull Request の木から読むと、その Pull Request が宣言を1行変えるだけで自分の検査を
-  省ける
+  base の commit の木から読み、両方に在る検査を base の値で判定する。Pull Request の木で判定すると、その Pull Request
+  が宣言を1行変えるだけで自分の検査を省ける
+- **検査の増減だけは Pull Request の木の宣言から読む。** Pull Request の木の `checks.json` にだけ在る検査（足した
+  検査）は、その値で走らせて判定し、`needs` に在ることを求める。base にだけ在る検査（外した検査）はその Pull Request
+  では判定せず、`needs` に無くてよく、表に「宣言から外した」と載せる。どちらの宣言にも無い `call-<name>` が `needs` に
+  在れば失敗する。外したことは宣言の差分に現れ、code owner の review が受け止める（ADR-0603 の保証しないこと）
 - **gate は走るべき検査を決め直す。** job `gate`（`make ci-gate`）は、走るべき検査を `changes` と同じ規則で決め直し、
   `changes` の出力と照らす。走るべき検査の `success` と、走るべきでない検査の `skipped` か `success` だけを合格とし、
   `changes` が成功しなかったこと、`needs` の job の集合が宣言と食い違うことも失敗とする。`required` が `false` の
-  検査は判定の表に載せるが、合否に数えない。表は job summary に全件を出す
+  検査は判定の表に載せるが、合否に数えない。合否に数える検査が1件も無ければ失敗する。表は job summary に全件を出す
 - **`changes` が成功しなければ、検査は省かれない。** `call-<name>` の `if:` は
   `!cancelled() && (needs.changes.result != 'success' || ...)` で、判定に届かなかった `changes` は検査を呼ばせる。
   そのとき gate は失敗する
@@ -105,10 +111,20 @@ ruleset が直接 required とする context は、merge の前に**報告され
 全体は [`scripts/README.md`](../../scripts/README.md) の `required-check-lint/` の行）。
 
 - 直接 required とする各 context を報告する job がちょうど1つあり、reusable workflow を呼ばず、`name:` を持たず、
-  その workflow が `workflow_call` を持たず、`pull_request` が上の形であること
+  その workflow が `workflow_call` を持たず、`pull_request` が上の形であること。`branches:` を置くなら、その印の
+  集合は context を required とする ruleset の対象と同じもの（`lines` は `gate`、`deploy-<branch>` は `deploy-env`）
+  であること。古い宣言にも在る context はフィルタ無しを求められるので、印の集合を課さない
+- 線の ruleset の required が `gate` の1つだけであること
 - `pr-gate.yaml` と `line-verify.yaml` の `call-<name>` の job の集合が、それぞれが呼ぶべき宣言の検査と両方向で
   一致し、`gate`・`line-gate` の `needs` がそれらをすべて持ち、`if:` が `always()` であること
-- `checks.json` が名指す workflow が `workflow_call` を持ち、concurrency の group に `github.workflow` を含まないこと
+- `gate`・`line-gate`・`changes` の job の steps に、`make ci-gate`・`make ci-line-gate`・`make ci-changes`
+  （`RUNNER_MODE=host`）をそのまま起動する step がちょうど1つあり、その step と job が `continue-on-error` を、
+  step が `if:` を持たず、判定の step が env の `NEEDS` に `${{ toJSON(needs) }}` を受け取ること
+- `call-<name>` の job が `with:` を持たず、`secrets:` は呼ばれる側の `workflow_call.secrets` の名前へ
+  `${{ secrets.<名前> }}` を渡す形に限ること。`pr-gate.yaml` では `needs: changes` と、自分の名前を
+  `contains(fromJSON(needs.changes.outputs.run), '<name>')` で見る決まった形の `if:` を持ち、`line-verify.yaml`
+  では `if:` を持たないこと
+- `checks.json` が名指す workflow が `workflow_call` を持ち、concurrency の group に `github.workflow`（索引の記法を含む）を含まないこと
   —— 呼ばれた workflow の中では caller の名前になり、同じ gate が呼ぶ検査どうしが互いを取り消す
 - `line-verify.yaml` が push だけで起動し、job の id `gate`・`line-gate` がそれぞれの workflow の外に無く、
   `call-<name>` の id が required の context と同じ名前でないこと

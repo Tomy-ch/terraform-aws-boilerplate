@@ -49,21 +49,70 @@ const prGateSrc = `on:
 jobs:
   changes:
     runs-on: x
+    steps:
+      - uses: actions/checkout@x
+      - id: changes
+        run: make ci-changes RUNNER_MODE=host
   call-a:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'a')) }}
     uses: ./.github/workflows/a.yaml
   call-b:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'b')) }}
     uses: ./.github/workflows/b.yaml
   gate:
     needs: [changes, call-a, call-b]
     if: always()
     runs-on: x
+    steps:
+      - continue-on-error: true
+        run: sleep 1
+      - env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: make ci-gate RUNNER_MODE=host
+`
+
+const lineVerifySrc = `on:
+  push:
+jobs:
+  call-a:
+    uses: ./.github/workflows/a.yaml
+  line-gate:
+    needs: call-a
+    if: always()
+    runs-on: x
+    steps:
+      - env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: make ci-line-gate RUNNER_MODE=host
 `
 
 // editorconfig-checker-enable
 
+// jobOf は、fixture の src から job id の区間（次の job の手前まで）を返す。
+func jobOf(src, id string) string {
+	start := strings.Index(src, "\n  "+id+":\n")
+	if start < 0 {
+		return ""
+	}
+	rest := src[start+1:]
+	next := len(rest)
+	for i := 1; i < len(rest); i++ {
+		if rest[i-1] == '\n' && strings.HasPrefix(rest[i:], "  ") && !strings.HasPrefix(rest[i:], "   ") {
+			next = i
+			break
+		}
+	}
+	return rest[:next]
+}
+
+// withoutJob は、fixture の src から job id の区間を除く。
+func withoutJob(src, id string) string { return strings.Replace(src, jobOf(src, id), "", 1) }
+
 func gateSpecAB() gateSpec {
 	return gateSpec{
-		file: prGateFile, job: gateJob, fixed: []string{changesJob},
+		file: prGateFile, job: gateJob, run: gateRun, fixed: []string{changesJob}, gated: true,
 		checks: []checksdecl.Check{declCheck("a", "a.yaml", checksdecl.ScopeTree, true), declCheck("b", "b.yaml", checksdecl.ScopeChange, true)},
 	}
 }
@@ -75,14 +124,14 @@ func Test_gateFindings(t *testing.T) {
 	valid := func() []Source {
 		return []Source{
 			{File: "wf/pr-gate.yaml", Source: prGateSrc},
-			{File: "wf/line-verify.yaml", Source: "on:\n  push:\njobs:\n  call-a:\n    uses: ./.github/workflows/a.yaml\n  line-gate:\n    needs: call-a\n    if: always()\n    runs-on: x\n"},
+			{File: "wf/line-verify.yaml", Source: lineVerifySrc},
 			{File: "wf/a.yaml", Source: "on:\n  workflow_call:\njobs:\n  a:\n    runs-on: x\n"},
 			{File: "wf/b.yaml", Source: "on:\n  workflow_call:\njobs:\n  b:\n    runs-on: x\n"},
 		}
 	}
 	in := gateInput{
-		contexts: []requiredchecks.Context{{Name: "gate", File: "r/lines.json"}, {Name: "line-gate", File: "r/deploy.json"}},
-		decl:     decl, checksPath: "checks.json", workflowsDir: "wf",
+		contexts: []requiredchecks.Context{{Name: "gate", File: "r/lines.json"}, {Name: "line-gate", File: "r/deploy-admin.json"}},
+		decl:     decl, checksPath: "checks.json", workflowsDir: "wf", rulesetsDir: "r",
 	}
 
 	t.Run("宣言と workflow が一致すれば違反0件", func(t *testing.T) {
@@ -114,6 +163,17 @@ func Test_gateFindings(t *testing.T) {
 		}
 		assert.True(t, files[filepath.Join("wf", prGateFile)])
 		assert.True(t, files[filepath.Join("wf", lineVerifyFile)])
+	})
+
+	t.Run("線の ruleset が gate のほかの context を required とすれば違反", func(t *testing.T) {
+		t.Parallel()
+		extra := in
+		extra.contexts = append([]requiredchecks.Context{{Name: "build", File: "r/lines.json"}}, in.contexts...)
+		srcs := append(valid(), Source{File: "wf/ci.yaml", Source: "on:\n  pull_request:\njobs:\n  build:\n    runs-on: x\n"})
+		got := gateFindings(extra, srcs)
+		require.Len(t, got, 1)
+		assert.Equal(t, filepath.Join("r", linesRulesetFile), got[0].File)
+		assert.Contains(t, got[0].Message, "（実際: [build, gate]）")
 	})
 
 	t.Run("古い宣言の context と同じ名前の call-* も衝突にする", func(t *testing.T) {
@@ -311,12 +371,12 @@ func Test_directFindings(t *testing.T) {
 
 	t.Run("報告する job がちょうど1つなら違反0件", func(t *testing.T) {
 		t.Parallel()
-		assert.Empty(t, directFindings([]requiredchecks.Context{{Name: "build", File: "r.json"}}, []wfDoc{ok}))
+		assert.Empty(t, directFindings([]requiredchecks.Context{{Name: "build", File: "r.json"}}, nil, []wfDoc{ok}))
 	})
 
 	t.Run("複数の ruleset が名指す context は1度だけ数える", func(t *testing.T) {
 		t.Parallel()
-		got := directFindings([]requiredchecks.Context{{Name: "build", File: "a.json"}, {Name: "build", File: "b.json"}}, []wfDoc{ok})
+		got := directFindings([]requiredchecks.Context{{Name: "build", File: "a.json"}, {Name: "build", File: "b.json"}}, nil, []wfDoc{ok})
 		assert.Empty(t, got)
 	})
 
@@ -329,17 +389,46 @@ func Test_directFindings(t *testing.T) {
 	} {
 		t.Run(name+"なら、最初に名指した ruleset へ報告する", func(t *testing.T) {
 			t.Parallel()
-			got := directFindings([]requiredchecks.Context{{Name: "build", File: "a.json"}, {Name: "build", File: "b.json"}}, c.docs)
+			got := directFindings([]requiredchecks.Context{{Name: "build", File: "a.json"}, {Name: "build", File: "b.json"}}, nil, c.docs)
 			require.Len(t, got, 1)
 			assert.Equal(t, "a.json", got[0].File)
 			assert.Contains(t, got[0].Message, c.want)
 		})
 	}
 
+	gated := parsed(t, "wf/ci.yaml", "on:\n  pull_request:\n    branches: # branch-set: ruleset\n      - 'a'\njobs:\n  build:\n    runs-on: x\n")
+
+	t.Run("線の ruleset の context は印 gate を求める", func(t *testing.T) {
+		t.Parallel()
+		got := directFindings([]requiredchecks.Context{{Name: "build", File: "r/lines.json"}}, nil, []wfDoc{gated})
+		require.Len(t, got, 1)
+		assert.Contains(t, got[0].Message, "`# branch-set: gate` にします")
+	})
+
+	t.Run("デプロイブランチの ruleset の context は印 deploy-env を求める", func(t *testing.T) {
+		t.Parallel()
+		got := directFindings([]requiredchecks.Context{{Name: "build", File: "r/deploy-admin.json"}, {Name: "build", File: "r/deploy-security.json"}}, nil, []wfDoc{gated})
+		require.Len(t, got, 1)
+		assert.Contains(t, got[0].Message, "`# branch-set: deploy-env` にします")
+	})
+
+	t.Run("古い宣言にも在る context には印の集合を課さない", func(t *testing.T) {
+		t.Parallel()
+		assert.Empty(t, directFindings([]requiredchecks.Context{{Name: "build", File: "r/deploy-admin.json"}}, []string{"build"}, []wfDoc{gated}))
+	})
+
+	t.Run("対象の集合が違う ruleset が同じ context を required とすれば違反", func(t *testing.T) {
+		t.Parallel()
+		got := directFindings([]requiredchecks.Context{{Name: "build", File: "r/lines.json"}, {Name: "build", File: "r/deploy-admin.json"}}, nil, []wfDoc{ok})
+		require.Len(t, got, 1)
+		assert.Equal(t, "r/lines.json", got[0].File)
+		assert.Contains(t, got[0].Message, "対象の集合が違う ruleset")
+	})
+
 	t.Run("報告する job 自身の違反も返す", func(t *testing.T) {
 		t.Parallel()
 		d := parsed(t, "wf/ci.yaml", "on:\n  pull_request:\njobs:\n  build:\n    name: Build\n    runs-on: x\n")
-		got := directFindings([]requiredchecks.Context{{Name: "build", File: "r.json"}}, []wfDoc{d})
+		got := directFindings([]requiredchecks.Context{{Name: "build", File: "r.json"}}, nil, []wfDoc{d})
 		require.Len(t, got, 1)
 		assert.Contains(t, got[0].Message, "name: を置かないでください")
 	})
@@ -348,27 +437,63 @@ func Test_directFindings(t *testing.T) {
 func Test_directJobFindings(t *testing.T) {
 	t.Parallel()
 
-	find := func(t *testing.T, file, src string) []lintreport.Finding {
+	findSet := func(t *testing.T, file, set, src string) []lintreport.Finding {
 		t.Helper()
 		d := parsed(t, file, src)
 		for _, j := range d.jobs {
 			if j.id == "build" {
-				return directJobFindings("build", d, j)
+				return directJobFindings("build", set, d, j)
 			}
 		}
 		require.FailNow(t, "job build がありません")
 		return nil
 	}
+	find := func(t *testing.T, file, src string) []lintreport.Finding {
+		t.Helper()
+		return findSet(t, file, setAny, src)
+	}
+	marked := func(set string) string {
+		return "on:\n  pull_request:\n    branches: # branch-set: " + set + "\n      - 'admin'\njobs:\n  build:\n    runs-on: x\n"
+	}
 
 	for name, src := range map[string]string{
 		"フィルタ無し":            "on:\n  pull_request:\njobs:\n  build:\n    runs-on: x\n",
 		"配列記法":              "on: [pull_request]\njobs:\n  build:\n    runs-on: x\n",
-		"印の付いた branches":    "on:\n  pull_request:\n    branches: # branch-set: deploy\n      - 'admin'\njobs:\n  build:\n    runs-on: x\n",
+		"印の付いた branches":    marked("deploy"),
 		"types は絞り込みとみなさない": "on:\n  pull_request:\n    types: [opened]\njobs:\n  build:\n    runs-on: x\n",
 	} {
 		t.Run(name+"なら違反0件", func(t *testing.T) {
 			t.Parallel()
 			assert.Empty(t, find(t, "ci.yaml", src))
+		})
+	}
+
+	t.Run("印の集合が ruleset の対象の集合と一致すれば違反0件", func(t *testing.T) {
+		t.Parallel()
+		assert.Empty(t, findSet(t, "ci.yaml", setGate, marked(setGate)))
+		assert.Empty(t, findSet(t, "ci.yaml", setDeployEnv, marked(setDeployEnv)))
+	})
+
+	t.Run("branches が無ければ、どの集合を求められても違反0件", func(t *testing.T) {
+		t.Parallel()
+		for _, set := range []string{setNone, setGate, setDeployEnv} {
+			assert.Empty(t, findSet(t, "ci.yaml", set, "on:\n  pull_request:\njobs:\n  build:\n    runs-on: x\n"))
+		}
+	})
+
+	for name, c := range map[string]struct {
+		set, src, want string
+	}{
+		"線の ruleset の context の印が ruleset": {setGate, marked("ruleset"), "`# branch-set: gate` にします（実際: ruleset）"},
+		"デプロイブランチの context の印が deploy":     {setDeployEnv, marked("deploy"), "`# branch-set: deploy-env` にします（実際: deploy）"},
+		"集合で表せない ruleset の context の印":     {setNone, marked(setGate), "印の集合で表せません"},
+	} {
+		t.Run(name+"なら違反", func(t *testing.T) {
+			t.Parallel()
+			got := findSet(t, "ci.yaml", c.set, c.src)
+			require.Len(t, got, 1)
+			assert.Equal(t, 3, got[0].Line)
+			assert.Contains(t, got[0].Message, c.want)
 		})
 	}
 
@@ -415,7 +540,7 @@ func Test_gateWorkflowFindings(t *testing.T) {
 
 	t.Run("call-* と判定の job が宣言と一致すれば違反0件", func(t *testing.T) {
 		t.Parallel()
-		assert.Empty(t, gateWorkflowFindings(gateSpecAB(), parsed(t, "pr-gate.yaml", prGateSrc), "checks.json"))
+		assert.Empty(t, gateWorkflowFindings(gateSpecAB(), parsed(t, "pr-gate.yaml", prGateSrc), "checks.json", nil))
 	})
 
 	for name, c := range map[string]struct {
@@ -423,7 +548,7 @@ func Test_gateWorkflowFindings(t *testing.T) {
 		want []string
 	}{
 		"call-* が0件": {
-			"on:\n  pull_request:\njobs:\n  changes:\n    runs-on: x\n  gate:\n    needs: [changes, call-a, call-b]\n    if: always()\n",
+			withoutJob(withoutJob(prGateSrc, "call-a"), "call-b"),
 			[]string{"検査 `a` を呼ぶ job `call-a` がありません", "検査 `b` を呼ぶ job `call-b` がありません", "call-* の job は 0 件、checks.json の検査は 2 件です"},
 		},
 		"宣言に無い検査を呼ぶ": {
@@ -439,13 +564,13 @@ func Test_gateWorkflowFindings(t *testing.T) {
 			[]string{"job `call-b` の uses: は `./.github/workflows/b.yaml` にします"},
 		},
 		"判定の job が無い": {
-			"on:\n  pull_request:\njobs:\n  call-a:\n    uses: ./.github/workflows/a.yaml\n  call-b:\n    uses: ./.github/workflows/b.yaml\n",
+			withoutJob(prGateSrc, "gate"),
 			[]string{"job `gate` は 1 件必要です（実際: 0）"},
 		},
 	} {
 		t.Run(name+"なら違反", func(t *testing.T) {
 			t.Parallel()
-			got := gateWorkflowFindings(gateSpecAB(), parsed(t, "pr-gate.yaml", c.src), "checks.json")
+			got := gateWorkflowFindings(gateSpecAB(), parsed(t, "pr-gate.yaml", c.src), "checks.json", nil)
 			require.Len(t, got, len(c.want))
 			for i, w := range c.want {
 				assert.Contains(t, got[i].Message, w)
@@ -455,8 +580,8 @@ func Test_gateWorkflowFindings(t *testing.T) {
 
 	t.Run("同じ id の call-* が2つあれば件数の差として現れる", func(t *testing.T) {
 		t.Parallel()
-		src := strings.Replace(prGateSrc, "  gate:\n", "  call-a:\n    uses: ./.github/workflows/a.yaml\n  gate:\n", 1)
-		got := gateWorkflowFindings(gateSpecAB(), parsed(t, "pr-gate.yaml", src), "checks.json")
+		src := strings.Replace(prGateSrc, "  gate:\n", jobOf(prGateSrc, "call-a")+"  gate:\n", 1)
+		got := gateWorkflowFindings(gateSpecAB(), parsed(t, "pr-gate.yaml", src), "checks.json", nil)
 		require.Len(t, got, 1)
 		assert.Contains(t, got[0].Message, "call-* の job は 3 件、checks.json の検査は 2 件です")
 	})
@@ -464,9 +589,232 @@ func Test_gateWorkflowFindings(t *testing.T) {
 	t.Run("判定の job の needs は fixed と call-* を合わせたものと突き合わせる", func(t *testing.T) {
 		t.Parallel()
 		src := strings.Replace(prGateSrc, "[changes, call-a, call-b]", "[call-a, call-b]", 1)
-		got := gateWorkflowFindings(gateSpecAB(), parsed(t, "pr-gate.yaml", src), "checks.json")
+		got := gateWorkflowFindings(gateSpecAB(), parsed(t, "pr-gate.yaml", src), "checks.json", nil)
 		assert.Contains(t, messages(got), "needs: に `changes` がありません")
 	})
+}
+
+func Test_rulesetSet(t *testing.T) {
+	t.Parallel()
+
+	for file, want := range map[string]string{
+		"r/lines.json":           setGate,
+		"r/deploy-admin.json":    setDeployEnv,
+		"r/common.json":          setNone,
+		"branch-protection.json": setNone,
+	} {
+		t.Run(file, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, want, rulesetSet(file))
+		})
+	}
+}
+
+func Test_linesRulesetFindings(t *testing.T) {
+	t.Parallel()
+
+	in := func(contexts ...requiredchecks.Context) gateInput {
+		return gateInput{contexts: contexts, rulesetsDir: "r"}
+	}
+
+	t.Run("線の ruleset の required が gate だけなら違反0件", func(t *testing.T) {
+		t.Parallel()
+		assert.Empty(t, linesRulesetFindings(in(requiredchecks.Context{Name: "gate", File: "r/lines.json"}, requiredchecks.Context{Name: "x", File: "r/deploy-a.json"})))
+	})
+
+	for name, contexts := range map[string][]requiredchecks.Context{
+		"線の ruleset に required が無い": {{Name: "x", File: "r/deploy-a.json"}},
+		"gate でない context":          {{Name: "line-gate", File: "r/lines.json"}},
+		"gate のほかに context がある":     {{Name: "gate", File: "r/lines.json"}, {Name: "x", File: "r/lines.json"}},
+	} {
+		t.Run(name+"なら違反", func(t *testing.T) {
+			t.Parallel()
+			got := linesRulesetFindings(in(contexts...))
+			require.Len(t, got, 1)
+			assert.Equal(t, filepath.Join("r", linesRulesetFile), got[0].File)
+		})
+	}
+}
+
+func Test_callerIf(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "!cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'go-lint'))", callerIf("go-lint"))
+}
+
+func Test_unwrapExpr(t *testing.T) {
+	t.Parallel()
+
+	for in, want := range map[string]string{
+		"  always()  ":         "always()",
+		"${{ always() }}":      "always()",
+		" ${{a}} ":             "a",
+		"${{ a }} && ${{ b }}": "a }} && ${{ b",
+		"":                     "",
+	} {
+		t.Run(in, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, want, unwrapExpr(in))
+		})
+	}
+}
+
+func Test_callerFindings(t *testing.T) {
+	t.Parallel()
+
+	gate := gateSpecAB()
+	line := gateSpec{file: lineVerifyFile, job: lineGateJob, run: lineRun}
+	c := declCheck("a", "a.yaml", checksdecl.ScopeTree, true)
+	called := parsed(t, "a.yaml", "on:\n  workflow_call:\n    secrets:\n      TOKEN:\n        required: false\njobs:\n  a:\n    runs-on: x\n")
+	ifA := "    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'a')) }}\n"
+	job := func(t *testing.T, body string) wfJob {
+		t.Helper()
+		return parsed(t, "g.yaml", "on: push\njobs:\n  call-a:\n    uses: ./.github/workflows/a.yaml\n"+body).jobs[0]
+	}
+
+	for name, cs := range map[string]struct {
+		spec gateSpec
+		body string
+	}{
+		"gate の形":                 {gate, "    needs: changes\n" + ifA},
+		"needs が配列の1要素":           {gate, "    needs: [changes]\n" + ifA},
+		"宣言された secret を名指して渡す":    {gate, "    needs: changes\n" + ifA + "    secrets:\n      TOKEN: ${{ secrets.TOKEN }}\n"},
+		"線の検証は needs も if: も持たない": {line, ""},
+	} {
+		t.Run(name+"なら違反0件", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, callerFindings(cs.spec, "g.yaml", job(t, cs.body), c, called))
+		})
+	}
+
+	for name, cs := range map[string]struct {
+		spec gateSpec
+		body string
+		want []string
+	}{
+		"with: を持つ":                {gate, "    needs: changes\n" + ifA + "    with:\n      x: y\n", []string{"with: を置けません"}},
+		"secrets: inherit":         {gate, "    needs: changes\n" + ifA + "    secrets: inherit\n", []string{"inherit は使えません"}},
+		"宣言の無い secret を渡す":         {gate, "    needs: changes\n" + ifA + "    secrets:\n      OTHER: ${{ secrets.OTHER }}\n", []string{"`OTHER` は、呼ばれる workflow の workflow_call.secrets に宣言がありません"}},
+		"secret に式でない値を渡す":         {gate, "    needs: changes\n" + ifA + "    secrets:\n      TOKEN: literal\n", []string{"`TOKEN` の値は `${{ secrets.<名前> }}` にします"}},
+		"secret に加工した値を渡す":         {gate, "    needs: changes\n" + ifA + "    secrets:\n      TOKEN: ${{ secrets.TOKEN || 'x' }}\n", []string{"`TOKEN` の値は"}},
+		"if: が無い":                  {gate, "    needs: changes\n", []string{"if: がありません"}},
+		"if: が別の検査の名前を見る":          {gate, "    needs: changes\n" + strings.Replace(ifA, "'a'", "'b'", 1), []string{"if: は `${{ !cancelled()"}},
+		"if: が fail open しない":      {gate, "    needs: changes\n    if: ${{ contains(fromJSON(needs.changes.outputs.run), 'a') }}\n", []string{"if: は `${{ !cancelled()"}},
+		"if: に条件を足す":               {gate, "    needs: changes\n" + strings.Replace(ifA, " }}", " && false }}", 1), []string{"if: は `${{ !cancelled()"}},
+		"needs が無い":                {gate, ifA, []string{"needs: がありません"}},
+		"needs がほかの job も持つ":       {gate, "    needs: [changes, call-b]\n" + ifA, []string{"needs: は `changes` だけにします"}},
+		"needs が別の job":            {gate, "    needs: call-b\n" + ifA, []string{"needs: は `changes` だけにします"}},
+		"線の検証の call-* が if: を持つ":   {line, "    if: always()\n", []string{"線の検証は検査を path で絞らず"}},
+		"線の検証の call-* が with: を持つ": {line, "    with:\n      x: y\n", []string{"with: を置けません"}},
+	} {
+		t.Run(name+"なら違反", func(t *testing.T) {
+			t.Parallel()
+			got := callerFindings(cs.spec, "g.yaml", job(t, cs.body), c, called)
+			require.Len(t, got, len(cs.want))
+			for i, w := range cs.want {
+				assert.Equal(t, "g.yaml", got[i].File)
+				assert.Contains(t, got[i].Message, "job `call-a` ")
+				assert.Contains(t, got[i].Message, w)
+			}
+		})
+	}
+}
+
+func Test_secretsFindings(t *testing.T) {
+	t.Parallel()
+
+	called := parsed(t, "a.yaml", "on:\n  workflow_call:\n    secrets:\n      TOKEN:\n        required: false\njobs:\n  a:\n    runs-on: x\n")
+	find := func(t *testing.T, value string, called wfDoc) []lintreport.Finding {
+		t.Helper()
+		m := yamlNode(t, "secrets: "+value)
+		return secretsFindings("call-a", "g.yaml", m.Content[0], m.Content[1], called)
+	}
+
+	t.Run("宣言された名前へ secret を1つずつ渡すなら違反0件", func(t *testing.T) {
+		t.Parallel()
+		assert.Empty(t, find(t, "{TOKEN: '${{ secrets.TOKEN }}'}", called))
+		assert.Empty(t, find(t, "{TOKEN: '${{ secrets.OTHER_NAME }}'}", called))
+		assert.Empty(t, find(t, "{}", called))
+	})
+
+	for name, c := range map[string]struct {
+		value  string
+		called wfDoc
+		want   []string
+	}{
+		"inherit": {"inherit", called, []string{"inherit は使えません"}},
+		"配列":      {"[TOKEN]", called, []string{"mapping にします"}},
+		"呼ばれる側に workflow_call.secrets が無い": {"{TOKEN: '${{ secrets.TOKEN }}'}", parsed(t, "b.yaml", "on:\n  workflow_call:\njobs:\n  b:\n    runs-on: x\n"), []string{"宣言がありません"}},
+		"呼ばれる workflow が無い":                {"{TOKEN: '${{ secrets.TOKEN }}'}", wfDoc{}, []string{"宣言がありません"}},
+		"値が mapping":                       {"{TOKEN: {a: b}}", called, []string{"の値は"}},
+		"値が github の context":              {"{TOKEN: '${{ github.token }}'}", called, []string{"の値は"}},
+		"宣言の無い名前と式でない値":                    {"{X: y}", called, []string{"`X` は、呼ばれる workflow", "`X` の値は"}},
+	} {
+		t.Run(name+"なら違反", func(t *testing.T) {
+			t.Parallel()
+			got := find(t, c.value, c.called)
+			require.Len(t, got, len(c.want))
+			for i, w := range c.want {
+				assert.Contains(t, got[i].Message, "job `call-a` の secrets: ")
+				assert.Contains(t, got[i].Message, w)
+			}
+		})
+	}
+}
+
+func Test_stepFindings(t *testing.T) {
+	t.Parallel()
+
+	judgeStep := "      - env:\n          NEEDS: ${{ toJSON(needs) }}\n        run: make ci-gate RUNNER_MODE=host\n"
+	job := func(t *testing.T, body string) wfJob {
+		t.Helper()
+		return parsed(t, "g.yaml", "on: push\njobs:\n  gate:\n    runs-on: x\n"+body).jobs[0]
+	}
+	steps := func(extra ...string) string { return "    steps:\n" + strings.Join(extra, "") }
+
+	for name, c := range map[string]struct {
+		body  string
+		run   string
+		needs bool
+	}{
+		"判定の step が1つ":                      {steps("      - uses: actions/checkout@x\n", judgeStep), gateRun, true},
+		"ほかの step は continue-on-error を持てる": {steps("      - continue-on-error: true\n        run: sleep 1\n", judgeStep), gateRun, true},
+		"run: の前後の空白は字面の差にしない":              {steps("      - env:\n          NEEDS: ${{ toJSON(needs) }}\n        run: |\n          make ci-gate RUNNER_MODE=host\n"), gateRun, true},
+		"needs を課さない changes の step":        {steps("      - id: changes\n        run: make ci-changes RUNNER_MODE=host\n"), changesRun, false},
+	} {
+		t.Run(name+"なら違反0件", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, stepFindings("gate", "g.yaml", job(t, c.body), c.run, c.needs))
+		})
+	}
+
+	for name, c := range map[string]struct {
+		body string
+		want []string
+	}{
+		"steps が無い":                    {"", []string{"steps の一覧がありません"}},
+		"steps が一覧でない":                 {"    steps: x\n", []string{"steps の一覧がありません"}},
+		"判定の step が無い":                 {steps("      - run: echo ok\n"), []string{"（実際: 0）"}},
+		"判定の step が2つ":                 {steps(judgeStep, judgeStep), []string{"（実際: 2）"}},
+		"別の入口を起動する step が並ぶ":           {steps(judgeStep, "      - run: make ci-changes RUNNER_MODE=host\n"), []string{"（実際: 2）"}},
+		"|| で失敗を打ち消す":                  {steps(strings.Replace(judgeStep, "RUNNER_MODE=host", "RUNNER_MODE=host || true", 1)), []string{"run: は `make ci-gate RUNNER_MODE=host` にします"}},
+		"; で後続を足す":                     {steps(strings.Replace(judgeStep, "RUNNER_MODE=host", "RUNNER_MODE=host; exit 0", 1)), []string{"run: は `make ci-gate RUNNER_MODE=host` にします"}},
+		"別の入口を判定に使う":                   {steps(strings.Replace(judgeStep, "ci-gate", "ci-line-gate", 1)), []string{"run: は `make ci-gate RUNNER_MODE=host` にします"}},
+		"判定の step が continue-on-error": {steps("      - continue-on-error: true\n        env:\n          NEEDS: ${{ toJSON(needs) }}\n        run: make ci-gate RUNNER_MODE=host\n"), []string{"continue-on-error: を置けません"}},
+		"判定の step が if:":               {steps("      - if: false\n        env:\n          NEEDS: ${{ toJSON(needs) }}\n        run: make ci-gate RUNNER_MODE=host\n"), []string{"if: を置けません"}},
+		"job が continue-on-error":      {"    continue-on-error: true\n" + steps(judgeStep), []string{"job `gate` に continue-on-error を置けません"}},
+		"NEEDS が無い":                    {steps("      - run: make ci-gate RUNNER_MODE=host\n"), []string{"NEEDS は `${{ toJSON(needs) }}` にします"}},
+		"NEEDS が別の値":                   {steps(strings.Replace(judgeStep, "toJSON(needs)", "'{}'", 1)), []string{"NEEDS は `${{ toJSON(needs) }}` にします"}},
+	} {
+		t.Run(name+"なら違反", func(t *testing.T) {
+			t.Parallel()
+			got := stepFindings("gate", "g.yaml", job(t, c.body), gateRun, true)
+			require.Len(t, got, len(c.want), messages(got))
+			for i, w := range c.want {
+				assert.Equal(t, "g.yaml", got[i].File)
+				assert.Contains(t, got[i].Message, w)
+			}
+		})
+	}
 }
 
 func Test_judgeFindings(t *testing.T) {
@@ -701,6 +1049,7 @@ func Test_concurrencyFindings(t *testing.T) {
 		"github.workflow_sha":    "${{ github.workflow_sha }}",
 		"group の無い mapping":      "{cancel-in-progress: true}",
 		"github.workflows は別の名前": "${{ github.workflows }}",
+		"索引記法の workflow_sha":     "${{ github['workflow_sha'] }}",
 	} {
 		t.Run(name+"なら違反0件", func(t *testing.T) {
 			t.Parallel()
@@ -716,6 +1065,9 @@ func Test_concurrencyFindings(t *testing.T) {
 		"mapping の group の github.workflow": {"{group: \"${{ github.workflow }}\", cancel-in-progress: true}", "github.workflow を含みます"},
 		"大文字の GitHub.Workflow":              {"${{ GitHub.Workflow }}", "github.workflow を含みます"},
 		"github.workflow_ref":               {"${{ github.workflow_ref }}", "github.workflow を含みます"},
+		"単一引用符の索引記法":                        {"${{ github['workflow'] }}", "github.workflow を含みます"},
+		"二重引用符の索引記法":                        {"'${{ github[\"workflow\"] }}'", "github.workflow を含みます"},
+		"空白を挟む索引記法の workflow_ref":           {"${{ github [ 'workflow_ref' ] }}", "github.workflow を含みます"},
 		"group が読めない":                       {"{group: [a]}", "group を読めません"},
 	} {
 		t.Run(name+"なら違反", func(t *testing.T) {
