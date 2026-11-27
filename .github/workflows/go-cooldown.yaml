@@ -3,7 +3,6 @@ name: Go Cooldown
 # Go has no resolver-side cooldown, so this workflow is the guard itself rather than a
 # detector for a bypassed one — README.md の「Go のクールダウン」.
 
-# Why the trigger condition lives in a job: README.md の「必須検査はすべての Pull Request で報告される」.
 on:
   pull_request:
   schedule:

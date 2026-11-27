@@ -1,6 +1,5 @@
 name: Pin Images Check
 
-# Why the trigger condition lives in a job: README.md の「必須検査はすべての Pull Request で報告される」.
 on:
   pull_request:
   workflow_dispatch:
