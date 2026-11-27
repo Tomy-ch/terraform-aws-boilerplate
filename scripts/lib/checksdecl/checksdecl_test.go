@@ -139,3 +139,16 @@ func TestCheck_RunsOn(t *testing.T) {
 		})
 	})
 }
+
+func TestCallerJob(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("検査の名前に接頭辞を付ける", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, "call-go-lint", CallerJob("go-lint"))
+		})
+	})
+}

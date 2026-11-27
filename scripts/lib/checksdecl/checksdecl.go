@@ -116,6 +116,14 @@ func (d Decl) Names() []string {
 	return out
 }
 
+// CallerPrefix は、gate と線の検証の workflow で検査を呼ぶ caller の job の id の接頭辞。skip された caller の
+// job はその id を名前とする check を作るので、検査の job と名前を分け、skipped（成功と数える）の check が同じ
+// 名前の required の context に重ならないようにする（ADR-0603 決定38）。
+const CallerPrefix = "call-"
+
+// CallerJob は、検査 name を呼ぶ caller の job の id を返す。
+func CallerJob(name string) string { return CallerPrefix + name }
+
 // JoinNames は、名前を報告のために繋ぐ。
 func JoinNames(names []string) string { return strings.Join(names, ", ") }
 

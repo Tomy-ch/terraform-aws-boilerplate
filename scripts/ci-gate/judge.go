@@ -12,12 +12,7 @@ import (
 // changesJob は、gate の workflow で走るべき検査を決める job の id。
 const changesJob = "changes"
 
-// callerPrefix は、検査を呼ぶ caller の job の id の接頭辞。skip された caller の job は、その id を名前とする
-// check を作る。検査の job と同じ名前を持たせると、skipped（成功と数える）の check が同じ名前の required の
-// context に重なるので、名前を分ける（ADR-0603 決定38）。
-const callerPrefix = "call-"
-
-func callerJob(name string) string { return callerPrefix + name }
+func callerJob(name string) string { return checksdecl.CallerJob(name) }
 
 func callerJobs(names []string) []string {
 	out := make([]string, 0, len(names))
