@@ -925,7 +925,7 @@ func Test_planChanges(t *testing.T) {
 			`{"address":"a.to2","previous_address":"a.from2","change":{"actions":["update"]}}`,
 			`{"address":"a.same","previous_address":"a.same","change":{"actions":["no-op"]}}`,
 		}, ",")
-		got, err := planChanges([]byte(planWith(changes, "")), []byte("Plan: 2 to import, 3 to add, 3 to change, 3 to destroy.\n"))
+		got, err := planChanges([]byte(planWith(changes, "")), summaryOf(2, 3, 3, 3))
 		require.NoError(t, err)
 		assert.Equal(t, []string{
 			"create a.create", "update a.update", "delete a.delete", "replace a.replace", "replace a.replace2",
@@ -940,7 +940,7 @@ func Test_planChanges(t *testing.T) {
 		data := `{"format_version":"1.2","resource_changes":[{"address":"a.b","change":{"actions":["update"],` +
 			`"before":{"v":"BEFORE-VALUE"},"after":{"v":"AFTER-VALUE"},"after_unknown":{"v":"UNKNOWN-VALUE"},` +
 			`"before_sensitive":{"v":"SENSITIVE-VALUE"}}}]}`
-		got, err := planChanges([]byte(data), []byte("Plan: 0 to add, 1 to change, 0 to destroy.\n"))
+		got, err := planChanges([]byte(data), summaryOf(0, 0, 1, 0))
 		require.NoError(t, err)
 		assert.Equal(t, []string{"update a.b"}, got)
 		for _, v := range []string{"BEFORE-VALUE", "AFTER-VALUE", "UNKNOWN-VALUE", "SENSITIVE-VALUE"} {
@@ -952,128 +952,98 @@ func Test_planChanges(t *testing.T) {
 		t.Parallel()
 
 		changes := `{"address":"module.m[\"acct-` + account + `\"].a.b[\"x@example.com\"]","previous_address":"a.b[\"` + account + `\"]","change":{"actions":["create"]}}`
-		got, err := planChanges([]byte(planWith(changes, "")), []byte("Plan: 1 to add, 0 to change, 0 to destroy.\n"))
+		got, err := planChanges([]byte(planWith(changes, "")), summaryOf(0, 1, 0, 0))
 		require.NoError(t, err)
 		assert.Equal(t, []string{"move+create a.b[<伏せた key>] -> module.m[<伏せた key>].a.b[<伏せた key>]"}, got)
 	})
 
-	t.Run("変更が無く「Plan:」の行も無ければ空の一覧を返す", func(t *testing.T) {
+	t.Run("変更が無く change_summary が0件ずつなら空の一覧を返す", func(t *testing.T) {
 		t.Parallel()
 
-		got, err := planChanges([]byte(planWith(change("a.b", `"no-op"`), "")), []byte("No changes. Your infrastructure matches the configuration.\n"))
+		got, err := planChanges([]byte(planWith(change("a.b", `"no-op"`), "")), summaryOf(0, 0, 0, 0))
 		require.NoError(t, err)
 		assert.Empty(t, got)
 	})
 
-	t.Run("move と forget だけなら「Plan:」の行は0件で一致する", func(t *testing.T) {
+	t.Run("move と forget だけなら change_summary は0件で一致する", func(t *testing.T) {
 		t.Parallel()
 
 		changes := change("a.forget", `"forget"`) + `,{"address":"a.to","previous_address":"a.from","change":{"actions":["no-op"]}}`
-		got, err := planChanges([]byte(planWith(changes, "")), []byte("Plan: 0 to add, 0 to change, 0 to destroy.\n"))
+		got, err := planChanges([]byte(planWith(changes, "")), summaryOf(0, 0, 0, 0))
 		require.NoError(t, err)
 		assert.Len(t, got, 2)
 	})
 
-	for name, c := range map[string]struct {
-		changes, out string
-	}{
-		"件数が「Plan:」の行と違えば失敗する":        {change("a.b", `"create"`), "Plan: 2 to add, 0 to change, 0 to destroy.\n"},
-		"置き換えを add と destroy の両方に数える": {change("a.b", `"delete","create"`), "Plan: 1 to add, 0 to change, 0 to destroy.\n"},
-		"import の件数が違えば失敗する":          {change("a.b", `"create"`), "Plan: 1 to import, 1 to add, 0 to change, 0 to destroy.\n"},
-		"変更があるのに「Plan:」の行が無ければ失敗する":   {change("a.b", `"create"`), "No changes.\n"},
-		"move だけで「Plan:」の行が無ければ失敗する":  {`{"address":"a.to","previous_address":"a.from","change":{"actions":["no-op"]}}`, ""},
-		"変更が無いのに「Plan:」の行に件数があれば失敗する": {change("a.b", `"no-op"`), "Plan: 0 to add, 1 to change, 0 to destroy.\n"},
+	type mismatch struct {
+		name    string
+		changes string
+		summary streamDiag
+	}
+
+	for _, c := range []mismatch{
+		{
+			name:    "件数が change_summary と違えば失敗する",
+			changes: change("a.b", `"create"`),
+			summary: summaryOf(0, 2, 0, 0),
+		},
+		{
+			name:    "置き換えを add と remove の両方に数える",
+			changes: change("a.b", `"delete","create"`),
+			summary: summaryOf(0, 1, 0, 0),
+		},
+		{
+			name:    "import の件数が違えば失敗する",
+			changes: change("a.b", `"create"`),
+			summary: summaryOf(1, 1, 0, 0),
+		},
+		{
+			name:    "変更が無いのに change_summary に件数があれば失敗する",
+			changes: change("a.b", `"no-op"`),
+			summary: summaryOf(0, 0, 1, 0),
+		},
 	} {
-		t.Run(name, func(t *testing.T) {
+		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := planChanges([]byte(planWith(c.changes, "")), []byte(c.out))
+			_, err := planChanges([]byte(planWith(c.changes, "")), c.summary)
 			require.ErrorIs(t, err, errPlanList)
 			assert.Equal(t, 2, exitCode(err))
 		})
 	}
 
-	t.Run("「Plan:」の行を読めなければ失敗する", func(t *testing.T) {
+	t.Run("change_summary が無ければ、変更が無くても失敗する", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := planChanges([]byte(planWith(change("a.b", `"create"`), "")), []byte("Plan: 1 to add.\n"))
-		require.ErrorIs(t, err, errPlanLine)
+		_, err := planChanges([]byte(planWith(change("a.b", `"no-op"`), "")), streamDiag{})
+		require.ErrorIs(t, err, errChangeSummary)
+	})
+
+	t.Run("change_summary が2つなら失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		two := streamDiag{Summaries: append(summaryOf(0, 1, 0, 0).Summaries, summaryOf(0, 1, 0, 0).Summaries...)}
+		_, err := planChanges([]byte(planWith(change("a.b", `"create"`), "")), two)
+		require.ErrorIs(t, err, errChangeSummary)
 	})
 
 	t.Run("JSON を読めなければ失敗する", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := planChanges([]byte("x"), nil)
+		_, err := planChanges([]byte("x"), streamDiag{})
 		require.ErrorIs(t, err, errPlanJSON)
 	})
 
 	t.Run("知らない actions は失敗する", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := planChanges([]byte(planWith(change("a.b", `"create","update"`), "")), nil)
+		_, err := planChanges([]byte(planWith(change("a.b", `"create","update"`), "")), streamDiag{})
 		require.ErrorIs(t, err, errPlanJSON)
 	})
 }
 
-func Test_planLineCounts(t *testing.T) {
-	t.Parallel()
-
-	for name, c := range map[string]struct {
-		out   string
-		want  [4]int
-		found bool
-	}{
-		"import を含む行を読む":       {"init\nPlan: 1 to import, 2 to add, 3 to change, 4 to destroy.\n", [4]int{1, 2, 3, 4}, true},
-		"import の無い行を読む":       {"Plan: 2 to add, 3 to change, 4 to destroy.\n", [4]int{0, 2, 3, 4}, true},
-		"CRLF の行を読む":           {"Plan: 0 to add, 1 to change, 0 to destroy.\r\n", [4]int{0, 0, 1, 0}, true},
-		"行が無ければ見つからないと返す":      {"No changes. Your infrastructure matches the configuration.\n", [4]int{}, false},
-		"字下げした行は「Plan:」の行ではない": {"  Plan: 1 to add, 0 to change, 0 to destroy.\n", [4]int{}, false},
-		"空の全文は見つからないと返す":       {"", [4]int{}, false},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			got, found, err := planLineCounts([]byte(c.out))
-			require.NoError(t, err)
-			assert.Equal(t, c.want, got)
-			assert.Equal(t, c.found, found)
-		})
-	}
-
-	for name, out := range map[string]string{
-		"行が2つあれば失敗する":         "Plan: 1 to add, 0 to change, 0 to destroy.\nPlan: 1 to add, 0 to change, 0 to destroy.\n",
-		"知らない形の行は失敗する":        "Plan: 0 to add, 0 to change, 0 to destroy, 1 to forget.\n",
-		"行末に続きがあれば失敗する":       "Plan: 1 to add, 0 to change, 0 to destroy. x\n",
-		"数えられない桁の件数は失敗する":     "Plan: 99999999999999999999 to add, 0 to change, 0 to destroy.\n",
-		"「Plan:」で始まる別の行も失敗する": "Plan:x\n",
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			_, _, err := planLineCounts([]byte(out))
-			require.ErrorIs(t, err, errPlanLine)
-		})
-	}
-}
-
-func Test_maskAddress(t *testing.T) {
-	t.Parallel()
-
-	for name, c := range map[string]struct{ in, want string }{
-		"識別子を含まない key はそのまま":           {`a.b["ap-northeast-1"]`, `a.b["ap-northeast-1"]`},
-		"数の添字はそのまま":                    {`a.b[0]`, `a.b[0]`},
-		"12桁の数字を含む key を伏せる":           {`a.b["x-` + account + `-y"]`, `a.b[<伏せた key>]`},
-		"12桁より長い数字の並びも伏せる":             {`a.b["1234567890123"]`, `a.b[<伏せた key>]`},
-		"11桁の数字は伏せない":                  {`a.b["12345678901"]`, `a.b["12345678901"]`},
-		"@ を含む key を伏せる":               {`a.b["x@example.com"]`, `a.b[<伏せた key>]`},
-		"識別子を含む key だけを伏せる":            {`module.m["dev"].a.b["` + account + `"]`, `module.m["dev"].a.b[<伏せた key>]`},
-		"引用符を含む key も1つの key として伏せる":   {`a.b["x\"` + account + `"]`, `a.b[<伏せた key>]`},
-		"key の外に識別子が残れば address ごと伏せる": {`a.b` + account, `<伏せた address>`},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			assert.Equal(t, c.want, maskAddress(c.in))
-		})
-	}
+// summaryOf は、plan の stream の change_summary を1つ持つ streamDiag を作る。
+func summaryOf(imports, add, chg, remove int) streamDiag {
+	return streamDiag{Summaries: []map[string]any{{
+		"import": float64(imports), "add": float64(add), "change": float64(chg), "remove": float64(remove), "operation": "plan",
+	}}}
 }

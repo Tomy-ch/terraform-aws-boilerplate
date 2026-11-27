@@ -88,6 +88,12 @@ func Test_command(t *testing.T) {
 		stepBucketEncrypt:  {"aws", "s3api", "get-bucket-encryption", "--cli-input-json", "file://input.json", "--output", "json"},
 		stepLocalInit:      {"terraform", "init", "-input=false", "-lockfile=readonly"},
 		stepLocalPlan:      {"terraform", "plan", "-lock=false", "-input=false", "-no-color"},
+		stepCIInit:         {"terraform", "init", "-input=false", "-no-color", "-json", "-lockfile=readonly"},
+		stepCIPlanNoLock:   {"terraform", "plan", "-lock=false", "-input=false", "-no-color", "-json", "-detailed-exitcode"},
+		stepCIPlanLock:     {"terraform", "plan", "-input=false", "-no-color", "-json", "-detailed-exitcode"},
+		stepCIShow:         {"terraform", "show"},
+		stepCIShowText:     {"terraform", "show", "-no-color"},
+		stepCIApply:        {"terraform", "apply", "-json"},
 	} {
 		t.Run(step, func(t *testing.T) {
 			t.Parallel()

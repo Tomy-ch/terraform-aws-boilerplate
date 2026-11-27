@@ -57,7 +57,7 @@ func s3Call(d deps, work string, env []string, step string, input map[string]str
 		return nil, xerrors.Wrap(err, "input.json")
 	}
 
-	return runTool(d.tool, work, env, step, d.stderr)
+	return ciRunTool(d.tool, work, env, step, d.stderr)
 }
 
 // lockTarget は、lock file のある Bucket と key と、aws の環境です。
@@ -105,7 +105,7 @@ func ciLockTarget(d deps, work, project, env, root, profile, base string) (lockT
 		return lockTarget{}, err
 	}
 	l := lockTarget{root: env + "-" + root, key: key, env: localEnv(d.environ, profile, "AWS_REGION="+region)}
-	identity, err := runTool(d.tool, work, l.env, stepCallerIdentity, d.stderr)
+	identity, err := ciRunTool(d.tool, work, l.env, stepCallerIdentity, d.stderr)
 	if err != nil {
 		return lockTarget{}, err
 	}
