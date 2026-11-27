@@ -807,6 +807,7 @@ func Test_exitCode(t *testing.T) {
 		"手元の plan の失敗":    errLocalPlan,
 		"Policy の違反（CI）":  errCIPolicy,
 		"Policy の違反":      policyresult.ErrViolation,
+		"権限が表と一致しない":      errCIPermissions,
 		"apply の失敗":       errApplyFailed,
 		"apply の打ち切り":     errApplyTimeout,
 		"assume が通ってしまった": errAssumeSucceeded,
@@ -837,6 +838,7 @@ func Test_exitCode(t *testing.T) {
 		"Policy の規則の評価が0件なのは 2": policyresult.ErrEmpty,
 		"Policy の評価の件数の食い違いは 2": policyresult.ErrCount,
 		"判定に届かない CI の段は 2":      errCINotEstablished,
+		"権限を評価できないのは 2":         errCIPermissionsRun,
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

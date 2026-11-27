@@ -22,6 +22,7 @@ CI_STATE = $(CI_PLAN_DIR)/$(1)-$(2).json
 
 # plan と apply の入口の段（tf-local の ci-*）。prepare と init が落ちればそこで止まる。それより後の段は `-` で続け、
 # 前の段の失敗を state で知って何もしない。upload は必ず走り、finish が state の判定で落とす。
+# CI_AFTER_POLICY は、Policy の後に足す段の macro の名前（入口の target が与える。空なら足さない）。
 # $(1)=plan|apply $(2)=env $(3)=root
 define CI_STEPS_PLAN
 @mkdir -p "$(CI_PLAN_DIR)"
@@ -29,7 +30,16 @@ define CI_STEPS_PLAN
 @$(call TF_LOCAL,ci-prepare -mode $(1) -project $(TF_LOCAL_PROJECT) -env $(2) -root $(3) -profile $(TF_LOCAL_PROFILE) -base $(TF_BASE) -header "$(CI_PLAN_DIR)/$(2)-$(3).header" -state "$(call CI_STATE,$(2),$(3))")
 @$(call TF_LOCAL,ci-init -state "$(call CI_STATE,$(2),$(3))")
 -@$(call TF_LOCAL,ci-plan -state "$(call CI_STATE,$(2),$(3))")
--@$(call TF_LOCAL,ci-policy -state "$(call CI_STATE,$(2),$(3))" -work tmp/ci-policy -policy $(POLICY_PLAN_DIR) -decl $(POLICY_PLAN_DECL) -layer $(POLICY_LAYER_DECL) $(foreach ns,$(CI_POLICY_NAMESPACES),-namespace $(ns)))
+-@$(call TF_LOCAL,ci-policy -state "$(call CI_STATE,$(2),$(3))" -work tmp/ci-policy -policy $(POLICY_PLAN_DIR) -decl $(POLICY_PLAN_DECL) -layer $(POLICY_LAYER_DECL) $(foreach ns,$(CI_POLICY_NAMESPACES),-namespace $(ns)))$(call $(CI_AFTER_POLICY),$(2),$(3))
+endef
+
+# $(1)=env $(2)=root。CI の role の権限を評価する段（tf-local の ci-permissions）。段が要るかは prepare が入口の値から
+# 決めて state に残し、finish がそれで落とす。bootstrap-check を build できなければ、ci-permissions の段が失敗として残る。
+# 先頭の空行は、Policy の段の行の後に改行を置くためのもの。
+define CI_PERMISSIONS
+
+-@$(call BUILD_SCRIPT_HOST,bootstrap-check)
+-@$(call TF_LOCAL,ci-permissions -state "$(call CI_STATE,$(1),$(2))" -work tmp/ci-permissions)
 endef
 
 define CI_STEPS_FINISH
@@ -80,6 +90,7 @@ ci-assume-denied:
 .PHONY: ci-plan-admin-identity ## [CI] 管理アカウントの identity root を plan し、全文を plan の出力の Bucket に置く
 ci-plan-admin-identity: CI_POLICY_NAMESPACES := plan.stateful_protection plan.kms_key_policy plan.resource_policy_exclusive plan.s3_bucket_namespace plan.state_backend_write_deny
 ci-plan-admin-identity: TF_LOCAL_PROFILE := $(call CI_PROFILE,admin,plan)
+ci-plan-admin-identity: CI_AFTER_POLICY := CI_PERMISSIONS
 ci-plan-admin-identity:
 	@$(call CI_PLAN,admin,identity)
 

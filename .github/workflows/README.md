@@ -96,7 +96,8 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
 
 - **公開されるログに plan の全文を出さない。** 全文は plan の出力の Bucket へ置き、ログと job summary
   には終了コード・件数・object の key・SHA-256・版 ID と、Policy の違反の文（resource の address）だけを
-  出す（ADR-0602 決定13、`.makefiles/terraform/operation/ci.mk`）
+  出す（ADR-0602 決定13、`.makefiles/terraform/operation/ci.mk`）。identity root の plan の、CI の role の policy の
+  文書の評価（`scripts/bootstrap-check` の `plan-permissions`）も、区分ごとの件数と期待と違う行の要約だけを出す
 - **全文は、ログの版 ID で読み、SHA-256 を確かめる。** plan の role は `pr/*`・`branch/*` のどの key にも
   書けるので、版を指定せずに読んだ最新の版は、別の run が書いたものでありうる（ADR-0602 の保証しないこと）。
   `aws s3api get-object --bucket <Bucket> --key <key> --version-id <版 ID> plan.txt` の後、
