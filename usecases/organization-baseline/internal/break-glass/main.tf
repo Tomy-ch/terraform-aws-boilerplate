@@ -13,15 +13,15 @@ locals {
   group_name = "break-glass"
 
   # 作る前に決まる ARN。deployment-identity の policy が、まだ無い break-glass を名指せる。
-  arn_prefix = "arn:${local.partition}:iam::${data.aws_caller_identity.current.account_id}"
-  user_arns  = [for n in sort(local.user_names) : "${local.arn_prefix}:user${var.path}${n}"]
+  arn_prefix       = "arn:${local.partition}:iam::${data.aws_caller_identity.current.account_id}"
+  user_arns        = [for n in sort(local.user_names) : "${local.arn_prefix}:user${var.path}${n}"]
+  login_client_arn = "arn:${local.partition}:signin:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:oauth2/public-client/localhost"
   arns = concat(
     local.user_arns,
     ["${local.arn_prefix}:group${var.path}${local.group_name}", "${local.arn_prefix}:role${var.path}${var.role_name}"],
   )
 }
 
-# パスワードとハードウェア MFA は Terraform で作らず、人が設定する。
 resource "aws_iam_user" "this" {
   #checkov:skip=CKV_AWS_273:Identity Center が使えないときの緊急の経路（ADR-0301 決定19、organization-baseline/ADR-0201）。撤回: break-glass を IAM user で持たなくなったとき
   for_each = local.user_names
@@ -84,6 +84,20 @@ resource "aws_iam_group_policy" "this" {
         Action   = "iam:GetAccountPasswordPolicy"
         Resource = "*"
       },
+      # signin:OAuthGrantType は CreateOAuth2Token にだけ在る条件キーなので、文を分ける。
+      {
+        Sid      = "AwsLoginAuthorize"
+        Effect   = "Allow"
+        Action   = "signin:AuthorizeOAuth2Access"
+        Resource = local.login_client_arn
+      },
+      {
+        Sid       = "AwsLoginToken"
+        Effect    = "Allow"
+        Action    = "signin:CreateOAuth2Token"
+        Resource  = local.login_client_arn
+        Condition = { StringEquals = { "signin:OAuthGrantType" = ["authorization_code", "refresh_token"] } }
+      },
       {
         Sid      = "DenyLongTermCredentials"
         Effect   = "Deny"
@@ -137,7 +151,6 @@ resource "aws_iam_account_password_policy" "this" {
 }
 
 # メンバーアカウントの break-glass の role（organization-baseline/ADR-0202）。
-# description は ASCII に限る（PLAN-BG-05）。
 resource "aws_cloudformation_stack_set" "this" {
   name             = var.role_name
   description      = "Break-glass role for member accounts"

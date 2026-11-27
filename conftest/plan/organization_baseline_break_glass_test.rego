@@ -33,7 +33,13 @@ long_term_credentials_deny := {"Effect": "Deny", "Action": long_term_credential_
 
 deactivate := {"Effect": "Allow", "Action": "iam:DeactivateMFADevice", "Resource": "arn:aws:iam::111111111111:user/break-glass/${aws:username}", "Condition": mfa}
 
-valid_group := [assume, self_manage, deactivate, password_policy, long_term_credentials_deny]
+login_client := "arn:aws:signin:ap-northeast-1:111111111111:oauth2/public-client/localhost"
+
+login_authorize := {"Sid": "AwsLoginAuthorize", "Effect": "Allow", "Action": "signin:AuthorizeOAuth2Access", "Resource": login_client}
+
+login_token := {"Sid": "AwsLoginToken", "Effect": "Allow", "Action": "signin:CreateOAuth2Token", "Resource": login_client, "Condition": {"StringEquals": {"signin:OAuthGrantType": ["authorization_code", "refresh_token"]}}}
+
+valid_group := [assume, self_manage, deactivate, password_policy, login_authorize, login_token, long_term_credentials_deny]
 
 trust(principals) := [{"Effect": "Allow", "Principal": {"AWS": principals}, "Action": "sts:AssumeRole", "Condition": mfa}]
 
@@ -785,4 +791,55 @@ test_violation_attachment_without_policy_arn if {
 test_violation_attachment_declaration_key_absent if {
 	d := {"break_glass": object.remove(decl.break_glass, ["role_policy_attachment"])}
 	fixture.has("[PLAN-BG-00]", p.deny) with input as valid with data.policy_plan as {"organization_baseline": d}
+}
+
+login_messages(authorize, token) := msgs if {
+	group := [assume, self_manage, deactivate, password_policy, authorize, token, long_term_credentials_deny]
+	msgs := p.deny with input as fixture.plan(rcs(group, trust(user_arns), [admin])) with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_pass_without_login_statements if {
+	not fixture.has("[PLAN-BG-02]", group_messages(with_deny([long_term_credentials_deny])))
+}
+
+test_violation_login_remote_client if {
+	remote := "arn:aws:signin:ap-northeast-1:111111111111:oauth2/public-client/remote"
+	fixture.has("[PLAN-BG-02]", login_messages(object.union(login_authorize, {"Resource": remote}), login_token))
+}
+
+test_violation_login_wildcard_resource if {
+	fixture.has("[PLAN-BG-02]", login_messages(object.union(login_authorize, {"Resource": "*"}), login_token))
+}
+
+test_violation_login_wildcard_region if {
+	wildcard := "arn:aws:signin:*:111111111111:oauth2/public-client/localhost"
+	fixture.has("[PLAN-BG-02]", login_messages(login_authorize, object.union(login_token, {"Resource": wildcard})))
+}
+
+test_violation_login_other_account if {
+	other := "arn:aws:signin:ap-northeast-1:222222222222:oauth2/public-client/localhost"
+	fixture.has("[PLAN-BG-02]", login_messages(object.union(login_authorize, {"Resource": other}), login_token))
+}
+
+test_violation_login_two_resources if {
+	two := [login_client, "arn:aws:signin:ap-northeast-1:111111111111:oauth2/public-client/remote"]
+	fixture.has("[PLAN-BG-02]", login_messages(object.union(login_authorize, {"Resource": two}), login_token))
+}
+
+test_violation_login_token_without_grant_condition if {
+	fixture.has("[PLAN-BG-02]", login_messages(login_authorize, object.remove(login_token, ["Condition"])))
+}
+
+test_violation_login_token_other_grant if {
+	grant := {"StringEquals": {"signin:OAuthGrantType": ["authorization_code", "refresh_token", "client_credentials"]}}
+	fixture.has("[PLAN-BG-02]", login_messages(login_authorize, object.union(login_token, {"Condition": grant})))
+}
+
+test_violation_login_other_signin_action if {
+	fixture.has("[PLAN-BG-02]", login_messages(object.union(login_authorize, {"Action": "signin:*"}), login_token))
+}
+
+test_violation_login_both_actions_in_one_statement if {
+	both := object.union(login_token, {"Action": ["signin:AuthorizeOAuth2Access", "signin:CreateOAuth2Token"]})
+	fixture.has("[PLAN-BG-02]", login_messages(login_authorize, both))
 }

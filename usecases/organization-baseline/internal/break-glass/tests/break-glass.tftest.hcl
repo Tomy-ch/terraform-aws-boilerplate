@@ -79,8 +79,32 @@ run "group_policy" {
   }
 
   assert {
-    condition     = length([for s in jsondecode(aws_iam_group_policy.this.policy).Statement : s if s.Effect == "Allow"]) == 4
-    error_message = "break-glass の user の Allow は、role の引き受け、自分のパスワードと MFA の管理、password policy の読み取りだけです。"
+    condition     = length([for s in jsondecode(aws_iam_group_policy.this.policy).Statement : s if s.Effect == "Allow"]) == 6
+    error_message = "break-glass の user の Allow は、role の引き受け、自分のパスワードと MFA の管理、password policy の読み取り、aws login だけです。"
+  }
+
+  assert {
+    condition = [for s in jsondecode(aws_iam_group_policy.this.policy).Statement : s if startswith(s.Sid, "AwsLogin")] == [
+      {
+        Sid      = "AwsLoginAuthorize"
+        Effect   = "Allow"
+        Action   = "signin:AuthorizeOAuth2Access"
+        Resource = "arn:aws:signin:ap-northeast-1:111111111111:oauth2/public-client/localhost"
+      },
+      {
+        Sid       = "AwsLoginToken"
+        Effect    = "Allow"
+        Action    = "signin:CreateOAuth2Token"
+        Resource  = "arn:aws:signin:ap-northeast-1:111111111111:oauth2/public-client/localhost"
+        Condition = { StringEquals = { "signin:OAuthGrantType" = ["authorization_code", "refresh_token"] } }
+      },
+    ]
+    error_message = "aws login は、このアカウントの provider の region の同じ端末の流れ（localhost）に限り、token の grant を authorization code と refresh token に限ってください。"
+  }
+
+  assert {
+    condition     = length([for s in jsondecode(aws_iam_group_policy.this.policy).Statement : s if can(regex("^signin:", try(tostring(s.Action), "")))]) == 2 && !strcontains(aws_iam_group_policy.this.policy, "public-client/remote")
+    error_message = "signin の Action は2つだけで、別の端末の流れ（remote）は許さないでください。"
   }
 
   assert {
@@ -177,7 +201,6 @@ run "member_stack_set" {
   }
 }
 
-# 管理アカウントの role と別に書いた文書が、ずれていないことを見る。
 run "member_role_matches_management_role" {
   command = apply
 

@@ -108,6 +108,28 @@ allowed_group_statement(s) if {
 	s.Condition == {"Bool": {"aws:MultiFactorAuthPresent": "true"}}
 }
 
+# aws login の同じ端末の流れ（localhost）だけを、break-glass の user のアカウントの client に限って許す（ADR-0301 決定19）。
+login_client(s) if {
+	resources := lib.as_array(s.Resource)
+	count(resources) == 1
+	m := regex.find_all_string_submatch_n(`^arn:[^:]+:signin:[a-z0-9-]+:([0-9]{12}):oauth2/public-client/localhost$`, resources[0], 1)
+	count(m) == 1
+	some u in user_arns
+	m[0][1] == split(u, ":")[4]
+}
+
+allowed_group_statement(s) if {
+	lib.lower_all(s.Action) == ["signin:authorizeoauth2access"]
+	login_client(s)
+	not "Condition" in object.keys(s)
+}
+
+allowed_group_statement(s) if {
+	lib.lower_all(s.Action) == ["signin:createoauth2token"]
+	login_client(s)
+	s.Condition == {"StringEquals": {"signin:OAuthGrantType": ["authorization_code", "refresh_token"]}}
+}
+
 deny contains msg if {
 	body(object.get(bg, "group_policy", ""), "policy")
 	count(lib.as_array(object.get(body(object.get(bg, "group_policy", ""), "policy"), "Statement", []))) == 0
