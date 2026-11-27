@@ -4,6 +4,8 @@ on:
   push:
     branches: # branch-set: ruleset
       - 'admin'
+      - 'security'
+      - 'log-archive'
       - 'production'
       - 'staging'
       - 'develop'

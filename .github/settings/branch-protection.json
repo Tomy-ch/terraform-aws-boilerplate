@@ -8,6 +8,8 @@
       "exclude": [],
       "include": [
         "refs/heads/admin",
+        "refs/heads/security",
+        "refs/heads/log-archive",
         "refs/heads/production",
         "refs/heads/staging",
         "refs/heads/develop",
