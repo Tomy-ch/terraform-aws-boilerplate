@@ -1,0 +1,42 @@
+{
+  "name": "deploy-admin",
+  "target": "branch",
+  "source_type": "Repository",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "exclude": [],
+      "include": [
+        "refs/heads/admin"
+      ]
+    }
+  },
+  "rules": [
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": false,
+        "do_not_enforce_on_create": false,
+        "required_status_checks": [
+          {
+            "context": "deploy-source-check",
+            "integration_id": 15368
+          },
+          {
+            "context": "plan-admin-identity",
+            "integration_id": 15368
+          },
+          {
+            "context": "plan-admin-workload",
+            "integration_id": 15368
+          },
+          {
+            "context": "line-gate",
+            "integration_id": 15368
+          }
+        ]
+      }
+    }
+  ],
+  "bypass_actors": []
+}

@@ -7,17 +7,19 @@
 //	.github/settings/environments.json                    environment の名前と、どのブランチから使えるか
 //	.github/settings/private-vulnerability-reporting.json Private Vulnerability Reporting を有効にするか
 //
-// ruleset の宣言 .github/settings/branch-protection.json は、include の区間だけを branches.json から
-// 生成します。apply の environment を使う workflow は、on.push.branches をその env のデプロイブランチへ
-// 生成します。ほかの workflow は、印 `# branch-set: <集合>` を持つ行を生成します。environment のパターンは
-// ファイルへ書き出さず、適用と突合のたびに展開します。
+// ruleset の宣言は役割ごとに .github/settings/rulesets/ に置きます（ADR-0603 決定35）。common.json と lines.json は
+// include の区間だけを branches.json から生成し、deploy-<branch>.json はファイル全体を branches.json と
+// .github/settings/checks.json から生成します。.github/settings/branch-protection.json は、在れば同じく include の
+// 区間を生成し、ほかの ruleset と並べて適用し突き合わせます。apply の environment を使う workflow は、
+// on.push.branches をその env のデプロイブランチへ生成します。ほかの workflow は、印 `# branch-set: <集合>` を持つ
+// 行を生成します。environment のパターンはファイルへ書き出さず、適用と突合のたびに展開します。
 //
 // サブコマンド:
 //
-//	apply  include の区間と workflow の起動条件を書き換える（ネットワークを使わない）
+//	apply  ruleset の宣言の生成する区間と workflow の起動条件を書き換える（ネットワークを使わない）
 //	check  apply と同じ判定で、書き換えずにずれを報せる。宣言の Static Analysis と、workflow の式が ref を
 //	       宣言の外の文字列と比べていないことと、Dependabot が付けるラベルが labels.json にあることも見る
-//	drift  実態を GET で読み、宣言との差分を報せる
+//	drift  実態を GET で読み、宣言との差分を報せる。宣言に無い名前の ruleset が実在すれば、それも差分とする
 //	sync   drift と同じ差分を、GitHub への書き込みで解消する（管理者の資格情報を要する）
 //	source デプロイブランチへ入る Pull Request の head を検査する（ADR-0603 決定31。ネットワークを使わない）
 //	deploy-branch  env のデプロイブランチの名前を出す
@@ -29,6 +31,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -50,7 +53,6 @@ const (
 	toolName                   = "repo-settings"
 	branchesFile               = branchdecl.File
 	environmentsFile           = ".github/settings/environments.json"
-	rulesetFile                = ".github/settings/branch-protection.json"
 	vulnerabilityReportingFile = ".github/settings/private-vulnerability-reporting.json"
 	defaultAPI                 = "https://api.github.com"
 	filePerm                   = 0o644
@@ -59,7 +61,7 @@ const (
 
 var (
 	errUsage                             = xerrors.New("usage: repo-settings <apply|check|drift|sync|source|deploy-branch|delete-labels|create-labels|enable-workflows|create-deploy-branch|deploy-branch-exists> [-repo owner/name] [-only ruleset|environments|vulnerability-reporting] [-base <ref> -base-sha <sha> -head-sha <sha> -default <branch>] [-env <env>]")
-	errIncludeDrift                      = xerrors.New("branch-protection.json の include が branches.json からずれています（make repo-settings-apply）")
+	errRulesetDrift                      = xerrors.New("ruleset の宣言が branches.json・checks.json からずれています（make repo-settings-apply）")
 	errDrift                             = xerrors.New("宣言と実態がずれています")
 	errNoToken                           = xerrors.New("GITHUB_TOKEN がありません（gh auth login でログインするか、GITHUB_TOKEN を渡してください）")
 	errNoRepo                            = xerrors.New("対象のリポジトリを解決できません（-repo、GITHUB_REPOSITORY、gh repo view のいずれも空です）")
@@ -184,14 +186,13 @@ func runSetup(ctx context.Context, sub, root string, c githubClient, repo, env s
 	}
 }
 
-// declarations は、検証を通った人の書く宣言と、include の区間を生成し直した保護設定の宣言と、起動条件を
-// 生成し直した apply の workflow。
+// declarations は、検証を通った人の書く宣言と、生成し直した ruleset の宣言と、起動条件を生成し直した apply の
+// workflow。
 type declarations struct {
 	branches               branches
 	environments           []environment
 	vulnerabilityReporting bool
-	ruleset                []byte
-	rendered               []byte
+	rulesets               []rulesetDecl
 	workflows              []workflowEdit
 	sets                   []workflowEdit
 	marks                  int
@@ -203,7 +204,7 @@ type declarations struct {
 	dependabotCooldowns int
 }
 
-// readDeclarations は宣言を読み、検証し、include の区間を生成し直します。書き込みはしません。
+// readDeclarations は宣言を読み、検証し、生成する区間を生成し直します。書き込みはしません。
 func readDeclarations(root string) (declarations, error) {
 	b, err := branchdecl.Read(filepath.Join(root, branchesFile))
 	if err != nil {
@@ -262,60 +263,67 @@ func readDeclarations(root string) (declarations, error) {
 	if err != nil {
 		return declarations{}, err
 	}
-	src, err := os.ReadFile(filepath.Clean(filepath.Join(root, rulesetFile)))
+	rulesets, err := readRulesets(root, b)
 	if err != nil {
-		return declarations{}, xerrors.Wrapf(err, "%s の読み取り", rulesetFile)
+		return declarations{}, err
 	}
-	if err := checkRuleset(src); err != nil {
-		return declarations{}, xerrors.Wrapf(err, "%s", rulesetFile)
-	}
-	includes := rulesetIncludes(b)
-	rendered, err := renderInclude(src, includes)
-	if err != nil {
-		return declarations{}, xerrors.Wrapf(err, "%s", rulesetFile)
-	}
-	if err := verifyInclude(rendered, includes); err != nil {
-		return declarations{}, xerrors.Wrapf(err, "%s", rulesetFile)
-	}
-	return declarations{branches: b, environments: envs, vulnerabilityReporting: pvr, ruleset: src, rendered: rendered, workflows: workflows, sets: sets, marks: marks, exprs: exprs, dependabotLabels: dependabotLabels, dependabotCooldowns: dependabotCooldowns}, nil
+	return declarations{branches: b, environments: envs, vulnerabilityReporting: pvr, rulesets: rulesets, workflows: workflows, sets: sets, marks: marks, exprs: exprs, dependabotLabels: dependabotLabels, dependabotCooldowns: dependabotCooldowns}, nil
 }
 
-// loadDesired は宣言からあるべき実態を組みます。include の区間がずれていればエラーにします
+// loadDesired は宣言からあるべき実態を組みます。生成する区間がずれていればエラーにします
 // —— ずれた宣言を GitHub と比べても、どちらが正しいかを答えられない。
 func loadDesired(root string) (desired, error) {
 	decl, err := readDeclarations(root)
 	if err != nil {
 		return desired{}, err
 	}
-	if string(decl.rendered) != string(decl.ruleset) {
-		return desired{}, errIncludeDrift
+	if drifted := driftedRulesets(decl.rulesets); len(drifted) > 0 {
+		return desired{}, xerrors.Wrapf(errRulesetDrift, "%s", strings.Join(drifted, ", "))
 	}
-	var ruleset map[string]any
-	if err := json.Unmarshal(decl.ruleset, &ruleset); err != nil {
-		return desired{}, xerrors.Wrapf(err, "%s の解釈", rulesetFile)
+	want := desired{VulnerabilityReporting: decl.vulnerabilityReporting}
+	for _, r := range decl.rulesets {
+		var body map[string]any
+		if err := json.Unmarshal(r.rendered, &body); err != nil {
+			return desired{}, xerrors.Wrapf(err, "%s の解釈", r.spec.path)
+		}
+		want.Rulesets = append(want.Rulesets, desiredRuleset{Name: r.spec.name, Body: body})
 	}
-	want := desired{Ruleset: ruleset, VulnerabilityReporting: decl.vulnerabilityReporting}
 	for _, e := range decl.environments {
 		want.Envs = append(want.Envs, desiredEnv{Name: e.Name, Patterns: environmentPatterns(decl.branches, e)})
 	}
 	return want, nil
 }
 
-// applyOrCheck は include の区間と apply の workflow の起動条件を branches.json から生成します。dryRun が
+// driftedRulesets は、生成し直した内容がファイルの今の内容と異なる ruleset の宣言の path を返します。
+func driftedRulesets(decls []rulesetDecl) []string {
+	var out []string
+	for _, r := range decls {
+		if !bytes.Equal(r.current, r.rendered) {
+			out = append(out, r.spec.path)
+		}
+	}
+	return out
+}
+
+// applyOrCheck は ruleset の宣言の生成する区間と apply の workflow の起動条件を宣言から生成します。dryRun が
 // 真なら書かず、ずれを報せます。書き込みは、宣言の検証がすべて通った後に、まとめて行います。
 func applyOrCheck(root string, dryRun bool, out io.Writer) error {
 	decl, err := readDeclarations(root)
 	if err != nil {
 		return err
 	}
-	summary := fmt.Sprintf("保護対象 %d 件、environment %d 件、%s の宣言（enabled=%t）、apply の workflow %d 件、分岐の集合の印 %d 件（workflow %d 件）、ref を比べる式の検査 %d 件、labels.json にある Dependabot のラベル %d 件、窓を下回らない Dependabot の cooldown %d 件",
-		len(rulesetIncludes(decl.branches)), len(decl.environments), vulnerabilityReportingName, decl.vulnerabilityReporting,
+	summary := fmt.Sprintf("保護対象 %d 件、ruleset %d 件、environment %d 件、%s の宣言（enabled=%t）、apply の workflow %d 件、分岐の集合の印 %d 件（workflow %d 件）、ref を比べる式の検査 %d 件、labels.json にある Dependabot のラベル %d 件、窓を下回らない Dependabot の cooldown %d 件",
+		len(rulesetIncludes(decl.branches)), len(decl.rulesets), len(decl.environments), vulnerabilityReportingName, decl.vulnerabilityReporting,
 		len(decl.workflows), decl.marks, len(decl.sets), decl.exprs, decl.dependabotLabels, decl.dependabotCooldowns)
 	changed := map[string]string{}
 	var names []string
-	if string(decl.rendered) != string(decl.ruleset) {
-		changed[filepath.Join(root, rulesetFile)] = string(decl.rendered)
-		names = append(names, rulesetFile)
+	var rulesetDrift []string
+	for _, r := range decl.rulesets {
+		if !bytes.Equal(r.current, r.rendered) {
+			changed[filepath.Join(root, r.spec.path)] = string(r.rendered)
+			names = append(names, r.spec.path)
+			rulesetDrift = append(rulesetDrift, r.spec.path)
+		}
 	}
 	var applyDrift, setDrift []string
 	for _, w := range decl.workflows {
@@ -337,8 +345,8 @@ func applyOrCheck(root string, dryRun bool, out io.Writer) error {
 		return nil
 	}
 	if dryRun {
-		if _, ok := changed[filepath.Join(root, rulesetFile)]; ok {
-			return errIncludeDrift
+		if len(rulesetDrift) > 0 {
+			return xerrors.Wrapf(errRulesetDrift, "%s", strings.Join(rulesetDrift, ", "))
 		}
 		if len(applyDrift) > 0 {
 			return xerrors.Wrapf(errTriggerDrift, "%s", strings.Join(applyDrift, ", "))
@@ -378,15 +386,16 @@ func drift(ctx context.Context, root string, c githubClient, repo string, out io
 	for _, u := range unobserved {
 		fmt.Fprintf(out, "⚠️ 突合の対象外（観測できない）: %s\n", u)
 	}
-	if total := len(findings) + len(d.Ruleset.Exceptions); total > 0 {
+	exceptions := d.exceptions()
+	if total := len(findings) + len(exceptions); total > 0 {
 		fmt.Fprintf(out, "❌ %s: %s で宣言と実態のずれが %d 件あります\n", toolName, repo, total)
 		for _, f := range findings {
 			fmt.Fprintf(out, "  - %s\n", f)
 		}
-		if len(d.Ruleset.Exceptions) > 0 {
+		if len(exceptions) > 0 {
 			fmt.Fprintln(out, "  ADR-0603 決定7 の例外（承認者数の要件）に当たるずれ:")
-			for _, f := range d.Ruleset.Exceptions {
-				fmt.Fprintf(out, "  - ruleset: %s\n", f)
+			for _, f := range exceptions {
+				fmt.Fprintf(out, "  - %s\n", f)
 			}
 		}
 		if pvrErr != nil {
@@ -403,17 +412,17 @@ func drift(ctx context.Context, root string, c githubClient, repo string, out io
 		compared = "と " + vulnerabilityReportingName + " "
 	}
 	if pvrErr != nil {
-		fmt.Fprintf(out, "❌ %s: %s の ruleset 1 件と environment %d 件（実在 %d 件）は宣言どおりですが、%s の実態を読めませんでした%s\n",
-			toolName, repo, len(want.Envs), len(got.Envs), vulnerabilityReportingName, excluded)
+		fmt.Fprintf(out, "❌ %s: %s の ruleset %d 件と environment %d 件（実在 %d 件）は宣言どおりですが、%s の実態を読めませんでした%s\n",
+			toolName, repo, len(want.Rulesets), len(want.Envs), len(got.Envs), vulnerabilityReportingName, excluded)
 		return xerrors.Wrapf(pvrErr, "%s の実態の読み取り", vulnerabilityReportingName)
 	}
-	fmt.Fprintf(out, "✅ %s: %s の ruleset 1 件と environment %d 件（実在 %d 件）%sが宣言どおりです%s\n",
-		toolName, repo, len(want.Envs), len(got.Envs), compared, excluded)
+	fmt.Fprintf(out, "✅ %s: %s の ruleset %d 件と environment %d 件（実在 %d 件）%sが宣言どおりです%s\n",
+		toolName, repo, len(want.Rulesets), len(want.Envs), len(got.Envs), compared, excluded)
 	return nil
 }
 
 // syncSettings は drift と同じ差分を、only が指す側について GitHub への書き込みで解消します。
-// 要求はすべて組んでから送ります。宣言に無い environment は消しません。
+// 要求はすべて組んでから送ります。宣言に無い ruleset と environment は消しません。
 func syncSettings(ctx context.Context, root string, c githubClient, repo, only string, out io.Writer) error {
 	if only == onlyVulnerabilityReporting {
 		return syncVulnerabilityReporting(ctx, root, c, repo, out)
@@ -428,6 +437,9 @@ func syncSettings(ctx context.Context, root string, c githubClient, repo, only s
 			return err
 		}
 		fmt.Fprintf(out, "🔧 %s %s\n", r.Method, r.Path)
+	}
+	if only == onlyRuleset && len(d.UndeclaredRulesets) > 0 {
+		fmt.Fprintf(out, "⚠️ 宣言に無い ruleset は消していません（make repo-settings-drift はこれをずれとして報せます）: %s\n", strings.Join(d.UndeclaredRulesets, ", "))
 	}
 	if only == onlyEnvironments && len(d.Extra) > 0 {
 		fmt.Fprintf(out, "⚠️ 宣言に無い environment は消していません（make repo-settings-drift はこれをずれとして報せます）: %s\n", strings.Join(d.Extra, ", "))
@@ -476,8 +488,11 @@ func observe(ctx context.Context, root string, c githubClient, repo string) (des
 	if err != nil {
 		return desired{}, live{}, diff{}, err
 	}
-	name, _ := want.Ruleset["name"].(string)
-	got, err := fetchLive(ctx, c, repo, name)
+	names := make([]string, 0, len(want.Rulesets))
+	for _, r := range want.Rulesets {
+		names = append(names, r.Name)
+	}
+	got, err := fetchLive(ctx, c, repo, names)
 	if err != nil {
 		return desired{}, live{}, diff{}, err
 	}

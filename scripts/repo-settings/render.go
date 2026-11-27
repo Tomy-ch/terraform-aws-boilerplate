@@ -145,18 +145,12 @@ func renderInclude(src []byte, patterns []string) ([]byte, error) {
 // verifyInclude は、書き換えた内容をデコードし直し、include が want と等しいことを確かめます。
 // 区間の位置の計算とは別の経路で、生成の結果を突き合わせる（ADR-0702 決定15）。
 func verifyInclude(rendered []byte, want []string) error {
-	var decl struct {
-		Conditions struct {
-			RefName struct {
-				Include []string `json:"include"`
-			} `json:"ref_name"`
-		} `json:"conditions"`
+	got, err := decodeInclude(rendered)
+	if err != nil {
+		return xerrors.Wrap(err, "書き換えた内容")
 	}
-	if err := json.Unmarshal(rendered, &decl); err != nil {
-		return xerrors.Wrapf(errInclude, "書き換えた内容の解釈: %v", err)
-	}
-	if !reflect.DeepEqual(decl.Conditions.RefName.Include, want) {
-		return xerrors.Wrapf(errInclude, "書き換えた include が %d 件で、宣言の %d 件と一致しません", len(decl.Conditions.RefName.Include), len(want))
+	if !reflect.DeepEqual(got, want) {
+		return xerrors.Wrapf(errInclude, "書き換えた include が %d 件で、宣言の %d 件と一致しません", len(got), len(want))
 	}
 	return nil
 }
@@ -166,8 +160,6 @@ type rulesetRule struct {
 	Parameters map[string]any `json:"parameters"`
 }
 
-// checkRuleset は保護設定の宣言が ADR-0603 決定21-23 の Static Analysis の項目を満たすかを見ます。
-// enforcement・target・exclude も見る —— どれを緩めても、決定22 の bypass と同じく全ルールが外れる。
 // githubActionsAppID は、GitHub Actions の app の ID（`gh api /apps/github-actions`）。
 const githubActionsAppID = 15368
 
@@ -189,7 +181,20 @@ func foreignReporters(checks []any) []string {
 	return out
 }
 
-func checkRuleset(src []byte) error {
+// requiredRules は、役割ごとに宣言が持たなければならないルール。pull_request・deletion・non_fast_forward は
+// すべての保護対象に重なる common が課し（ADR-0603 決定23・35）、required_status_checks は lines と deploy-* が課す。
+// legacy は1件ですべてを課す。
+var requiredRules = map[string][]string{
+	roleCommon: {"deletion", "non_fast_forward", "pull_request"},
+	roleLines:  {"required_status_checks"},
+	roleDeploy: {"required_status_checks"},
+	roleLegacy: {"deletion", "non_fast_forward", "pull_request", "required_status_checks"},
+}
+
+// checkRuleset は保護設定の宣言が、spec の役割について ADR-0603 決定21-23・34 の Static Analysis の項目を満たすかを
+// 見ます。enforcement・target・exclude はどの役割にも課す —— どれを緩めても、決定22 の bypass と同じく全ルールが外れる。
+// name はファイル名と等しいことを課す。突合は ruleset を名前で対応させる。
+func checkRuleset(src []byte, spec rulesetSpec) error {
 	var decl struct {
 		Name        string `json:"name"`
 		Target      string `json:"target"`
@@ -206,8 +211,12 @@ func checkRuleset(src []byte) error {
 		return xerrors.Wrapf(errRulesetPolicy, "JSON の解釈: %v", err)
 	}
 	var problems []string
-	if decl.Name == "" {
-		problems = append(problems, "name がありません")
+	required, ok := requiredRules[spec.role]
+	if !ok {
+		return xerrors.Wrapf(errRulesetPolicy, "未知の役割 %q", spec.role)
+	}
+	if decl.Name != spec.name {
+		problems = append(problems, fmt.Sprintf("name が %q ではありません", spec.name))
 	}
 	if decl.Target != "branch" {
 		problems = append(problems, `target が "branch" ではありません`)
@@ -235,7 +244,7 @@ func checkRuleset(src []byte) error {
 		}
 		problems = append(problems, foreignReporters(checks)...)
 	}
-	for _, t := range []string{"deletion", "non_fast_forward", "pull_request", "required_status_checks"} {
+	for _, t := range required {
 		if _, ok := rules[t]; !ok {
 			problems = append(problems, "ルール "+t+" がありません")
 		}
