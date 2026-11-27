@@ -152,3 +152,25 @@ func TestCallerJob(t *testing.T) {
 		})
 	})
 }
+
+func TestDecl_TreeChecks(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		yes, no := true, false
+		t.Run("scope が tree で required の検査だけを返し、plan_env を持つものは外す", func(t *testing.T) {
+			t.Parallel()
+			d := Decl{Checks: []Check{
+				{Name: "a", Scope: ScopeTree, Required: &yes},
+				{Name: "c", Scope: ScopeChange, Required: &yes},
+				{Name: "info", Scope: ScopeTree, Required: &no},
+				{Name: "plan", Scope: ScopeTree, Required: &yes, PlanEnv: "admin"},
+				{Name: "b", Scope: ScopeTree, Required: &yes},
+			}}
+			assert.Equal(t, []string{"a", "b"}, d.TreeChecks())
+			assert.Empty(t, Decl{}.TreeChecks())
+		})
+	})
+}

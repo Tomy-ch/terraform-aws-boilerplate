@@ -226,11 +226,15 @@ func (d wfDoc) event(name string) (wfEvent, bool) {
 // get は、job の直下の key の node と値の node を返します。
 func (j wfJob) get(key string) (*yaml.Node, *yaml.Node) { return lookup(j.node, key) }
 
-// treeChecks は、線の検証が呼ぶ検査（scope が tree で required のもの）を宣言の順に返します。
+// treeChecks は、線の検証が呼ぶ検査を宣言の順に返します。どれを呼ぶかは checksdecl の TreeChecks が決めます。
 func treeChecks(d checksdecl.Decl) []checksdecl.Check {
+	names := map[string]bool{}
+	for _, n := range d.TreeChecks() {
+		names[n] = true
+	}
 	var out []checksdecl.Check
 	for _, c := range d.Checks {
-		if c.Scope == checksdecl.ScopeTree && c.IsRequired() {
+		if names[c.Name] {
 			out = append(out, c)
 		}
 	}

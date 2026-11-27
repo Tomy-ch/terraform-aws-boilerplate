@@ -293,6 +293,9 @@ func Test_treeChecks(t *testing.T) {
 		declCheck("opt", "opt.yaml", checksdecl.ScopeTree, false),
 		declCheck("t2", "t2.yaml", checksdecl.ScopeTree, true),
 	}}
+	plan := declCheck("plan", "plan.yaml", checksdecl.ScopeTree, true)
+	plan.PlanEnv = "admin"
+	d.Checks = append(d.Checks, plan)
 	got := treeChecks(d)
 	require.Len(t, got, 2)
 	assert.Equal(t, "t1", got[0].Name)

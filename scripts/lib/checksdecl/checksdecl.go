@@ -124,6 +124,19 @@ const CallerPrefix = "call-"
 // CallerJob は、検査 name を呼ぶ caller の job の id を返す。
 func CallerJob(name string) string { return CallerPrefix + name }
 
+// TreeChecks は、線の検証が走らせる検査（scope が tree で required、かつ plan_env を持たないもの）の名前を宣言の
+// 順に返す。plan は AWS の状態に依り、木だけでは決まらない（ADR-0603 決定13）うえ、Pull Request でだけ走る
+// （ADR-0602 決定14）。デプロイブランチへ入る木の plan は、その ruleset が直接 required とする。
+func (d Decl) TreeChecks() []string {
+	var out []string
+	for _, c := range d.Checks {
+		if c.Scope == ScopeTree && c.IsRequired() && c.PlanEnv == "" {
+			out = append(out, c.Name)
+		}
+	}
+	return out
+}
+
 // JoinNames は、名前を報告のために繋ぐ。
 func JoinNames(names []string) string { return strings.Join(names, ", ") }
 

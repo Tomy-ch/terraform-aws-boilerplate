@@ -128,16 +128,8 @@ func judgePR(d checksdecl.Decl, should []string, needs map[string]need) ([]row, 
 	return rows, nil
 }
 
-// treeChecks は、線の検証が走らせる検査（scope が tree で required のもの）の名前を宣言の順に返す。
-func treeChecks(d checksdecl.Decl) []string {
-	var out []string
-	for _, c := range d.Checks {
-		if c.Scope == checksdecl.ScopeTree && c.IsRequired() {
-			out = append(out, c.Name)
-		}
-	}
-	return out
-}
+// treeChecks は、線の検証が走らせる検査の名前を返す。どれを走らせるかは checksdecl の TreeChecks が決める。
+func treeChecks(d checksdecl.Decl) []string { return d.TreeChecks() }
 
 // judgeLine は、線の検証の判定。needs の集合が treeChecks と一致し、すべて success のときだけ合格する。
 func judgeLine(d checksdecl.Decl, needs map[string]need) ([]row, error) {

@@ -178,6 +178,14 @@ func Test_judgeLine(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
+		t.Run("plan_env を持つ検査は線の検証に数えない", func(t *testing.T) {
+			t.Parallel()
+			d := judgeDecl()
+			d.Checks = append(d.Checks, checksdecl.Check{Name: "plan", Paths: []string{}, Scope: checksdecl.ScopeTree, Required: boolp(true), PlanEnv: "admin", Contexts: []string{"plan-admin"}})
+			_, err := judgeLine(d, map[string]need{"call-a": {Result: "success"}, "call-b": {Result: "success"}})
+			require.NoError(t, err)
+		})
+
 		t.Run("木の検査がすべて success なら合格", func(t *testing.T) {
 			t.Parallel()
 			rows, err := judgeLine(judgeDecl(), map[string]need{"call-a": {Result: "success"}, "call-b": {Result: "success"}})
