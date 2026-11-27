@@ -41,6 +41,8 @@ type check struct {
 	PlanEnv  string   `json:"plan_env,omitempty"`
 	// Bases は、その検査が走る Pull Request の base の役割（line・deploy）。無ければ両方で走る。
 	Bases []string `json:"bases,omitempty"`
+	// Contexts は、plan_env を持つ検査が、その env のデプロイブランチの ruleset で直接 required とする context。
+	Contexts []string `json:"contexts,omitempty"`
 }
 
 type decl struct {
@@ -84,6 +86,8 @@ func parseDecl(raw []byte) (decl, error) {
 			return decl{}, at("required がありません")
 		case c.PlanEnv != "" && !envRe.MatchString(c.PlanEnv):
 			return decl{}, at("plan_env の形が誤っています")
+		case (c.PlanEnv == "") != (len(c.Contexts) == 0):
+			return decl{}, at("contexts は plan_env を持つ検査にだけ、1つ以上置きます")
 		case c.Bases != nil && !validBases(c.Bases):
 			return decl{}, at("bases は %q と %q の重複の無い空でない配列にします", baseLine, baseDeploy)
 		}

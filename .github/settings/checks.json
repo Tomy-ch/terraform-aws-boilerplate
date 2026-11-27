@@ -245,7 +245,11 @@
       ],
       "scope": "tree",
       "required": true,
-      "plan_env": "admin"
+      "plan_env": "admin",
+      "contexts": [
+        "plan-admin-identity",
+        "plan-admin-workload"
+      ]
     },
     {
       "name": "checkov",

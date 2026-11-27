@@ -29,7 +29,7 @@ func Test_selectChecks(t *testing.T) {
 	d := decl{Checks: []check{
 		{Name: "always", Paths: []string{}, Scope: scopeChange, Required: boolp(true)},
 		{Name: "go", Paths: []string{"**/*.go"}, Scope: scopeTree, Required: boolp(true)},
-		{Name: "plan", Paths: []string{"env/**"}, Scope: scopeTree, Required: boolp(true), PlanEnv: "admin"},
+		{Name: "plan", Paths: []string{"env/**"}, Scope: scopeTree, Required: boolp(true), PlanEnv: "admin", Contexts: []string{"plan-admin"}},
 		{Name: "release", Paths: []string{}, Scope: scopeTree, Required: boolp(false), Bases: []string{baseDeploy}},
 	}}
 
@@ -76,7 +76,7 @@ func Test_selectChecks(t *testing.T) {
 
 		t.Run("plan_env の env を持つデプロイブランチが無ければ誤りにする", func(t *testing.T) {
 			t.Parallel()
-			bad := decl{Checks: []check{{Name: "plan", Paths: []string{}, Scope: scopeTree, Required: boolp(true), PlanEnv: "security"}}}
+			bad := decl{Checks: []check{{Name: "plan", Paths: []string{}, Scope: scopeTree, Required: boolp(true), PlanEnv: "security", Contexts: []string{"plan-security"}}}}
 			_, err := selectChecks(bad, nil, "release/v0.2.0", testBranches())
 			require.ErrorIs(t, err, errPlanEnv)
 		})

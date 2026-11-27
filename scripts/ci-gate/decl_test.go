@@ -33,18 +33,20 @@ func Test_parseDecl(t *testing.T) {
 		t.Parallel()
 
 		for name, body := range map[string]string{
-			"JSON として読めない":        `{"checks": [`,
-			"未知のキー":               `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true, "x": 1}]}`,
-			"name が規則に合わない":       `{"checks": [{"name": "A", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true}]}`,
-			"name の重複":            `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true}, {"name": "a", "workflow": "b.yaml", "paths": [], "scope": "tree", "required": true}]}`,
-			"workflow が yaml でない": `{"checks": [{"name": "a", "workflow": "a.yml", "paths": [], "scope": "tree", "required": true}]}`,
-			"paths が無い":           `{"checks": [{"name": "a", "workflow": "a.yaml", "scope": "tree", "required": true}]}`,
-			"scope が未知":           `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "x", "required": true}]}`,
-			"required が無い":        `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree"}]}`,
-			"plan_env の形が誤り":      `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true, "plan_env": "A B"}]}`,
-			"path を解釈できない":        `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": ["!x"], "scope": "tree", "required": true}]}`,
-			"bases が未知":           `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true, "bases": ["x"]}]}`,
-			"宣言のあとに値がある":          `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true}]} {}`,
+			"JSON として読めない":            `{"checks": [`,
+			"未知のキー":                   `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true, "x": 1}]}`,
+			"name が規則に合わない":           `{"checks": [{"name": "A", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true}]}`,
+			"name の重複":                `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true}, {"name": "a", "workflow": "b.yaml", "paths": [], "scope": "tree", "required": true}]}`,
+			"workflow が yaml でない":     `{"checks": [{"name": "a", "workflow": "a.yml", "paths": [], "scope": "tree", "required": true}]}`,
+			"paths が無い":               `{"checks": [{"name": "a", "workflow": "a.yaml", "scope": "tree", "required": true}]}`,
+			"scope が未知":               `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "x", "required": true}]}`,
+			"required が無い":            `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree"}]}`,
+			"plan_env の形が誤り":          `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true, "plan_env": "A B"}]}`,
+			"path を解釈できない":            `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": ["!x"], "scope": "tree", "required": true}]}`,
+			"plan_env に contexts が無い": `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true, "plan_env": "admin"}]}`,
+			"plan_env が無いのに contexts": `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true, "contexts": ["x"]}]}`,
+			"bases が未知":               `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true, "bases": ["x"]}]}`,
+			"宣言のあとに値がある":              `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true}]} {}`,
 		} {
 			t.Run(name+"なら誤りにする", func(t *testing.T) {
 				t.Parallel()
