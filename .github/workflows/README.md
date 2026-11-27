@@ -600,8 +600,10 @@ Go には `min-release-age` に相当するものが無い。`go get` に「新�
 
 緊急の迂回は [`go-cooldown-bypass.toml`](../go-cooldown-bypass.toml) が持ち、全エントリが期限を持つ
 （[ADR-0702](../../docs/adr/0702-repository-operations-substrate.md) 決定18）。期限は `go.mod` が
-変わらなくても訪れる。**だからスケジュール実行が要る** —— Pull Request の起動だけでは、期限が切れる
-瞬間を誰も見ない。
+変わらなくても訪れる。**だからスケジュール実行が要る** —— Pull Request の gate が落とすバイパスの違反は、
+変更が触れた require に掛かるエントリと、変更が足すか書き換えたエントリのものに限る。日付が進んだだけの
+期限切れで全 Pull Request を落とさないためである（[ADR-0603](../../docs/adr/0603-branch-protection-and-required-checks.md)
+決定11）。それを落とすのはスケジュール実行の audit である。
 
 ## ランナーの封じ込め
 
