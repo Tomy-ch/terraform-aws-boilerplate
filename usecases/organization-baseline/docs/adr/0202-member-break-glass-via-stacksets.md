@@ -9,7 +9,7 @@
 
 repository-wide/ADR-0301 (least-privilege-policy) 決定19 は、すべてのアカウントに break-glass の role を置き、その信頼条件を管理アカウントの break-glass の user と MFA に限ると決めている。organization-baseline/ADR-0201 は管理アカウントの側を決め、メンバーアカウントの role の置き方は、それを配る変更が決めるとした。
 
-メンバーアカウントは、この usecase が組織を作った後に作られる。管理アカウントの identity root は管理アカウントの provider だけを持ち、メンバーアカウントへ届く provider を持たない（organization-baseline/ADR-0001）。
+メンバーアカウントは、この usecase が組織を作った後に作られる。管理アカウントの identity root がメンバーアカウントへ届く provider を持つのは、そのアカウントの立ち上げの間だけである（repository-wide/ADR-0604 決定6）。break-glass の role は、立ち上げの外でもすべてのメンバーアカウントに要る。
 
 Well-Architected（2026-11-16 の版）の FND05-BP02 は、メンバーアカウントの break-glass の role を CloudFormation StackSets で配り、その role の変更を SCP で拒むことを勧める。Security Hub の FSBP の CloudFormation.4 は、stack に service role が付いていることを求め、service-managed の StackSet が作る stack を必ず FAILED にする（コントロールの文書の原文）。
 
@@ -27,10 +27,10 @@ service-managed の StackSet は、組織への信頼アクセスを CloudFormat
 8. FSBP の CloudFormation.4 から外れる（repository-wide/ADR-0207 決定11 の記録）。
    - 外れる推奨: FSBP の CloudFormation.4（stack に service role が付いていること）
    - 理由: service-managed の StackSet が作る stack は、service role を持てない。コントロールの文書は、この stack を必ず FAILED にすると述べる
-   - ユースケース上の制約: 管理アカウントの identity root は、メンバーアカウントへ届く provider を持たない（organization-baseline/ADR-0001）。メンバーへ resource を置く経路は StackSets だけである
+   - ユースケース上の制約: 管理アカウントの identity root がメンバーアカウントへ届く provider を持つのは、そのアカウントの立ち上げの間だけである（repository-wide/ADR-0604 決定6）。break-glass の role は立ち上げの外でもすべてのメンバーアカウントに要るので、管理アカウントの StackSet で置く
    - 影響: security は、すべてのメンバーアカウントで break-glass の stack が CloudFormation.4 の FAILED になる（Security Hub での抑止はこの usecase で行わない。検出結果の抑止は、それを持つ変更が決める）。stack の権限は CloudFormation の service role ではなく StackSets の実行の role が持つ。availability と cost への影響は無い
    - 代替案: 管理アカウントの外の provider（メンバーごとの alias）で role を作る。採らない理由は「検討した代替案」に在る
-   - 見直し条件: StackSets の service-managed の stack が service role を持てるようになったとき。メンバーアカウントへ届く provider を、この root が持つと決めたとき
+   - 見直し条件: StackSets の service-managed の stack が service role を持てるようになったとき。メンバーアカウントへ届く provider を、立ち上げの外でもこの root が持つと決めたとき
 
 ## ネイティブ統合で解けない理由
 

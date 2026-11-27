@@ -1,14 +1,15 @@
 ## organization-baseline の手順書（docs/setup/organization-baseline.md）の、人が実行する確認と手順の実行
 ## （.makefiles/README.md の `setup/`、ADR-0702 決定26・27）。
-## 端末からの入力を読むので、ホストで起動する（ADR-0504 決定1・3）。
 
 SETUP_USECASE = usecases/organization-baseline
 
-# PROFILE・MEMBER_ENV・IDC_USER は人が渡す値なので、レシピの本文に埋めず、字面のまま環境変数で渡す。本文に埋めると、
-# 値の中の空白や `;` が、外した資格情報の変数を足し直す引数や別のコマンドとして読まれる。
+# 人が渡す値はレシピの本文に埋めず、字面のまま環境変数で渡す。本文に埋めると、値の中の空白や `;` が、
+# 外した資格情報の変数を足し直す引数や別のコマンドとして読まれる。
 setup-organization-baseline-%: export SETUP_PROFILE = $(call literal_value,PROFILE)
 setup-organization-baseline-%: export SETUP_MEMBER_ENV = $(call literal_value,MEMBER_ENV)
 setup-organization-baseline-%: export SETUP_IDC_USER = $(call literal_value,IDC_USER)
+setup-organization-baseline-%: export SETUP_ENVIRONMENTS = $(call literal_value,ENVIRONMENTS)
+setup-organization-baseline-%: export SETUP_REPO = $(call literal_value,REPO)
 
 # $(1)=入口 $(2)=入口に足す引数
 define SETUP_RUN
@@ -82,3 +83,7 @@ setup-organization-baseline-break-glass-check:
 .PHONY: setup-organization-baseline-break-glass-usage-check ## 3.6 の忘れ: break-glass の user のサインインと role の引き受けが45日以内である（PROFILE=<profile>）
 setup-organization-baseline-break-glass-usage-check:
 	$(call SETUP_RUN,break-glass-usage-check,-usecase "$(SETUP_USECASE)")
+
+.PHONY: setup-organization-baseline-member-env-secrets ## メンバーの立ち上げ: メンバーの environment に secret AWS_ACCOUNT_ID（組織の <project>-<env> のアカウントの ID）を置く。在れば書かない（PROFILE=<管理アカウントの profile> ENVIRONMENTS=<env>[,<env>...] REPO=<owner>/<repo>、置き直すなら REPLACE=1）
+setup-organization-baseline-member-env-secrets:
+	$(call SETUP_RUN,member-env-secrets,-environments "$$SETUP_ENVIRONMENTS" -repo "$$SETUP_REPO"$(if $(REPLACE),$(if $(filter 1,$(REPLACE)), -replace,$(error REPLACE は 1 のときだけ効きます))))

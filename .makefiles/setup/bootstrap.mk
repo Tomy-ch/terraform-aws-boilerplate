@@ -1,6 +1,5 @@
 ## bootstrap の手順書（docs/setup/bootstrap.md）の、人が実行する手順の実行（.makefiles/README.md の `setup/`、
 ## ADR-0702 決定26・27）。資格情報は bootstrap の一時 IAM user の profile（TF_LOCAL_PROFILE）で、組織より前に行う。
-## 端末からの入力を読むので、ホストで起動する（ADR-0504 決定1・3）。
 
 # ENVIRONMENTS・REPO は人が渡す値（.makefiles/README.md の `setup/`）。
 setup-bootstrap-%: export SETUP_ENVIRONMENTS = $(call literal_value,ENVIRONMENTS)
@@ -19,6 +18,6 @@ setup-bootstrap-contacts:
 setup-bootstrap-anomaly-tag:
 	$(call SETUP_BOOTSTRAP_RUN,bootstrap-anomaly-tag,)
 
-.PHONY: setup-bootstrap-env-secrets ## 段4・段5: environment に secret AWS_ACCOUNT_ID（管理アカウントの ID）を置く。在れば書かない（ENVIRONMENTS=<env>[,<env>...] REPO=<owner>/<repo>、置き直すなら REPLACE=1）
+.PHONY: setup-bootstrap-env-secrets ## 段4・段5: admin の environment に secret AWS_ACCOUNT_ID（資格情報のアカウントの ID）を置く。在れば書かない（ENVIRONMENTS=<env>[,<env>...] REPO=<owner>/<repo>、置き直すなら REPLACE=1）
 setup-bootstrap-env-secrets:
 	$(call SETUP_BOOTSTRAP_RUN,bootstrap-env-secrets,-environments "$$SETUP_ENVIRONMENTS" -repo "$$SETUP_REPO"$(if $(REPLACE),$(if $(filter 1,$(REPLACE)), -replace,$(error REPLACE は 1 のときだけ効きます))))

@@ -42,3 +42,88 @@ module "organization_baseline" {
   # 立ち上げを終えたアカウントを外す PR で、OrganizationAccountAccessRole が使えなくなる（docs/setup/organization-baseline.md）。
   bootstrapping = ["security", "log-archive"]
 }
+
+module "state_backend_security" {
+  source = "../../../usecases/state-backend"
+  providers = {
+    aws = aws.security
+  }
+
+  project                                 = "tabp"
+  env                                     = "security"
+  state_noncurrent_version_retention_days = 90
+  ci_role_arns = {
+    plan            = module.deployment_identity_security.plan_role_arn
+    apply           = module.deployment_identity_security.apply_role_arn
+    apply_identity  = module.deployment_identity_security.apply_identity_role_arn
+    unlock_identity = module.deployment_identity_security.unlock_identity_role_arn
+    unlock          = module.deployment_identity_security.unlock_role_arn
+  }
+}
+
+module "deployment_identity_security" {
+  source = "../../../usecases/deployment-identity"
+  providers = {
+    aws = aws.security
+  }
+
+  project = "tabp"
+  env     = "security"
+  github = {
+    owner         = "Tomy-ch"
+    owner_id      = "182787471"
+    repository    = "terraform-aws-boilerplate"
+    repository_id = "1370808564"
+  }
+  state_bucket_arn        = module.state_backend_security.bucket_arn
+  state_key_arn           = module.state_backend_security.state_key_arn
+  plan_output_bucket_arn  = module.state_backend_security.plan_output_bucket_arn
+  apply_output_bucket_arn = module.state_backend_security.apply_output_bucket_arn
+  break_glass_arns        = [local.member_break_glass_arns["security"]]
+}
+
+module "state_backend_log_archive" {
+  source = "../../../usecases/state-backend"
+  providers = {
+    aws = aws.log_archive
+  }
+
+  project                                 = "tabp"
+  env                                     = "log-archive"
+  state_noncurrent_version_retention_days = 90
+  ci_role_arns = {
+    plan            = module.deployment_identity_log_archive.plan_role_arn
+    apply           = module.deployment_identity_log_archive.apply_role_arn
+    apply_identity  = module.deployment_identity_log_archive.apply_identity_role_arn
+    unlock_identity = module.deployment_identity_log_archive.unlock_identity_role_arn
+    unlock          = module.deployment_identity_log_archive.unlock_role_arn
+  }
+}
+
+module "deployment_identity_log_archive" {
+  source = "../../../usecases/deployment-identity"
+  providers = {
+    aws = aws.log_archive
+  }
+
+  project = "tabp"
+  env     = "log-archive"
+  github = {
+    owner         = "Tomy-ch"
+    owner_id      = "182787471"
+    repository    = "terraform-aws-boilerplate"
+    repository_id = "1370808564"
+  }
+  state_bucket_arn        = module.state_backend_log_archive.bucket_arn
+  state_key_arn           = module.state_backend_log_archive.state_key_arn
+  plan_output_bucket_arn  = module.state_backend_log_archive.plan_output_bucket_arn
+  apply_output_bucket_arn = module.state_backend_log_archive.apply_output_bucket_arn
+  break_glass_arns        = [local.member_break_glass_arns["log-archive"]]
+}
+
+locals {
+  member_break_glass_arns = {
+    for env, id in module.organization_baseline.bootstrapping_account_ids :
+    env => "arn:${data.aws_partition.current.partition}:iam::${id}:role${module.organization_baseline.member_break_glass_role.path}${module.organization_baseline.member_break_glass_role.name}"
+  }
+}

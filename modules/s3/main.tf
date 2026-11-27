@@ -10,6 +10,7 @@ data "aws_partition" "current" {}
 
 locals {
   bucket_name = "${var.name}-${data.aws_caller_identity.current.account_id}-${data.aws_region.current.region}-an"
+  bucket_arn  = "arn:${data.aws_partition.current.partition}:s3:::${local.bucket_name}"
 }
 
 # 版管理は aws_s3_bucket_versioning.this が有効にする。このルールは非推奨の inline の versioning しか認めない。撤回: ルールが分離した resource を認めたとき。

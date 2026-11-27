@@ -118,7 +118,7 @@ func fixtureFiles(usecaseMain, ouMain, accounts string) map[string]string {
 	}
 }
 
-const environmentsJSON = `[{"name":"admin-plan"},{"name":"admin-apply"},{"name":"admin-unlock"}]`
+const environmentsJSON = `[{"name":"admin-plan"},{"name":"admin-apply"},{"name":"admin-unlock"},{"name":"security-plan"},{"name":"copilot"}]`
 
 // fakeGH は、gh の偽物。応答は引数を空白で繋いだもので引き、標準入力を stdins に覚える。after は secret set の
 // 引数の列ごとの、成功した後の応答。引けない呼び出しはテストを落とす。

@@ -49,17 +49,23 @@ run "bucket_name_output_matches_bucket" {
   }
 }
 
-# ARN は plan では決まらないので、mock の apply で確かめる。
+# computed の arn に別の値を与えても、出力は名前から組んだ ARN を返し、Bucket を作る plan で決まる。
 run "bucket_arn_output" {
-  command = apply
+  command = plan
 
   variables {
     name = "tabp-mgmt-tfstate"
   }
 
+  override_resource {
+    target          = aws_s3_bucket.this
+    override_during = plan
+    values          = { arn = "arn:aws:s3:::other" }
+  }
+
   assert {
-    condition     = output.bucket_arn == aws_s3_bucket.this.arn
-    error_message = "bucket_arn が Bucket の ARN を返していません。"
+    condition     = output.bucket_arn == "arn:aws:s3:::${aws_s3_bucket.this.bucket}"
+    error_message = "bucket_arn が、Bucket の名前から組んだ ARN を返していません。"
   }
 }
 

@@ -27,12 +27,13 @@
 //	break-glass-login      3.4 手順1: パスワードの無い break-glass の user に、伏せて打ち込んだパスワードを置く（-usecase）
 //	break-glass-check      3.4 の確認: パスワードと FIDO の MFA だけが在り、アクセスキーが無く、password policy が宣言どおり（-usecase）
 //	break-glass-usage-check 3.6 の忘れ: break-glass の user のサインインと role の引き受けが45日以内（-usecase）
+//	member-env-secrets     メンバーの立ち上げ: メンバーの environment に secret AWS_ACCOUNT_ID（組織の <project>-<env> のアカウントの ID）を gh で置く（-environments・-repo。在れば -replace のときだけ置き直す）
 //
 // 入口（bootstrap の手順書。資格情報は bootstrap の一時 IAM user）:
 //
 //	bootstrap-contacts     2-1: 主の連絡先と、BILLING・OPERATIONS・SECURITY の代替連絡先を置く
 //	bootstrap-anomaly-tag  2-4: AWS services monitor とその subscription に tag <project>:bootstrap を付ける
-//	bootstrap-env-secrets  段4・段5: environment に secret AWS_ACCOUNT_ID を gh で置く（-environments・-repo。在れば -replace のときだけ置き直す）
+//	bootstrap-env-secrets  段4・段5: admin の environment に secret AWS_ACCOUNT_ID を gh で置く（-environments・-repo。在れば -replace のときだけ置き直す）
 //
 // 入口（ops-notification の手順書。-env はそのアカウントの env、-region はその workload root の provider の region、
 // -usecase は usecases/ops-notification）:
@@ -241,7 +242,13 @@ var entries = map[string]entry{
 	"bootstrap-env-secrets": {
 		writes: []string{"gh secret set"}, bootstrap: true, needsEnvironments: true,
 		run: func(o options, c *client, t *terminal, _ organization) error {
-			return setEnvSecrets(o, c, t, o.gh)
+			return setEnvSecrets(o, c, t, o.gh, false)
+		},
+	},
+	"member-env-secrets": {
+		writes: []string{"gh secret set"}, needsEnvironments: true,
+		run: func(o options, c *client, t *terminal, _ organization) error {
+			return setEnvSecrets(o, c, t, o.gh, true)
 		},
 	},
 	"break-glass-usage-check": {
@@ -479,9 +486,9 @@ func parseArgs(args []string) (options, entry, error) {
 	case e.needsZone != (o.zone != ""):
 		return options{}, entry{}, xerrors.Wrap(errUsage, "-zone は dns- の入口にだけ渡します")
 	case e.needsEnvironments != (o.environments != ""), e.needsEnvironments != (o.repo != ""):
-		return options{}, entry{}, xerrors.Wrap(errUsage, "-environments と -repo は bootstrap-env-secrets にだけ、両方を渡します")
+		return options{}, entry{}, xerrors.Wrap(errUsage, "-environments と -repo は bootstrap-env-secrets と member-env-secrets にだけ、両方を渡します")
 	case o.replace && !e.needsEnvironments:
-		return options{}, entry{}, xerrors.Wrap(errUsage, "-replace は bootstrap-env-secrets にだけ渡します")
+		return options{}, entry{}, xerrors.Wrap(errUsage, "-replace は bootstrap-env-secrets と member-env-secrets にだけ渡します")
 	case o.showIDs && !e.ids:
 		return options{}, entry{}, xerrors.Wrap(errUsage, "-ids は member-accounts-check と dns-delegation-values にだけ渡します")
 	}
