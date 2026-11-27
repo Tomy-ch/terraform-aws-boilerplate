@@ -258,7 +258,6 @@ test_violation_plan_role_read_not_covered if {
 managed_address := "module.d.aws_iam_policy.governance_read[0]"
 
 with_managed := object.union(decl, {
-	"documents": {"aws_iam_role_policy": ["policy"], "aws_iam_policy": ["policy"]},
 	"organization_baseline": object.union(decl.organization_baseline, {"bootstrap_read": object.union(decl.organization_baseline.bootstrap_read, {"plan_managed_policies": [managed_address]})}),
 })
 
@@ -270,7 +269,8 @@ inline_without_organization := plan_role([
 ])
 
 managed_messages(policy) := msgs if {
-	msgs := p.deny with input as fixture.plan(array.concat(rcs(stack_set_with({}, properties([trust], [read])), instances_with(root_target), valid_bootstrap_scp, protect(pattern), inline_without_organization), [policy])) with data.policy_plan as with_managed
+	rs := array.concat(rcs(stack_set_with({}, properties([trust], [read])), instances_with(root_target), valid_bootstrap_scp, protect(pattern), inline_without_organization), [policy])
+	msgs := p.deny with input as array.concat(fixture.plan(rs), member_files(member_sb, member_di)) with data.policy_plan as with_managed
 }
 
 test_pass_management_only_in_managed_policy if {
@@ -280,13 +280,13 @@ test_pass_management_only_in_managed_policy if {
 test_violation_managed_policy_read_not_covered if {
 	m := managed_policy([
 		{"Sid": "ReadOrganization", "Effect": "Allow", "Action": "organizations:DescribeOrganization", "Resource": "*"},
-		{"Sid": "ReadSlr", "Effect": "Allow", "Action": "iam:GetRole", "Resource": "*"},
+		{"Sid": "ReadPolicies", "Effect": "Allow", "Action": "iam:GetPolicy", "Resource": "*"},
 	])
-	fixture.has("[PLAN-BR-04] plan の role の iam:getrole", managed_messages(m))
+	fixture.has("[PLAN-BR-04] plan の role の iam:getpolicy", managed_messages(m))
 }
 
 test_violation_managed_policy_missing if {
-	msgs := p.deny with input as fixture.plan(rcs(stack_set_with({}, properties([trust], [read])), instances_with(root_target), valid_bootstrap_scp, protect(pattern), valid_plan_role)) with data.policy_plan as with_managed
+	msgs := p.deny with input as array.concat(fixture.plan(valid_rcs), member_files(member_sb, member_di)) with data.policy_plan as with_managed
 	fixture.has("[PLAN-BR-00] 宣言 plan_managed_policies の module.d.aws_iam_policy.governance_read[0]", msgs)
 }
 
