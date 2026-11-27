@@ -6,6 +6,8 @@
 
 - メンバーの provider は、apply-identity の role の session では `OrganizationAccountAccessRole` を、それ以外の session では立ち上げの読み取りの role（`/bootstrap/<project>-bootstrap-read`）を引き受ける
 - 立ち上げの中のアカウントは、`env/admin/identity/main.tf` の `bootstrapping` にあるものだけである。外したアカウントでは、SCP（`deny-bootstrap-role`）と管理アカウントの IAM の Allow の両方から引き受けが消える
+- デプロイブランチ `<env>` と environment は、`env/<env>/` の root とその apply の job が在るまで、CI の role の信頼条件の宛先であるだけで、merge しても何も apply しない
+- 立ち上げの module が `env/admin/identity` に在る間は、新しいリポジトリの bootstrap の段2-4 を行えない（[`bootstrap.md`](bootstrap.md) の 2-5）
 
 | 実施者 | 担当 |
 | --- | --- |
@@ -42,3 +44,14 @@
 1. 昇格の apply の job が成功したことを確かめる
 2. `make setup-organization-baseline-stack-instances-check PROFILE=<管理アカウントの profile>` で、立ち上げの読み取りの StackSet の stack instance が、立ち上げの中のアカウントで `CURRENT` であることを確かめる
 3. 次の Pull Request の CI の `plan-admin-identity` が変更を示さないことを確かめ、Pull Request に書く
+
+### 3.3 立ち上げを閉じる
+
+メンバーアカウントの identity root（`env/<env>/identity`）が、そのアカウントの `state-backend`・`deployment-identity` を `import` block で取り込み、その root の CI の plan が変更なしを示した後に行う（[ADR-0604](../adr/0604-state-split-by-apply-role.md) 決定6）。
+
+1. 1つの Pull Request で、`env/admin/identity` の次を同時に変える。`bootstrapping` から外すだけでは、provider と module が外したアカウントの ID を読めず、identity root の plan が落ちる
+   - `bootstrapping` からそのアカウントの env を外す
+   - そのアカウントの `module.state_backend_<env>`・`module.deployment_identity_<env>` を、`removed` block（`destroy = false`）に替える
+   - そのアカウントの provider を消す
+   - [`scripts/check-plan-bootstrapping.expected`](scripts/check-plan-bootstrapping.expected) から、そのアカウントの行を消す。立ち上げの中のアカウントが無くなれば、ファイルごと消す
+2. その Pull Request の CI の `plan-admin-identity` が、そのアカウントの resource の削除を示さないことを確かめ、Pull Request に書く
