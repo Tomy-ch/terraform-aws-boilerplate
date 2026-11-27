@@ -43,6 +43,7 @@
 - 2-2 の結果と 2-4 は翌日以降に揃う。待つ間に段1 へ進んでよい。2-4 は、管理アカウントの workload root に finops を置く apply より前に済ませる
 - 一時 IAM user は段5 の成功まで削除しない
 - 段5 の後、[organization-baseline 手順書](organization-baseline.md) の 3.2 以降を行う
+- メンバーアカウントの `state-backend`・`deployment-identity` は、[メンバーアカウントの立ち上げ 手順書](member-bootstrap.md) が置く
 
 ## 4. 手順
 

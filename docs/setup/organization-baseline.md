@@ -146,4 +146,4 @@ declarative policy は、付ける前に account status report で影響を見�
 
 メールを変えるときは、`make setup-organization-baseline-member-email-update PROFILE=<管理アカウントの profile> MEMBER_ENV=<env>` を実行する。AWS の側で先に変え（新しいメールに届く確認コードを入力する）、その後に parameter を同じ値に合わせる。parameter だけを変えると、plan が作り直しを求め、`prevent_destroy` で止まる。`make setup-organization-baseline-member-emails` は、在るアカウントのメールを変える入力を拒む。
 
-立ち上げを終えたアカウントは、`env/admin/identity/main.tf` の `bootstrapping` から外す Pull Request で閉じる。外したアカウントには `deny-bootstrap-role` が付き、`OrganizationAccountAccessRole` が使えなくなる。
+作ったアカウントの立ち上げは [メンバーアカウントの立ち上げ 手順書](member-bootstrap.md) が持つ。立ち上げを終えたアカウントは、`env/admin/identity/main.tf` の `bootstrapping` から外す Pull Request で閉じる。外したアカウントには `deny-bootstrap-role` が付き、`OrganizationAccountAccessRole` が使えなくなる。
