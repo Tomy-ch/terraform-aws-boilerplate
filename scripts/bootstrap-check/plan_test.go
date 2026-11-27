@@ -1027,3 +1027,58 @@ func Test_compare(t *testing.T) {
 		assert.Contains(t, out, "NG  余剰  unknown(read) b\n")
 	})
 }
+
+func Test_withBootstrapping(t *testing.T) {
+	t.Parallel()
+
+	t.Run("足した行を整列して返す", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		d := osDepsExpected("", filepath.Join(dir, "e"))
+		d.bootstrapping = write(t, dir, "b", "# 立ち上げ\nadd c.z\nadd a.a\n")
+		got, err := withBootstrapping([]string{"add b.y", "import d.w"}, d)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"add a.a", "add b.y", "add c.z", "import d.w"}, got)
+	})
+
+	t.Run("ファイルが無ければ期待値をそのまま返す", func(t *testing.T) {
+		t.Parallel()
+
+		d := osDepsExpected("", "e")
+		d.bootstrapping = filepath.Join(t.TempDir(), "missing")
+		got, err := withBootstrapping([]string{"add b.y"}, d)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"add b.y"}, got)
+	})
+
+	t.Run("コメントだけなら errExpectedEmpty", func(t *testing.T) {
+		t.Parallel()
+
+		d := osDepsExpected("", "e")
+		d.bootstrapping = write(t, t.TempDir(), "b", "# だけ\n")
+		_, err := withBootstrapping([]string{"add b.y"}, d)
+		require.ErrorIs(t, err, errExpectedEmpty)
+	})
+
+	t.Run("形の崩れた行は、そのファイルを名指しして errExpectedMalformed", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		d := osDepsExpected("", "e")
+		d.bootstrapping = write(t, dir, "b", "create x.y\n")
+		_, err := withBootstrapping([]string{"add b.y"}, d)
+		require.ErrorIs(t, err, errExpectedMalformed)
+		assert.Contains(t, err.Error(), d.bootstrapping+" の 1 行目")
+	})
+
+	t.Run("2つにまたがる重複は、両方を名指しして errExpectedDuplicate", func(t *testing.T) {
+		t.Parallel()
+
+		d := osDepsExpected("", "e")
+		d.bootstrapping = write(t, t.TempDir(), "b", "add b.y\n")
+		_, err := withBootstrapping([]string{"add b.y"}, d)
+		require.ErrorIs(t, err, errExpectedDuplicate)
+		assert.Contains(t, err.Error(), "e と "+d.bootstrapping)
+	})
+}
