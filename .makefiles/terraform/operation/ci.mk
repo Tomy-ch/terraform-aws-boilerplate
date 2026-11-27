@@ -6,7 +6,7 @@
 ## OIDC の token で role を1回だけ assume し、使い捨てのランナーの ~/.aws の profile に置く。後の段は AWS_* を外した
 ## 環境で、その profile だけを使う。plan と apply には、入口の CI_POLICY_NAMESPACES の Policy を掛ける。
 ## 公開されるログに terraform の出力を出さない。全文は plan の出力の Bucket か apply の出力の Bucket に置き、ログには
-## 終了コード・件数・object の key・SHA-256・版 ID と Policy の違反の文だけを出す（ADR-0602 決定13）。
+## 終了コード・件数・object の key・SHA-256・版 ID と、許可の文法に当たる診断の行だけを出す（ADR-0602 決定13）。
 ##
 ## 入力は環境変数で受ける。CI_ACCOUNT_ID（environment の secret）と CI_PR（Pull Request の番号）は workflow が渡し、
 ## GITHUB_RUN_ID・GITHUB_RUN_ATTEMPT・RUNNER_TEMP・GITHUB_STEP_SUMMARY・GITHUB_OUTPUT と OIDC の要求先は

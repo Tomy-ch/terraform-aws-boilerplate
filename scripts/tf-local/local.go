@@ -63,12 +63,14 @@ func command(ctx context.Context, dir string, env []string, step string, _ ...st
 	case stepAssumeRole:
 		cmd = exec.CommandContext(ctx, "aws", "sts", "assume-role-with-web-identity", "--cli-input-json", "file://input.json", "--output", "json")
 	case stepCIInit:
-		cmd = exec.CommandContext(ctx, "terraform", "init", "-input=false", "-no-color", "-lockfile=readonly")
+		cmd = exec.CommandContext(ctx, "terraform", "init", "-input=false", "-no-color", "-json", "-lockfile=readonly")
 	case stepCIPlanNoLock:
-		cmd = exec.CommandContext(ctx, "terraform", "plan", "-lock=false", "-input=false", "-no-color", "-detailed-exitcode")
+		cmd = exec.CommandContext(ctx, "terraform", "plan", "-lock=false", "-input=false", "-no-color", "-json", "-detailed-exitcode")
 	case stepCIPlanLock:
-		cmd = exec.CommandContext(ctx, "terraform", "plan", "-input=false", "-no-color", "-detailed-exitcode")
+		cmd = exec.CommandContext(ctx, "terraform", "plan", "-input=false", "-no-color", "-json", "-detailed-exitcode")
 	case stepCIShow:
+		cmd = exec.CommandContext(ctx, "terraform", "show")
+	case stepCIShowText:
 		cmd = exec.CommandContext(ctx, "terraform", "show")
 	case stepCIApply:
 		cmd = exec.CommandContext(ctx, "terraform", "apply")

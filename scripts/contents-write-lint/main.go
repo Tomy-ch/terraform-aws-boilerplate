@@ -52,8 +52,6 @@ const defaultWorkflowsDir = ".github/workflows"
 var pushEnvKeys = []string{"GH_TOKEN", "REVERT_HEAD", "REVERT_COMMITS", "REVERT_BRANCH"}
 
 var (
-	// contentsKey は contents の権限の行。値が read か none と読めなければ書き込みとして数える —— アンカーやタグ
-	// （`contents: &c write`）を挟んだ値も取りこぼさない。
 	contentsKey = regexp.MustCompile(`(?:^|[\s{,])["']?contents["']?[ \t]*:(.*)$`)
 	tokenDenied = regexp.MustCompile(`^[ \t]*["']?(?:read|none)["']?[ \t]*(?:[,}#].*)?$`)
 	// yamlNode は、アンカー・エイリアス・タグとフロー記法の mapping。別の場所に書いた値や1行に詰めた step を
@@ -249,7 +247,8 @@ func checkNeeds(job workflow.Job, jobs []workflow.Job, finding func(int, string,
 func checkSteps(job workflow.Job, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
 	var findings []lintreport.Finding
 	runs := 0
-	// egress が生成した bullfrog の対の continue-on-error: と if: は見逃す（harden.GeneratedLines。ADR-0702 決定20）。
+	// egress が生成した bullfrog の三つ組の continue-on-error:・if:・run: は見逃し、run: の数にも入れない
+	// （harden.GeneratedLines。ADR-0702 決定20）。
 	generated := harden.GeneratedLines(job)
 	for _, step := range workflow.SplitSteps(job) {
 		inEnv, checkout, persistOff := false, false, false
@@ -272,7 +271,7 @@ func checkSteps(job workflow.Job, finding func(int, string, ...any) lintreport.F
 			if noPersist.MatchString(l.Text) {
 				persistOff = true
 			}
-			if m := stepRun.FindStringSubmatch(l.Text); m != nil {
+			if m := stepRun.FindStringSubmatch(l.Text); m != nil && !generated[l.Number] {
 				runs++
 				if !pushRun.MatchString(m[1]) {
 					findings = append(findings, finding(l.Number, "run: は make ci-revert-push RUNNER_MODE=host だけにしてください"))
@@ -302,11 +301,10 @@ func checkSteps(job workflow.Job, finding func(int, string, ...any) lintreport.F
 	if runs != 1 {
 		findings = append(findings, finding(job.Number, "run: を持つ step をちょうど1つにしてください（%d 件）", runs))
 	}
-	// run: を step の切り出しとは別の経路で数え直す。step として読めない run:（1行に詰めた step など）は、
-	// 上の検査を受けないまま走る。
+	// step として読めない run:（1行に詰めた step など）は、上の検査を受けないまま走る。
 	mentions := 0
 	for _, l := range job.Lines {
-		if !commentLine.MatchString(l.Text) && anyRun.MatchString(l.Text) {
+		if !commentLine.MatchString(l.Text) && !generated[l.Number] && anyRun.MatchString(l.Text) {
 			mentions++
 		}
 	}
@@ -327,7 +325,6 @@ func permissions(lines []workflow.Line, indent string) ([]string, int, bool) {
 			return []string{m[2]}, l.Number, true
 		}
 		var values []string
-		// 空行は block を終わらせない。字下げが戻ったところで終わる。
 		for _, next := range lines[i+1:] {
 			if commentLine.MatchString(next.Text) || strings.TrimSpace(next.Text) == "" {
 				continue
