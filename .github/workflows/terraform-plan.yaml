@@ -510,7 +510,7 @@ jobs:
             scheduler.us-east-1.amazonaws.com
             chatbot.us-west-2.amazonaws.com
 
-      # 失敗にする理由は plan-admin-identity の Refuse untrusted Pull Requests と同じ。
+      # 失敗にする理由は admin-identity の Refuse untrusted Pull Requests と同じ。
       - name: Refuse untrusted Pull Requests
         id: refuse-untrusted
         env:

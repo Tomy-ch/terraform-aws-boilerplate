@@ -61,7 +61,6 @@ const linesFixture = `{
 }
 `
 
-// checksFixture は、env x の plan を2つの context で報告する検査を持つ。
 const checksFixture = `{"checks": [
   {"name": "lint", "workflow": "lint.yaml", "paths": [], "scope": "tree", "required": true},
   {"name": "plan-x", "workflow": "plan.yaml", "paths": [], "scope": "tree", "required": true, "plan_env": "x", "contexts": ["plan-x-identity", "plan-x-workload"]}

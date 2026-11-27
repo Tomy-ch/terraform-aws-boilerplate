@@ -123,7 +123,6 @@ func main() {
 	}
 }
 
-// gitLsFiles は、root で追跡されているファイルの一覧を返します。
 func gitLsFiles(root string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
@@ -142,7 +141,6 @@ func gitLsFiles(root string) ([]string, error) {
 	return files, nil
 }
 
-// run は、サブコマンドを選んで実行します。
 func run(args []string, root string, ds []domain, list func(string) ([]string, error), w io.Writer) error {
 	if len(args) == 0 {
 		return errUsage
@@ -172,7 +170,6 @@ func run(args []string, root string, ds []domain, list func(string) ([]string, e
 	}
 }
 
-// countActions は、manifest が宣言する pin の action の数を返します。
 func countActions(ds []domain) int {
 	n := 0
 	for _, d := range ds {
@@ -421,7 +418,6 @@ func under(path string, prefixes []string) bool {
 	return false
 }
 
-// report は、plan の内容を書き出します。
 func report(w io.Writer, p plan) {
 	fmt.Fprintf(w, "消すパス（%d 件）:\n", len(p.deletes))
 	for _, d := range p.deletes {

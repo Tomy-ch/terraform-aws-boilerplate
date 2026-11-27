@@ -112,8 +112,8 @@ func requiredDeployFrom(name string) (string, bool) {
 	}
 }
 
-// rulesetIncludes は、保護設定の宣言の conditions.ref_name.include に置く値を返します。
-// lines は階層をまたいで保護する。
+// rulesetIncludes は、保護対象の全集合（common の conditions.ref_name.include に置く値）を返します。
+// 線は階層をまたいで保護する。
 func rulesetIncludes(b branches) []string {
 	out := make([]string, 0, len(b.Deploy)+len(b.Lines.Prefixes()))
 	for _, name := range b.DeployNames() {

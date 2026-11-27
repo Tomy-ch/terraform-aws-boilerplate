@@ -92,9 +92,7 @@ jobs:
         id: filter
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
         with:
-          # An empty token selects `git diff` over the compare API. The API refuses a
-          # large diff outright (`this diff is taking too long to generate`), and a filter
-          # that reaches no verdict runs every gated job instead of skipping it.
+          # An empty token selects `git diff` over the compare API, which refuses a large diff.
           token: ''
           filters: |
             relevant:

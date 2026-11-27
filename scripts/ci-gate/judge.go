@@ -24,8 +24,7 @@ func callerJobs(names []string) []string {
 
 var (
 	// errNeeds は、needs の JSON を解釈できないか、宣言と job の集合が食い違うことを表す。
-	errNeeds = xerrors.New("gate が受け取った job の集合が宣言と合いません")
-	// errFailed は、判定が合格でないことを表す。
+	errNeeds  = xerrors.New("gate が受け取った job の集合が宣言と合いません")
 	errFailed = xerrors.New("gate の判定が合格ではありません")
 )
 
@@ -128,7 +127,6 @@ func judgePR(d checksdecl.Decl, should []string, needs map[string]need) ([]row, 
 	return rows, nil
 }
 
-// treeChecks は、線の検証が走らせる検査の名前を返す。どれを走らせるかは checksdecl の TreeChecks が決める。
 func treeChecks(d checksdecl.Decl) []string { return d.TreeChecks() }
 
 // judgeLine は、線の検証の判定。needs の集合が treeChecks と一致し、すべて success のときだけ合格する。

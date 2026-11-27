@@ -42,7 +42,6 @@ type gateInput struct {
 	workflowsDir string
 }
 
-// wfDoc は、YAML として読んだ workflow 1件。
 type wfDoc struct {
 	file   string
 	lines  []string
@@ -51,14 +50,13 @@ type wfDoc struct {
 	jobs   []wfJob
 }
 
-// wfEvent は on: のイベント1つ。value はマッピング記法のときのイベントの値で、ほかの記法では nil。
+// wfEvent は on: のイベント1つ。value はマッピング記法のときだけ入り、ほかの記法では nil。
 type wfEvent struct {
 	name  string
 	line  int
 	value *yaml.Node
 }
 
-// wfJob は jobs: の直下の job 1つ。
 type wfJob struct {
 	id   string
 	line int
@@ -185,7 +183,6 @@ func lookup(m *yaml.Node, key string) (*yaml.Node, *yaml.Node) {
 	return nil, nil
 }
 
-// readEvents は on: の単一値・配列・マッピングの3つの記法を読みます。
 func readEvents(on *yaml.Node) ([]wfEvent, error) {
 	switch on.Kind {
 	case yaml.ScalarNode:
@@ -213,7 +210,6 @@ func readEvents(on *yaml.Node) ([]wfEvent, error) {
 	return nil, xerrors.New("on: の値が単一値・配列・マッピングのどれでもありません")
 }
 
-// event は、名前が name のイベントを返します。
 func (d wfDoc) event(name string) (wfEvent, bool) {
 	for _, e := range d.events {
 		if e.name == name {
@@ -223,7 +219,6 @@ func (d wfDoc) event(name string) (wfEvent, bool) {
 	return wfEvent{}, false
 }
 
-// get は、job の直下の key の node と値の node を返します。
 func (j wfJob) get(key string) (*yaml.Node, *yaml.Node) { return lookup(j.node, key) }
 
 // treeChecks は、線の検証が呼ぶ検査を宣言の順に返します。どれを呼ぶかは checksdecl の TreeChecks が決めます。
@@ -479,8 +474,9 @@ func lineVerifyTriggerFindings(d wfDoc) []lintreport.Finding {
 	return findings
 }
 
-// calledFindings は、検査の宣言が名指す各 workflow を、宣言の順に1度ずつ検査します。古い単一の ruleset の宣言が
-// 在る間は、その context を報告するために pull_request で起動し if: で skip する形が残るので、その2つを課さない。
+// calledFindings は、検査の宣言が名指す各 workflow を、宣言の順に1度ずつ検査します。
+// 役割ごとの ruleset と並べて適用する単一の ruleset の宣言（in.legacy）が在るときは、その context を報告するために
+// pull_request で起動し if: で skip する形が残るので、その2つの違反を課さない（final が偽）。
 func calledFindings(in gateInput, byName map[string]wfDoc, failed map[string]bool) []lintreport.Finding {
 	var findings []lintreport.Finding
 	final := in.legacy == nil
@@ -503,8 +499,8 @@ func calledFindings(in gateInput, byName map[string]wfDoc, failed map[string]boo
 	return findings
 }
 
-// calledWorkflowFindings は、gate が呼ぶ workflow 1つを検査します（決定16・17・19）。final は古い単一の ruleset の
-// 宣言が無いことで、そのとき pull_request での起動と job の if: も違反にする。
+// calledWorkflowFindings は、gate が呼ぶ workflow 1つを検査します（決定16・17・19）。final のときだけ、
+// pull_request での起動と job の if: も違反にする（[calledFindings] が決める）。
 func calledWorkflowFindings(d wfDoc, final bool) []lintreport.Finding {
 	var findings []lintreport.Finding
 	add := func(line int, format string, args ...any) {

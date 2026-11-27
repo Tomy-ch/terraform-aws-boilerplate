@@ -181,9 +181,7 @@ func foreignReporters(checks []any) []string {
 	return out
 }
 
-// requiredRules は、役割ごとに宣言が持たなければならないルール。pull_request・deletion・non_fast_forward は
-// すべての保護対象に重なる common が課し（ADR-0603 決定23・35）、required_status_checks は lines と deploy-* が課す。
-// legacy は1件ですべてを課す。
+// requiredRules は、役割ごとに宣言が持たなければならないルール（ADR-0603 決定23・35）。
 var requiredRules = map[string][]string{
 	roleCommon: {"deletion", "non_fast_forward", "pull_request"},
 	roleLines:  {"required_status_checks"},

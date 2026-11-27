@@ -174,7 +174,7 @@ func writeChanges(output string, should []string, nFiles int, out io.Writer) err
 	return nil
 }
 
-// report は判定の表を out と summary へ全件書き、verdict を返す。行を落とさない（ADR-0702 決定16）。
+// report は判定の表を out と summary へ全件書き、verdict を返す。行を落とさない。
 func report(summary, title string, rows []row, verdict error, out io.Writer) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## %s\n\n| 検査 | 合否に数える | 走るべき | 結果 | 判定 |\n| --- | --- | --- | --- | --- |\n", title)

@@ -660,7 +660,6 @@ func planTriggerAllowed(file string, keys []string) bool {
 	return filepath.Base(file) == deployGateFile && eventsAllowed(keys, kindOf[cientry.Plan])
 }
 
-// reusableCall は、job が job の直下の uses: で reusable workflow を呼ぶとき、その値と行を返します。
 func reusableCall(job workflow.Job) (string, int, bool) {
 	v, at, ok := jobKey(job, "uses")
 	return strings.Trim(v, `"'`), at, ok

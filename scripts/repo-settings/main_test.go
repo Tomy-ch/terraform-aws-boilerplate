@@ -75,7 +75,6 @@ func writeRepo(t *testing.T, common string) string {
 	return root
 }
 
-// liveBody は、宣言 src に、応答にだけ在る id を足した ruleset の実態を返します。
 func liveBody(t *testing.T, src string, id float64) string {
 	t.Helper()
 	var ruleset map[string]any
@@ -86,7 +85,6 @@ func liveBody(t *testing.T, src string, id float64) string {
 	return string(body)
 }
 
-// liveRulesetList は liveRoutes の ruleset の一覧。common が 7、lines が 8、deploy-main が 9。
 const liveRulesetList = `{"id": 7, "name": "common", "source_type": "Repository"}, {"id": 8, "name": "lines", "source_type": "Repository"}, {"id": 9, "name": "deploy-main", "source_type": "Repository"}`
 
 func liveRoutes(t *testing.T) map[string]fakeResponse {

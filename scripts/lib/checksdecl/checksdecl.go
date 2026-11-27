@@ -1,5 +1,5 @@
 // Package checksdecl は、gate が呼ぶ検査と path の対応の宣言（`.github/settings/checks.json`）を読む
-// （ADR-0603 決定17・19・20）。読み手は ci-gate、repo-settings、required-check-lint で、同じ宣言を各々が読むと、
+// （ADR-0603 決定17・19・20）。複数の道具がこの宣言を読む。各々が読むと、
 // 一方だけが読める宣言が生まれ、もう一方は黙って検査の対象を失う。
 package checksdecl
 
@@ -125,8 +125,8 @@ const CallerPrefix = "call-"
 func CallerJob(name string) string { return CallerPrefix + name }
 
 // TreeChecks は、線の検証が走らせる検査（scope が tree で required、かつ plan_env を持たないもの）の名前を宣言の
-// 順に返す。plan は AWS の状態に依り、木だけでは決まらない（ADR-0603 決定13）うえ、Pull Request でだけ走る
-// （ADR-0602 決定14）。デプロイブランチへ入る木の plan は、その ruleset が直接 required とする。
+// 順に返す。plan は AWS の状態に依り、木だけでは決まらない（ADR-0603 決定13）。
+// デプロイブランチへ入る木の plan は、その ruleset が直接 required とする。
 func (d Decl) TreeChecks() []string {
 	var out []string
 	for _, c := range d.Checks {

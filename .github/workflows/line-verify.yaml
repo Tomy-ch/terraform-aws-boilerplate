@@ -150,7 +150,6 @@ jobs:
       pull-requests: write
       security-events: write
 
-  # 取り消されても判定を報告するよう always() で走る。
   line-gate:
     needs:
       - call-actions-lint

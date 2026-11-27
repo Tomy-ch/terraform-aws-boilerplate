@@ -7,8 +7,8 @@ name: Tool Cooldown
 # Transitive dependencies are out of scope, for the same reason `go-cooldown` only gates direct
 # requirements.
 #
-# The window has two tiers (14 days for a GitHub release, 7 for a package registry) and language
-# runtimes are outside every window.
+# The window has two tiers (a GitHub release, a package registry; `windowFor` in `scripts/tool-cooldown`)
+# and language runtimes are outside every window.
 #
 # Short names are resolved by asking `mise registry`, because mise decides which backend a name
 # resolves to and a table kept here would drift silently the next time mise changes.

@@ -2,8 +2,7 @@ name: KICS
 
 # KICS over the Terraform tree, one of the Security layer's gates (ADR-0501 decision 6).
 # Any finding fails regardless of severity; accepted exceptions are file-level
-# `kics-scan disable` comments. The tool runs from its upstream image with the target copied
-# in, not bind-mounted (ADR-0503 決定7; scripts/iac-scan).
+# `kics-scan disable` comments. How the tool is run: ADR-0503 決定7, scripts/iac-scan.
 
 on:
   push:

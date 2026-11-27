@@ -1,8 +1,7 @@
 name: PR Gate
 
-# 保護対象のブランチへ入る Pull Request の検査を、1つの gate が判定する（ADR-0603 決定17・18）。changes が走るべき検査を
-# 決め、call-<name> がそれを reusable workflow として呼び、gate が needs の結果を宣言と照らす。検査と path の対応は
-# .github/settings/checks.json が持つ。
+# 保護対象のブランチへ入る Pull Request の検査を、1つの gate が判定する（ADR-0603 決定17・18。
+# 流れは .github/workflows/README.md の「Pull Request の gate」）。
 #
 # edited は起動に含めない。title の編集で同じ commit を走り直すと、同じ SHA に gate の check が2つ並ぶ。
 
@@ -407,7 +406,6 @@ jobs:
       contents: read
       pull-requests: write
 
-  # 走るべき検査を宣言と差分から決め直し、needs の結果と照らす。取り消されても判定を報告するよう always() で走る。
   gate:
     needs:
       - changes

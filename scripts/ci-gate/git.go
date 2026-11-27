@@ -16,8 +16,7 @@ const gitTimeout = 60 * time.Second
 
 var (
 	// errGit は、git から差分か宣言を取れないことを表す。浅い clone で merge-base が無いときもここに来る。
-	errGit = xerrors.New("git から読めません")
-	// errDiffCount は、変更したファイルの件数が2つの経路で食い違うことを表す。
+	errGit       = xerrors.New("git から読めません")
 	errDiffCount = xerrors.New("変更したファイルの件数が食い違います")
 )
 
@@ -69,7 +68,6 @@ func splitZ(b []byte) []string {
 	return out
 }
 
-// fileAt は、rev の木の path の中身を返す。
 func fileAt(rev, path string) ([]byte, error) {
 	return git("show", rev+":"+path)
 }

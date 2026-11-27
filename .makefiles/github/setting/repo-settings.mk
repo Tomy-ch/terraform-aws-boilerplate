@@ -39,12 +39,11 @@ apply-environments:
 apply-vulnerability-reporting:
 	@$(call REPO_SETTINGS_REMOTE,sync -only vulnerability-reporting)
 
-# 引数は RUN_SCRIPT_HOST の sh が環境変数から展開する。
+# 引数は RUN_SCRIPT_HOST の sh が環境変数から展開する。ci-changes・ci-gate・ci-line-gate・create-deploy-branch も同じ。
 deploy-source-check:
 	@$(call RUN_SCRIPT_HOST,repo-settings,source -base "$${BASE_REF:-}" -base-sha "$${BASE_SHA:-}" -head-sha "$${HEAD_SHA:-}" -default "$${DEFAULT_BRANCH:-}")
 
-# 判定は scripts/ci-gate が持つ。git の履歴を読むので、ツールランナーを経由しない。引数は deploy-source-check と同じく
-# RUN_SCRIPT_HOST の sh が環境変数から展開する。宣言は base の commit（線の検証では push した commit）の木から読む。
+# 判定は scripts/ci-gate が持つ。git の履歴を読むので、ツールランナーを経由しない。宣言は base の commit（線の検証では push した commit）の木から読む。
 ci-changes:
 	@$(call RUN_SCRIPT_HOST,ci-gate,changes --decl-rev "$${BASE_SHA:-}" --base "$${BASE_SHA:-}" --head "$${HEAD_SHA:-}" --base-ref "$${BASE_REF:-}" --output "$${GITHUB_OUTPUT:-}")
 
@@ -54,7 +53,7 @@ ci-gate:
 ci-line-gate:
 	@$(call RUN_SCRIPT_HOST,ci-gate,line --decl-rev "$${GITHUB_SHA:-}" --event "$${GITHUB_EVENT_NAME:-}" --ref "$${GITHUB_REF:-}" --summary "$${GITHUB_STEP_SUMMARY:-}")
 
-# DEPLOY_ENV は人が渡す値なので、deploy-source-check と同じく RUN_SCRIPT_HOST の sh が環境変数から展開する。
+# DEPLOY_ENV は人が渡す値。展開の形は deploy-source-check の注記のとおり。
 create-deploy-branch:
 	@$(call REPO_SETTINGS_REMOTE,create-deploy-branch -env "$${DEPLOY_ENV:-}")
 

@@ -1740,7 +1740,7 @@ func Test_checkGateJob(t *testing.T) {
 		assert.Len(t, got, 5)
 	})
 
-	// 除外は行の単位なので、三つ組が在っても、ほかの step の run: は今までどおり見る。
+	// 除外は行の単位なので、三つ組が在っても、ほかの step の run: は見る。
 	t.Run("生成した三つ組の後ろの許可の外の run: は違反", func(t *testing.T) {
 		t.Parallel()
 

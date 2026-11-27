@@ -229,9 +229,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # The console gets the filtered stream, not the raw one: most of a passing run's output is
-      # lines that say only "this package passed". That is what anyone reading the run log pays,
-      # `gh run view` included -- `::group::` folds in the browser but leaves every byte in the
-      # fetched log, so folding would not have helped.
+      # lines that say only "this package passed".
       #
       # `tee` keeps the raw log for the comment step below, which reads it from disk. Nothing unique
       # is dropped from the console: the per-package percentages live in `coverage.out`, which

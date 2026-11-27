@@ -532,7 +532,6 @@ const fixtureProtection = `{
 
 // editorconfig-checker-enable
 
-// contextNames は、必須検査の宣言の本文を JSON として読み、context の名前を順に返します。
 func contextNames(t *testing.T, s string) []string {
 	t.Helper()
 	var v struct {
