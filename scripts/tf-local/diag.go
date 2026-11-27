@@ -72,8 +72,7 @@ type streamDiag struct {
 	// Unparsed は、JSON として読めない行の数。UnparsedErrors はそのうち error の行の数。
 	Unparsed       int
 	UnparsedErrors int
-	// Summaries は、change_summary の欄。
-	Summaries []map[string]any
+	Summaries      []map[string]any
 }
 
 // reconciled は、error の行の数が、公開した診断の行と、読めなかった error の行の和に一致するかを返します
@@ -308,7 +307,6 @@ func diagSection(lines []string) string {
 	return "<pre>\n" + html.EscapeString(strings.Join(lines, "\n")) + "\n</pre>\n\n"
 }
 
-// writeLines は、行を1行ずつ書きます。
 func writeLines(w io.Writer, lines []string) error {
 	for _, l := range lines {
 		if _, err := io.WriteString(w, l+"\n"); err != nil {

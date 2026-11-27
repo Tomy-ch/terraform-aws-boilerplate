@@ -119,7 +119,6 @@ func ciLockTarget(d deps, work, project, env, root, profile, base string) (lockT
 	return l, nil
 }
 
-// ciUnlockStep は ci-unlock です。
 func ciUnlockStep(args []string, d deps, stdout io.Writer) (string, error) {
 	fs := flag.NewFlagSet("ci-unlock", flag.ContinueOnError)
 	fs.SetOutput(d.stderr)

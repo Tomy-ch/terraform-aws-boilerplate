@@ -42,8 +42,8 @@ import (
 // prepare と init が落ちれば、make はそこで止まる（全文はランナーの外に出さない）。それより後の段は make の `-` で
 // 続き、前の段の失敗を state で知って何もしない。upload は必ず走り、finish が最後に落とす。全文は公開される
 // ログに出さない。ログと job summary へは、終了コード・件数・key・SHA-256・版 ID と、許可の文法に当たる診断の行
-// （scripts/lib/publicdiag）だけを出す。Policy の違反の文と aws CLI の stderr も、文法に当たる欄だけを出し、Policy の
-// 違反の文は全文へ置く（ADR-0602 決定13）。
+// （scripts/lib/publicdiag）だけを出す。aws CLI の stderr も文法に当たる欄だけを出す。Policy の違反は規則の ID と
+// 件数だけを出し、違反の文と conftest の stderr は全文へ置く（ADR-0602 決定13）。
 // plan と apply の段の失敗の種類（state の stage）は scripts/apply-revert の revertKinds と skipKinds が読む。
 
 const (
@@ -621,7 +621,6 @@ func (l *stringList) Set(v string) error {
 	return nil
 }
 
-// policyInputDir は、conftest に渡す plan を置く作業ディレクトリの下のディレクトリ。
 const policyInputDir = "input"
 
 func ciRunPolicy(s ciState, d deps, stdout io.Writer, parent, policy, decl, layer string, namespaces []string) error {
@@ -652,7 +651,8 @@ func ciRunPolicy(s ciState, d deps, stdout io.Writer, parent, policy, decl, laye
 	// 違反があれば conftest は非ゼロで終わる。判定は結果の JSON で行う。
 	_, runErr := toolrun.Exec(cmd)
 	entries, parseErr := policyresult.Parse(result.Bytes())
-	// conftest の stderr と違反の文は plan の値を含みうるので、全文へ置き、ログへは件数だけを出す（ADR-0602 決定13）。
+	// conftest の stderr と違反の文は plan の値を含みうるので、全文へ置く。ログへは規則の ID と件数、stderr の行数だけを
+	// 出す（ADR-0602 決定13）。
 	if err := appendPolicyOut(s, conftestErr.String()+policyMessages(entries)); err != nil {
 		return err
 	}
@@ -1038,9 +1038,9 @@ func ciRequired(s ciState) []string {
 	return append(steps, stageUpload)
 }
 
-// ciFinishStep は ci-finish です。失敗した段があれば、apply の入口は failure にその種類を書いて落ちる。すべての段が
-// 終わっていれば job summary を書き、apply の入口は outputs の plan に要約を書く。それらを書けなければ、apply の
-// 入口の失敗の種類は applied である。全文・plan の JSON・plan のファイルは消す。
+// ciFinishStep は ci-finish です。失敗した段があれば、診断の節を job summary に書き、apply の入口は failure にその種類を
+// 書いて落ちる。すべての段が終わっていれば job summary を書き、apply の入口は outputs の plan に要約を書く。それらを
+// 書けなければ、apply の入口の失敗の種類は applied である。全文・plan の JSON・plan のファイルは消す。
 func ciFinishStep(args []string, d deps) (string, error) {
 	statePath, err := ciStepArgs("ci-finish", args, d, nil)
 	if err != nil {

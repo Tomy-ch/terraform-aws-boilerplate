@@ -1041,7 +1041,6 @@ func Test_planChanges(t *testing.T) {
 	})
 }
 
-// summaryOf は、plan の stream の change_summary を1つ持つ streamDiag を作る。
 func summaryOf(imports, add, chg, remove int) streamDiag {
 	return streamDiag{Summaries: []map[string]any{{
 		"import": float64(imports), "add": float64(add), "change": float64(chg), "remove": float64(remove), "operation": "plan",

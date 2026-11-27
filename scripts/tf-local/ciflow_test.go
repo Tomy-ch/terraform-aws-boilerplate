@@ -28,8 +28,8 @@ import (
 const (
 	planSecret  = "PLAN-SECRET"
 	applySecret = "APPLY-SECRET"
-	// planLineOne は、偽の show の既定（create 1件）に合う terraform の change_summary の行。
-	planLineOne = `{"@level":"info","type":"change_summary","changes":{"add":1,"change":0,"import":0,"remove":0,"operation":"plan"}}` + "\n"
+	// summaryOne は、偽の show の既定（create 1件）に合う terraform の change_summary の行。
+	summaryOne = `{"@level":"info","type":"change_summary","changes":{"add":1,"change":0,"import":0,"remove":0,"operation":"plan"}}` + "\n"
 	// planLog は、plan の stream の、値を含む info の行。
 	planLog   = `{"@level":"info","@message":"` + planSecret + `","type":"log"}` + "\n"
 	onePolicy = "package plan.p\n\ndeny contains msg if {\n\tfalse\n\tmsg := \"x\"\n}\n"
@@ -46,9 +46,9 @@ func fakeFlow(t *testing.T, knobs map[string]string) (toolFunc, string) {
 		stepCallerIdentity + ".out":       callerIdentity,
 		stepListAliases + ".out":          withAlias,
 		stepBucketEncrypt + ".out":        encKMS(stateKeyARN),
-		stepCIPlanNoLock + ".out":         planLog + planLineOne,
+		stepCIPlanNoLock + ".out":         planLog + summaryOne,
 		stepCIPlanNoLock + ".rc":          "2",
-		stepCIPlanLock + ".out":           planLog + planLineOne,
+		stepCIPlanLock + ".out":           planLog + summaryOne,
 		stepCIPlanLock + ".rc":            "2",
 		stepCIShow + ".out":               planWith(change("a.b", `"create"`), ""),
 		stepCIConftest + ".out":           `[{"namespace":"plan.p","successes":1}]`,
@@ -1656,7 +1656,6 @@ func Test_isVerdict(t *testing.T) {
 	})
 }
 
-// summaryLine は、plan の stream の change_summary の1行。
 func summaryLine(add, chg int) string {
 	return `{"@level":"info","type":"change_summary","changes":{"add":` + strconv.Itoa(add) + `,"change":` + strconv.Itoa(chg) +
 		`,"import":0,"remove":0,"operation":"plan"}}` + "\n"

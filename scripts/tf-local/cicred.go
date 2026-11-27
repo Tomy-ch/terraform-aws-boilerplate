@@ -255,7 +255,6 @@ func ciCredentials(args []string, d deps, stdout io.Writer) (string, error) {
 	return "✅ " + profile + " の profile に資格情報を置きました", nil
 }
 
-// credentials は、assume の応答の資格情報です。
 type credentials struct {
 	AccessKeyID     string `json:"AccessKeyId"`
 	SecretAccessKey string `json:"SecretAccessKey"`
