@@ -299,7 +299,7 @@ plan の role は変更系の権限を一切持たずに済む。ただし plan 
 - Policy Test（apply の role の権限の与え方を持つ use-case の Policy Test）: reference の plan で、apply の role が、統制の構成物の変更（Organizations の組織・OU・アカウント・policy とその付け先、root の資格情報の中央管理、break-glass の IAM user と role、Identity Center の permission set と割当）を、条件なしで拒まれること（決定13）
 - Contract Test: bootstrap の use-case の公開 variable / output の schema
 - Policy Test（発火側の role を持つ use-case の Policy Test）: 発火側の role の信頼条件が、決定14 の第1項の形を完全一致で持ち、ワイルドカードを含まないこと（決定19）
-- 運用機構（`make check-plan-expected`）: 段2-4 の期待値（`docs/setup/scripts/check-plan.expected`）が、管理アカウントの identity root の mock の plan と、import と追加の address の集合で一致すること（決定1・8）。実 plan との突合は段2 の手順が持つ
+- 運用機構（`make check-plan-expected`）: 段2-4 の期待値（`docs/setup/scripts/check-plan.expected`）と、立ち上げの中のメンバーアカウントの分（`docs/setup/scripts/check-plan-bootstrapping.expected`。在るとき）を合わせたものが、管理アカウントの identity root の mock の plan と、import と追加の address の集合で一致すること（決定1・8）。実 plan との突合は段2 の手順が持ち、`check-plan.expected` だけを読む
 - 手順: 段2 の完了条件（決定8）は、それ自体が検証である。plan が決定8 の条件を満たさない限り段3 へ進まない
 
 決定9 の契機の判定と、回復の契機の plan が統制の構成物とアカウントの前提の構成物に変更を示さないこと（決定1）と、決定10 の apply 前の条件と記録の存在は、機械判定できない。例外の commit を含む Pull Request のレビューで扱う。決定10 の merge 前の条件は、required check の plan が担う（ADR-0603 決定12）。決定11 のうち member account の SCP と root 資格情報の中央管理の中身は、`organization-baseline` の Policy Test が見る。本 ADR が見るのは、apply の role がそれらを変更できないことである。
