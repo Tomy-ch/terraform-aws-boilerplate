@@ -572,6 +572,7 @@ jobs:
             securityhub.us-west-1.amazonaws.com
             securityhub.us-west-2.amazonaws.com
             cloudtrail.ap-northeast-1.amazonaws.com
+            sso.ap-northeast-1.amazonaws.com
       - name: Prepare to retry hardening the runner
         if: steps.harden-runner.outcome != 'success'
         continue-on-error: true
@@ -680,6 +681,7 @@ jobs:
             securityhub.us-west-1.amazonaws.com
             securityhub.us-west-2.amazonaws.com
             cloudtrail.ap-northeast-1.amazonaws.com
+            sso.ap-northeast-1.amazonaws.com
 
       # 再実行は元の run の commit と payload を使うので、古い run を止める。skip は成功として数えられる
       # ので失敗にする（ADR-0603 決定17）。どのブランチから起動できるかは environment が限る。
