@@ -42,6 +42,7 @@ import (
 // 続き、前の段の失敗を state で知って何もしない。upload は必ず走り、finish が最後に落とす。全文は公開される
 // ログに出さず、ログには終了コード・件数・key・SHA-256・版 ID と Policy の違反の文だけを出す（ADR-0602 決定13）。
 // plan と apply の段の失敗の種類（state の stage）は scripts/apply-revert の revertKinds と skipKinds が読む。
+// drift の入口（CI_DRIFT）の段は cidrift.go が持ち、prepare・init・plan・upload はここの段を使う。
 
 const (
 	stepCIInit       = "ci-terraform-init"
@@ -116,7 +117,18 @@ type ciState struct {
 	Changes []string `json:"changes"`
 	SHA     string   `json:"sha"`
 	Version string   `json:"version"`
+	// PlanChanged は、plan の終了コードが 2（宣言との差がある）だったことです。
+	PlanChanged bool `json:"plan_changed"`
+	// 以下は drift の入口だけが使う。Overlap は plan の前か後に lock があったこと、Drift は項目（値は持たない）、
+	// Count は項目の address の数。Digest は itemsDigest。
+	Overlap bool        `json:"overlap"`
+	Verdict string      `json:"verdict"`
+	Drift   []driftItem `json:"drift"`
+	Count   int         `json:"count"`
+	Digest  string      `json:"digest"`
 }
+
+var ciModes = []string{ciModePlan, ciModeApply, ciModeHold, ciModeDrift}
 
 func loadCIState(path string) (ciState, error) {
 	raw, err := readInRoot(path)
@@ -124,7 +136,7 @@ func loadCIState(path string) (ciState, error) {
 		return ciState{}, xerrors.Wrap(errCIState, err.Error())
 	}
 	var s ciState
-	if err := json.Unmarshal(raw, &s); err != nil || (s.Mode != ciModePlan && s.Mode != ciModeApply && s.Mode != ciModeHold) || s.Dir == "" || s.Out == "" {
+	if err := json.Unmarshal(raw, &s); err != nil || !slices.Contains(ciModes, s.Mode) || s.Dir == "" || s.Out == "" {
 		return ciState{}, xerrors.Wrap(errCIState, path)
 	}
 
@@ -242,7 +254,7 @@ func ciPrepareStep(args []string, d deps, stdout io.Writer) (string, error) {
 	if err := fs.Parse(args); err != nil {
 		return "", xerrors.Wrap(errUsage, err.Error())
 	}
-	if (*mode != ciModePlan && *mode != ciModeApply && *mode != ciModeHold) || *project == "" || *profile == "" || *base == "" ||
+	if !slices.Contains(ciModes, *mode) || *project == "" || *profile == "" || *base == "" ||
 		*header == "" || *statePath == "" || fs.NArg() > 0 {
 		return "", errUsage
 	}
@@ -290,6 +302,12 @@ func ciPrepareState(d deps, stdout io.Writer, mode, project, env, root, profile,
 	switch mode {
 	case ciModePlan:
 		s.Key, err = planKey(envValue(d.environ, "CI_PR"), "", run, attempt, s.Root)
+	case ciModeDrift:
+		// drift の plan はデプロイブランチの木の plan なので、保護ブランチの plan の key（branch/）に置く。
+		var branch string
+		if branch, err = deployBranch(d.root, env); err == nil {
+			s.Key, err = planKey("", branch, run, attempt, s.Root)
+		}
 	case ciModeApply:
 		s.Key, err = applyKey(run, attempt, s.Root)
 	}
@@ -516,6 +534,7 @@ func ciRunPlan(s *ciState, d deps, stdout io.Writer) (string, error) {
 	if code == 1 {
 		return "", errPlanFailed
 	}
+	s.PlanChanged = code == 2
 	data, err := readInRoot(s.JSON)
 	if err != nil {
 		return "", xerrors.Wrap(errPlanJSON, "ファイルを読めません")
@@ -528,8 +547,11 @@ func ciRunPlan(s *ciState, d deps, stdout io.Writer) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if _, err := io.WriteString(stdout, changeList(changes)); err != nil {
-		return "", err
+	// drift の入口は address を公開されるログに出さず、job summary にだけ書く（ci-finish）。
+	if s.Mode != ciModeDrift {
+		if _, err := io.WriteString(stdout, changeList(changes)); err != nil {
+			return "", err
+		}
 	}
 	s.Changes = changes
 	s.Stage = ""
@@ -1001,6 +1023,9 @@ func ciFinishStep(args []string, d deps) (string, error) {
 		return "", err
 	}
 	defer s.remove()
+	if s.Mode == ciModeDrift {
+		return ciFinishDrift(s, d)
+	}
 	for _, step := range ciRequired(s) {
 		if !slices.Contains(s.Done, step) {
 			s.fail(step)

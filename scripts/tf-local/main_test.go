@@ -799,23 +799,25 @@ func Test_exitCode(t *testing.T) {
 
 	// verdicts とは独立に書いた、判定（1）になる失敗の一覧。verdicts から抜けても、余計なものが入っても落ちる。
 	want := map[string]error{
-		"root の資格情報":      errRootCredentials,
-		"state の鍵が無い":     errStateKeyMissing,
-		"state の鍵の食い違い":   errStateKeyMismatch,
-		"plan の失敗":        errPlanFailed,
-		"plan のエラー":       errPlanErrored,
-		"手元の plan の失敗":    errLocalPlan,
-		"Policy の違反（CI）":  errCIPolicy,
-		"Policy の違反":      policyresult.ErrViolation,
-		"権限が表と一致しない":      errCIPermissions,
-		"apply の失敗":       errApplyFailed,
-		"apply の打ち切り":     errApplyTimeout,
-		"assume が通ってしまった": errAssumeSucceeded,
-		"新しい lock":        errLockFresh,
-		"他人の lock":        errLockForeign,
-		"lock が在る":        errLockExists,
-		"CI の段の失敗":        errCIFailed,
-		"CI の段の未完":        errCIUnfinish,
+		"root の資格情報":        errRootCredentials,
+		"state の鍵が無い":       errStateKeyMissing,
+		"state の鍵の食い違い":     errStateKeyMismatch,
+		"plan の失敗":          errPlanFailed,
+		"plan のエラー":         errPlanErrored,
+		"手元の plan の失敗":      errLocalPlan,
+		"Policy の違反（CI）":    errCIPolicy,
+		"Policy の違反":        policyresult.ErrViolation,
+		"権限が表と一致しない":        errCIPermissions,
+		"apply の失敗":         errApplyFailed,
+		"apply の打ち切り":       errApplyTimeout,
+		"assume が通ってしまった":   errAssumeSucceeded,
+		"新しい lock":          errLockFresh,
+		"他人の lock":          errLockForeign,
+		"lock が在る":          errLockExists,
+		"CI の段の失敗":          errCIFailed,
+		"CI の段の未完":          errCIUnfinish,
+		"drift がある":         errDriftFound,
+		"apply と重なった drift": errDriftInconclusive,
 	}
 	assert.Len(t, verdicts, len(want), "verdicts の件数が独立の一覧と合わない")
 	for name, err := range want {
@@ -839,6 +841,9 @@ func Test_exitCode(t *testing.T) {
 		"Policy の評価の件数の食い違いは 2": policyresult.ErrCount,
 		"判定に届かない CI の段は 2":      errCINotEstablished,
 		"権限を評価できないのは 2":         errCIPermissionsRun,
+		"drift の木を決められないのは 2":   errDriftTarget,
+		"一覧を読めない drift の判定は 2":  errDriftOwned,
+		"drift の報告の入力を読めないのは 2": errDriftReport,
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

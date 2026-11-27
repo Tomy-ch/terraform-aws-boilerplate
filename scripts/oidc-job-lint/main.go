@@ -34,7 +34,7 @@
 //     （lock を取らない経路。ADR-0604 決定8）。資格情報を取った後で plan の入口より前に
 //     `make ci-assume-denied CI_ENV=<env> RUNNER_MODE=host` だけの run: をちょうど1回持ち、その CI_ENV は資格情報と
 //     同じである —— この job の token で apply 系の role の assume が拒否されることを確かめる。この step は
-//     plan の job のほかに置かない
+//     plan と drift の job のほかに置かない
 //   - apply の job は、workflow の起動が push と入力の無い workflow_dispatch だけで（ADR-0602 決定14）、
 //     push に paths を持たず、concurrency を持ち、workflow 全体と job に在る concurrency が
 //     すべて cancel-in-progress: false で —— 後から起動した run が、実行中の apply を途中で止めない ——、id が refuse-stale で
@@ -55,6 +55,19 @@
 //     字面で書き、`make ci-hold-<env>-<root>` に対して `make ci-apply-<env>-<root>` を走らせるただ1つの apply の job の
 //     environment と、字面の group に一致する —— 同じ group なので apply と並んで lock を奪い合わない（ADR-0604 決定8）
 //   - plan と apply と lock を残す job は lock の解除の role を取らない —— lock file を消す権限は lock の解除の job だけが持つ
+//   - drift の job（`make ci-drift-*` を持つ job。ADR-0601 決定12）は、plan の role を取り、workflow の起動が schedule と
+//     入力の無い workflow_dispatch だけで、id が refuse-off-default で if: と continue-on-error: を持たない step を資格情報より
+//     前に置き、plan の job と同じく資格情報の後で入口より前に `make ci-assume-denied` をちょうど1回持ち、terraform を
+//     `make ci-drift-*` でだけ1回走らせる。job の id は `drift-<env>-<root>` で、needs は同じ workflow の
+//     `drift-target-<env>`（`make ci-target-drift CI_ENV=<env>` だけを走らせる、資格情報を持たない job）と
+//     `drift-infra-code-gate-<env>`（needs をその job だけに限った検出の job）で、if: は両方の成功と
+//     `needs.drift-target-<env>.outputs.promoted-<env>-<root> == 'true'` を含み、status の関数・論理和・否定を置かない。
+//     drift の job と検出の job の actions/checkout は `ref: ${{ needs.drift-target-<env>.outputs.sha }}` を持つ。concurrency は字面の group で cancel-in-progress: false とし、
+//     apply・lock の解除・lock を残す job の group と一致しない。drift の job を持つ workflow は、報告の job `report`
+//     （`if: ${{ !cancelled() }}`、needs にすべての drift の job とその needs、`make ci-report-drift` を1回）と、
+//     失敗の通知 `notify-failure` と drift の通知 `notify-drift`（どちらも needs に report、if: は決めた形だけ）と、drift の通知が
+//     届いた後に issue の印を書く `mark-report`（needs に report と notify-drift、if: は決めた形だけ、資格情報を持たず
+//     upsert-report-issue を使う）を持つ
 //
 // CI の入口（登録簿の種別の `make ci-<種別>-*`）を走らせる job が対象でなければ違反にし、
 // 入口の行をファイル全体で別に数えて、job の行として読めない行があれば落とす。root の網羅も、対象の job だけを数える。
@@ -90,6 +103,7 @@ const (
 	defaultRootsDir         = "env"
 	refuseUntrusted         = "refuse-untrusted"
 	refuseStale             = "refuse-stale"
+	refuseOffDefault        = "refuse-off-default"
 )
 
 var (
@@ -114,7 +128,6 @@ var (
 		return regexp.MustCompile(`\bCI_ROLE=(` + strings.Join(roles, "|") + `)(?:\s|$)`)
 	}()
 	// makeRun の形以外を拒む理由は scripts/README.md の oidc-job-lint の行が持つ。
-	ciPlan     = entryRuns[cientry.Plan]
 	deniedRun  = makeRun(`ci-assume-denied\s+CI_ENV=` + envWord)
 	deniedLine = regexp.MustCompile(`\bmake\b.*\bci-assume-denied\b`)
 	ciApply    = entryRuns[cientry.Apply]
@@ -126,7 +139,11 @@ var (
 	otherEntry  = cientry.MustPattern(`\bmake\b.*\bci-`, `-[a-z0-9-]+`, slices.DeleteFunc(cientry.Kinds(), func(k cientry.Kind) bool { return k.Name == cientry.Hold })...)
 	applyEntry  = cientry.MustPattern(`\bmake\b.*\bci-`, `-([a-z0-9-]+)`, kindOf[cientry.Apply])
 	planEntry   = cientry.MustPattern(`\bmake\b.*\bci-`, `-[a-z0-9-]+`, kindOf[cientry.Plan])
-	runEntry    = cientry.MustPattern(`\bmake\b.*\bci-`, `-[a-z0-9-]+`, kindOf[cientry.Plan], kindOf[cientry.Apply])
+	runEntry    = cientry.MustPattern(`\bmake\b.*\bci-`, `-[a-z0-9-]+`, kindOf[cientry.Plan], kindOf[cientry.Apply], kindOf[cientry.Drift])
+	driftEntry  = cientry.MustPattern(`\bmake\b.*\bci-`, `-([a-z0-9-]+)`, kindOf[cientry.Drift])
+	ciDrift     = entryRuns[cientry.Drift]
+	targetRun   = makeRun(`ci-target-drift\s+CI_ENV=(` + envWord + `)`)
+	reportRun   = makeRun(`ci-report-drift`)
 	detection   = makeRun(`infra-code-gate`)
 	orderCheck  = makeRun(`resource-order-check`)
 	layerCheck  = makeRun(`layer-check`)
@@ -251,6 +268,8 @@ func run(dir, envFile, rulesetFile, rootsDir string, out io.Writer) error {
 		findings = append(findings, f...)
 		_, f = checkRevertWiring(p, string(raw))
 		findings = append(findings, f...)
+		_, f = checkDriftWiring(p, string(raw))
+		findings = append(findings, f...)
 		groups = append(groups, groupRecords(p, string(raw))...)
 		// 複数の検査を走らせる job では、job 単位の違反が検査ごとに同じ文で出るので、1件にする。
 		seen := map[lintreport.Finding]bool{}
@@ -267,6 +286,7 @@ func run(dir, envFile, rulesetFile, rootsDir string, out io.Writer) error {
 	}
 	findings = append(findings, checkUnlockIsolation(groups)...)
 	findings = append(findings, checkHoldPairing(groups)...)
+	findings = append(findings, checkDriftIsolation(groups)...)
 	for _, g := range applyGates {
 		findings = append(findings, checkPullRequestGate(dir, groups, prGates[g.noun], g)...)
 	}
@@ -587,17 +607,21 @@ func checkJob(file string, job workflow.Job, permissions, envs []string, w workf
 		findings = append(findings, finding(cred.Number, "environment %s と、取る role の %s-%s が一致しません", env, e[1], role))
 	}
 	kind := jobKind(job, role)
-	plan := kind == cientry.Plan
 	findings = append(findings, checkRole(job, cred, role, kind, finding)...)
 	findings = append(findings, checkSteps(job, cred, finding)...)
 	findings = append(findings, checkDetection(job, w.jobs, finding)...)
 	refusal := refuseStale
-	if plan {
+	switch kind {
+	case cientry.Plan:
 		refusal = refuseUntrusted
+	case cientry.Drift:
+		refusal = refuseOffDefault
 	}
 	findings = append(findings, checkHidden(job, cred, refusal, w, finding)...)
 
 	switch kind {
+	case cientry.Drift:
+		return append(findings, checkDrift(job, cred, w, finding)...)
 	case cientry.Unlock:
 		return append(findings, checkUnlock(job, cred, w, finding)...)
 	case cientry.Hold:
@@ -609,7 +633,7 @@ func checkJob(file string, job workflow.Job, permissions, envs []string, w workf
 }
 
 // jobKind は、資格情報を取る job の種別を、走らせる入口と取る role から決めます。lock の解除の入口を先に、
-// lock を残す入口を次に見る。plan の入口の job が lock の解除の role を取った違反は checkRole が出すので、
+// lock を残す入口を次に、drift の入口をその次に見る。plan の入口の job が lock の解除の role を取った違反は checkRole が出すので、
 // plan の規則で見る。ほかの role を取った plan の入口の job は、apply の規則が落とす。
 func jobKind(job workflow.Job, role string) string {
 	switch {
@@ -617,6 +641,8 @@ func jobKind(job workflow.Job, role string) string {
 		return cientry.Unlock
 	case isHold(job):
 		return cientry.Hold
+	case isDrift(job):
+		return cientry.Drift
 	case kindHasRole(kindOf[cientry.Plan], role) || (isUnlockRole(role) && hasLine(job, planEntry)):
 		return cientry.Plan
 	}
@@ -629,14 +655,14 @@ func checkPlan(job workflow.Job, cred workflow.Line, w workflowInfo, finding fun
 		findings = append(findings, finding(w.onLine, "plan の job を持つ workflow の起動は pull_request だけにしてください（%s）", strings.Join(keys, ", ")))
 	}
 	findings = append(findings, checkRefusal(job, cred, refuseUntrusted, finding)...)
-	findings = append(findings, checkDenied(job, cred, finding)...)
+	findings = append(findings, checkDenied(job, cred, cientry.Plan, finding)...)
 	return append(findings, checkTerraform(job, cientry.Plan, finding)...)
 }
 
-// checkDenied は、plan の job が `make ci-assume-denied` をちょうど1回、資格情報を取った後で plan の入口より前に
-// 持ち、その CI_ENV が資格情報の CI_ENV と同じことを検査します。step を消すか別の env へ向ける変更は、
-// AWS の側の検査をすべて緑のまま、拒否されるべき主体の確認だけを止めます。
-func checkDenied(job workflow.Job, cred workflow.Line, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+// checkDenied は、plan の role を取る job（種別 kind の plan か drift）が `make ci-assume-denied` をちょうど1回、資格情報を
+// 取った後で入口より前に持ち、その CI_ENV が資格情報の CI_ENV と同じことを検査します。step を消すか別の env へ向ける
+// 変更は、AWS の側の検査をすべて緑のまま、拒否されるべき主体の確認だけを止めます。
+func checkDenied(job workflow.Job, cred workflow.Line, kind string, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
 	var lines []workflow.Line
 	for _, l := range job.Lines {
 		if !commentLine.MatchString(l.Text) && !nameLine.MatchString(l.Text) && deniedLine.MatchString(l.Text) {
@@ -644,7 +670,7 @@ func checkDenied(job workflow.Job, cred workflow.Line, finding func(int, string,
 		}
 	}
 	if len(lines) != 1 {
-		return []lintreport.Finding{finding(job.Number, "plan の job に make ci-assume-denied を1回だけ置いてください（%d 回）。apply 系の role の assume が拒否されることを、Pull Request ごとに確かめます", len(lines))}
+		return []lintreport.Finding{finding(job.Number, "%s の job に make ci-assume-denied を1回だけ置いてください（%d 回）。apply 系の role の assume が拒否されることを、plan の role を取るたびに確かめます", kind, len(lines))}
 	}
 	denied := lines[0]
 	var findings []lintreport.Finding
@@ -655,8 +681,8 @@ func checkDenied(job workflow.Job, cred workflow.Line, finding func(int, string,
 		findings = append(findings, finding(denied.Number, "make ci-assume-denied は資格情報を取る step より後に置いてください。plan の role の assume が通った後でなければ、拒否が信頼条件によるものか分かりません"))
 	}
 	for _, l := range job.Lines {
-		if !commentLine.MatchString(l.Text) && ciPlan.MatchString(l.Text) && l.Number < denied.Number {
-			findings = append(findings, finding(denied.Number, "make ci-assume-denied は plan の入口より前に置いてください。信頼条件が崩れた run で plan の全文を置きません"))
+		if !commentLine.MatchString(l.Text) && entryRuns[kind].MatchString(l.Text) && l.Number < denied.Number {
+			findings = append(findings, finding(denied.Number, "make ci-assume-denied は %s の入口より前に置いてください。信頼条件が崩れた run で plan の全文を置きません", kind))
 			break
 		}
 	}
@@ -795,7 +821,7 @@ var kindOf = func() map[string]cientry.Kind {
 // namedKinds は、規則が名指す種別を lookup で引きます。登録簿に無い種別があればエラーにする。
 func namedKinds(lookup func(string) (cientry.Kind, bool)) (map[string]cientry.Kind, error) {
 	m := map[string]cientry.Kind{}
-	for _, name := range []string{cientry.Plan, cientry.Apply, cientry.Unlock, cientry.Hold} {
+	for _, name := range []string{cientry.Plan, cientry.Apply, cientry.Unlock, cientry.Hold, cientry.Drift} {
 		k, ok := lookup(name)
 		if !ok {
 			return nil, xerrors.Wrapf(errKindMissing, "%s", name)
@@ -881,7 +907,7 @@ func checkUnlock(job workflow.Job, cred workflow.Line, w workflowInfo, finding f
 	findings = append(findings, checkNoCancel(job, w, "lock の解除", finding)...)
 	for _, j := range w.jobs {
 		if j.ID != job.ID && (hasLine(j, runEntry) || hasLine(j, holdEntry)) {
-			findings = append(findings, finding(j.Number, "lock の解除の job と同じ workflow に plan と apply と lock を残す job（%s）を置かないでください。同じ run の中で lock の解除と並んで走ります", j.ID))
+			findings = append(findings, finding(j.Number, "lock の解除の job と同じ workflow に plan と apply と drift と lock を残す job（%s）を置かないでください。同じ run の中で lock の解除と並んで走ります", j.ID))
 		}
 	}
 	findings = append(findings, checkRefusal(job, cred, refuseStale, finding)...)
@@ -923,7 +949,7 @@ var entryNames = func() string {
 	return "make " + strings.Join(names, "・")
 }()
 
-// groupRecord は、資格情報を取る job のうち apply の job と lock の解除の job と lock を残す job の、入口の
+// groupRecord は、資格情報を取る job のうち apply の job と lock の解除の job と lock を残す job と drift の job の、入口の
 // `<env>-<root>` と実効の concurrency の group と environment です。
 type groupRecord struct {
 	file        string
@@ -934,8 +960,8 @@ type groupRecord struct {
 	environment string
 }
 
-// groupRecords は、workflow の apply の job と lock の解除の job と lock を残す job を、workflow をまたぐ照合のために
-// 取り出します。
+// groupRecords は、workflow の資格情報を取る job のうち apply・lock の解除・lock を残す・drift の job を、
+// workflow をまたぐ照合のために取り出します。
 func groupRecords(file, source string) []groupRecord {
 	split := workflow.SplitJobs(source)
 	var records []groupRecord
@@ -949,6 +975,8 @@ func groupRecords(file, source string) []groupRecord {
 			kind, entry = cientry.Unlock, unlockEntry
 		case isHold(job):
 			kind, entry = cientry.Hold, holdEntry
+		case isDrift(job):
+			kind, entry = cientry.Drift, driftEntry
 		}
 		root := entryRoot(job, entry)
 		if root == "" {
@@ -1115,6 +1143,10 @@ func isHold(job workflow.Job) bool {
 	return hasLine(job, holdEntry)
 }
 
+func isDrift(job workflow.Job) bool {
+	return hasLine(job, driftEntry)
+}
+
 func hasLine(job workflow.Job, re *regexp.Regexp) bool {
 	return slices.ContainsFunc(job.Lines, func(l workflow.Line) bool {
 		return !commentLine.MatchString(l.Text) && !nameLine.MatchString(l.Text) && re.MatchString(l.Text)
@@ -1134,6 +1166,8 @@ var (
 	orderGate     = gate{noun: "順序の検査", label: "順序の検査の job", check: "make resource-order-check", marks: orderCheck}
 	layerGate     = gate{noun: "層の検査", label: "層の検査の job", check: "make layer-check", marks: layerCheck}
 	rootGate      = gate{noun: "root の検査", label: "root の検査の job", check: "make root-check", marks: rootCheck}
+	// targetGate は、drift の job が待つ、デプロイブランチの先頭の commit を解く job（資格情報を持たない）。
+	targetGate = gate{noun: "drift の木の解決", label: "drift の木の job", check: "make ci-target-drift CI_ENV=<env>", marks: targetRun}
 	// applyGates は、apply の job が検出に加えて必ず待ち、Pull Request の必須検査も走らせる検査である。
 	applyGates = []gate{orderGate, layerGate, rootGate}
 )
@@ -1147,13 +1181,18 @@ func checkDetection(job workflow.Job, jobs []workflow.Job, finding func(int, str
 		job  workflow.Job
 		gate gate
 	}
-	var detectors, upstream []workflow.Job
+	var detectors, upstream, targets []workflow.Job
 	var checks []gated
 	var findings []lintreport.Finding
+	drift := isDrift(job)
 	for _, n := range needs(job) {
 		i := slices.IndexFunc(jobs, func(j workflow.Job) bool { return j.ID == n })
 		if i >= 0 && runsGate(jobs[i], detectionGate) {
 			detectors = append(detectors, jobs[i])
+			continue
+		}
+		if i >= 0 && drift && runsGate(jobs[i], targetGate) {
+			targets = append(targets, jobs[i])
 			continue
 		}
 		if i >= 0 && upstreamApply(job, jobs[i]) {
@@ -1170,14 +1209,20 @@ func checkDetection(job workflow.Job, jobs []workflow.Job, finding func(int, str
 	if len(detectors) == 0 {
 		return append(findings, finding(job.Number, "needs に、make infra-code-gate を走らせる job を同じ workflow の中に置いてください。資格情報を取る job は検出より先にコードを実行しません（ADR-0601 決定9）"))
 	}
+	targetIDs := make([]string, 0, len(targets))
+	for _, t := range targets {
+		targetIDs = append(targetIDs, t.ID)
+		findings = append(findings, checkGateJob(t, targetGate, nil, finding)...)
+	}
 	for _, d := range detectors {
-		findings = append(findings, checkGateJob(d, detectionGate, finding)...)
+		findings = append(findings, checkGateJob(d, detectionGate, targetIDs, finding)...)
 	}
 	for _, c := range checks {
-		findings = append(findings, checkGateJob(c.job, c.gate, finding)...)
+		findings = append(findings, checkGateJob(c.job, c.gate, nil, finding)...)
 	}
+	// drift の job の if: は、木の job と検出の job の成功と昇格の済みを checkDriftTree が見る（if: を欠けば違反にする）。
 	cond, at, ok := jobKey(job, "if")
-	if !ok {
+	if !ok || drift {
 		return findings
 	}
 	if statusEscape.MatchString(cond) {
@@ -1223,23 +1268,29 @@ func checkUpstream(job workflow.Job, jobs []workflow.Job, finding func(int, stri
 
 // allowedNeeds は、資格情報を取る job の needs に置ける job の形を、違反の文のために並べます。
 func allowedNeeds() string {
-	parts := make([]string, 0, 2+len(applyGates))
+	parts := make([]string, 0, 3+len(applyGates))
 	parts = append(parts, fmt.Sprintf("%s（%s）", detectionGate.label, detectionGate.check))
 	for _, g := range applyGates {
 		parts = append(parts, fmt.Sprintf("%s（%s）", g.label, g.check))
 	}
 	parts = append(parts, "workload root の apply の job に限り同じ env の identity root の apply の job（make ci-apply-<env>-identity）")
+	parts = append(parts, fmt.Sprintf("drift の job に限り %s（%s）", targetGate.label, targetGate.check))
 	return strings.Join(parts, "・")
 }
 
 // checkGateJob は、needs の先の検査の job が skip も失敗の無視もできず、決めたターゲットだけを走らせることを検査します。
-func checkGateJob(d workflow.Job, g gate, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+// allowed が空でなければ、検査の job は needs にちょうど allowed の job（資格情報を持たない drift の木の job）を置ける。
+func checkGateJob(d workflow.Job, g gate, allowed []string, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
 	var findings []lintreport.Finding
 	// egress が生成した bullfrog の三つ組は見逃す（harden.GeneratedLines。ADR-0702 決定20）。
 	generated := harden.GeneratedLines(d)
-	// 依存先が skip すると検査の job も skip され、後続は走らないまま失敗も報告されない。
+	// 依存先が skip すると検査の job も skip され、後続は走らないまま失敗も報告されない。drift の木の job の skip は、
+	// drift の job の skip を経て、報告の job が失敗として読む（checkDriftWiring）。
 	if _, at, ok := jobKey(d, "needs"); ok {
-		findings = append(findings, finding(at, "%s %s に needs: を置かないでください", g.label, d.ID))
+		got := slices.Sorted(slices.Values(needs(d)))
+		if want := slices.Sorted(slices.Values(allowed)); len(want) == 0 || !slices.Equal(got, want) {
+			findings = append(findings, finding(at, "%s %s に needs: を置かないでください（drift の job の検出の job に限り、drift の木の job だけを置けます）", g.label, d.ID))
+		}
 	}
 	for _, l := range d.Lines {
 		if commentLine.MatchString(l.Text) {
@@ -1307,17 +1358,17 @@ func checkHidden(job workflow.Job, cred workflow.Line, refusal string, w workflo
 			continue
 		}
 		entry, credStep := ciEntry.MatchString(runs.Text), credentials.MatchString(runs.Text)
-		// 拒否の確認は plan の job でだけ入口と同じに扱う。形と位置は checkDenied が見る。
+		// 拒否の確認は plan の role を取る plan と drift の job でだけ入口と同じに扱う。形と位置は checkDenied が見る。
 		if deniedLine.MatchString(runs.Text) {
-			if refusal != refuseUntrusted {
-				findings = append(findings, finding(runs.Number, "make ci-assume-denied は plan の job にだけ置いてください"))
+			if refusal != refuseUntrusted && refusal != refuseOffDefault {
+				findings = append(findings, finding(runs.Number, "make ci-assume-denied は plan と drift の job にだけ置いてください"))
 			}
 			entry = deniedRun.MatchString(runs.Text)
 		}
 		// 拒否の step と認めるのは、役割の id を持ち資格情報より前に在るものだけ。後ろの run: は資格情報を読める。
 		refuses := hasStepID(step, refusal) && step.Number < cred.Number
 		if !entry && !credStep && !refuses {
-			findings = append(findings, finding(runs.Number, "資格情報を取る job の run: は、資格情報より前の拒否の step・make ci-aws-credentials・CI の入口・plan の job の make ci-assume-denied だけにしてください。ほかの run: は後続の step の PATH と環境を替えるか、資格情報を読みます"))
+			findings = append(findings, finding(runs.Number, "資格情報を取る job の run: は、資格情報より前の拒否の step・make ci-aws-credentials・CI の入口・plan と drift の job の make ci-assume-denied だけにしてください。ほかの run: は後続の step の PATH と環境を替えるか、資格情報を読みます"))
 		}
 		for _, l := range step.Lines {
 			switch {
@@ -1838,7 +1889,7 @@ func notifiesSuccess(j workflow.Job, apply string) bool {
 
 // checkRootCoverage は、rootsDir の下で *.tf を持つディレクトリが ADR-0604 決定5 の配置（<env>/ と <env>/identity/）
 // にだけ在り、各 root に、Pull Request で起動する workflow の plan の job が1つ以上、apply の job と lock の解除の job と
-// lock を残す job がちょうど1つずつあることを検査します。数えるのは対象の job（assumesRole）だけである。見た root の数を返し、0件なら errNoTarget にする。
+// lock を残す job と drift の job がちょうど1つずつあることを検査します。数えるのは対象の job（assumesRole）だけである。見た root の数を返し、0件なら errNoTarget にする。
 func checkRootCoverage(rootsDir string, sources map[string]string) (int, []lintreport.Finding, error) {
 	var findings []lintreport.Finding
 	var roots []string
@@ -1916,6 +1967,271 @@ func checkRootCoverage(rootsDir string, sources map[string]string) (int, []lintr
 		if n := count(cientry.Hold, false); n != 1 {
 			findings = append(findings, lintreport.Finding{File: rootsDir, Line: 1, Message: fmt.Sprintf("root %s の lock を残す job が %d 件です（1件を期待）", root, n)})
 		}
+		if n := count(cientry.Drift, false); n != 1 {
+			findings = append(findings, lintreport.Finding{File: rootsDir, Line: 1, Message: fmt.Sprintf("root %s の drift を検出する job が %d 件です（1件を期待。ADR-0601 決定12）", root, n)})
+		}
 	}
 	return len(roots), findings, nil
+}
+
+var (
+	checkoutRef = regexp.MustCompile(`^ {10}ref:[ \t]*["']?\$\{\{[ \t]*needs\.([a-z0-9-]+)\.outputs\.sha[ \t]*\}\}["']?[ \t]*(?:#.*)?$`)
+	notifyUses  = regexp.MustCompile(`^ {4}uses:[ \t]*["']?\./\.github/workflows/notify\.ya?ml["']?[ \t]*(?:#.*)?$`)
+	upsertUses  = regexp.MustCompile(`^ {6}(?:- | {2})uses:[ \t]*["']?\./\.github/actions/upsert-report-issue["']?[ \t]*(?:#.*)?$`)
+)
+
+const (
+	driftReportJob = "report"
+	driftReportIf  = "!cancelled()"
+	// driftFailureIf は、報告の job が成功しなかったとき（skip・取り消しを含む）か、報告が失敗の通知を決めたときに
+	// 送る形。drift の job の skip と空の result は、報告の job が失敗として読む。
+	driftFailureIf = "always() && (needs.report.result != 'success' || needs.report.outputs.notify == 'failure')"
+	driftNotifyIf  = "needs.report.result == 'success' && needs.report.outputs.notify == 'drift'"
+	driftMarkJob   = "mark-report"
+	// driftMarkIf は、drift の通知が届いた後にだけ issue の印を書く形。届かなければ印は前回のまま残り、次の回も通知する。
+	driftMarkIf = "needs.report.result == 'success' && needs.notify-drift.result == 'success' && needs.report.outputs.mark-state != ''"
+)
+
+// checkDrift は、drift の job を検査します（ADR-0601 決定12）。起動は schedule と入力の無い workflow_dispatch だけで、
+// 資格情報の前に refuse-off-default の step を置き、plan の job と同じく拒否の確認を持ち、terraform を make ci-drift-* で
+// だけ走らせる。job の名前・待つ job・checkout する commit・if: は、報告の job が入口から job を引けて、検出と plan が
+// 同じ commit を見る形に限る。
+func checkDrift(job workflow.Job, cred workflow.Line, w workflowInfo, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+	var findings []lintreport.Finding
+	if keys := triggerNames(w.on); !eventsAllowed(keys, kindOf[cientry.Drift]) {
+		findings = append(findings, finding(w.onLine, "drift の job を持つ workflow の起動は schedule と workflow_dispatch だけにしてください。Pull Request や push で起動すると、デプロイブランチの外の木の差を drift と読みます（%s）", strings.Join(keys, ", ")))
+	}
+	findings = append(findings, checkTriggerForm(w, "drift", finding)...)
+	findings = append(findings, checkNoCancel(job, w, "drift", finding)...)
+	if !isLiteral(effectiveGroup(job, w.preamble)) {
+		findings = append(findings, finding(job.Number, "drift の job の concurrency の group を字面で書いてください。apply・lock の解除・lock を残す job の group と違うことを確かめられません"))
+	}
+	findings = append(findings, checkRefusal(job, cred, refuseOffDefault, finding)...)
+	findings = append(findings, checkDenied(job, cred, cientry.Drift, finding)...)
+	findings = append(findings, checkTerraform(job, cientry.Drift, finding)...)
+	entries := kindEntries(job, cientry.Drift)
+	if len(entries) != 1 {
+		return findings
+	}
+	envRoot := ciDrift.FindStringSubmatch(entries[0].Text)[1]
+	env, _, ok := cientry.SplitEnvRoot(envRoot)
+	if !ok {
+		return findings
+	}
+	if job.ID != "drift-"+envRoot {
+		findings = append(findings, finding(job.Number, "drift の job の id を drift-%s にしてください。報告の job が ci.mk の入口から job を引きます", envRoot))
+	}
+	return append(findings, checkDriftTree(job, env, envRoot, w.jobs, finding)...)
+}
+
+// checkDriftTree は、drift の job が env の drift の木の job `drift-target-<env>` と検出の job `drift-infra-code-gate-<env>` を
+// needs に持ち、if: が両方の成功と昇格の済みを含み、drift の job と検出の job が drift の木の job の commit を checkout する
+// ことを検査します。検出と plan が別の commit を見ると、検出を経ていない木を資格情報で動かす（ADR-0601 決定9）。
+func checkDriftTree(job workflow.Job, env, envRoot string, jobs []workflow.Job, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+	var findings []lintreport.Finding
+	target, gateID := "drift-target-"+env, "drift-infra-code-gate-"+env
+	byID := func(id string) (workflow.Job, bool) {
+		i := slices.IndexFunc(jobs, func(j workflow.Job) bool { return j.ID == id })
+		if i < 0 {
+			return workflow.Job{}, false
+		}
+		return jobs[i], true
+	}
+	got := slices.Sorted(slices.Values(needs(job)))
+	if want := []string{gateID, target}; !slices.Equal(got, want) {
+		findings = append(findings, finding(job.Number, "drift の job の needs は %s と %s だけにしてください（%s）", target, gateID, strings.Join(got, ", ")))
+	}
+	t, ok := byID(target)
+	if !ok || !runsGate(t, targetGate) {
+		return append(findings, finding(job.Number, "同じ workflow に、make ci-target-drift CI_ENV=%s を走らせる job %s を置いてください", env, target))
+	}
+	for _, l := range t.Lines {
+		if m := targetRun.FindStringSubmatch(l.Text); m != nil && m[1] != env {
+			findings = append(findings, finding(l.Number, "job %s の CI_ENV=%s が、drift の job の env %s と違います", target, m[1], env))
+		}
+	}
+	g, ok := byID(gateID)
+	switch {
+	case !ok || !runsGate(g, detectionGate):
+		findings = append(findings, finding(job.Number, "同じ workflow に、make infra-code-gate を走らせる検出の job %s を置いてください", gateID))
+	case !slices.Equal(needs(g), []string{target}):
+		findings = append(findings, finding(g.Number, "検出の job %s の needs を %s だけにしてください。drift の job と同じ commit を checkout します", gateID, target))
+	default:
+		findings = append(findings, checkCheckoutRef(g, target, finding)...)
+	}
+	findings = append(findings, checkCheckoutRef(job, target, finding)...)
+	cond, at, ok := jobKey(job, "if")
+	if !ok {
+		cond, at = "", job.Number
+	}
+	// 昇格は root の単位で見る。env の一部の root だけが昇格した木では、ほかの root に drift の入口が無い。
+	output := "promoted-" + envRoot
+	promoted := regexp.MustCompile(`^needs\.` + regexp.QuoteMeta(target) + `\.outputs\.` + regexp.QuoteMeta(output) + `\s*==\s*'true'$`)
+	if !slices.ContainsFunc(strings.Split(ifExpression(cond), "&&"), func(term string) bool { return promoted.MatchString(strings.TrimSpace(term)) }) {
+		findings = append(findings, finding(at, "drift の job の if: に needs.%s.outputs.%s == 'true' を含めてください。昇格の前の木には drift の入口がありません", target, output))
+	}
+	if statusEscape.MatchString(cond) {
+		findings = append(findings, finding(at, "drift の job の if: に status の関数・|| ・! を置かないでください。検出と木の解決の失敗を越えて走ります"))
+	}
+	for _, id := range []string{target, gateID} {
+		if !requiresSuccess(cond, id) {
+			findings = append(findings, finding(at, "drift の job の if: に needs.%s.result == 'success' を含めてください", id))
+		}
+	}
+	return findings
+}
+
+// checkCheckoutRef は、job の actions/checkout がすべて ref: ${{ needs.<target>.outputs.sha }} を持ち、1つ以上あることを検査します。
+func checkCheckoutRef(job workflow.Job, target string, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+	var findings []lintreport.Finding
+	seen := 0
+	for _, step := range workflow.SplitSteps(job) {
+		if !slices.ContainsFunc(step.Lines, func(l workflow.Line) bool { return checkoutUses.MatchString(l.Text) }) {
+			continue
+		}
+		seen++
+		if !slices.ContainsFunc(step.Lines, func(l workflow.Line) bool {
+			m := checkoutRef.FindStringSubmatch(l.Text)
+			return m != nil && m[1] == target
+		}) {
+			findings = append(findings, finding(step.Number, "job %s の actions/checkout に ref: ${{ needs.%s.outputs.sha }} を置いてください。デプロイブランチの先頭の commit を見ます", job.ID, target))
+		}
+	}
+	if seen == 0 {
+		findings = append(findings, finding(job.Number, "job %s に、ref: ${{ needs.%s.outputs.sha }} の actions/checkout を置いてください", job.ID, target))
+	}
+	return findings
+}
+
+// checkDriftIsolation は、drift の job の concurrency の group が、apply・lock の解除・lock を残す job の group と字面で
+// 違うことを検査します。同じ group では、待っている drift の run と apply の run が互いを取り消しうる。
+func checkDriftIsolation(records []groupRecord) []lintreport.Finding {
+	var findings []lintreport.Finding
+	for _, d := range records {
+		if d.kind != cientry.Drift || !isLiteral(d.group) {
+			continue
+		}
+		for _, o := range records {
+			if o.kind != cientry.Drift && o.group == d.group {
+				findings = append(findings, lintreport.Finding{File: d.file, Line: d.job.Number,
+					Message: fmt.Sprintf("job %s: concurrency の group %q が、job %s（%s）の group と同じです。待っている drift と %s の run が互いを取り消しうる", d.job.ID, d.group, o.job.ID, o.file, o.kind)})
+			}
+		}
+	}
+	return findings
+}
+
+// checkDriftWiring は、drift の job を持つ workflow が、結果を issue と通知に残す job を持つことを検査します
+// （ADR-0601 の検証方法）。報告の job は drift の job が落ちても走り、drift の job の skip と空の result を失敗と読む。
+// 失敗の通知は報告の job が成功しなかったときにも送る。drift の job を持つかを返す。
+func checkDriftWiring(file, source string) (bool, []lintreport.Finding) {
+	split := workflow.SplitJobs(source)
+	byID := map[string]workflow.Job{}
+	var drift []string
+	for _, job := range split.Jobs {
+		byID[job.ID] = job
+		if isDrift(job) {
+			drift = append(drift, job.ID)
+		}
+	}
+	if len(drift) == 0 {
+		return false, nil
+	}
+	finding := func(line int, format string, args ...any) lintreport.Finding {
+		return lintreport.Finding{File: file, Line: line, Message: fmt.Sprintf(format, args...)}
+	}
+	var findings []lintreport.Finding
+	wantNeeds := []string{}
+	for _, id := range drift {
+		wantNeeds = append(wantNeeds, id)
+		wantNeeds = append(wantNeeds, needs(byID[id])...)
+	}
+	slices.Sort(wantNeeds)
+	wantNeeds = slices.Compact(wantNeeds)
+	report, ok := byID[driftReportJob]
+	if !ok {
+		findings = append(findings, finding(1, "drift の job（%s）を持つ workflow に report の job がありません。結果を issue に残せません", strings.Join(drift, ", ")))
+	} else {
+		findings = append(findings, checkDriftReport(report, wantNeeds, finding)...)
+	}
+	for _, n := range []struct{ id, cond string }{{"notify-failure", driftFailureIf}, {"notify-drift", driftNotifyIf}} {
+		j, ok := byID[n.id]
+		if !ok {
+			findings = append(findings, finding(1, "drift の job を持つ workflow に %s の job がありません", n.id))
+			continue
+		}
+		if !slices.Contains(needs(j), driftReportJob) {
+			findings = append(findings, finding(j.Number, "%s の needs に report がありません", n.id))
+		}
+		if cond, at, ok := jobKey(j, "if"); !ok || ifExpression(cond) != n.cond {
+			if !ok {
+				at = j.Number
+			}
+			findings = append(findings, finding(at, "%s の if: は ${{ %s }} だけにしてください", n.id, n.cond))
+		}
+		if !slices.ContainsFunc(j.Lines, func(l workflow.Line) bool { return notifyUses.MatchString(l.Text) }) {
+			findings = append(findings, finding(j.Number, "%s は uses: ./.github/workflows/notify.yaml で通知してください", n.id))
+		}
+	}
+	if m, ok := byID[driftMarkJob]; !ok {
+		findings = append(findings, finding(1, "drift の job を持つ workflow に %s の job がありません。drift の通知の後に issue の印を書けません", driftMarkJob))
+	} else {
+		findings = append(findings, checkDriftMark(m, finding)...)
+	}
+	return true, findings
+}
+
+// checkDriftMark は、issue の drift の集合の印を書く job が、報告の job と drift の通知を待ち、通知が届いたときにだけ走り、
+// 資格情報を持たず、upsert-report-issue で書くことを検査します。通知の前に印を書くと、届かなかった通知が次の回に送られない。
+func checkDriftMark(m workflow.Job, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+	var findings []lintreport.Finding
+	for _, n := range []string{driftReportJob, "notify-drift"} {
+		if !slices.Contains(needs(m), n) {
+			findings = append(findings, finding(m.Number, "%s の needs に %s がありません", driftMarkJob, n))
+		}
+	}
+	if cond, at, ok := jobKey(m, "if"); !ok || ifExpression(cond) != driftMarkIf {
+		if !ok {
+			at = m.Number
+		}
+		findings = append(findings, finding(at, "%s の if: は ${{ %s }} だけにしてください", driftMarkJob, driftMarkIf))
+	}
+	if assumesRole(m) {
+		findings = append(findings, finding(m.Number, "%s に id-token: write を置かないでください", driftMarkJob))
+	}
+	if !slices.ContainsFunc(m.Lines, func(l workflow.Line) bool { return upsertUses.MatchString(l.Text) }) {
+		findings = append(findings, finding(m.Number, "%s は uses: ./.github/actions/upsert-report-issue で issue を書いてください", driftMarkJob))
+	}
+	return findings
+}
+
+// checkDriftReport は、報告の job が drift の job とその needs をすべて待ち、それらが落ちても走り、資格情報を持たず、
+// make ci-report-drift をちょうど1回走らせることを検査します。
+func checkDriftReport(report workflow.Job, wantNeeds []string, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+	var findings []lintreport.Finding
+	got := needs(report)
+	for _, n := range wantNeeds {
+		if !slices.Contains(got, n) {
+			findings = append(findings, finding(report.Number, "report の needs に %s がありません", n))
+		}
+	}
+	if cond, at, ok := jobKey(report, "if"); !ok || ifExpression(cond) != driftReportIf {
+		if !ok {
+			at = report.Number
+		}
+		findings = append(findings, finding(at, "report の if: は ${{ %s }} だけにしてください。drift と未確定では drift の job が落ちるので、成功を待つ形では報告が走りません", driftReportIf))
+	}
+	if assumesRole(report) {
+		findings = append(findings, finding(report.Number, "report に id-token: write を置かないでください。報告は資格情報を要りません"))
+	}
+	runs := 0
+	for _, l := range report.Lines {
+		if !commentLine.MatchString(l.Text) && reportRun.MatchString(l.Text) {
+			runs++
+		}
+	}
+	if runs != 1 {
+		findings = append(findings, finding(report.Number, "report は make ci-report-drift を1回だけ走らせてください（%d 回）", runs))
+	}
+	return findings
 }
