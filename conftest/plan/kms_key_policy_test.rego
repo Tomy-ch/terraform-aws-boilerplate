@@ -2,6 +2,7 @@ package plan.kms_key_policy_test
 
 import data.plan.fixture
 import data.plan.kms_key_policy as p
+import data.plan.lib
 
 # modules/kms/tests/policy.tftest.hcl の期待値と同じ文。module の実際の出力が通ることは、state-backend と audit-evidence の reference の plan への適用が見る。
 root := {
@@ -922,4 +923,106 @@ test_violation_s3_arn_under_two_operators if {
 
 test_pass_read_statement_single_operator if {
 	count({i | some i in ids([root, via_s3_read]); i == "[PLAN-KMS-12]"}) == 0
+}
+
+# メンバーアカウントの instance（decl.json の state_backend.instances）。宣言した root の名前のファイルでだけ数える。
+member_of(x, account, env) := json.unmarshal(strings.replace_n({"123456789012": account, "tabp-admin-": sprintf("tabp-%s-", [env])}, json.marshal(x)))
+
+security_key_policy_address := "module.state_backend_security.module.kms.aws_kms_key_policy.this"
+
+log_archive_key_policy_address := "module.state_backend_log_archive.module.kms.aws_kms_key_policy.this"
+
+member_key_policy(address, account, env) := fixture.doc("aws_kms_key_policy", address, "policy", {"Version": "2012-10-17", "Statement": member_of([root, via_s3, via_s3_read], account, env)})
+
+security_key_policy := member_key_policy(security_key_policy_address, "111111111111", "security")
+
+log_archive_key_policy := member_key_policy(log_archive_key_policy_address, "222222222222", "log-archive")
+
+admin_identity(rcs) := [{"path": "input/admin-identity.json", "contents": {"plan_format_version": "1.2", "resource_changes": rcs}}]
+
+test_declared_instances_are_well_formed if {
+	count(lib.instance_shape_errors) == 0 with input as []
+}
+
+test_pass_member_key_policies_created if {
+	roles := [
+		{"address": "module.deployment_identity_security.module.github_oidc.aws_iam_role.this[\"plan\"]", "type": "aws_iam_role", "change": {"actions": ["create"], "after": {"name": "tabp-security-ci-plan", "path": "/"}, "after_unknown": {"arn": true}}},
+		{"address": "module.deployment_identity_log_archive.module.github_oidc.aws_iam_role.this[\"plan\"]", "type": "aws_iam_role", "change": {"actions": ["create"], "after": {"name": "tabp-log-archive-ci-plan", "path": "/"}, "after_unknown": {"arn": true}}},
+	]
+	count(p.deny) == 0 with input as admin_identity(array.concat([noop_key_policy, security_key_policy, log_archive_key_policy], roles))
+}
+
+test_violation_member_key_policy_absent if {
+	msgs := p.deny with input as admin_identity([noop_key_policy, security_key_policy])
+	msgs == {sprintf("[PLAN-KMS-00] admin-identity の instance log-archive: 宣言した state の鍵の Key Policy %s が入力にありません", [log_archive_key_policy_address])}
+}
+
+# 宣言した root の名前でないファイルには、メンバーの instance を求めない。
+test_pass_member_key_policy_not_required_outside_its_root if {
+	count(p.deny) == 0 with input as fixture.plan([noop_key_policy])
+}
+
+test_violation_member_key_policy_only_in_another_file if {
+	inp := array.concat(admin_identity([noop_key_policy, security_key_policy]), fixture.plan([log_archive_key_policy]))
+	fixture.has(sprintf("[PLAN-KMS-00] admin-identity の instance log-archive: 宣言した state の鍵の Key Policy %s が入力にありません", [log_archive_key_policy_address]), p.deny) with input as inp
+}
+
+test_violation_member_role_created_member_key_policy_unchanged if {
+	role := {"address": "module.deployment_identity_security.module.github_oidc.aws_iam_role.this[\"plan\"]", "type": "aws_iam_role", "change": {"actions": ["delete", "create"], "after": {"name": "tabp-security-ci-plan"}, "after_unknown": {}}}
+	msgs := p.deny with input as admin_identity([noop_key_policy, unchanged(security_key_policy), log_archive_key_policy, role])
+	msgs == {sprintf("[PLAN-KMS-10] input/admin-identity.json: role %s を作るのに、それを名指す %s を書き直しません。KMS は作る前の role を名指し続けます", [role.address, security_key_policy_address])}
+}
+
+test_violation_instances_malformed if {
+	every instances in [
+		[],
+		{},
+		{"admin-identity": []},
+		{"admin-identity": [{"name": "security", "state_backend": "module.state_backend_security", "deployment_identity": "module.deployment_identity_security."}]},
+	] {
+		d := json.patch(data.policy_plan, [{"op": "replace", "path": "/state_backend/instances", "value": instances}])
+		msgs := p.deny with input as admin_identity([noop_key_policy, security_key_policy, log_archive_key_policy]) with data.policy_plan as d
+		fixture.has("[PLAN-KMS-00] data.policy_plan.state_backend.instances", msgs)
+	}
+}
+
+test_violation_declared_key_policy_outside_the_module if {
+	d := json.patch(data.policy_plan, [{"op": "replace", "path": "/state_backend/key_policy", "value": "module.other.aws_kms_key_policy.this"}])
+	fixture.has("[PLAN-KMS-00] 宣言 state_backend.key_policy \"module.other.aws_kms_key_policy.this\" が state_backend.module か deployment_identity.module で始まりません", p.deny) with input as fixture.plan([noop_key_policy]) with data.policy_plan as d
+}
+
+security_key_policy_with(statements) := fixture.doc("aws_kms_key_policy", security_key_policy_address, "policy", {"Version": "2012-10-17", "Statement": member_of(statements, "111111111111", "security")})
+
+test_pass_member_sns_role if {
+	count(p.deny) == 0 with input as admin_identity([noop_key_policy, security_key_policy_with([root, via_sns]), log_archive_key_policy])
+}
+
+test_violation_member_sns_role_with_foreign_topic if {
+	s := with_condition(via_sns, {"StringEquals": {
+		"kms:ViaService": "sns.ap-northeast-1.amazonaws.com",
+		"kms:EncryptionContext:aws:sns:topicArn": ["arn:aws:sns:ap-northeast-1:222222222222:tabp-dev-ops-notification"],
+	}})
+	msgs := p.deny with input as admin_identity([noop_key_policy, security_key_policy_with([root, s]), log_archive_key_policy])
+	msgs == {sprintf("[PLAN-KMS-11] input/admin-identity.json: %s が SNS 経由の arn:aws:iam::111111111111:role/tabp-dev-heartbeat に、委任のアカウントの Topic の ARN（kms:EncryptionContext:aws:sns:topicArn）を限らずに許可しています", [security_key_policy_address])}
+}
+
+# 立ち上げを閉じる PR は、メンバーの instance を removed（destroy = false）で管理から外す。宣言を外したメンバーの Key Policy の forget は数えない。
+test_pass_removed_member_key_policies_forgotten if {
+	gone := [json.patch(kp, [{"op": "replace", "path": "/change/actions", "value": ["forget"]}, {"op": "replace", "path": "/change/after", "value": null}]) | some kp in [security_key_policy, log_archive_key_policy]]
+	d := json.patch(data.policy_plan, [{"op": "remove", "path": "/state_backend/instances"}])
+	count(p.deny) == 0 with input as admin_identity(array.concat([noop_key_policy], gone)) with data.policy_plan as d
+}
+
+# 宣言に無い instance の Key Policy は、宣言で引く 00 と 10 の対象ではない（宣言に無いことは plan.resource_policy_exclusive と
+# plan.state_backend_write_deny の 00 が落とす）。型で見る規則は、宣言に依らず見る。
+test_pass_undeclared_member_key_policy_is_not_a_declared_subject if {
+	other := "module.state_backend_other.module.kms.aws_kms_key_policy.this"
+	role := {"address": "module.deployment_identity_other.module.github_oidc.aws_iam_role.this[\"plan\"]", "type": "aws_iam_role", "change": {"actions": ["delete", "create"], "after": {"name": "tabp-security-ci-plan"}, "after_unknown": {}}}
+	msgs := p.deny with input as admin_identity([noop_key_policy, security_key_policy, log_archive_key_policy, unchanged(member_key_policy(other, "111111111111", "security")), role])
+	not fixture.has(sprintf("[PLAN-KMS-10] input/admin-identity.json: role %s を作るのに、それを名指す %s", [role.address, other]), msgs)
+}
+
+test_violation_undeclared_member_key_policy_typed_rules if {
+	other := fixture.doc("aws_kms_key_policy", "module.state_backend_other.module.kms.aws_kms_key_policy.this", "policy", {"Statement": member_of([root, json.patch(via_s3, [{"op": "replace", "path": "/Principal", "value": "*"}])], "111111111111", "security")})
+	fixture.has("[PLAN-KMS-01] input/admin-identity.json: module.state_backend_other.module.kms.aws_kms_key_policy.this", p.deny) with input as admin_identity([noop_key_policy, security_key_policy, log_archive_key_policy, other])
 }

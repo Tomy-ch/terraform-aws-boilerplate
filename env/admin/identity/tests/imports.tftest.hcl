@@ -5,7 +5,10 @@ mock_provider "aws" {
     defaults = { value = "{\"security\":\"security@example.com\",\"log-archive\":\"log-archive@example.com\"}" }
   }
   mock_data "aws_caller_identity" {
-    defaults = { account_id = "123456789012" }
+    defaults = { account_id = "123456789012", arn = "arn:aws:sts::123456789012:assumed-role/tabp-admin-ci-plan/session" }
+  }
+  mock_data "aws_iam_session_context" {
+    defaults = { issuer_arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan" }
   }
   mock_data "aws_region" {
     defaults = { region = "ap-northeast-1" }
@@ -23,6 +26,34 @@ mock_provider "aws" {
   }
   mock_resource "aws_organizations_organizational_unit" {
     defaults = { id = "ou-exam-abcdefgh" }
+  }
+}
+
+mock_provider "aws" {
+  alias = "security"
+
+  mock_data "aws_caller_identity" {
+    defaults = { account_id = "111111111111" }
+  }
+  mock_data "aws_region" {
+    defaults = { region = "ap-northeast-1" }
+  }
+  mock_data "aws_partition" {
+    defaults = { partition = "aws" }
+  }
+}
+
+mock_provider "aws" {
+  alias = "log_archive"
+
+  mock_data "aws_caller_identity" {
+    defaults = { account_id = "111111111111" }
+  }
+  mock_data "aws_region" {
+    defaults = { region = "ap-northeast-1" }
+  }
+  mock_data "aws_partition" {
+    defaults = { partition = "aws" }
   }
 }
 
@@ -45,7 +76,8 @@ override_resource {
   values          = { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity" }
 }
 
-# deployment_identity の state_bucket_arn と plan_output_bucket_arn の validation を通すため、Bucket の ARN だけ形のある値にする。
+# state Bucket は import の取り込み先なので override で与える。出力の Bucket は、deployment_identity の
+# plan_output_bucket_arn の validation を通すため、ARN だけ形のある値にする。
 override_resource {
   target = module.state_backend.module.s3.aws_s3_bucket.this
   values = { arn = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an" }

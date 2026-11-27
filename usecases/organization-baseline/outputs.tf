@@ -20,3 +20,11 @@ output "bootstrap_read_role" {
     path = local.bootstrap_read_path
   }
 }
+
+output "member_break_glass_role" {
+  description = "メンバーアカウントへ配る break-glass の role の名前と path。管理アカウントの identity root が、立ち上げの中のメンバーの `deployment-identity` に渡す break-glass の ARN を組むのに使う。"
+  value = {
+    name = local.break_glass_role_name
+    path = local.break_glass_path
+  }
+}

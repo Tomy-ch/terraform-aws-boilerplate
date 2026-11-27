@@ -579,6 +579,9 @@ func (l *stringList) Set(v string) error {
 	return nil
 }
 
+// policyInputDir は、conftest に渡す plan を置く作業ディレクトリの下のディレクトリ。
+const policyInputDir = "input"
+
 func ciRunPolicy(s ciState, d deps, stdout io.Writer, parent, policy, decl, layer string, namespaces []string) error {
 	work, cleanup, err := ciWorkUnder(d.root, parent, "policy-", d.stderr)
 	if err != nil {
@@ -588,7 +591,15 @@ func ciRunPolicy(s ciState, d deps, stdout io.Writer, parent, policy, decl, laye
 	if err := copyTree(policy, filepath.Join(work, "rego")); err != nil {
 		return xerrors.Wrap(errPolicyRules, err.Error())
 	}
-	for src, dst := range map[string]string{decl: "decl.json", layer: "layer.json", s.JSON: "plan.json"} {
+	// plan は input の下へ root の名前で置く。Policy は入力のファイル名から root を読む（stateful_protection の
+	// 許可の宣言、state_backend の instances）。
+	if !rootPattern.MatchString(s.Root) {
+		return xerrors.Wrap(errPolicyJSON, "root の名前 "+strconv.Quote(s.Root))
+	}
+	if err := os.Mkdir(filepath.Join(work, policyInputDir), 0o700); err != nil {
+		return xerrors.Wrap(errPolicyJSON, err.Error())
+	}
+	for src, dst := range map[string]string{decl: "decl.json", layer: "layer.json", s.JSON: filepath.Join(policyInputDir, s.Root+".json")} {
 		if err := copyFile(src, filepath.Join(work, dst)); err != nil {
 			return xerrors.Wrap(errPolicyJSON, err.Error())
 		}
