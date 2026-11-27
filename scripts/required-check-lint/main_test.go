@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/checksdecl"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/requiredchecks"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
 func writeFixture(t *testing.T, files map[string]string) string {
@@ -25,6 +27,9 @@ func writeFixture(t *testing.T, files map[string]string) string {
 	}
 	return root
 }
+
+// errListFixture は、木のファイルの一覧を得られないことを模すエラー。
+var errListFixture = xerrors.New("一覧を得られません")
 
 // editorconfig-checker-disable -- raw string の fixture は埋め込んだ YAML / シェルの字下げを持つ。撤回: fixture を外部ファイルへ移したとき
 
@@ -47,6 +52,7 @@ func validTree() map[string]string {
 ]}`,
 		"wf/pr-gate.yaml": `on:
   pull_request:
+    types: [opened, synchronize, reopened, edited]
     branches: # branch-set: gate
       - 'main'
 jobs:
@@ -115,6 +121,9 @@ func treeWith(files map[string]string) map[string]string {
 	return tree
 }
 
+// treeFiles は、validTree の検査の paths に当たるリポジトリの木のファイルの一覧を返す。
+func treeFiles() ([]string, error) { return []string{"x/a.go", "y.md"}, nil }
+
 func runArgs(root string) []string {
 	return []string{
 		"-rulesets", filepath.Join(root, "rulesets"),
@@ -134,7 +143,7 @@ func Test_run(t *testing.T) {
 			t.Parallel()
 			root := writeFixture(t, validTree())
 			var out bytes.Buffer
-			require.NoError(t, run(runArgs(root), &out))
+			require.NoError(t, run(runArgs(root), treeFiles, &out))
 			assert.Contains(t, out.String(), "ruleset の required context 3 件、古い宣言の required context 0 件、検査 2 件と workflow 5 件")
 		})
 
@@ -145,7 +154,7 @@ func Test_run(t *testing.T) {
 				"wf/a.yaml":              "on:\n  pull_request:\n  workflow_call:\njobs:\n  a:\n    if: github.event_name == 'pull_request'\n    runs-on: x\n",
 			}))
 			var out bytes.Buffer
-			require.NoError(t, run(runArgs(root), &out))
+			require.NoError(t, run(runArgs(root), treeFiles, &out))
 			assert.Contains(t, out.String(), "古い宣言の required context 1 件")
 		})
 	})
@@ -160,7 +169,7 @@ func Test_run(t *testing.T) {
 				"wf/a.yaml": "on:\n  pull_request:\n  workflow_call:\njobs:\n  a:\n    runs-on: x\n",
 			}))
 			var out bytes.Buffer
-			err := run(runArgs(root), &out)
+			err := run(runArgs(root), treeFiles, &out)
 			require.Error(t, err)
 			assert.Contains(t, out.String(), "2 件の不整合")
 			assert.Less(t, strings.Index(out.String(), "a.yaml"), strings.Index(out.String(), "b.yaml"))
@@ -173,7 +182,7 @@ func Test_run(t *testing.T) {
 				"wf/ci.yaml":             "on:\n  pull_request:\n    paths:\n      - 'src/**'\n\njobs:\n  build:\n    runs-on: x\n",
 			}))
 			var out bytes.Buffer
-			require.Error(t, run(runArgs(root), &out))
+			require.Error(t, run(runArgs(root), treeFiles, &out))
 			assert.Contains(t, out.String(), "`paths` が残っています")
 		})
 
@@ -181,15 +190,43 @@ func Test_run(t *testing.T) {
 			t.Parallel()
 			root := writeFixture(t, treeWith(map[string]string{"wf/pr-gate.yaml": ""}))
 			var out bytes.Buffer
-			require.Error(t, run(runArgs(root), &out))
+			require.Error(t, run(runArgs(root), treeFiles, &out))
 			assert.Contains(t, out.String(), "pr-gate.yaml がありません")
+		})
+
+		t.Run("線の ruleset の違反は、-rulesets のディレクトリの lines.json へ報告する", func(t *testing.T) {
+			t.Parallel()
+			root := writeFixture(t, treeWith(map[string]string{
+				"rulesets/lines.json": `{"rules": [{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "gate"}, {"context": "build"}]}}]}`,
+				"wf/ci.yaml":          "on:\n  pull_request:\njobs:\n  build:\n    runs-on: x\n",
+			}))
+			var out bytes.Buffer
+			require.Error(t, run(runArgs(root), treeFiles, &out))
+			assert.Contains(t, out.String(), "1 件の不整合")
+			assert.Contains(t, out.String(), "  "+filepath.Join(root, "rulesets", "lines.json")+"\n")
+			assert.Contains(t, out.String(), "（実際: [gate, build]）")
+		})
+
+		t.Run("検査の paths の pattern が木のどのファイルにも当たらなければ落ちる", func(t *testing.T) {
+			t.Parallel()
+			root := writeFixture(t, validTree())
+			var out bytes.Buffer
+			require.Error(t, run(runArgs(root), func() ([]string, error) { return []string{"y.md"}, nil }, &out))
+			assert.Contains(t, out.String(), "1 件の不整合")
+			assert.Contains(t, out.String(), "検査 `b` の paths の `x/**` が、リポジトリの木のどのファイルにも当たりません")
+		})
+
+		t.Run("木のファイルの一覧を得られなければ落ちる", func(t *testing.T) {
+			t.Parallel()
+			root := writeFixture(t, validTree())
+			require.ErrorIs(t, run(runArgs(root), func() ([]string, error) { return nil, errListFixture }, &bytes.Buffer{}), errListFixture)
 		})
 
 		t.Run("解釈できない workflow は違反として報告する", func(t *testing.T) {
 			t.Parallel()
 			root := writeFixture(t, treeWith(map[string]string{"wf/broken.yaml": "on: [\n"}))
 			var out bytes.Buffer
-			require.Error(t, run(runArgs(root), &out))
+			require.Error(t, run(runArgs(root), treeFiles, &out))
 			assert.Contains(t, out.String(), "workflow を解釈できません")
 		})
 	})
@@ -213,17 +250,68 @@ func Test_run(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
 				root := writeFixture(t, treeWith(c.files))
-				require.ErrorIs(t, run(runArgs(root), &bytes.Buffer{}), c.want)
+				require.ErrorIs(t, run(runArgs(root), treeFiles, &bytes.Buffer{}), c.want)
 			})
 		}
+
+		t.Run("木のファイルが0件なら0件", func(t *testing.T) {
+			t.Parallel()
+			root := writeFixture(t, validTree())
+			require.ErrorIs(t, run(runArgs(root), func() ([]string, error) { return nil, nil }, &bytes.Buffer{}), errNoFiles)
+		})
 
 		t.Run("workflow のディレクトリが無ければ落ちる", func(t *testing.T) {
 			t.Parallel()
 			root := writeFixture(t, validTree())
 			args := runArgs(root)
 			args[len(args)-1] = filepath.Join(root, "missing")
-			require.Error(t, run(args, &bytes.Buffer{}))
+			require.Error(t, run(args, treeFiles, &bytes.Buffer{}))
 		})
+	})
+}
+
+func Test_gitLsFiles(t *testing.T) {
+	t.Parallel()
+
+	t.Run("追跡されているファイルだけを root からの path で返す", func(t *testing.T) {
+		t.Parallel()
+		root := writeFixture(t, map[string]string{"a.txt": "a", "dir/b.txt": "b", "untracked.txt": "u"})
+		for _, args := range [][]string{{"init", "-q"}, {"add", "a.txt", "dir/b.txt"}} {
+			require.NoError(t, exec.CommandContext(t.Context(), "git", append([]string{"-C", root}, args...)...).Run())
+		}
+		got, err := gitLsFiles(root)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"a.txt", "dir/b.txt"}, got)
+	})
+
+	t.Run("リポジトリでなければ番兵で返す", func(t *testing.T) {
+		t.Parallel()
+		_, err := gitLsFiles(t.TempDir())
+		require.ErrorIs(t, err, errLsFiles)
+	})
+}
+
+func Test_pathFindings(t *testing.T) {
+	t.Parallel()
+
+	check := func(name string, paths ...string) checksdecl.Check { return checksdecl.Check{Name: name, Paths: paths} }
+	files := []string{"scripts/a/b.go", "mise.toml"}
+
+	t.Run("どの pattern もどれかのファイルに当たり、paths が空の検査は見なければ違反0件", func(t *testing.T) {
+		t.Parallel()
+		decl := checksdecl.Decl{Checks: []checksdecl.Check{check("a", "scripts/**", "**/*.go", "mise.toml"), check("always")}}
+		assert.Empty(t, pathFindings(decl, "checks.json", files))
+		assert.Empty(t, pathFindings(checksdecl.Decl{Checks: []checksdecl.Check{check("always")}}, "checks.json", nil))
+	})
+
+	t.Run("当たらない pattern ごとに、検査と pattern を名指して宣言へ報告する", func(t *testing.T) {
+		t.Parallel()
+		decl := checksdecl.Decl{Checks: []checksdecl.Check{check("a", "mise.toml", "env/**"), check("b", "docs/*.md")}}
+		got := pathFindings(decl, "checks.json", files)
+		require.Len(t, got, 2)
+		assert.Equal(t, "checks.json", got[0].File)
+		assert.Contains(t, got[0].Message, "検査 `a` の paths の `env/**`")
+		assert.Contains(t, got[1].Message, "検査 `b` の paths の `docs/*.md`")
 	})
 }
 

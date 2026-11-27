@@ -11,7 +11,7 @@ import (
 var ErrGlob = xerrors.New("path の形を解釈できません")
 
 // ValidateGlob は、宣言の path の形を検める。受け付けるのは `/` で区切った segment の列で、segment は
-// path.Match の形か、segment 全体の `**` だけである。否定（`!`）と波括弧は受け付けない —— 意味の違う glob の
+// path.Match の形か、segment 全体の `**` だけで、`.` と `..` は置けない。否定（`!`）と波括弧は受け付けない —— 意味の違う glob の
 // 方言を黙って別の意味で読むと、走るべき検査を省く。
 func ValidateGlob(p string) error {
 	switch {
@@ -27,6 +27,9 @@ func ValidateGlob(p string) error {
 	for _, seg := range strings.Split(p, "/") {
 		if seg == "" {
 			return xerrors.Wrapf(ErrGlob, "%q: 空の segment があります", p)
+		}
+		if seg == "." || seg == ".." {
+			return xerrors.Wrapf(ErrGlob, "%q: . と .. の segment は受け付けません", p)
 		}
 		if strings.Contains(seg, "**") && seg != "**" {
 			return xerrors.Wrapf(ErrGlob, "%q: ** は segment 全体に置きます", p)

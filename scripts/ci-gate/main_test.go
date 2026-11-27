@@ -605,6 +605,37 @@ func Test_report(t *testing.T) {
 			assert.Contains(t, out.String(), "| a | はい | はい | failure | ❌ |")
 			assert.Contains(t, out.String(), "| b | いいえ | いいえ | skipped | ✅ |")
 		})
+
+		t.Run("失敗の判定は summary にも表と ❌ の行を書き verdict を返す", func(t *testing.T) {
+			t.Parallel()
+			summary := filepath.Join(t.TempDir(), "summary.md")
+			var out bytes.Buffer
+			err := report(summary, "gate", []row{{Name: "a", Required: true, Should: true, Result: "failure"}}, errFailed, &out)
+			require.ErrorIs(t, err, errFailed)
+			raw, err := os.ReadFile(summary)
+			require.NoError(t, err)
+			got := string(raw)
+			assert.Contains(t, got, "| 検査 | 合否に数える | 走るべき | 結果 | 判定 |\n")
+			assert.Contains(t, got, "| a | はい | はい | failure | ❌ |\n")
+			assert.Contains(t, got, "\n❌ "+errFailed.Error()+"\n")
+			assert.Equal(t, out.String(), got)
+		})
+
+		for _, title := range []string{"gate", "line-gate"} {
+			t.Run(title+" の成功の判定は summary に全体を書く", func(t *testing.T) {
+				t.Parallel()
+				summary := filepath.Join(t.TempDir(), "summary.md")
+				var out bytes.Buffer
+				err := report(summary, title, []row{{Name: "a", Required: true, Should: true, OK: true, Result: "success"}}, nil, &out)
+				require.NoError(t, err)
+				raw, err := os.ReadFile(summary)
+				require.NoError(t, err)
+				assert.Equal(t, "## "+title+"\n\n"+
+					"| 検査 | 合否に数える | 走るべき | 結果 | 判定 |\n| --- | --- | --- | --- | --- |\n"+
+					"| a | はい | はい | success | ✅ |\n"+
+					"\n✅ 1 件を確かめました\n", string(raw))
+			})
+		}
 	})
 
 	t.Run("異常系", func(t *testing.T) {

@@ -395,6 +395,18 @@ func Test_deployRulesets(t *testing.T) {
 		assert.ErrorContains(t, err, `plan-x の plan_env "x"`)
 	})
 
+	t.Run("2つの plan が同じ context を名指せば失敗する", func(t *testing.T) {
+		t.Parallel()
+		dup, err := checksdecl.Parse([]byte(`{"checks": [
+  {"name": "plan-x-a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true, "plan_env": "x", "contexts": ["c1"]},
+  {"name": "plan-x-b", "workflow": "b.yaml", "paths": [], "scope": "tree", "required": true, "plan_env": "x", "contexts": ["c1"]}
+]}`))
+		require.NoError(t, err)
+		_, err = deployRulesets(t.TempDir(), lineBranches(branchdecl.DeployBranch{Branch: "main", Env: "x"}), dup)
+		require.ErrorIs(t, err, errDeployRuleset)
+		assert.ErrorContains(t, err, deployMainFile)
+	})
+
 	t.Run("今のファイルを読めなければ失敗する", func(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
@@ -436,10 +448,12 @@ func Test_deployContexts(t *testing.T) {
 		checks []string
 		want   string
 	}{
-		"plan の context が決定31 の検査と同じ名前": {[]string{plan("plan-x", "x", contextDeploySource)}, "別に required とする名前です"},
-		"plan の context が線の検証と同じ名前":     {[]string{plan("plan-x", "x", "a1", contextLineGate)}, "別に required とする名前です"},
-		"同じ env の2つの plan が同じ context":  {[]string{plan("plan-x-a", "x", "a1"), plan("plan-x-b", "x", "b1", "a1")}, "plan-x-a と plan-x-b が同じ context \"a1\""},
-		"別の env の2つの plan が同じ context":  {[]string{plan("plan-x", "x", "a1"), plan("plan-y", "y", "a1")}, "plan-x と plan-y が同じ context \"a1\""},
+		"plan の context が決定31 の検査と同じ名前":          {[]string{plan("plan-x", "x", contextDeploySource)}, "別に required とする名前です"},
+		"plan の context が線の検証と同じ名前":              {[]string{plan("plan-x", "x", "a1", contextLineGate)}, "別に required とする名前です"},
+		"同じ env の2つの plan が同じ context":           {[]string{plan("plan-x-a", "x", "a1"), plan("plan-x-b", "x", "b1", "a1")}, "plan-x-a と plan-x-b が同じ context \"a1\""},
+		"別の env の2つの plan が同じ context":           {[]string{plan("plan-x", "x", "a1"), plan("plan-y", "y", "a1")}, "plan-x と plan-y が同じ context \"a1\""},
+		"別の env の plan の context が決定31 の検査と同じ名前": {[]string{plan("plan-x", "x", "a1"), plan("plan-y", "y", contextDeploySource)}, "plan-y の context"},
+		"別の env の plan の context が線の検証と同じ名前":     {[]string{plan("plan-x", "x", "a1"), plan("plan-y", "y", contextLineGate)}, "plan-y の context"},
 	} {
 		t.Run(name+"なら失敗する", func(t *testing.T) {
 			t.Parallel()

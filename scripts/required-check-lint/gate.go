@@ -4,13 +4,16 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/checksdecl"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/harden"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lintreport"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/requiredchecks"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -53,6 +56,16 @@ var (
 
 	// errEvents は、on: の値からイベントを読めないことを表す。
 	errEvents = xerrors.New("on: のイベントを読めません")
+
+	// 判定と changes の step の形。env は、make の入口が読む変数だけを置ける。ほかの変数（MAKEFLAGS など）は make の
+	// 振る舞いを替える。changes の step の id は、job の outputs が steps.changes を読むために要る。
+	baseEnv     = []string{"BASE_SHA", "HEAD_SHA", "BASE_REF"}
+	changesStep = stepSpec{run: changesRun, keys: []string{"name", "id", "env", "run"}, env: baseEnv}
+	gateStep    = stepSpec{run: gateRun, keys: []string{"name", "env", "run"}, env: append([]string{"NEEDS"}, baseEnv...), needs: true}
+	lineStep    = stepSpec{run: lineRun, keys: []string{"name", "env", "run"}, env: []string{"NEEDS"}, needs: true}
+	// prGateTypes は、gate の workflow の pull_request の types に要るもの。gate の判定は base に依るので、base の
+	// 付け替え（edited）でも走り直す。
+	prGateTypes = []string{"opened", "synchronize", "reopened", "edited"}
 )
 
 // gateInput は、gate と線の検証の検査の入力。どれも宣言から読んだもので、検査が独自に持つ一覧は無い（決定20）。
@@ -86,15 +99,26 @@ type wfJob struct {
 	node *yaml.Node
 }
 
-// gateSpec は、宣言の検査を call-<name> の job で呼び、1つの job で判定する workflow の形。run は判定の step の run:。
-// gated は、call-* の job が changes の job の出力で走るかを決める（gate の workflow）ことを表す。
+// gateSpec は、宣言の検査を call-<name> の job で呼び、1つの job で判定する workflow の形。step は判定の step の形。
+// gated は、call-* の job が changes の job の出力で走るかを決める（gate の workflow）ことを表す。types は、
+// pull_request の types に要るもの。
 type gateSpec struct {
 	file   string
 	job    string
-	run    string
+	step   stepSpec
 	fixed  []string
 	checks []checksdecl.Check
 	gated  bool
+	types  []string
+}
+
+// stepSpec は、make の入口を起動する step の形。keys は step に置ける key、env は env に置ける key。needs が真なら、
+// env の NEEDS に needs を渡すことを課す。
+type stepSpec struct {
+	run   string
+	keys  []string
+	env   []string
+	needs bool
 }
 
 // gateFindings は、ruleset の宣言・検査の宣言・workflow を突き合わせ、決定16・19・38 の不変条件の違反を返します。
@@ -121,8 +145,8 @@ func gateFindings(in gateInput, sources []Source) []lintreport.Finding {
 	findings = append(findings, linesRulesetFindings(in)...)
 
 	for _, g := range []gateSpec{
-		{file: prGateFile, job: gateJob, run: gateRun, fixed: []string{changesJob}, checks: in.decl.Checks, gated: true},
-		{file: lineVerifyFile, job: lineGateJob, run: lineRun, checks: treeChecks(in.decl)},
+		{file: prGateFile, job: gateJob, step: gateStep, fixed: []string{changesJob}, checks: in.decl.Checks, gated: true, types: prGateTypes},
+		{file: lineVerifyFile, job: lineGateJob, step: lineStep, checks: treeChecks(in.decl)},
 	} {
 		d, ok := byName[g.file]
 		switch {
@@ -154,7 +178,8 @@ func gateFindings(in gateInput, sources []Source) []lintreport.Finding {
 	return findings
 }
 
-// parseWorkflow は workflow を YAML として読みます。読めないときは違反1件を返します。
+// parseWorkflow は workflow を YAML として読みます。読めないときと、文書のどこかにマージキー・別名・スカラーでない
+// キーがあるときは違反1件を返します。取り込まれた先のキーは、mapping を1段ずつ読む検査からは見えない。
 func parseWorkflow(src Source) (wfDoc, *lintreport.Finding) {
 	fail := func(line int, format string, args ...any) (wfDoc, *lintreport.Finding) {
 		return wfDoc{}, &lintreport.Finding{File: src.File, Line: line, Message: "workflow を解釈できません: " + fmt.Sprintf(format, args...)}
@@ -168,6 +193,9 @@ func parseWorkflow(src Source) (wfDoc, *lintreport.Finding) {
 		return fail(1, "最上位が mapping ではありません")
 	}
 	root := doc.Content[0]
+	if line, what := opaqueNode(root); line != 0 {
+		return fail(line, "%sは使えません", what)
+	}
 
 	onKey, on := lookup(root, "on")
 	if on == nil {
@@ -227,8 +255,8 @@ func readEvents(on *yaml.Node) ([]wfEvent, error) {
 		out := make([]wfEvent, 0, len(on.Content)/2)
 		for i := 0; i+1 < len(on.Content); i += 2 {
 			k := on.Content[i]
-			if k.Kind != yaml.ScalarNode || k.ShortTag() == mergeTag {
-				return nil, xerrors.Wrapf(errEvents, "on: の %d 行目のキーがイベント名ではありません（マージキーは使えません）", k.Line)
+			if k.Kind != yaml.ScalarNode {
+				return nil, xerrors.Wrapf(errEvents, "on: の %d 行目のキーがイベント名ではありません", k.Line)
 			}
 			out = append(out, wfEvent{name: k.Value, line: k.Line, value: on.Content[i+1]})
 		}
@@ -238,7 +266,7 @@ func readEvents(on *yaml.Node) ([]wfEvent, error) {
 }
 
 // emptyEvent は、イベントの値が無い（配列や単一値の記法か、値が空か null）かを返します。マッピングでもなく空でも
-// ない値（別名など）は中身を読めないので、呼び出し側は違反にする。
+// ない値は中身を読めないので、呼び出し側は違反にする。
 func emptyEvent(v *yaml.Node) bool {
 	return v == nil || (v.Kind == yaml.ScalarNode && (v.Value == "" || v.ShortTag() == "!!null"))
 }
@@ -246,15 +274,26 @@ func emptyEvent(v *yaml.Node) bool {
 // mergeTag は、yaml のマージキー（<<）の解決後の tag です。
 const mergeTag = "!!merge"
 
-// opaqueEntry は、マッピングの中で中身を読めない最初の項目（マージキーか、値が別名の項目）の行を返します。無ければ 0 です。
-// 取り込まれた先のキーは、このマッピングを1段だけ読む検査からは見えない。
-func opaqueEntry(m *yaml.Node) int {
-	for i := 0; i+1 < len(m.Content); i += 2 {
-		if k, v := m.Content[i], m.Content[i+1]; k.Kind != yaml.ScalarNode || k.ShortTag() == mergeTag || v.Kind == yaml.AliasNode {
-			return k.Line
+// opaqueNode は、n の下を文書の順に辿り、中身を読めない最初の node（マージキー、別名、スカラーでない mapping の
+// キー）の行とその種類を返します。無ければ行は 0 です。
+func opaqueNode(n *yaml.Node) (int, string) {
+	if n.Kind == yaml.AliasNode {
+		return n.Line, "別名（*）"
+	}
+	for i, c := range n.Content {
+		if n.Kind == yaml.MappingNode && i%2 == 0 {
+			switch {
+			case c.Kind != yaml.ScalarNode:
+				return c.Line, "スカラーでないキー"
+			case c.ShortTag() == mergeTag:
+				return c.Line, "マージキー（<<）"
+			}
+		}
+		if line, what := opaqueNode(c); line != 0 {
+			return line, what
 		}
 	}
-	return 0
+	return 0, ""
 }
 
 func (d wfDoc) event(name string) (wfEvent, bool) {
@@ -420,11 +459,7 @@ func directJobFindings(context, set string, d wfDoc, j wfJob) []lintreport.Findi
 		return findings
 	}
 	if pr.value.Kind != yaml.MappingNode {
-		add(pr.line, "の workflow の pull_request の値を読めません。フィルタを置くならマッピングで書きます（別名は使えません）")
-		return findings
-	}
-	if line := opaqueEntry(pr.value); line != 0 {
-		add(line, "の workflow の pull_request の項目を読めません。マージキーと別名は使えません")
+		add(pr.line, "の workflow の pull_request の値を読めません。フィルタを置くならマッピングで書きます")
 		return findings
 	}
 	for i := 0; i+1 < len(pr.value.Content); i += 2 {
@@ -457,6 +492,15 @@ func gateWorkflowFindings(s gateSpec, d wfDoc, checksPath string, byName map[str
 	var findings []lintreport.Finding
 	add := func(line int, format string, args ...any) {
 		findings = append(findings, lintreport.Finding{File: d.file, Line: line, Message: fmt.Sprintf(format, args...)})
+	}
+
+	for _, key := range []string{"env", "defaults"} {
+		if k, _ := lookup(d.root, key); k != nil {
+			add(k.Line, "%s の最上位に %s: を置けません。判定の step の環境・shell・場所を替えます", s.file, key)
+		}
+	}
+	if len(s.types) > 0 {
+		findings = append(findings, typesFindings(s, d)...)
 	}
 
 	want := make(map[string]checksdecl.Check, len(s.checks))
@@ -504,7 +548,7 @@ func gateWorkflowFindings(s gateSpec, d wfDoc, checksPath string, byName map[str
 		if len(changes) != 1 {
 			add(1, "job `%s` は 1 件必要です（実際: %d）", changesJob, len(changes))
 		} else {
-			findings = append(findings, stepFindings(changesJob, d.file, changes[0], changesRun, false)...)
+			findings = append(findings, stepFindings(changesJob, d, changes[0], changesStep)...)
 		}
 	}
 
@@ -513,7 +557,42 @@ func gateWorkflowFindings(s gateSpec, d wfDoc, checksPath string, byName map[str
 		return findings
 	}
 	findings = append(findings, judgeFindings(s.job, d.file, judges[0], append(append([]string{}, s.fixed...), wantIDs...))...)
-	return append(findings, stepFindings(s.job, d.file, judges[0], s.run, true)...)
+	return append(findings, stepFindings(s.job, d, judges[0], s.step)...)
+}
+
+// typesFindings は、workflow の pull_request の types が s.types をすべて含むことを検査します。types を置かないと
+// GitHub の既定（opened・synchronize・reopened）になる。
+func typesFindings(s gateSpec, d wfDoc) []lintreport.Finding {
+	line := 1
+	got := map[string]bool{}
+	if pr, ok := d.event("pull_request"); ok {
+		line = pr.line
+		if k, v := lookup(pr.value, "types"); k != nil {
+			line = k.Line
+			switch v.Kind {
+			case yaml.ScalarNode:
+				got[v.Value] = true
+			case yaml.SequenceNode:
+				for _, e := range v.Content {
+					got[e.Value] = true
+				}
+			}
+		}
+	}
+	var missing []string
+	for _, t := range s.types {
+		if !got[t] {
+			missing = append(missing, t)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return []lintreport.Finding{{
+		File: d.file, Line: line,
+		Message: fmt.Sprintf("%s の pull_request の types は %s を含めます（無いもの: %s）。判定は base に依るので、base の付け替え（edited）でも走り直します",
+			s.file, strings.Join(s.types, ", "), strings.Join(missing, ", ")),
+	}}
 }
 
 // callerIf は、gate の workflow の call-<name> の job の if: の式（${{ }} の中身）。changes が success でなければ
@@ -593,51 +672,87 @@ func secretsFindings(id, file string, key, value *yaml.Node, called wfDoc) []lin
 	return findings
 }
 
-// stepFindings は、job j の steps に make の入口 run をちょうど1つ起動する step が在り、その step と job が失敗を
-// 成功へ変えない形であることを検査します。needs が真なら、その step が env の NEEDS で needs を受け取ることも課す。
-// run: は字面で一致させるので、`||` や `;` の後続は一致しない。
-func stepFindings(id, file string, j wfJob, run string, needs bool) []lintreport.Finding {
+// stepFindings は、job j の steps に make の入口 s.run をちょうど1つ起動する step が在り、job と step が判定の
+// 失敗を成功へ変えず、make の振る舞いを替えない形であることを検査します。job は continue-on-error・env・defaults・
+// container を持たず、判定の step は s.keys の key だけを持ち、env は s.env の key だけを持つ。判定の step より前の
+// step は、egress が生成した bullfrog の三つ組（harden.GeneratedLines）のほかに run: を持たない —— run: は
+// $GITHUB_ENV へ書いて判定の step の環境を替えられる。run: は字面で一致させるので、`||` や `;` の後続は一致しない。
+func stepFindings(id string, d wfDoc, j wfJob, s stepSpec) []lintreport.Finding {
 	var findings []lintreport.Finding
 	add := func(line int, format string, args ...any) {
-		findings = append(findings, lintreport.Finding{File: file, Line: line, Message: fmt.Sprintf("job `%s` ", id) + fmt.Sprintf(format, args...)})
+		findings = append(findings, lintreport.Finding{File: d.file, Line: line, Message: fmt.Sprintf("job `%s` ", id) + fmt.Sprintf(format, args...)})
 	}
 
 	if k, _ := j.get("continue-on-error"); k != nil {
 		add(k.Line, "に continue-on-error を置けません。判定の失敗が job の成功になります")
 	}
+	for _, key := range []string{"env", "defaults", "container"} {
+		if k, _ := j.get(key); k != nil {
+			add(k.Line, "に %s: を置けません。判定の step の環境・shell・場所を替えます", key)
+		}
+	}
 	_, steps := j.get("steps")
 	if steps == nil || steps.Kind != yaml.SequenceNode {
-		add(j.line, "に steps の一覧がありません。`%s` を起動する step が要ります", run)
+		add(j.line, "に steps の一覧がありません。`%s` を起動する step が要ります", s.run)
 		return findings
 	}
-	var hits []*yaml.Node
-	for _, st := range steps.Content {
+	at := -1
+	n := 0
+	for i, st := range steps.Content {
 		if _, r := lookup(st, "run"); r != nil && r.Kind == yaml.ScalarNode && makeTarget.MatchString(r.Value) {
-			hits = append(hits, st)
+			at = i
+			n++
 		}
 	}
-	if len(hits) != 1 {
-		add(j.line, "の steps に make の入口を起動する step は 1 件必要です（実際: %d）", len(hits))
+	if n != 1 {
+		add(j.line, "の steps に make の入口を起動する step は 1 件必要です（実際: %d）", n)
 		return findings
 	}
-	st := hits[0]
-	if _, r := lookup(st, "run"); strings.TrimSpace(r.Value) != run {
-		add(r.Line, "の判定の step の run: は `%s` にします。後続のコマンドや別の入口は、判定の結果を変えます", run)
-	}
-	for _, key := range []string{"continue-on-error", "if"} {
-		if k, _ := lookup(st, key); k != nil {
-			add(k.Line, "の判定の step に %s: を置けません。判定の失敗か判定の不在が job の成功になります", key)
+	generated := hardenLines(d, j.id)
+	for _, st := range steps.Content[:at] {
+		if k, _ := lookup(st, "run"); k != nil && !generated[k.Line] {
+			add(k.Line, "の判定の step より前の step に run: を置けません。$GITHUB_ENV などで判定の step の環境を替えます")
 		}
 	}
-	if !needs {
+	st := steps.Content[at]
+	if _, r := lookup(st, "run"); strings.TrimSpace(r.Value) != s.run {
+		add(r.Line, "の判定の step の run: は `%s` にします。後続のコマンドや別の入口は、判定の結果を変えます", s.run)
+	}
+	for i := 0; i+1 < len(st.Content); i += 2 {
+		if k := st.Content[i]; !slices.Contains(s.keys, k.Value) {
+			add(k.Line, "の判定の step に %s: を置けません。置ける key は %s です", k.Value, strings.Join(s.keys, ", "))
+		}
+	}
+	envKey, env := lookup(st, "env")
+	switch {
+	case env == nil:
+	case env.Kind != yaml.MappingNode:
+		add(envKey.Line, "の判定の step の env: を読めません")
+	default:
+		for i := 0; i+1 < len(env.Content); i += 2 {
+			if k := env.Content[i]; !slices.Contains(s.env, k.Value) {
+				add(k.Line, "の判定の step の env に `%s` を置けません。置ける key は %s です", k.Value, strings.Join(s.env, ", "))
+			}
+		}
+	}
+	if !s.needs {
 		return findings
 	}
-	_, env := lookup(st, "env")
 	_, v := lookup(env, "NEEDS")
 	if v == nil || v.Kind != yaml.ScalarNode || strings.TrimSpace(v.Value) != needsEnv {
 		add(st.Line, "の判定の step の env の NEEDS は `%s` にします", needsEnv)
 	}
 	return findings
+}
+
+// hardenLines は、workflow d の job id の先頭で egress が生成した bullfrog の三つ組の行の番号を返します。
+func hardenLines(d wfDoc, id string) map[int]bool {
+	for _, j := range workflow.SplitJobs(strings.Join(d.lines, "\n")).Jobs {
+		if j.ID == id {
+			return harden.GeneratedLines(j)
+		}
+	}
+	return nil
 }
 
 // judgeFindings は、判定の job の needs が want と両方向で一致し、if: が always() であることを検査します。
@@ -740,14 +855,7 @@ func lineVerifyTriggerFindings(d wfDoc) []lintreport.Finding {
 		if e.value.Kind != yaml.MappingNode {
 			findings = append(findings, lintreport.Finding{
 				File: d.file, Line: e.line,
-				Message: lineVerifyFile + " の push の値を読めません。フィルタを置くならマッピングで書きます（別名は使えません）",
-			})
-			continue
-		}
-		if line := opaqueEntry(e.value); line != 0 {
-			findings = append(findings, lintreport.Finding{
-				File: d.file, Line: line,
-				Message: lineVerifyFile + " の push の項目を読めません。マージキーと別名は使えません",
+				Message: lineVerifyFile + " の push の値を読めません。フィルタを置くならマッピングで書きます",
 			})
 			continue
 		}

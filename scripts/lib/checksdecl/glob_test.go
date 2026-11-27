@@ -24,7 +24,7 @@ func TestValidateGlob(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		for _, p := range []string{"", "/a", "a/", "!a", "a/{b,c}", `a\b`, "a//b", "a**/b", "a/[b"} {
+		for _, p := range []string{"", "/a", "a/", "!a", "a/{b,c}", `a\b`, "a//b", "a**/b", "a/[b", "./a", "a/../b", "a/.", "..", "/a/b"} {
 			t.Run(p+" を誤りにする", func(t *testing.T) {
 				t.Parallel()
 				require.ErrorIs(t, ValidateGlob(p), ErrGlob)

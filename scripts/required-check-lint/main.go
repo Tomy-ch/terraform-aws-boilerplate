@@ -16,14 +16,19 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/checksdecl"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lintreport"
@@ -36,13 +41,21 @@ const (
 	defaultRulesetsDir  = ".github/settings/rulesets"
 	defaultLegacyPath   = ".github/settings/branch-protection.json"
 	defaultWorkflowsDir = ".github/workflows"
+	gitTimeout          = 60 * time.Second
+)
+
+var (
+	// errNoFiles は、リポジトリの木のファイルの一覧が空であることを表す。宣言の path が何にも当たらないことを確かめられない。
+	errNoFiles = xerrors.New("リポジトリの木のファイルが1件もありません")
+	// errLsFiles は、git ls-files でリポジトリの木のファイルの一覧を得られないことを表す。
+	errLsFiles = xerrors.New("git ls-files でファイルの一覧を得られません")
 )
 
 func main() {
 	log.SetFlags(0)
-	if err := run(os.Args[1:], os.Stdout); err != nil {
+	if err := run(os.Args[1:], func() ([]string, error) { return gitLsFiles(".") }, os.Stdout); err != nil {
 		// 0件は違反（1）とは別の終了コードで返す（ADR-0702 決定13）。
-		if xerrors.Is(err, requiredchecks.ErrNone) || xerrors.Is(err, checksdecl.ErrNoChecks) {
+		if xerrors.Is(err, requiredchecks.ErrNone) || xerrors.Is(err, checksdecl.ErrNoChecks) || xerrors.Is(err, errNoFiles) {
 			log.Printf("❌ required-check-lint: %v", err)
 			os.Exit(2)
 		}
@@ -50,7 +63,27 @@ func main() {
 	}
 }
 
-func run(args []string, out io.Writer) error {
+// gitLsFiles は、root のリポジトリが追跡するファイルを、root からの `/` 区切りの path で返します。
+func gitLsFiles(root string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "ls-files", "-z")
+	cmd.Dir = root
+	raw, err := cmd.Output()
+	if err != nil {
+		return nil, xerrors.Wrapf(errLsFiles, "%s: %v", root, err)
+	}
+	var files []string
+	for _, f := range bytes.Split(raw, []byte{0}) {
+		if len(f) > 0 {
+			files = append(files, string(f))
+		}
+	}
+	return files, nil
+}
+
+// run は検査を走らせます。files はリポジトリの木のファイルの一覧を返し、宣言の path の突き合わせに使います。
+func run(args []string, files func() ([]string, error), out io.Writer) error {
 	fs := flag.NewFlagSet("required-check-lint", flag.ContinueOnError)
 	fs.SetOutput(out)
 	rulesetsDir := fs.String("rulesets", defaultRulesetsDir, "役割ごとの ruleset の宣言を置くディレクトリ")
@@ -83,6 +116,14 @@ func run(args []string, out io.Writer) error {
 		return xerrors.Wrapf(checksdecl.ErrNoChecks, "%s: scope が tree で required の検査がありません（線の検証が何も見ません）", *checksPath)
 	}
 
+	tree, err := files()
+	if err != nil {
+		return err
+	}
+	if len(tree) == 0 {
+		return errNoFiles
+	}
+
 	sources, err := readWorkflows(*workflowsDir)
 	if err != nil {
 		return err
@@ -91,6 +132,7 @@ func run(args []string, out io.Writer) error {
 	findings := gateFindings(gateInput{
 		contexts: contexts, legacy: legacy, decl: decl, checksPath: *checksPath, workflowsDir: *workflowsDir, rulesetsDir: *rulesetsDir,
 	}, sources)
+	findings = append(findings, pathFindings(decl, *checksPath, tree)...)
 	if legacy != nil {
 		findings = append(findings, check(legacy, sources, *legacyPath)...)
 	}
@@ -104,6 +146,23 @@ func run(args []string, out io.Writer) error {
 	fmt.Fprintf(out, "✅ required-check-lint: ruleset の required context %d 件、古い宣言の required context %d 件、検査 %d 件と workflow %d 件を確認しました\n",
 		len(contexts), len(legacy), len(decl.Checks), len(sources))
 	return nil
+}
+
+// pathFindings は、宣言の各検査の paths の pattern がそれぞれ木のファイル files のどれかに当たることを検査します。
+// 何にも当たらない pattern は、その検査を走らせるはずの変更を見落とす。paths が空の検査は常に走るので対象外。
+func pathFindings(decl checksdecl.Decl, checksPath string, files []string) []lintreport.Finding {
+	var findings []lintreport.Finding
+	for _, c := range decl.Checks {
+		for _, p := range c.Paths {
+			if !slices.ContainsFunc(files, func(f string) bool { return checksdecl.MatchGlob(p, f) }) {
+				findings = append(findings, lintreport.Finding{
+					File: checksPath, Line: 1,
+					Message: fmt.Sprintf("検査 `%s` の paths の `%s` が、リポジトリの木のどのファイルにも当たりません", c.Name, p),
+				})
+			}
+		}
+	}
+	return findings
 }
 
 // readLegacy は、役割ごとの ruleset と並べて適用する単一の ruleset の宣言の required の context を返します。

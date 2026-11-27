@@ -56,6 +56,8 @@ func TestParse(t *testing.T) {
 			"bases が未知":               `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true, "bases": ["x"]}]}`,
 			"bases が空配列":              `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true, "bases": []}]}`,
 			"contexts に空の名前":          `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true, "plan_env": "admin", "contexts": ["x", ""]}]}`,
+			"contexts に空白だけの名前":       `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true, "plan_env": "admin", "contexts": [" "]}]}`,
+			"contexts の名前の前後に空白":      `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true, "plan_env": "admin", "contexts": ["x "]}]}`,
 			"contexts の重複":            `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true, "plan_env": "admin", "contexts": ["x", "x"]}]}`,
 			"宣言のあとに値がある":              `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true}]} {}`,
 		} {
@@ -135,8 +137,11 @@ func Test_validContexts(t *testing.T) {
 		t.Parallel()
 
 		for name, contexts := range map[string][]string{
-			"空の名前を含む": {"a", ""},
-			"名前が重複する": {"a", "b", "a"},
+			"空の名前を含む":       {"a", ""},
+			"空白だけの名前を含む":    {"a", " "},
+			"先頭に空白のある名前を含む": {" a"},
+			"末尾に空白のある名前を含む": {"a\t"},
+			"名前が重複する":       {"a", "b", "a"},
 		} {
 			t.Run(name+"なら受け付けない", func(t *testing.T) {
 				t.Parallel()

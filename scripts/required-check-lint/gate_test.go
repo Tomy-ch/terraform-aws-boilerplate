@@ -10,6 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/checksdecl"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/harden"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lintreport"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/requiredchecks"
 )
@@ -46,6 +47,7 @@ func declCheck(name, workflow, scope string, req bool) checksdecl.Check {
 
 const prGateSrc = `on:
   pull_request:
+    types: [opened, synchronize, reopened, edited]
 jobs:
   changes:
     runs-on: x
@@ -66,8 +68,7 @@ jobs:
     if: always()
     runs-on: x
     steps:
-      - continue-on-error: true
-        run: sleep 1
+      - uses: actions/checkout@x
       - env:
           NEEDS: ${{ toJSON(needs) }}
         run: make ci-gate RUNNER_MODE=host
@@ -112,7 +113,7 @@ func withoutJob(src, id string) string { return strings.Replace(src, jobOf(src, 
 
 func gateSpecAB() gateSpec {
 	return gateSpec{
-		file: prGateFile, job: gateJob, run: gateRun, fixed: []string{changesJob}, gated: true,
+		file: prGateFile, job: gateJob, step: gateStep, fixed: []string{changesJob}, gated: true, types: prGateTypes,
 		checks: []checksdecl.Check{declCheck("a", "a.yaml", checksdecl.ScopeTree, true), declCheck("b", "b.yaml", checksdecl.ScopeChange, true)},
 	}
 }
@@ -186,6 +187,16 @@ func Test_gateFindings(t *testing.T) {
 		assert.Contains(t, got[0].Message, "push のほかのイベント（pull_request）")
 	})
 
+	t.Run("gate の workflow の pull_request の types が edited を欠けば違反", func(t *testing.T) {
+		t.Parallel()
+		srcs := valid()
+		srcs[0].Source = strings.Replace(prGateSrc, ", edited]", "]", 1)
+		got := gateFindings(in, srcs)
+		require.Len(t, got, 1, messages(got))
+		assert.Equal(t, "wf/pr-gate.yaml", got[0].File)
+		assert.Contains(t, got[0].Message, "（無いもの: edited）")
+	})
+
 	t.Run("古い宣言の context と同じ名前の call-* も衝突にする", func(t *testing.T) {
 		t.Parallel()
 		withLegacy := in
@@ -231,6 +242,16 @@ func Test_parseWorkflow(t *testing.T) {
 		"jobs: が無い":           {"on: push\n", 1, "jobs: がありません"},
 		"jobs: が mapping でない": {"on: push\njobs: []\n", 2, "jobs: が mapping ではありません"},
 		"job の値が mapping でない": {"on: push\njobs:\n  a: x\n", 3, "「id: mapping」の形ではありません"},
+		"job のマージキーが name と secrets を足す": {
+			"x-job: &j\n  name: Gate\n  secrets: inherit\non: push\njobs:\n  a:\n    <<: *j\n    runs-on: x\n", 7, "マージキー（<<）は使えません",
+		},
+		"job の値が別名": {"x-job: &j\n  runs-on: x\non: push\njobs:\n  a: *j\n", 5, "別名（*）は使えません"},
+		"最上位のマージキーが concurrency を足す": {"x: &x\n  concurrency: g\non: push\n<<: *x\njobs:\n  a:\n    runs-on: x\n", 4, "マージキー（<<）は使えません"},
+		"最上位のマージキーが on を足す":          {"x: &x\n  on: push\n<<: *x\njobs:\n  a:\n    runs-on: x\n", 3, "マージキー（<<）は使えません"},
+		"pull_request の値が別名":         {"x-pr: &pr\n  paths: [x]\non:\n  pull_request: *pr\njobs:\n  a:\n    runs-on: x\n", 4, "別名（*）は使えません"},
+		"pull_request のマージキー":        {"x-pr: &pr\n  paths: [x]\non:\n  pull_request:\n    <<: *pr\njobs:\n  a:\n    runs-on: x\n", 5, "マージキー（<<）は使えません"},
+		"step の値が別名":                 {"x: &x echo\non: push\njobs:\n  a:\n    steps:\n      - run: *x\n", 6, "別名（*）は使えません"},
+		"スカラーでないキー":                  {"on: push\njobs:\n  a:\n    ? [b]\n    : x\n", 4, "スカラーでないキーは使えません"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -311,7 +332,6 @@ func Test_readEvents(t *testing.T) {
 	for name, src := range map[string]string{
 		"配列の要素がスカラーでない":    "[[push]]",
 		"マッピングのキーがスカラーでない": "? [push]\n: x\n",
-		"マッピングにマージキーがある":   "<<: {push: }\npull_request:\n",
 	} {
 		t.Run(name+"ならエラー", func(t *testing.T) {
 			t.Parallel()
@@ -327,22 +347,26 @@ func Test_readEvents(t *testing.T) {
 	})
 }
 
-func Test_opaqueEntry(t *testing.T) {
+func Test_opaqueNode(t *testing.T) {
 	t.Parallel()
 
 	for name, c := range map[string]struct {
 		src  string
-		want int
+		line int
+		what string
 	}{
-		"スカラーのキーとふつうの値だけなら0":   {"paths: [x]\nbranches:\n  - a\n", 0},
-		"マージキーの行を返す":           {"a: 1\n<<: {paths: [x]}\n", 2},
-		"値が別名の項目の行を返す":         {"a: &x [b]\nbranches: *x\n", 2},
-		"キーがスカラーでない項目の行を返す":    {"? [a]\n: x\n", 1},
-		"引用符付きの << はマージキーではない": {"'<<': x\n", 0},
+		"マージキーも別名も無ければ0":         {"a: &x [b]\nc:\n  - d: e\n", 0, ""},
+		"深い mapping のマージキーの行を返す": {"a:\n  b:\n    - c: 1\n      <<: {d: 2}\n", 4, "マージキー（<<）"},
+		"配列の要素の別名の行を返す":          {"a: &x 1\nb:\n  - *x\n", 3, "別名（*）"},
+		"スカラーでないキーの行を返す":         {"? [a]\n: x\n", 1, "スカラーでないキー"},
+		"文書の順で最初のものを返す":          {"a: &x 1\nb: *x\n<<: {c: 1}\n", 2, "別名（*）"},
+		"引用符付きの << はマージキーではない":   {"'<<': x\n", 0, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, c.want, opaqueEntry(yamlNode(t, c.src)))
+			line, what := opaqueNode(yamlNode(t, c.src))
+			assert.Equal(t, c.line, line)
+			assert.Equal(t, c.what, what)
 		})
 	}
 }
@@ -585,19 +609,16 @@ func Test_directJobFindings(t *testing.T) {
 		line int
 		want string
 	}{
-		"reusable workflow を呼ぶ job":     {"on:\n  pull_request:\njobs:\n  build:\n    uses: ./.github/workflows/x.yaml\n", 5, "reusable workflow を呼んでいます"},
-		"workflow_call を持つ workflow":    {"on:\n  pull_request:\n  workflow_call:\njobs:\n  build:\n    runs-on: x\n", 3, "workflow_call を持っています"},
-		"job の name:":                   {"on:\n  pull_request:\njobs:\n  build:\n    name: Build\n    runs-on: x\n", 5, "name: を置かないでください"},
-		"pull_request が無い":              {"on:\n  push:\njobs:\n  build:\n    runs-on: x\n", 1, "pull_request トリガーがありません"},
-		"paths":                         {"on:\n  pull_request:\n    paths:\n      - x\njobs:\n  build:\n    runs-on: x\n", 3, "`paths` が残っています"},
-		"paths-ignore":                  {"on:\n  pull_request:\n    paths-ignore:\n      - x\njobs:\n  build:\n    runs-on: x\n", 3, "`paths-ignore` が残っています"},
-		"branches-ignore は印があっても":       {"on:\n  pull_request:\n    branches-ignore: # branch-set: deploy\n      - x\njobs:\n  build:\n    runs-on: x\n", 3, "`branches-ignore` が残っています"},
-		"印の無い branches":                 {"on:\n  pull_request:\n    branches:\n      - main\njobs:\n  build:\n    runs-on: x\n", 3, "印 `# branch-set: <集合>`"},
-		"印がほかの行にある branches":            {"on:\n  pull_request:\n    branches:\n      - main # branch-set: deploy\njobs:\n  build:\n    runs-on: x\n", 3, "印 `# branch-set: <集合>`"},
-		"pull_request の値が別名":            {"x-pr: &pr\n  paths: [x]\non:\n  pull_request: *pr\njobs:\n  build:\n    runs-on: x\n", 4, "pull_request の値を読めません"},
-		"pull_request の値が空でないスカラー":      {"on:\n  pull_request: x\njobs:\n  build:\n    runs-on: x\n", 2, "pull_request の値を読めません"},
-		"pull_request のマージキー":           {"x-pr: &pr\n  paths: [x]\non:\n  pull_request:\n    <<: *pr\njobs:\n  build:\n    runs-on: x\n", 5, "マージキーと別名は使えません"},
-		"pull_request の branches の値が別名": {"x-b: &b\n  - main\non:\n  pull_request:\n    branches: *b # branch-set: deploy\njobs:\n  build:\n    runs-on: x\n", 5, "マージキーと別名は使えません"},
+		"reusable workflow を呼ぶ job":  {"on:\n  pull_request:\njobs:\n  build:\n    uses: ./.github/workflows/x.yaml\n", 5, "reusable workflow を呼んでいます"},
+		"workflow_call を持つ workflow": {"on:\n  pull_request:\n  workflow_call:\njobs:\n  build:\n    runs-on: x\n", 3, "workflow_call を持っています"},
+		"job の name:":                {"on:\n  pull_request:\njobs:\n  build:\n    name: Build\n    runs-on: x\n", 5, "name: を置かないでください"},
+		"pull_request が無い":           {"on:\n  push:\njobs:\n  build:\n    runs-on: x\n", 1, "pull_request トリガーがありません"},
+		"paths":                      {"on:\n  pull_request:\n    paths:\n      - x\njobs:\n  build:\n    runs-on: x\n", 3, "`paths` が残っています"},
+		"paths-ignore":               {"on:\n  pull_request:\n    paths-ignore:\n      - x\njobs:\n  build:\n    runs-on: x\n", 3, "`paths-ignore` が残っています"},
+		"branches-ignore は印があっても":    {"on:\n  pull_request:\n    branches-ignore: # branch-set: deploy\n      - x\njobs:\n  build:\n    runs-on: x\n", 3, "`branches-ignore` が残っています"},
+		"印の無い branches":              {"on:\n  pull_request:\n    branches:\n      - main\njobs:\n  build:\n    runs-on: x\n", 3, "印 `# branch-set: <集合>`"},
+		"印がほかの行にある branches":         {"on:\n  pull_request:\n    branches:\n      - main # branch-set: deploy\njobs:\n  build:\n    runs-on: x\n", 3, "印 `# branch-set: <集合>`"},
+		"pull_request の値が空でないスカラー":   {"on:\n  pull_request: x\njobs:\n  build:\n    runs-on: x\n", 2, "pull_request の値を読めません"},
 	} {
 		t.Run(name+"は違反", func(t *testing.T) {
 			t.Parallel()
@@ -668,6 +689,18 @@ func Test_gateWorkflowFindings(t *testing.T) {
 			strings.Replace(prGateSrc, "  call-a:\n", jobOf(prGateSrc, "changes")+"  call-a:\n", 1),
 			[]string{"job `changes` は 1 件必要です（実際: 2）"},
 		},
+		"最上位に env: がある": {
+			strings.Replace(prGateSrc, "jobs:\n", "env:\n  MAKEFLAGS: -n\njobs:\n", 1),
+			[]string{"pr-gate.yaml の最上位に env: を置けません"},
+		},
+		"最上位に defaults: がある": {
+			strings.Replace(prGateSrc, "jobs:\n", "defaults:\n  run:\n    shell: sh\njobs:\n", 1),
+			[]string{"pr-gate.yaml の最上位に defaults: を置けません"},
+		},
+		"pull_request の types が edited を欠く": {
+			strings.Replace(prGateSrc, ", edited]", "]", 1),
+			[]string{"（無いもの: edited）"},
+		},
 		"changes の step の run: が違う": {
 			strings.Replace(prGateSrc, "run: make ci-changes RUNNER_MODE=host", "run: make ci-changes RUNNER_MODE=host || true", 1),
 			[]string{"job `changes` の判定の step の run: は `make ci-changes RUNNER_MODE=host` にします"},
@@ -696,6 +729,70 @@ func Test_gateWorkflowFindings(t *testing.T) {
 		src := strings.Replace(prGateSrc, "[changes, call-a, call-b]", "[call-a, call-b]", 1)
 		got := gateWorkflowFindings(gateSpecAB(), parsed(t, "pr-gate.yaml", src), "checks.json", nil)
 		assert.Contains(t, messages(got), "needs: に `changes` がありません")
+	})
+}
+
+func Test_typesFindings(t *testing.T) {
+	t.Parallel()
+
+	spec := gateSpec{file: prGateFile, types: prGateTypes}
+	find := func(t *testing.T, on string) []lintreport.Finding {
+		t.Helper()
+		return typesFindings(spec, parsed(t, prGateFile, on+"jobs:\n  gate:\n    runs-on: x\n"))
+	}
+
+	for name, on := range map[string]string{
+		"4つの types を並べる":    "on:\n  pull_request:\n    types: [opened, synchronize, reopened, edited]\n",
+		"ほかの types を足してもよい": "on:\n  pull_request:\n    types: [edited, labeled, reopened, synchronize, opened]\n",
+	} {
+		t.Run(name+"なら違反0件", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, find(t, on))
+		})
+	}
+
+	for name, c := range map[string]struct {
+		on   string
+		line int
+		want string
+	}{
+		"types が無い（GitHub の既定は edited を含まない）": {"on:\n  pull_request:\n", 2, "（無いもの: opened, synchronize, reopened, edited）"},
+		"edited が無い":         {"on:\n  pull_request:\n    types: [opened, synchronize, reopened]\n", 3, "（無いもの: edited）"},
+		"単一値の types":         {"on:\n  pull_request:\n    types: edited\n", 3, "（無いもの: opened, synchronize, reopened）"},
+		"pull_request が無い":   {"on:\n  push:\n", 1, "（無いもの: opened, synchronize, reopened, edited）"},
+		"配列記法の pull_request": {"on: [pull_request]\n", 1, "（無いもの: opened, synchronize, reopened, edited）"},
+	} {
+		t.Run(name+"なら違反", func(t *testing.T) {
+			t.Parallel()
+			got := find(t, c.on)
+			require.Len(t, got, 1)
+			assert.Equal(t, prGateFile, got[0].File)
+			assert.Equal(t, c.line, got[0].Line)
+			assert.Contains(t, got[0].Message, "pr-gate.yaml の pull_request の types は opened, synchronize, reopened, edited を含めます")
+			assert.Contains(t, got[0].Message, c.want)
+		})
+	}
+}
+
+func Test_hardenLines(t *testing.T) {
+	t.Parallel()
+
+	triple := strings.Join(harden.Render("        uses: "+harden.Action+"@x", nil), "\n") + "\n"
+	src := "on: push\njobs:\n  other:\n    runs-on: x\n  gate:\n    runs-on: x\n    steps:\n" + triple + "      - run: make ci-gate RUNNER_MODE=host\n"
+	d := parsed(t, "g.yaml", src)
+
+	t.Run("job の先頭の生成した三つ組の行を返す", func(t *testing.T) {
+		t.Parallel()
+		got := hardenLines(d, "gate")
+		recoveryRun := 8 + len(harden.Head()) + len(harden.Recovery())
+		assert.True(t, got[recoveryRun], "回復の step の run: の行")
+		assert.False(t, got[len(strings.Split(src, "\n"))-1], "判定の step の run: の行")
+	})
+
+	t.Run("三つ組の無い job と無い job は空", func(t *testing.T) {
+		t.Parallel()
+		assert.Empty(t, hardenLines(d, "other"))
+		assert.Empty(t, hardenLines(d, "missing"))
 	})
 }
 
@@ -729,16 +826,21 @@ func Test_linesRulesetFindings(t *testing.T) {
 		assert.Empty(t, linesRulesetFindings(in(requiredchecks.Context{Name: "gate", File: "r/lines.json"}, requiredchecks.Context{Name: "x", File: "r/deploy-a.json"})))
 	})
 
-	for name, contexts := range map[string][]requiredchecks.Context{
-		"線の ruleset に required が無い": {{Name: "x", File: "r/deploy-a.json"}},
-		"gate でない context":          {{Name: "line-gate", File: "r/lines.json"}},
-		"gate のほかに context がある":     {{Name: "gate", File: "r/lines.json"}, {Name: "x", File: "r/lines.json"}},
+	for name, c := range map[string]struct {
+		contexts []requiredchecks.Context
+		want     string
+	}{
+		"線の ruleset に required が無い": {[]requiredchecks.Context{{Name: "x", File: "r/deploy-a.json"}}, "（実際: []）"},
+		"gate でない context":          {[]requiredchecks.Context{{Name: "line-gate", File: "r/lines.json"}}, "（実際: [line-gate]）"},
+		"gate のほかに context がある":     {[]requiredchecks.Context{{Name: "gate", File: "r/lines.json"}, {Name: "x", File: "r/lines.json"}}, "（実際: [gate, x]）"},
 	} {
 		t.Run(name+"なら違反", func(t *testing.T) {
 			t.Parallel()
-			got := linesRulesetFindings(in(contexts...))
+			got := linesRulesetFindings(in(c.contexts...))
 			require.Len(t, got, 1)
 			assert.Equal(t, filepath.Join("r", linesRulesetFile), got[0].File)
+			assert.Contains(t, got[0].Message, "`gate` の1つだけにします")
+			assert.Contains(t, got[0].Message, c.want)
 		})
 	}
 }
@@ -781,7 +883,7 @@ func Test_callerFindings(t *testing.T) {
 	t.Parallel()
 
 	gate := gateSpecAB()
-	line := gateSpec{file: lineVerifyFile, job: lineGateJob, run: lineRun}
+	line := gateSpec{file: lineVerifyFile, job: lineGateJob, step: lineStep}
 	c := declCheck("a", "a.yaml", checksdecl.ScopeTree, true)
 	called := parsed(t, "a.yaml", "on:\n  workflow_call:\n    secrets:\n      TOKEN:\n        required: false\njobs:\n  a:\n    runs-on: x\n")
 	ifA := "    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'a')) }}\n"
@@ -822,6 +924,7 @@ func Test_callerFindings(t *testing.T) {
 		"needs が無い":                {gate, ifA, []string{"needs: がありません"}},
 		"needs がほかの job も持つ":       {gate, "    needs: [changes, call-b]\n" + ifA, []string{"needs: は `changes` だけにします"}},
 		"needs が別の job":            {gate, "    needs: call-b\n" + ifA, []string{"needs: は `changes` だけにします"}},
+		"needs が空の配列":              {gate, "    needs: []\n" + ifA, []string{"needs: は `changes` だけにします"}},
 		"線の検証の call-* が if: を持つ":   {line, "    if: always()\n", []string{"線の検証は検査を path で絞らず"}},
 		"線の検証の call-* が with: を持つ": {line, "    with:\n      x: y\n", []string{"with: を置けません"}},
 	} {
@@ -855,6 +958,11 @@ func Test_secretsFindings(t *testing.T) {
 		assert.Empty(t, find(t, "{}", called))
 	})
 
+	t.Run("ブロックスカラーの値は末尾の改行を除いて読む", func(t *testing.T) {
+		t.Parallel()
+		assert.Empty(t, find(t, "\n  TOKEN: |\n    ${{ secrets.TOKEN }}\n", called))
+	})
+
 	for name, c := range map[string]struct {
 		value  string
 		called wfDoc
@@ -884,49 +992,67 @@ func Test_stepFindings(t *testing.T) {
 	t.Parallel()
 
 	judgeStep := "      - env:\n          NEEDS: ${{ toJSON(needs) }}\n        run: make ci-gate RUNNER_MODE=host\n"
-	job := func(t *testing.T, body string) wfJob {
+	triple := strings.Join(harden.Render("        uses: "+harden.Action+"@x", nil), "\n") + "\n"
+	find := func(t *testing.T, body string, s stepSpec) []lintreport.Finding {
 		t.Helper()
-		return parsed(t, "g.yaml", "on: push\njobs:\n  gate:\n    runs-on: x\n"+body).jobs[0]
+		d := parsed(t, "g.yaml", "on: push\njobs:\n  gate:\n    runs-on: x\n"+body)
+		return stepFindings("gate", d, d.jobs[0], s)
 	}
 	steps := func(extra ...string) string { return "    steps:\n" + strings.Join(extra, "") }
 
 	for name, c := range map[string]struct {
-		body  string
-		run   string
-		needs bool
+		body string
+		spec stepSpec
 	}{
-		"判定の step が1つ":                      {steps("      - uses: actions/checkout@x\n", judgeStep), gateRun, true},
-		"ほかの step は continue-on-error を持てる": {steps("      - continue-on-error: true\n        run: sleep 1\n", judgeStep), gateRun, true},
-		"run: の前後の空白は字面の差にしない":              {steps("      - env:\n          NEEDS: ${{ toJSON(needs) }}\n        run: |\n          make ci-gate RUNNER_MODE=host\n"), gateRun, true},
-		"needs を課さない changes の step":        {steps("      - id: changes\n        run: make ci-changes RUNNER_MODE=host\n"), changesRun, false},
+		"判定の step が1つ":                         {steps("      - uses: actions/checkout@x\n", judgeStep), gateStep},
+		"判定の step の後ろの step は run: を持てる":       {steps(judgeStep, "      - continue-on-error: true\n        run: sleep 1\n"), gateStep},
+		"run: の前後の空白は字面の差にしない":                 {steps("      - env:\n          NEEDS: ${{ toJSON(needs) }}\n        run: |\n          make ci-gate RUNNER_MODE=host\n"), gateStep},
+		"判定の step が name と base の env を持つ":     {steps("      - name: Judge\n        env:\n          NEEDS: ${{ toJSON(needs) }}\n          BASE_SHA: a\n          HEAD_SHA: b\n          BASE_REF: c\n        run: make ci-gate RUNNER_MODE=host\n"), gateStep},
+		"needs を課さない changes の step は id を持てる": {steps("      - id: changes\n        env:\n          BASE_SHA: a\n        run: make ci-changes RUNNER_MODE=host\n"), changesStep},
+		"前に生成した bullfrog の三つ組がある":              {steps(triple, "      - uses: actions/checkout@x\n", judgeStep), gateStep},
+		"線の検証の判定の step":                        {steps("      - env:\n          NEEDS: ${{ toJSON(needs) }}\n        run: make ci-line-gate RUNNER_MODE=host\n"), lineStep},
 	} {
 		t.Run(name+"なら違反0件", func(t *testing.T) {
 			t.Parallel()
-			assert.Empty(t, stepFindings("gate", "g.yaml", job(t, c.body), c.run, c.needs))
+			assert.Empty(t, find(t, c.body, c.spec))
 		})
 	}
 
 	for name, c := range map[string]struct {
 		body string
+		spec stepSpec
 		want []string
 	}{
-		"steps が無い":                    {"", []string{"steps の一覧がありません"}},
-		"steps が一覧でない":                 {"    steps: x\n", []string{"steps の一覧がありません"}},
-		"判定の step が無い":                 {steps("      - run: echo ok\n"), []string{"（実際: 0）"}},
-		"判定の step が2つ":                 {steps(judgeStep, judgeStep), []string{"（実際: 2）"}},
-		"別の入口を起動する step が並ぶ":           {steps(judgeStep, "      - run: make ci-changes RUNNER_MODE=host\n"), []string{"（実際: 2）"}},
-		"|| で失敗を打ち消す":                  {steps(strings.Replace(judgeStep, "RUNNER_MODE=host", "RUNNER_MODE=host || true", 1)), []string{"run: は `make ci-gate RUNNER_MODE=host` にします"}},
-		"; で後続を足す":                     {steps(strings.Replace(judgeStep, "RUNNER_MODE=host", "RUNNER_MODE=host; exit 0", 1)), []string{"run: は `make ci-gate RUNNER_MODE=host` にします"}},
-		"別の入口を判定に使う":                   {steps(strings.Replace(judgeStep, "ci-gate", "ci-line-gate", 1)), []string{"run: は `make ci-gate RUNNER_MODE=host` にします"}},
-		"判定の step が continue-on-error": {steps("      - continue-on-error: true\n        env:\n          NEEDS: ${{ toJSON(needs) }}\n        run: make ci-gate RUNNER_MODE=host\n"), []string{"continue-on-error: を置けません"}},
-		"判定の step が if:":               {steps("      - if: false\n        env:\n          NEEDS: ${{ toJSON(needs) }}\n        run: make ci-gate RUNNER_MODE=host\n"), []string{"if: を置けません"}},
-		"job が continue-on-error":      {"    continue-on-error: true\n" + steps(judgeStep), []string{"job `gate` に continue-on-error を置けません"}},
-		"NEEDS が無い":                    {steps("      - run: make ci-gate RUNNER_MODE=host\n"), []string{"NEEDS は `${{ toJSON(needs) }}` にします"}},
-		"NEEDS が別の値":                   {steps(strings.Replace(judgeStep, "toJSON(needs)", "'{}'", 1)), []string{"NEEDS は `${{ toJSON(needs) }}` にします"}},
+		"steps が無い":                      {"", gateStep, []string{"steps の一覧がありません"}},
+		"steps が一覧でない":                   {"    steps: x\n", gateStep, []string{"steps の一覧がありません"}},
+		"判定の step が無い":                   {steps("      - uses: actions/checkout@x\n"), gateStep, []string{"（実際: 0）"}},
+		"判定の step が2つ":                   {steps(judgeStep, judgeStep), gateStep, []string{"（実際: 2）"}},
+		"別の入口を起動する step が並ぶ":             {steps(judgeStep, "      - run: make ci-changes RUNNER_MODE=host\n"), gateStep, []string{"（実際: 2）"}},
+		"|| で失敗を打ち消す":                    {steps(strings.Replace(judgeStep, "RUNNER_MODE=host", "RUNNER_MODE=host || true", 1)), gateStep, []string{"run: は `make ci-gate RUNNER_MODE=host` にします"}},
+		"; で後続を足す":                       {steps(strings.Replace(judgeStep, "RUNNER_MODE=host", "RUNNER_MODE=host; exit 0", 1)), gateStep, []string{"run: は `make ci-gate RUNNER_MODE=host` にします"}},
+		"別の入口を判定に使う":                     {steps(strings.Replace(judgeStep, "ci-gate", "ci-line-gate", 1)), gateStep, []string{"run: は `make ci-gate RUNNER_MODE=host` にします"}},
+		"判定の step が continue-on-error":   {steps("      - continue-on-error: true\n        " + strings.TrimPrefix(judgeStep, "      - ")), gateStep, []string{"continue-on-error: を置けません"}},
+		"判定の step が if:":                 {steps("      - if: false\n        " + strings.TrimPrefix(judgeStep, "      - ")), gateStep, []string{"if: を置けません"}},
+		"判定の step が shell:":              {steps("      - shell: bash -c 'exit 0' {0}\n        " + strings.TrimPrefix(judgeStep, "      - ")), gateStep, []string{"判定の step に shell: を置けません"}},
+		"判定の step が working-directory:":  {steps("      - working-directory: x\n        " + strings.TrimPrefix(judgeStep, "      - ")), gateStep, []string{"判定の step に working-directory: を置けません"}},
+		"changes でない判定の step が id:":      {steps("      - id: judge\n        " + strings.TrimPrefix(judgeStep, "      - ")), gateStep, []string{"判定の step に id: を置けません"}},
+		"判定の step の env に MAKEFLAGS":     {steps(strings.Replace(judgeStep, "        run:", "          MAKEFLAGS: -n\n        run:", 1)), gateStep, []string{"env に `MAKEFLAGS` を置けません"}},
+		"線の検証の判定の step の env に BASE_SHA": {steps("      - env:\n          NEEDS: ${{ toJSON(needs) }}\n          BASE_SHA: a\n        run: make ci-line-gate RUNNER_MODE=host\n"), lineStep, []string{"env に `BASE_SHA` を置けません"}},
+		"changes の step の env に NEEDS":   {steps("      - id: changes\n        env:\n          NEEDS: x\n        run: make ci-changes RUNNER_MODE=host\n"), changesStep, []string{"env に `NEEDS` を置けません"}},
+		"判定の step の env が mapping でない":   {steps("      - env: x\n        run: make ci-changes RUNNER_MODE=host\n"), changesStep, []string{"env: を読めません"}},
+		"job が continue-on-error":        {"    continue-on-error: true\n" + steps(judgeStep), gateStep, []string{"job `gate` に continue-on-error を置けません"}},
+		"job が env:":                     {"    env:\n      MAKEFLAGS: -n\n" + steps(judgeStep), gateStep, []string{"job `gate` に env: を置けません"}},
+		"job が defaults:":                {"    defaults:\n      run:\n        shell: sh\n" + steps(judgeStep), gateStep, []string{"job `gate` に defaults: を置けません"}},
+		"job が container:":               {"    container: alpine\n" + steps(judgeStep), gateStep, []string{"job `gate` に container: を置けません"}},
+		"判定の step より前の run:":             {steps("      - run: echo MAKEFLAGS=-n >> \"$GITHUB_ENV\"\n", judgeStep), gateStep, []string{"判定の step より前の step に run: を置けません"}},
+		"三つ組より前の run:":                   {steps("      - run: echo x\n", triple, judgeStep), gateStep, []string{"判定の step より前の step に run: を置けません", "判定の step より前の step に run: を置けません"}},
+		"生成と違う回復の step の run:":           {steps(strings.Replace(triple, harden.RecoveryRun, harden.RecoveryRun+" && echo MAKEFLAGS=-n >> \"$GITHUB_ENV\"", 1), judgeStep), gateStep, []string{"判定の step より前の step に run: を置けません"}},
+		"NEEDS が無い":                      {steps("      - run: make ci-gate RUNNER_MODE=host\n"), gateStep, []string{"NEEDS は `${{ toJSON(needs) }}` にします"}},
+		"NEEDS が別の値":                     {steps(strings.Replace(judgeStep, "toJSON(needs)", "'{}'", 1)), gateStep, []string{"NEEDS は `${{ toJSON(needs) }}` にします"}},
 	} {
 		t.Run(name+"なら違反", func(t *testing.T) {
 			t.Parallel()
-			got := stepFindings("gate", "g.yaml", job(t, c.body), gateRun, true)
+			got := find(t, c.body, c.spec)
 			require.Len(t, got, len(c.want), messages(got))
 			for i, w := range c.want {
 				assert.Equal(t, "g.yaml", got[i].File)
@@ -1068,10 +1194,7 @@ func Test_lineVerifyTriggerFindings(t *testing.T) {
 		"push が無い":                {"on:\n  workflow_dispatch:\n", []string{"push のほかのイベント（workflow_dispatch）", "push トリガーがありません"}},
 		"push を paths で絞る":        {"on:\n  push:\n    paths:\n      - x\n", []string{"`paths` があります"}},
 		"push を paths-ignore で絞る": {"on:\n  push:\n    paths-ignore:\n      - x\n", []string{"`paths-ignore` があります"}},
-		"push の値が別名":              {"x-push: &p\n  paths: [x]\non:\n  push: *p\n", []string{"push の値を読めません"}},
 		"push の値が空でないスカラー":        {"on:\n  push: x\n", []string{"push の値を読めません"}},
-		"push のマージキー":             {"x-push: &p\n  paths: [x]\non:\n  push:\n    <<: *p\n", []string{"push の項目を読めません"}},
-		"push の branches の値が別名":   {"x-b: &b\n  - main\non:\n  push:\n    branches: *b\n", []string{"push の項目を読めません"}},
 	} {
 		t.Run(name+"なら違反", func(t *testing.T) {
 			t.Parallel()
