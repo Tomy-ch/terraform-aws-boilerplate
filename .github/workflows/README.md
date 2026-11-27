@@ -753,6 +753,7 @@ job の先頭に並んでいないこと、本体と再試行の間が生成し�
 | `aws-state` | STS・S3 の endpoint（region と wildcard の理由は宣言のコメント） | OIDC で role を assume し、state の Bucket に触れる job（lock の解除の job） |
 | `aws` | `aws-state` に加えて IAM・KMS・S3 Control の endpoint | Terraform で AWS の API を呼ぶ job |
 | `aws-notify` | `aws` に加えて SNS・EventBridge Scheduler・Chatbot の endpoint | 通知の構成物を持つ workload root を Terraform で扱う job |
+| `aws-cost` | `aws` に加えて Budgets・Cost Explorer の endpoint | 費用の監視の構成物を持つ workload root を Terraform で扱う job |
 
 1つの job に固有のものは、その job の `extra` へ置く —— 走査のデータ源、通知先の `hooks.slack.com`。
 2つ目の job の `extra` に現れた宛先は、クラスへ移す。
