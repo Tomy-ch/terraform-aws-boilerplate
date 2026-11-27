@@ -603,6 +603,7 @@ locals {
     "cloudtrail.amazonaws.com"         = "${local.iam_arn_prefix}:role/aws-service-role/cloudtrail.amazonaws.com/AWSServiceRoleForCloudTrail"
     "context.cloudtrail.amazonaws.com" = "${local.iam_arn_prefix}:role/aws-service-role/context.cloudtrail.amazonaws.com/AWSServiceRoleForCloudTrailEventContext"
   }
+  inspector_slr_arn = "${local.iam_arn_prefix}:role/aws-service-role/inspector2.amazonaws.com/AWSServiceRoleForAmazonInspector2"
   # GuardDuty・Inspector・Security Hub の指定はリージョンごとで、ADR-0209 の集合のすべてに置く。Security Hub の Action は
   # 管理アカウントの hub を resource に取る（Service Authorization Reference）。
   delegated_admin_regional_read_actions   = ["guardduty:ListOrganizationAdminAccounts", "inspector2:ListDelegatedAdminAccounts"]
@@ -637,6 +638,13 @@ locals {
       },
       { Sid = "CloudtrailRegisterOrganizationDelegatedAdmin", Effect = "Allow", Action = "cloudtrail:RegisterOrganizationDelegatedAdmin", Resource = "*" },
       { Sid = "CloudtrailDeregisterOrganizationDelegatedAdmin", Effect = "Allow", Action = "cloudtrail:DeregisterOrganizationDelegatedAdmin", Resource = "*" },
+      # 指定の中の GetRole は、SLR がまだ無いと path を持たない ARN で評価される。plan は指定を呼ばないので、plan の role に置かない。
+      {
+        Sid      = "ReadAbsentCloudTrailServiceLinkedRoles"
+        Effect   = "Allow"
+        Action   = "iam:GetRole"
+        Resource = [for a in values(local.cloudtrail_slr_arns) : "${local.iam_arn_prefix}:role/${regex("[^/]+$", a)}"]
+      },
     ],
     # CloudTrail の指定は、CloudTrail の SLR が無ければ呼び手の権限で作る（CloudTrail の文書）。
     [for svc, arn in local.cloudtrail_slr_arns : {
@@ -646,6 +654,14 @@ locals {
       Resource  = arn
       Condition = { StringEquals = { "iam:AWSServiceName" = svc } }
     }],
+    # Inspector の指定は、Inspector の SLR が無ければ呼び手の権限で作る。
+    [for s in [{
+      Sid       = "CreateInspectorServiceLinkedRole"
+      Effect    = "Allow"
+      Action    = "iam:CreateServiceLinkedRole"
+      Resource  = local.inspector_slr_arn
+      Condition = { StringEquals = { "iam:AWSServiceName" = "inspector2.amazonaws.com" } }
+    }] : s if local.baseline_supported],
     [for a in local.delegated_admin_regional_manage_actions : { Sid = replace(title(replace(a, ":", " ")), " ", ""), Effect = "Allow", Action = a, Resource = "*" } if local.baseline_supported],
     [for s in [{ Sid = "ManageSecurityHubAdminAccounts", Effect = "Allow", Action = local.securityhub_manage_actions, Resource = local.securityhub_hub_arn }] : s if local.baseline_supported],
   )
