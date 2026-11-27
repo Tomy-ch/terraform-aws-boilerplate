@@ -3,11 +3,12 @@ name: PR Gate
 # 線と env を持たないデプロイブランチへ入る Pull Request の検査を、1つの gate が判定する（ADR-0603 決定17・18・35・36。
 # 流れは .github/workflows/README.md の「Pull Request の gate」）。
 #
-# edited は起動に含めない。title の編集で同じ commit を走り直すと、同じ SHA に gate の check が2つ並ぶ。
+# edited でも起動する。判定は base に依るので、base の付け替えで走り直す。title だけの編集を job の if: で飛ばすと
+# gate が skipped（成功と数えられる）になり、失敗した gate を上書きできるので、飛ばさない。
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, edited]
     branches: # branch-set: gate
       - 'production'
       - 'staging'

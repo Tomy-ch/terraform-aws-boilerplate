@@ -65,7 +65,7 @@ CI の workflow 定義。Pull Request を止めるゲート、供給網のクー
   `!cancelled() && (needs.changes.result != 'success' || ...)` で、判定に届かなかった `changes` は検査を呼ばせる。
   そのとき gate は失敗する
 - **gate は取り消されても判定を報告する。** job `gate` の `if:` は `always()` で、取り消された run では失敗を報告する
-- **`edited` では起動しない。** title の編集で同じ commit を走り直すと、同じ SHA に `gate` の check が2つ並ぶ
+- **`edited` でも起動する。** 判定は base に依るので、base の付け替えで走り直す。title だけの編集を job の `if:` で飛ばすと、`gate` が skipped（成功と数える）になり失敗した `gate` を上書きできるので、飛ばさない。同じ SHA に `gate` の check が並ぶことは受け入れる（ADR-0603 の保証しないこと）
 
 ### 線の検証
 
