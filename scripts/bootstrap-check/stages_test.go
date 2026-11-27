@@ -36,6 +36,7 @@ var (
 		"StackSet tabp-break-glass がまだ無い",
 		"StackSet tabp-bootstrap-read がまだ無い",
 		"policy tabp-admin-ci-apply-identity-governance がまだ無い",
+		"policy tabp-admin-ci-apply-identity-governance-2 がまだ無い",
 		"policy tabp-admin-ci-apply-identity-members がまだ無い",
 		"policy tabp-admin-ci-apply-identity-manage がまだ無い",
 		"policy tabp-admin-ci-apply-workload がまだ無い",
@@ -68,7 +69,7 @@ func stage4Descs(executor string) []string {
 		"role tabp-admin-ci-apply の inline policy が apply だけ",
 		"role tabp-admin-ci-apply に付く managed policy が、workload の3つの policy だけ",
 		"role tabp-admin-ci-apply-identity の inline policy が apply_identity だけ",
-		"role tabp-admin-ci-apply-identity に付く managed policy が、統制の policy と manage の policy とメンバーの role の policy だけ",
+		"role tabp-admin-ci-apply-identity に付く managed policy が、統制の policy と委任管理者の policy と manage の policy とメンバーの role の policy だけ",
 		"role tabp-admin-ci-unlock-identity の inline policy が unlock_identity だけ",
 		"role tabp-admin-ci-unlock-identity に managed policy が付いていない",
 		"role tabp-admin-ci-unlock の inline policy が unlock だけ",
@@ -89,7 +90,7 @@ func stage4Descs(executor string) []string {
 
 const (
 	stage1Count      = 4
-	beforeApplyCount = 24
+	beforeApplyCount = 25
 	stage4Count      = 25
 	stage5Count      = 5
 
@@ -138,7 +139,7 @@ func beforeApplyResponses() map[string]awsResult {
 		r[jsonKey("iam", "get-user", "--user-name", u)] = awsError("NoSuchEntity")
 	}
 
-	for _, p := range []string{"apply-identity-governance", "apply-identity-members", "apply-identity-manage", "apply-workload", "apply-workload-read", "boundary-ops-notification"} {
+	for _, p := range []string{"apply-identity-governance", "apply-identity-governance-2", "apply-identity-members", "apply-identity-manage", "apply-workload", "apply-workload-read", "boundary-ops-notification"} {
 		r[jsonKey("iam", "get-policy", "--policy-arn", "arn:aws:iam::123456789012:policy/tabp-admin-ci-"+p)] = awsError("NoSuchEntity")
 	}
 
@@ -191,7 +192,7 @@ func stage4Responses(t *testing.T, bucketPolicy string) map[string]awsResult {
 		okResult(`{"Url":"token.actions.githubusercontent.com","ClientIDList":["sts.amazonaws.com"]}`)
 
 	attached := map[string]string{
-		"apply-identity": `{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-manage"},{"PolicyName":"tabp-admin-ci-apply-identity-members"},{"PolicyName":"tabp-admin-ci-apply-identity-governance"}]}`,
+		"apply-identity": `{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-manage"},{"PolicyName":"tabp-admin-ci-apply-identity-members"},{"PolicyName":"tabp-admin-ci-apply-identity-governance"},{"PolicyName":"tabp-admin-ci-apply-identity-governance-2"}]}`,
 		"apply":          `{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-workload-read"},{"PolicyName":"tabp-admin-ci-apply-workload-2"},{"PolicyName":"tabp-admin-ci-apply-workload"}]}`,
 		"plan":           `{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-workload-read"}]}`,
 	}
@@ -530,7 +531,7 @@ func Test_beforeApplySteps(t *testing.T) {
 
 		require.NoError(t, err)
 		assert.Len(t, steps, beforeApplyCount)
-		assert.Equal(t, append(okLines(beforeApplyDescs), "# 結果: 24 件のうち NG 0 件"), lines)
+		assert.Equal(t, append(okLines(beforeApplyDescs), "# 結果: 25 件のうち NG 0 件"), lines)
 	})
 
 	for name, tc := range map[string]struct {
@@ -576,7 +577,7 @@ func Test_beforeApplySteps(t *testing.T) {
 
 			require.ErrorIs(t, err, errMismatch)
 			assert.Contains(t, lines, tc.line)
-			assert.Equal(t, "# 結果: 24 件のうち NG 1 件", lines[len(lines)-1])
+			assert.Equal(t, "# 結果: 25 件のうち NG 1 件", lines[len(lines)-1])
 		})
 	}
 
@@ -909,14 +910,14 @@ func Test_stage4Steps(t *testing.T) {
 		"inline policy が文字列": {jsonKey("iam", "list-role-policies", "--role-name", "tabp-admin-ci-plan"), `{"PolicyNames":"plan"}`,
 			"role tabp-admin-ci-plan の inline policy が plan だけ"},
 		"apply-identity に manage が無い": {jsonKey("iam", "list-attached-role-policies", "--role-name", "tabp-admin-ci-apply-identity"),
-			`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-governance"},{"PolicyName":"tabp-admin-ci-apply-identity-members"}]}`,
-			"role tabp-admin-ci-apply-identity に付く managed policy が、統制の policy と manage の policy とメンバーの role の policy だけ"},
+			`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-governance"},{"PolicyName":"tabp-admin-ci-apply-identity-governance-2"},{"PolicyName":"tabp-admin-ci-apply-identity-members"}]}`,
+			"role tabp-admin-ci-apply-identity に付く managed policy が、統制の policy と委任管理者の policy と manage の policy とメンバーの role の policy だけ"},
 		"apply-identity に members が無い": {jsonKey("iam", "list-attached-role-policies", "--role-name", "tabp-admin-ci-apply-identity"),
-			`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-governance"},{"PolicyName":"tabp-admin-ci-apply-identity-manage"}]}`,
-			"role tabp-admin-ci-apply-identity に付く managed policy が、統制の policy と manage の policy とメンバーの role の policy だけ"},
+			`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-governance"},{"PolicyName":"tabp-admin-ci-apply-identity-governance-2"},{"PolicyName":"tabp-admin-ci-apply-identity-manage"}]}`,
+			"role tabp-admin-ci-apply-identity に付く managed policy が、統制の policy と委任管理者の policy と manage の policy とメンバーの role の policy だけ"},
 		"apply-identity に余分な policy": {jsonKey("iam", "list-attached-role-policies", "--role-name", "tabp-admin-ci-apply-identity"),
-			`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-governance"},{"PolicyName":"tabp-admin-ci-apply-identity-manage"},{"PolicyName":"tabp-admin-ci-apply-identity-members"},{"PolicyName":"x"}]}`,
-			"role tabp-admin-ci-apply-identity に付く managed policy が、統制の policy と manage の policy とメンバーの role の policy だけ"},
+			`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-governance"},{"PolicyName":"tabp-admin-ci-apply-identity-governance-2"},{"PolicyName":"tabp-admin-ci-apply-identity-manage"},{"PolicyName":"tabp-admin-ci-apply-identity-members"},{"PolicyName":"x"}]}`,
+			"role tabp-admin-ci-apply-identity に付く managed policy が、統制の policy と委任管理者の policy と manage の policy とメンバーの role の policy だけ"},
 		"apply に余分な policy": {jsonKey("iam", "list-attached-role-policies", "--role-name", "tabp-admin-ci-apply"),
 			`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-workload"},{"PolicyName":"tabp-admin-ci-apply-workload-read"},{"PolicyName":"x"}]}`,
 			"role tabp-admin-ci-apply に付く managed policy が、workload の3つの policy だけ"},

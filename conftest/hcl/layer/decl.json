@@ -271,6 +271,16 @@
         "parent_arguments": {},
         "whole_document": false
       },
+      "aws_cloudtrail_organization_delegated_admin_account": {
+        "parents": {
+          "account_id": [
+            "aws_organizations_account"
+          ]
+        },
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
+      },
       "aws_cloudwatch_event_archive": {
         "parents": {
           "event_source_arn": [
@@ -812,6 +822,16 @@
         "parent_arguments": {},
         "whole_document": false
       },
+      "aws_guardduty_organization_admin_account": {
+        "parents": {
+          "admin_account_id": [
+            "aws_organizations_account"
+          ]
+        },
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
+      },
       "aws_guardduty_publishing_destination": {
         "parents": {
           "detector_id": [
@@ -952,6 +972,16 @@
         "parents": {
           "user": [
             "aws_iam_user"
+          ]
+        },
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
+      },
+      "aws_inspector2_delegated_admin_account": {
+        "parents": {
+          "account_id": [
+            "aws_organizations_account"
           ]
         },
         "optional": false,
@@ -1755,6 +1785,16 @@
             "egress": null
           }
         },
+        "whole_document": false
+      },
+      "aws_securityhub_organization_admin_account": {
+        "parents": {
+          "admin_account_id": [
+            "aws_organizations_account"
+          ]
+        },
+        "optional": false,
+        "parent_arguments": {},
         "whole_document": false
       },
       "aws_ses_active_receipt_rule_set": {

@@ -168,7 +168,7 @@ run "with_config" {
         organization_id  = "o-abcdefghij"
         region           = "ap-northeast-1"
       }
-      config_source_accounts = ["333333333333", "222222222222"]
+      config_source_accounts = ["333333333333", "111111111111"]
     }
   }
 
@@ -182,7 +182,7 @@ run "with_config" {
           Principal = { Service = "config.amazonaws.com" }
           Action    = "s3:GetBucketAcl"
           Resource  = var.bucket
-          Condition = { StringEquals = { "aws:SourceAccount" = ["222222222222", "333333333333"] } }
+          Condition = { StringEquals = { "aws:SourceAccount" = ["111111111111", "333333333333"] } }
         },
         {
           Sid       = "AWSConfigBucketExistenceCheck"
@@ -190,17 +190,17 @@ run "with_config" {
           Principal = { Service = "config.amazonaws.com" }
           Action    = "s3:ListBucket"
           Resource  = var.bucket
-          Condition = { StringEquals = { "aws:SourceAccount" = ["222222222222", "333333333333"] } }
+          Condition = { StringEquals = { "aws:SourceAccount" = ["111111111111", "333333333333"] } }
         },
         {
-          Sid       = "AWSConfigBucketDelivery222222222222"
+          Sid       = "AWSConfigBucketDelivery111111111111"
           Effect    = "Allow"
           Principal = { Service = "config.amazonaws.com" }
           Action    = "s3:PutObject"
-          Resource  = "${var.bucket}/AWSLogs/222222222222/Config/*"
+          Resource  = "${var.bucket}/AWSLogs/111111111111/Config/*"
           Condition = { StringEquals = {
             "s3:x-amz-acl"      = "bucket-owner-full-control"
-            "aws:SourceAccount" = "222222222222"
+            "aws:SourceAccount" = "111111111111"
           } }
         },
         {

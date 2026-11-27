@@ -185,6 +185,7 @@ type gate int
 const (
 	gateNone gate = iota
 	gateGovernance
+	gateDelegatedAdmin
 	gateWorkload
 )
 
@@ -230,10 +231,23 @@ func attachedNames(q *query, roleName string) ([]string, string, error) {
 	return got, "", nil
 }
 
-func governanceGate(q *query, n names) (gateResult, error) {
+// governanceGate は、apply-identity の role に統制の policy・メンバーの role の policy と、委任管理者の policy が付いているか。
+// 1回の読み取りから2つを決める。読めなければどちらも unknown で、NG は統制の側だけが持つ。
+func governanceGate(q *query, n names) (gateResult, gateResult, error) {
 	got, reason, err := attachedNames(q, n.roleName(n.applyIdentity))
 	if err != nil {
-		return gateResult{}, err
+		return gateResult{}, gateResult{}, err
+	}
+
+	if reason != "" {
+		unknown := gateResult{state: gateUnknown, ng: fixedCheck(n.applyIdentity+": list-attached-role-policies を読めないので、統制の policy とメンバーの role の policy が付いているかを決められない", verdict{reason: reason})}
+
+		return unknown, gateResult{state: gateUnknown}, nil
+	}
+
+	delegated := gateResult{state: gateAbsent}
+	if slices.Contains(got, n.roleName(n.applyIdentity+"-governance-2")) {
+		delegated = gateResult{state: gateAttached}
 	}
 
 	// StackSet の行は members の policy に、ほかの行は統制の policy に依る。片方だけなら、どちらの行も確かめられない。
@@ -241,14 +255,12 @@ func governanceGate(q *query, n names) (gateResult, error) {
 	members := slices.Contains(got, n.roleName(n.applyIdentity+"-members"))
 
 	switch {
-	case reason != "":
-		return gateResult{state: gateUnknown, ng: fixedCheck(n.applyIdentity+": list-attached-role-policies を読めないので、統制の policy とメンバーの role の policy が付いているかを決められない", verdict{reason: reason})}, nil
 	case governance && members:
-		return gateResult{state: gateAttached}, nil
+		return gateResult{state: gateAttached}, delegated, nil
 	case !governance && !members:
-		return gateResult{state: gateAbsent}, nil
+		return gateResult{state: gateAbsent}, delegated, nil
 	default:
-		return gateResult{state: gateUnknown, ng: fixedCheck(n.applyIdentity+" に、統制の policy とメンバーの role の policy の片方だけが付いている", verdict{reason: strings.Join(got, "、")})}, nil
+		return gateResult{state: gateUnknown, ng: fixedCheck(n.applyIdentity+" に、統制の policy とメンバーの role の policy の片方だけが付いている", verdict{reason: strings.Join(got, "、")})}, delegated, nil
 	}
 }
 
@@ -298,6 +310,13 @@ func permissionSections(n names, sk, skReason string) []section {
 	}
 
 	gp := n.policyARN(ai + "-governance")
+	gp2 := n.policyARN(ai + "-governance-2")
+	orgAccount := "arn:aws:organizations::" + n.account + ":account/o-exampleorg1/111111111111"
+	principal := func(svc string) []string { return []string{ctxEntry("organizations:ServicePrincipal", svc, "string")} }
+	ctslr := iam + ":role/aws-service-role/cloudtrail.amazonaws.com/AWSServiceRoleForCloudTrail"
+	delegatedRegional := []string{"guardduty:EnableOrganizationAdminAccount", "guardduty:DisableOrganizationAdminAccount", "inspector2:EnableDelegatedAdminAccount", "inspector2:DisableDelegatedAdminAccount"}
+	delegatedLists := []string{"guardduty:ListOrganizationAdminAccounts", "inspector2:ListDelegatedAdminAccounts"}
+	hub := func(r string) string { return "arn:aws:securityhub:" + r + ":" + n.account + ":hub/default" }
 	mp := n.policyARN(ai + "-manage")
 	mbp := n.policyARN(ai + "-members")
 	// 管理アカウントの OrganizationAccountAccessRole の ARN。引き受けの Resource がアカウントの wildcard へ広がったことを見つける。
@@ -433,6 +452,39 @@ func permissionSections(n names, sk, skReason string) []section {
 			}, stackInstanceRows(n, otherRegion(n))...),
 			absentNote: "  統制の policy とメンバーの role の policy がまだ付いていないので、作成と設定の権限は確かめない（2つの policy を作って付ける apply の後にもう一度走らせる）",
 			reportGate: true,
+		},
+		{
+			heading: "# 委任管理者の指定（deployment-identity/ADR-0201 決定7・21、repository-wide/ADR-0209 決定4）",
+			rows: []simRow{
+				sim(allowed, ai, gp2, manage...),
+				simCtx(allowed, ai, n.roleARN(ai), policyARN(gp2), "iam:AttachRolePolicy"),
+				sim(allowed, plan, "*", "organizations:ListDelegatedAdministrators"),
+				simCtx(allowed, plan, "*", inCtx, delegatedLists...),
+				simCtx(explicitDeny, plan, "*", outCtx, delegatedLists...),
+				simCtx(allowed, plan, hub(n.region), inCtx, "securityhub:ListOrganizationAdminAccounts"),
+				simCtx(explicitDeny, plan, hub(optIn), outCtx, "securityhub:ListOrganizationAdminAccounts"),
+				simCtx(implicitDeny, plan, "*", inCtx, "guardduty:EnableOrganizationAdminAccount", "inspector2:EnableDelegatedAdminAccount"),
+				sim(explicitDeny, apply, orgAccount, "organizations:RegisterDelegatedAdministrator", "organizations:DeregisterDelegatedAdministrator"),
+				sim(explicitDeny, apply, gp2, "iam:CreatePolicyVersion"),
+			},
+			gate: gateDelegatedAdmin,
+			gated: []simRow{
+				simCtx(allowed, ai, orgAccount, principal("guardduty.amazonaws.com"), "organizations:RegisterDelegatedAdministrator", "organizations:DeregisterDelegatedAdministrator"),
+				simCtx(allowed, ai, orgAccount, principal("config.amazonaws.com"), "organizations:RegisterDelegatedAdministrator"),
+				simCtx(implicitDeny, ai, orgAccount, principal("sso.amazonaws.com"), "organizations:RegisterDelegatedAdministrator"),
+				simCtx(allowed, ai, "*", principal("inspector2.amazonaws.com"), "organizations:EnableAWSServiceAccess"),
+				simCtx(implicitDeny, ai, "*", principal("config.amazonaws.com"), "organizations:EnableAWSServiceAccess", "organizations:DisableAWSServiceAccess"),
+				simCtx(allowed, ai, "*", inCtx, delegatedRegional...),
+				simCtx(explicitDeny, ai, "*", outCtx, delegatedRegional...),
+				simCtx(allowed, ai, hub(n.region), inCtx, "securityhub:EnableOrganizationAdminAccount", "securityhub:DisableOrganizationAdminAccount"),
+				simCtx(explicitDeny, ai, hub(optIn), outCtx, "securityhub:EnableOrganizationAdminAccount"),
+				simCtx(allowed, ai, "*", principal("securityhub.amazonaws.com"), "organizations:EnableAWSServiceAccess"),
+				sim(allowed, ai, "*", "cloudtrail:RegisterOrganizationDelegatedAdmin", "cloudtrail:DeregisterOrganizationDelegatedAdmin"),
+				simCtx(allowed, ai, ctslr, serviceName("cloudtrail.amazonaws.com"), "iam:CreateServiceLinkedRole"),
+				simCtx(implicitDeny, ai, ctslr, serviceName("guardduty.amazonaws.com"), "iam:CreateServiceLinkedRole"),
+			},
+			absentNote:  "  委任管理者の policy がまだ付いていないので、指定と解除の権限は確かめない（委任管理者の policy を作って付ける apply の後にもう一度走らせる）",
+			unknownNote: "  apply-identity の role の managed policy を確かめられないので（上の NG）、委任管理者の指定と解除の権限は確かめない",
 		},
 		{heading: "# Chatbot の service-linked role（deployment-identity/ADR-0201 決定3）", rows: []simRow{
 			simCtx(allowed, ai, slr, serviceName("management.chatbot.amazonaws.com"), "iam:CreateServiceLinkedRole"),
@@ -642,7 +694,7 @@ func permissionsSteps(q *query, n names) ([]step, error) {
 
 	gates := map[gate]gateResult{gateNone: {state: gateAttached}}
 
-	if gates[gateGovernance], err = governanceGate(q, n); err != nil {
+	if gates[gateGovernance], gates[gateDelegatedAdmin], err = governanceGate(q, n); err != nil {
 		return nil, err
 	}
 

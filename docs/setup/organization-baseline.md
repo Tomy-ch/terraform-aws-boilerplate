@@ -147,3 +147,12 @@ declarative policy は、付ける前に account status report で影響を見�
 メールを変えるときは、`make setup-organization-baseline-member-email-update PROFILE=<管理アカウントの profile> MEMBER_ENV=<env>` を実行する。AWS の側で先に変え（新しいメールに届く確認コードを入力する）、その後に parameter を同じ値に合わせる。parameter だけを変えると、plan が作り直しを求め、`prevent_destroy` で止まる。`make setup-organization-baseline-member-emails` は、在るアカウントのメールを変える入力を拒む。
 
 立ち上げを終えたアカウントは、`env/admin/identity/main.tf` の `bootstrapping` から外す Pull Request で閉じる。外したアカウントには `deny-bootstrap-role` が付き、`OrganizationAccountAccessRole` が使えなくなる。
+
+### 3.9 セキュリティのサービスの信頼アクセスを有効にする
+
+セキュリティのサービスの委任管理者を security のアカウントに指定する変更の merge より前に、1回行う。新しく使う管理アカウントでは、段4 の apply が組織を作った後に、3.5 と一緒に行う（[ADR-0602](../adr/0602-bootstrap-and-ci-authentication.md) 決定1）。CloudTrail・AWS Config・IAM Access Analyzer の委任管理者の登録は、信頼アクセスが有効でないと拒まれる（Organizations の `SERVICE_ACCESS_NOT_ENABLED`）。GuardDuty・Inspector・Security Hub は、指定の API が信頼アクセスを有効にするので、ここでは行わない。
+
+1. `make setup-organization-baseline-service-access PROFILE=<管理アカウントの profile>` を実行する。CloudTrail・AWS Config・IAM Access Analyzer の信頼アクセスのうち無効なものを差分として示し、project の名前の入力を受けてから有効にし、確かめ直す。既にすべて有効なら何もしない
+2. `make setup-organization-baseline-service-access-check PROFILE=<管理アカウントの profile>` の出力を Pull Request に書く（3つの信頼アクセスが有効である）
+
+指定の変更が昇格した後に、`make setup-organization-baseline-delegated-admin-check PROFILE=<管理アカウントの profile>` の出力を Pull Request に書く（サービスの主体のそれぞれで、委任管理者が security のアカウントだけである）。
