@@ -73,6 +73,11 @@ run "organizational_units" {
   command = apply
 
   assert {
+    condition     = output.management_account_id == "111111111111"
+    error_message = "management_account_id が、組織の管理アカウントの ID を返していません。"
+  }
+
+  assert {
     condition     = toset(keys(aws_organizations_organizational_unit.top)) == toset(["Security", "Workloads", "Sandbox", "PolicyStaging"])
     error_message = "Root の直下の OU は Security・Workloads・Sandbox・PolicyStaging です。"
   }

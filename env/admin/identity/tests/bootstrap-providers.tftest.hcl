@@ -56,6 +56,17 @@ mock_provider "aws" {
   }
 }
 
+# Identity Center のインスタンスと主体の ID は、人が有効にして置くもので、mock の provider は持たない。合成の値を与える。
+override_data {
+  target = module.organization_baseline.module.access[0].data.aws_ssoadmin_instances.this
+  values = { arns = ["arn:aws:sso:::instance/ssoins-0000000000000000"], identity_store_ids = ["d-0000000000"] }
+}
+
+override_data {
+  target = module.organization_baseline.module.access[0].data.aws_ssm_parameter.principals
+  values = { value = "{\"users\":{\"owner\":\"00000000-0000-0000-0000-000000000001\"},\"groups\":{\"operators\":\"00000000-0000-0000-0000-000000000002\"}}" }
+}
+
 # state の鍵の Key Policy の precondition（同じアカウントの role）を plan で評価させるため、role の ARN を既知の値にする。
 override_resource {
   target          = module.deployment_identity.module.github_oidc.aws_iam_role.this["plan"]
