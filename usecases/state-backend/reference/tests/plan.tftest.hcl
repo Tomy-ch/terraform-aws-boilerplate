@@ -43,6 +43,26 @@ run "reference_bucket_name" {
   }
 }
 
+# policy-input.tftest.hcl はメンバーの形の instance の ARN を名前の規則どおりに与える。名前がずれれば、ここで落ちる。
+run "reference_member_bucket_name" {
+  command = plan
+
+  assert {
+    condition     = module.state_backend_security.bucket_name == "tabp-security-tfstate-111111111111-ap-northeast-1-an"
+    error_message = "メンバーの形の instance の値から state Bucket の名前が組まれていません。"
+  }
+
+  assert {
+    condition     = module.state_backend_security.plan_output_bucket_name == "tabp-security-tfplan-111111111111-ap-northeast-1-an"
+    error_message = "メンバーの形の instance の値から plan の出力の Bucket の名前が組まれていません。"
+  }
+
+  assert {
+    condition     = module.state_backend_security.state_key_alias_name == "alias/tabp-security-tfstate"
+    error_message = "メンバーの形の instance の値から state の鍵の alias の名前が組まれていません。"
+  }
+}
+
 # ARN は plan では決まらないので、名前の規則どおりの値を与えて配線を見る。
 run "reference_apply_output_bucket" {
   command = plan

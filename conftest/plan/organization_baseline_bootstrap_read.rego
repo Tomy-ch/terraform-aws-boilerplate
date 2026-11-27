@@ -331,7 +331,7 @@ substituted(p, x, i) := strings.replace_n({"${AWS::Partition}": split(x, ":")[1]
 	some account in member_accounts(i)
 }
 
-# 3つの疑似パラメータのほかの ${...} が残る pattern は、どの ARN にも当たらないと数える。
+# 3つの疑似パラメータのほかの ${...} が残る pattern は、wildcard の無い ARN（concrete_arn）に当たらない。
 read_allows(a, x, i) if {
 	some s in read_statements
 	a in lib.lower_all(s.Action)
@@ -344,15 +344,14 @@ read_resource_matches("*", _, _)
 read_resource_matches(r, x, i) if {
 	is_object(r)
 	p := substituted(r["Fn::Sub"], x, i)
-	not contains(p, "${")
 	lib.iam_match(p, x)
 }
 
 # Resource "*" の Allow は特定の ARN への認可ではない（PLAN-IAM-03 が resource-level の権限を持たない Action に限る）。
 # Condition は無視して数え、要求を広い側に倒す。NotResource の Allow は、どの pattern も当たらない ARN に当たる。
 plan_allows_arn(s, x) if {
-	not "*" in lib.as_array(object.get(s, "Resource", []))
 	some r in lib.as_array(object.get(s, "Resource", []))
+	r != "*"
 	lib.iam_match(lib.policy_variable_as_wildcard(r), x)
 }
 
@@ -378,7 +377,13 @@ deny contains msg if {
 	msg := "[PLAN-BR-00] 入力に、構成物の ARN を照らすメンバーの形の instance（state_backend.instances）がありません。reference に置いてください"
 }
 
-# 管理アカウントの形の instance から取ると、メンバーに無い構成物への読みを要求する。
+# 管理アカウントの形の instance から取ると、メンバーに無い構成物への読みを要求する。形の印は宣言が持つ。
+deny contains msg if {
+	role_properties
+	count(lib.management_only_policies) == 0
+	msg := "[PLAN-BR-00] 宣言 deployment_identity.management_only_policies が無いか空です。メンバーの形の instance が管理アカウントの形でないことを見られません"
+}
+
 deny contains msg if {
 	role_properties
 	some i in members

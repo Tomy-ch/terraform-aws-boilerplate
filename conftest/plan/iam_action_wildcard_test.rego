@@ -212,10 +212,10 @@ test_pass_crypto_via_service_in_member_instance_boundary if {
 
 test_violation_crypto_via_service_in_undeclared_instance_boundary if {
 	rc := member_boundary("module.deployment_identity_x.module.github_oidc.aws_iam_policy.boundary[\"ops-notification\"]")
-	fixture.has("[PLAN-IAM-04]", p.deny) with input as member_files([rc]) with data.policy_plan as object.union(data.policy_plan, member_boundary_decl) with data.policy_plan.resource_wildcard_actions as []
+	fixture.has("[PLAN-IAM-04] di.json: module.deployment_identity_x.module.github_oidc.aws_iam_policy.boundary[\"ops-notification\"] の policy が KMS の暗号操作", p.deny) with input as member_files([rc]) with data.policy_plan as object.union(data.policy_plan, member_boundary_decl) with data.policy_plan.resource_wildcard_actions as []
 }
 
 test_violation_crypto_via_service_in_member_boundary_without_its_roots if {
 	rc := member_boundary("module.deployment_identity_m.module.github_oidc.aws_iam_policy.boundary[\"ops-notification\"]")
-	fixture.has("[PLAN-IAM-04]", p.deny) with input as fixture.plan([rc]) with data.policy_plan as object.union(data.policy_plan, member_boundary_decl) with data.policy_plan.resource_wildcard_actions as []
+	fixture.has("[PLAN-IAM-04] p.json: module.deployment_identity_m.module.github_oidc.aws_iam_policy.boundary[\"ops-notification\"] の policy が KMS の暗号操作", p.deny) with input as fixture.plan([rc]) with data.policy_plan as object.union(data.policy_plan, member_boundary_decl) with data.policy_plan.resource_wildcard_actions as []
 }

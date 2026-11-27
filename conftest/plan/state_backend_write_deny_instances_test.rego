@@ -300,3 +300,14 @@ test_member_view_rebases_the_instance_and_keeps_the_rest if {
 	[[rc.address | some rc in f.contents.resource_changes] | some f in got] == [["module.s.module.kms.aws_kms_key.this"], ["module.d.x.this", "module.other.x.this"]]
 	[f.path | some f in got] == ["sb.json", "di.json"]
 }
+
+# 2つ目の instance の resource は、1つ目の付け替えた入力に残さない。
+test_member_view_drops_other_instances if {
+	two := inst_decl_with({"state-backend": [cross, object.union(cross, {"name": "log-archive", "state_backend": "module.sn.", "deployment_identity": "module.dn."})]})
+	other := {"name": "log-archive", "root": "state-backend", "deployment_identity_root": "deployment-identity", "state_backend": "module.sn.", "deployment_identity": "module.dn.", "creating": null}
+	inp := [file("state-backend.json", [rc("module.sm.module.kms.aws_kms_key.this", ["create"]), rc("module.sn.module.kms.aws_kms_key.this", ["create"])]), file("deployment-identity.json", [rc("module.dn.x.this", ["create"]), rc("module.other.x.this", ["create"])])]
+	got := lib.member_view(cross_member) with data.policy_plan as two with input as inp
+	[[rc.address | some rc in f.contents.resource_changes] | some f in got] == [["module.s.module.kms.aws_kms_key.this"], ["module.other.x.this"]]
+	got2 := lib.member_view(other) with data.policy_plan as two with input as inp
+	[[rc.address | some rc in f.contents.resource_changes] | some f in got2] == [["module.s.module.kms.aws_kms_key.this"], ["module.d.x.this", "module.other.x.this"]]
+}

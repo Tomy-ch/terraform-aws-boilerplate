@@ -304,6 +304,17 @@ moved(rc, inst) := object.union(rc, {"address": canonical_address(rc.address, in
 moved(rc, inst) := rc if {
 	not canonical_address(rc.address, inst)
 	not canonical_resource(rc.address)
+	not other_instance_resource(rc.address, inst)
+}
+
+# ほかの instance の resource は、付け替えた入力の中では宣言の外の instance になるので除く。その instance は自分の評価で見る。
+other_instance_resource(address, inst) if {
+	is_string(address)
+	some m in instances
+	m.root != null
+	m != inst
+	some kind in ["state_backend", "deployment_identity"]
+	startswith(address, m[kind])
 }
 
 canonical_address(address, inst) := concat("", [sb_module, substring(address, count(inst.state_backend), -1)]) if {

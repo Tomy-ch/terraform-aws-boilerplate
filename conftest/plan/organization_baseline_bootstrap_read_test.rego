@@ -11,6 +11,7 @@ decl := {
 	"documents": {"aws_iam_role_policy": ["policy"], "aws_iam_policy": ["policy"]},
 	"deployment_identity": {
 		"module": "module.d.",
+		"management_only_policies": ["module.d.aws_iam_policy.governance[0]"],
 		"plan_role": {"role": plan_role_address, "policy": plan_policy, "managed_policies": ["module.d.aws_iam_policy.read"]},
 		"apply_role": {"bootstrap": {
 			"modules": ["module.s.", "module.d."],
@@ -609,8 +610,8 @@ test_violation_env_narrowed_pattern if {
 
 # 正規の instance（管理アカウントの形）の構成物は照らさない。管理アカウントにだけ在る policy の読みを要求しない。
 test_pass_canonical_resources_ignored if {
-	governance := change("module.d.aws_iam_policy.governance[0]", "aws_iam_policy", {"arn": "arn:aws:iam::111111111111:policy/tabp-admin-ci-apply-identity-governance"})
-	msgs := p.deny with input as array.concat(fixture.plan(array.concat(valid_rcs, [governance])), member_files(member_sb, member_di)) with data.policy_plan as decl
+	canonical_role := change("module.d.aws_iam_role.this[\"governance\"]", "aws_iam_role", {"arn": "arn:aws:iam::111111111111:role/tabp-admin-governance"})
+	msgs := p.deny with input as array.concat(fixture.plan(array.concat(valid_rcs, [canonical_role])), member_files(member_sb, member_di)) with data.policy_plan as decl
 	count(msgs) == 0
 }
 
@@ -693,3 +694,29 @@ test_violation_unknown_substitution_not_counted if {
 	set := stack_set_with({}, properties_with([trust], [read, member_key_read, member_role_read, odd]))
 	fixture.has(not_covered(slr_arn, "iam:getrole"), member_messages(set, instances_with(root_target), member_sb, member_di))
 }
+
+test_violation_management_only_policies_missing if {
+	d := json.patch(decl, [{"op": "remove", "path": "/deployment_identity/management_only_policies"}])
+	msgs := p.deny with input as array.concat(fixture.plan(valid_rcs), member_files(member_sb, member_di)) with data.policy_plan as d
+	fixture.has("[PLAN-BR-00] 宣言 deployment_identity.management_only_policies が無いか空です", msgs)
+}
+
+# Resource に "*" と ARN が混ざる文は、ARN の要素で要求する。
+test_violation_mixed_wildcard_resource_still_requires if {
+	mixed := {"Sid": "Mixed", "Effect": "Allow", "Action": "iam:ListRoleTags", "Resource": ["*", "arn:aws:iam::111111111111:role/tabp-security-ci-*"]}
+	di := [member_role, member_slr, member_plan_policy(array.concat(member_plan_statements, [mixed])), member_managed_policy([member_slr_statement])]
+	fixture.has(not_covered(role_arn, "iam:listroletags"), member_messages(valid_stack_set, instances_with(root_target), member_sb, di))
+}
+
+test_violation_stack_instance_regions_absent if {
+	inst := change("module.b.aws_cloudformation_stack_instances.this", "aws_cloudformation_stack_instances", {"stack_set_name": "tabp-bootstrap-read", "deployment_targets": [root_target]})
+	fixture.has("[PLAN-BR-00] 立ち上げの読み取りの stack instance の region []", member_messages(valid_stack_set, inst, member_sb, member_di))
+}
+
+test_violation_member_accounts_none if {
+	bucket_only := [member_bucket]
+	di := [member_plan_policy(member_plan_statements), member_slr_policy_only]
+	fixture.has("[PLAN-BR-00] instance security の構成物の IAM と KMS の ARN のアカウント [] が", member_messages(valid_stack_set, instances_with(root_target), bucket_only, di))
+}
+
+member_slr_policy_only := member_managed_policy([member_slr_statement])

@@ -39,11 +39,6 @@ required_policies := [plan_policy] if lib.member_form
 
 else := [plan_policy, apply_identity_policy]
 
-# メンバーの形では引き受けをどこにも置かない（deployment-identity/ADR-0201 決定22 は引き受けを管理アカウントにだけ与える）。
-allowed_assumers := set() if lib.member_form
-
-else := {plan_policy, apply_identity_policy}
-
 # deployment-identity の CI の role の権限の文書。信頼条件（aws_iam_role の assume_role_policy）は含めない。
 ci_documents contains r if {
 	some r in lib.readable
@@ -116,10 +111,11 @@ apply_identity_assume_shape(s) if {
 deny contains msg if {
 	not lib.member_form
 	some x in assume_statements
-	not x.document.address in allowed_assumers
+	not x.document.address in {plan_policy, apply_identity_policy}
 	msg := sprintf("[PLAN-ASSUME-03] %s: %s が sts:AssumeRole・sts:TagSession・sts:SetSourceIdentity のどれかを許します。メンバーの引き受けは、plan の role の inline policy と %s だけに置いてください", [x.document.path, x.document.address, apply_identity_policy])
 }
 
+# メンバーの形では引き受けをどこにも置かない（deployment-identity/ADR-0201 決定22 は引き受けを管理アカウントにだけ与える）。
 deny contains msg if {
 	lib.member_form
 	some x in assume_statements

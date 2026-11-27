@@ -49,7 +49,7 @@ direct(inp) := msgs if {
 	msgs := {sprintf("[PLAN-DIM-01] instance m: %s", [m]) | some m in all}
 }
 
-test_member_instance_is_evaluated_like_the_canonical_instance if {
+test_pass_member_instance_is_evaluated_like_the_canonical_instance if {
 	got := {m | some m in messages(member_input([])); startswith(m, "[PLAN-DIM-01]")}
 	want := direct(canonical_input([]))
 	count(want) > 0
@@ -61,7 +61,7 @@ test_violation_policy_attached_from_outside_the_member_module if {
 }
 
 # 正規の instance の resource は付け替えた入力に入らない。正規の instance の違反を二重に報告しない。
-test_canonical_resources_are_not_reported_again if {
+test_pass_canonical_resources_are_not_reported_again if {
 	inp := [file("sb.json", []), file("di.json", array.concat(rcs, [moved(rc) | some rc in rcs]))]
 	view := lib.member_view(member) with data.policy_plan as decl with input as inp
 	every rc in view[1].contents.resource_changes {
@@ -97,4 +97,37 @@ test_violation_management_only_policy_absent_from_canonical if {
 test_violation_member_form_requirement_not_declared if {
 	d := json.patch(decl, [{"op": "replace", "path": "/deployment_identity/bootstrap_assume/apply_identity_policy", "value": "module.deployment_identity.module.github_oidc.aws_iam_policy.manage"}])
 	fixture.has("[PLAN-DIM-00] 宣言 deployment_identity.bootstrap_assume.apply_identity_policy", p.deny) with input as member_input([]) with data.policy_plan as d
+}
+
+# 差分のケースの world で違反を出さない package も、メンバーの instance の違反を報告する。
+member_address(suffix) := concat("", [member.deployment_identity, suffix])
+
+test_violation_member_trust if {
+	address := member_address("module.github_oidc.aws_iam_role.this[\"extra\"]")
+	s := {"Effect": "Allow", "Action": "sts:AssumeRoleWithWebIdentity", "Principal": {"Federated": "x"}}
+	trust := fixture.doc("aws_iam_role", address, "assume_role_policy", {"Statement": [s, s]})
+	fixture.has("[PLAN-DIM-01] instance m: [PLAN-TRUST-01] di.json: module.deployment_identity.module.github_oidc.aws_iam_role.this[\"extra\"] の信頼条件は statement を1つだけ持ちます", messages(member_input([trust])))
+	not fixture.has("[PLAN-DIM-01] instance m: [PLAN-TRUST-01]", messages(member_input([])))
+}
+
+test_violation_member_assume if {
+	doc := fixture.doc("aws_iam_policy", member_address("module.github_oidc.aws_iam_policy.manage"), "policy", {"Statement": [{"Effect": "Allow", "Action": "sts:AssumeRole", "Resource": "arn:aws:iam::111111111111:role/OrganizationAccountAccessRole"}]})
+	fixture.has("[PLAN-DIM-01] instance m: [PLAN-ASSUME-03] di.json: module.deployment_identity.module.github_oidc.aws_iam_policy.manage が sts:AssumeRole・sts:TagSession・sts:SetSourceIdentity のどれかを許します。メンバーアカウントの deployment-identity は", messages(member_input([doc])))
+	not fixture.has("[PLAN-DIM-01] instance m: [PLAN-ASSUME-03]", messages(member_input([])))
+}
+
+test_violation_member_policy_inventory if {
+	rogue_policy := fixture.doc("aws_iam_policy", member_address("module.github_oidc.aws_iam_policy.rogue"), "policy", {"Statement": []})
+	fixture.has("[PLAN-DIM-01] instance m: [PLAN-CMP-01] di.json: module.deployment_identity.module.github_oidc.aws_iam_policy.rogue が deployment_identity.customer_managed_policies の宣言にありません", messages(member_input([rogue_policy])))
+}
+
+# メンバーの形の評価が外す要求の根拠は、2つとも宣言に在ることを求める。
+test_violation_member_form_requirement_governance_not_declared if {
+	every patch in [
+		{"op": "replace", "path": "/deployment_identity/apply_role/governance/management_policy", "value": "module.deployment_identity.module.github_oidc.aws_iam_policy.manage"},
+		{"op": "remove", "path": "/deployment_identity/apply_role/governance/management_policy"},
+	] {
+		d := json.patch(decl, [patch])
+		fixture.has("[PLAN-DIM-00] 宣言 deployment_identity.apply_role.governance.management_policy", p.deny) with input as member_input([]) with data.policy_plan as d
+	}
 }
