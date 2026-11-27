@@ -11,6 +11,7 @@
       "data.aws_region": {"executes_code": false},
       "data.aws_regions": {"executes_code": false},
       "data.aws_ssm_parameter": {"executes_code": false},
+      "data.aws_ssoadmin_instances": {"executes_code": false},
       "data.external": {"executes_code": true, "path_args": ["program"]},
       "resource.aws_accessanalyzer_analyzer": {"executes_code": false},
       "resource.aws_account_alternate_contact": {"executes_code": false},
@@ -96,6 +97,10 @@
       "resource.aws_spot_fleet_request": {"executes_code": true, "body_args": ["launch_specification.user_data"]},
       "resource.aws_spot_instance_request": {"executes_code": true, "body_args": ["user_data", "user_data_base64"]},
       "resource.aws_ssm_service_setting": {"executes_code": false},
+      "resource.aws_ssoadmin_account_assignment": {"executes_code": false},
+      "resource.aws_ssoadmin_managed_policy_attachments_exclusive": {"executes_code": false},
+      "resource.aws_ssoadmin_permission_set": {"executes_code": false},
+      "resource.aws_ssoadmin_permission_set_inline_policy": {"executes_code": false},
       "resource.aws_subnet": {"executes_code": false},
       "resource.aws_vpc": {"executes_code": false},
       "resource.aws_vpc_block_public_access_options": {"executes_code": false}
