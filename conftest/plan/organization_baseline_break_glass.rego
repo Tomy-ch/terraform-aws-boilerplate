@@ -83,7 +83,7 @@ deny contains msg if {
 	some s in group_statements
 	s.Effect == "Allow"
 	not allowed_group_statement(s)
-	msg := sprintf("[PLAN-BG-02] break-glass の group の Allow %v が、role の引き受けと自分の資格情報の管理の外です", [object.get(s, "Sid", "")])
+	msg := sprintf("[PLAN-BG-02] break-glass の group の Allow %v が、role の引き受け、自分の資格情報の管理、aws login の外です", [object.get(s, "Sid", "")])
 }
 
 allowed_group_statement(s) if {
@@ -106,6 +106,29 @@ allowed_group_statement(s) if {
 	lib.lower_all(s.Action) == ["iam:deactivatemfadevice"]
 	own_resource(s)
 	s.Condition == {"Bool": {"aws:MultiFactorAuthPresent": "true"}}
+}
+
+# aws login の同じ端末の流れ（localhost）だけを、break-glass の user のアカウントの client に限って許す（ADR-0301 決定19）。
+# partition は role_pattern と administrator_access と同じく aws に限る。region は形だけを見る（provider の region との一致は terraform test が見る）。
+login_client(s) if {
+	resources := lib.as_array(s.Resource)
+	count(resources) == 1
+	m := regex.find_all_string_submatch_n(`^arn:aws:signin:[a-z]{2,4}(?:-[a-z]+)+-[0-9]+:([0-9]{12}):oauth2/public-client/localhost$`, resources[0], 1)
+	count(m) == 1
+	some u in user_arns
+	m[0][1] == split(u, ":")[4]
+}
+
+allowed_group_statement(s) if {
+	lib.lower_all(s.Action) == ["signin:authorizeoauth2access"]
+	login_client(s)
+	not "Condition" in object.keys(s)
+}
+
+allowed_group_statement(s) if {
+	lib.lower_all(s.Action) == ["signin:createoauth2token"]
+	login_client(s)
+	s.Condition == {"StringEquals": {"signin:OAuthGrantType": ["authorization_code", "refresh_token"]}}
 }
 
 deny contains msg if {
