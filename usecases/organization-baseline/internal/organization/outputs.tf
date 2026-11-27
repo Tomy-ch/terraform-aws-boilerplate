@@ -21,3 +21,8 @@ output "delegated_admin" {
     regions            = toset(keys(aws_guardduty_organization_admin_account.this))
   }
 }
+
+output "management_account_id" {
+  description = "組織の管理アカウントの ID。"
+  value       = aws_organizations_organization.this.master_account_id
+}

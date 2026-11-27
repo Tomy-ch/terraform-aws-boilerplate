@@ -28,3 +28,8 @@ output "member_break_glass_role" {
     path = local.break_glass_path
   }
 }
+
+output "identity_center_instance_arn" {
+  description = "IAM Identity Center のインスタンスの ARN。`identity_center` が null なら null。`deployment-identity` が Identity Center の権限の Resource を組む。"
+  value       = one(module.access[*].instance_arn)
+}
