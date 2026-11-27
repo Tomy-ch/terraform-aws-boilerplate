@@ -215,6 +215,11 @@ func Deny(msg string) []Field {
 	return fields
 }
 
+// IsRegion は、s が AWS のリージョンの名前の形かを返します。
+func IsRegion(s string) bool {
+	return regionPattern.MatchString(s)
+}
+
 // MaskAddress は、address の key のうち、allowed が受けるもの（登録簿の env と role の名前）と、リージョンの名前の形の
 // ものを残し、ほかを伏せます。key の外に識別子が残れば address ごと伏せる。整数の index は残す。
 func MaskAddress(address string, allowed func(string) bool) string {

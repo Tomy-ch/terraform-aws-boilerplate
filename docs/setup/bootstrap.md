@@ -634,7 +634,7 @@ aws s3api list-objects-v2 --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_I
 
 #### CloudTrail で拒否を引く
 
-ログと job summary の診断の行で足りないときは、`make aws-login` の後に `make ci-trail RUN=<run ID> ATTEMPT=<n>` を実行する。run ID と attempt は、失敗した run の URL（`/actions/runs/<run ID>/attempts/<n>`）から取る。その run の CI の role の session が AWS で拒まれた・失敗した呼び出しを、root の region と us-east-1 と ADR-0209 のリージョンの集合で引き、1件ずつ出す（`scripts/ci-trail`）。CI がメンバーへ引き受けた role の呼び出しは、`MEMBER_PROFILE=<メンバーの profile>` で引く。
+ログと job summary の診断の行で足りないときは、`make ci-trail RUN=<run ID> ATTEMPT=<n>` を実行する。run ID と attempt は、失敗した run の URL（`/actions/runs/<run ID>/attempts/<n>`）から取る。その run の CI の role の session が AWS で拒まれた・失敗した呼び出しを、root の region と us-east-1 と ADR-0209 のリージョンの集合で引き、1件ずつ出す（`scripts/ci-trail`）。CI がメンバーへ引き受けた role の呼び出しは、`MEMBER_PROFILE=<メンバーの profile>` で引く。
 
 | 失敗の類型 | 手段 |
 | --- | --- |
@@ -644,7 +644,9 @@ aws s3api list-objects-v2 --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_I
 | 待ちの打ち切り、StackSets の中の失敗 | 診断の行の分類。StackSets はコンソールの「StackSets」のオペレーション |
 | init と prepare の失敗、打ち切り、全文の置き場への書き込みの失敗 | ログの診断の行。全文は残らない |
 
-写してよいのは既定の出力（許可の文法に当たる欄だけの行。[ADR-0602](../adr/0602-bootstrap-and-ci-authentication.md) 決定13）に限る。`RAW=1` は errorMessage をそのまま出すので、人の端末だけで読み、エージェントは使わず、会話・issue・Pull Request へ写さない。保証しないこと: event history への反映は遅れることがあり、90日を過ぎた event は引けない。メンバーの経路は、メンバーを引ける主体が IAM Identity Center で配線されるまで、実 API で確かめていない。
+引く主体は、CloudTrail を読むだけの主体である。`make ci-trail` は root の資格情報を拒み、`make aws-login` の profile（`tabp-bootstrap`）とは別の profile `tabp-trail` を使う。IAM Identity Center の permission set が配線されるまでは、管理アカウントに IAM user を1つ作り、`cloudtrail:LookupEvents`（Resource `"*"`）だけを許す inline policy を付け、アクセスキーを `aws configure --profile tabp-trail` で手元に置く。permission set が配線されたら、その IAM user を消し、profile `tabp-trail` を permission set の profile にする。
+
+写してよいのは既定の出力（許可の文法に当たる欄だけの行。[ADR-0602](../adr/0602-bootstrap-and-ci-authentication.md) 決定13）に限る。`RAW=1` は errorMessage をそのまま出すので、人の端末だけで読み、エージェントは使わず、会話・issue・Pull Request へ写さない。保証しないこと: event history への反映は遅れることがあり、90日を過ぎた event は引けない。メンバーの経路は、メンバーを引ける主体が IAM Identity Center で配線されるまで、実 API で確かめていない。メンバーの role からさらに引き受けた role の呼び出しは追わない。
 
 ### 段5 で lock が残った
 

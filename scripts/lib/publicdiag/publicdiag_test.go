@@ -295,6 +295,29 @@ func Test_allowed(t *testing.T) {
 		assert.False(t, allowed("address", "a"+strings.Repeat("b", 512)))
 	})
 
+	t.Run("time は秒までの UTC の形だけを受け、タイムゾーン付きと空白区切りを受けない", func(t *testing.T) {
+		t.Parallel()
+
+		assert.True(t, allowed("time", "2026-11-27T04:37:21Z"))
+		assert.False(t, allowed("time", "2026-11-27T04:37:21+09:00"))
+		assert.False(t, allowed("time", "2026-11-27 04:37:21"))
+	})
+
+	t.Run("source は amazonaws.com の host だけを受け、名前の40字は受け41字は受けない", func(t *testing.T) {
+		t.Parallel()
+
+		assert.True(t, allowed("source", strings.Repeat("a", 40)+".amazonaws.com"))
+		assert.False(t, allowed("source", strings.Repeat("a", 41)+".amazonaws.com"))
+		assert.False(t, allowed("source", "evil.example.com"))
+	})
+
+	t.Run("region は番号まで持つ名前だけを受ける", func(t *testing.T) {
+		t.Parallel()
+
+		assert.True(t, allowed("region", "us-east-1"))
+		assert.False(t, allowed("region", "us-east"))
+	})
+
 	t.Run("12桁の数字は文法の形でも受けない、11桁は受ける", func(t *testing.T) {
 		t.Parallel()
 
@@ -502,6 +525,26 @@ func TestDeny(t *testing.T) {
 			assert.Equal(t, c.want, Deny(c.msg))
 		})
 	}
+}
+
+func TestIsRegion(t *testing.T) {
+	t.Parallel()
+
+	t.Run("リージョンの名前の形を受ける", func(t *testing.T) {
+		t.Parallel()
+
+		for _, r := range []string{"us-east-1", "ap-northeast-1", "us-gov-west-1"} {
+			assert.True(t, IsRegion(r), r)
+		}
+	})
+
+	t.Run("番号の無い名前と大文字を受けない", func(t *testing.T) {
+		t.Parallel()
+
+		for _, r := range []string{"us-east", "US-EAST-1", "tokyo", ""} {
+			assert.False(t, IsRegion(r), r)
+		}
+	})
 }
 
 func TestMaskAddress(t *testing.T) {

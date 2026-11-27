@@ -47,7 +47,8 @@ plan-admin-identity: init-admin-identity
 bootstrap-check-account:
 	@set -eu; unset_env=$$($(call TF_LOCAL,env-unset)); region=$$($(call TF_LOCAL,region "$(TF_BASE)/env/admin/identity")); env $$unset_env AWS_PROFILE=$(TF_LOCAL_PROFILE) AWS_EC2_METADATA_DISABLED=true $(call RUN_SCRIPT_HOST_ARGS,bootstrap-check) account -project $(TF_LOCAL_PROJECT) -region "$$region"
 
-# 環境変数から取らず、コマンドラインで渡されたときだけ値を持つ。
+# STAGE・BOOTSTRAP_EXECUTOR・POLICY_SOURCE と、下の RUN・ATTEMPT・MEMBER_PROFILE・RAW・PARTIAL は、環境変数から取らず、
+# コマンドラインで渡されたときだけ値を持つ。
 STAGE :=
 BOOTSTRAP_EXECUTOR :=
 POLICY_SOURCE :=
@@ -56,22 +57,23 @@ POLICY_SOURCE :=
 bootstrap-verify:
 	@set -eu; unset_env=$$($(call TF_LOCAL,env-unset)); region=$$($(call TF_LOCAL,region "$(TF_BASE)/env/admin/identity")); env $$unset_env AWS_PROFILE=$(TF_LOCAL_PROFILE) AWS_EC2_METADATA_DISABLED=true $(call RUN_SCRIPT_HOST_ARGS,bootstrap-check) verify -stage "$(STAGE)" -project $(TF_LOCAL_PROJECT) -region "$$region"$(if $(BOOTSTRAP_EXECUTOR), -executor "$(BOOTSTRAP_EXECUTOR)")$(if $(POLICY_SOURCE), -policy-source "$(POLICY_SOURCE)")$(if $(filter reference,$(POLICY_SOURCE)), -reference-dir "$(TF_POLICY_INPUT)/run")
 
-# 環境変数から取らず、コマンドラインで渡されたときだけ値を持つ。RAW の出力は人の端末だけで読む（会話・issue・Pull
-# Request へ写すのは既定の出力だけ。docs/setup/bootstrap.md）。
+# ci-trail は root の資格情報を拒むので、TF_LOCAL_PROFILE と分けた読み取り専用の主体の profile で引く
+# （docs/setup/bootstrap.md の「CloudTrail で拒否を引く」）。RAW=1 の出力は人の端末だけで読む（会話・issue・Pull
+# Request へ写すのは既定の出力だけ）。
+TRAIL_PROFILE := tabp-trail
 RUN :=
 ATTEMPT :=
 MEMBER_PROFILE :=
 RAW :=
 
-.PHONY: ci-trail ## CI の run が AWS で拒まれた・失敗した呼び出しを CloudTrail から引く（RUN=<run ID> ATTEMPT=<n>、メンバーは MEMBER_PROFILE=、要 make aws-login）
+.PHONY: ci-trail ## CI の run が AWS で拒まれた・失敗した呼び出しを CloudTrail から引く（RUN=<run ID> ATTEMPT=<n>、メンバーは MEMBER_PROFILE=、読み取り専用の主体の profile tabp-trail で）
 ci-trail:
-	@set -eu; unset_env=$$($(call TF_LOCAL,env-unset)); region=$$($(call TF_LOCAL,region "$(TF_BASE)/env/admin/identity")); env $$unset_env AWS_PROFILE=$(TF_LOCAL_PROFILE) AWS_EC2_METADATA_DISABLED=true $(call RUN_SCRIPT_HOST_ARGS,ci-trail) -run "$(RUN)" -attempt "$(ATTEMPT)" -root-region "$$region" -regions-file "$(TF_BASE)/modules/default-regions/outputs.tf"$(if $(MEMBER_PROFILE), -member-profile "$(MEMBER_PROFILE)")$(if $(RAW), -raw)
+	@set -eu; unset_env=$$($(call TF_LOCAL,env-unset)); region=$$($(call TF_LOCAL,region "$(TF_BASE)/env/admin/identity")); env $$unset_env AWS_PROFILE=$(TRAIL_PROFILE) AWS_EC2_METADATA_DISABLED=true $(call RUN_SCRIPT_HOST_ARGS,ci-trail) -run "$(RUN)" -attempt "$(ATTEMPT)" -root-region "$$region" -regions-file "$(TF_BASE)/modules/default-regions/outputs.tf"$(if $(MEMBER_PROFILE), -member-profile "$(MEMBER_PROFILE)")$(if $(filter 1,$(RAW)), -raw)
 
 # terraform show は AWS を呼ばないので、環境変数は引き継がず、
 # terraform が動くのに要る PATH と HOME だけを渡す。
 # bootstrap-check へはホストの terraform の出力を標準入力で渡し、plan のパスはホストの絶対パスなので、
 # RUN_SCRIPT_HOST で起動する。
-# PARTIAL は環境変数から取らず、make の引数でだけ渡せる。
 PARTIAL :=
 BOOTSTRAP_CHECK_OUT = tmp/bootstrap-check
 
