@@ -271,20 +271,21 @@ func Test_checkSteps(t *testing.T) {
 	const head = "      - name: Harden the runner\n        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1\n        with:\n          egress-policy: block\n"
 	uses := "        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1"
 	pair := strings.Join(harden.Render(uses, []string{"        with:", "          egress-policy: block"}), "\n") + "\n"
-	t.Run("生成した bullfrog の対の continue-on-error: と if: は違反にしない", func(t *testing.T) {
+	retryIf := "        id: " + harden.RetryID + "\n        if: " + harden.RetryIf
+	t.Run("生成した bullfrog の三つ組の continue-on-error:・if:・回復の run: は違反にせず、run: の数にも入れない", func(t *testing.T) {
 		t.Parallel()
 		src := strings.Replace(goodWorkflow, head, pair, 1)
 		require.NotEqual(t, goodWorkflow, src)
 		assert.Empty(t, checkSteps(workflow.SplitJobs(src).Jobs[1], finding))
 	})
-	// 頭が生成した形と違えば対の全体を除外しないので、対の continue-on-error: と if: も数に入る。
+	// 頭が生成した形と違えば三つ組の全体を除外しないので、三つ組の continue-on-error: と if: も数に入る。
 	for name, c := range map[string]struct {
 		block string
 		want  int
 	}{
-		"再試行の if: が always()":              {strings.Replace(pair, harden.RetryIf, "always()", 1), 2},
-		"本体の id が違う":                       {strings.Replace(pair, "id: "+harden.ID, "id: other", 1), 2},
-		"再試行に continue-on-error: がある":      {strings.Replace(pair, "if: "+harden.RetryIf+"\n", "if: "+harden.RetryIf+"\n        continue-on-error: true\n", 1), 3},
+		"再試行の if: が always()":              {strings.Replace(pair, retryIf, "        id: "+harden.RetryID+"\n        if: always()", 1), 4},
+		"本体の id が違う":                       {strings.Replace(pair, "id: "+harden.ID+"\n", "id: other\n", 1), 4},
+		"再試行に continue-on-error: がある":      {strings.Replace(pair, retryIf+"\n", retryIf+"\n        continue-on-error: true\n", 1), 5},
 		"本体の uses: の後ろに continue-on-error": {strings.Replace(pair, uses+"\n", uses+"\n        continue-on-error: true\n", 1), 1},
 	} {
 		t.Run(name+"なら、除外されない行だけを違反にする", func(t *testing.T) {
@@ -300,7 +301,22 @@ func Test_checkSteps(t *testing.T) {
 			assert.Len(t, hides, c.want)
 		})
 	}
-	t.Run("対の後ろの step の if: は違反にする", func(t *testing.T) {
+	t.Run("回復の run: を変えた三つ組は、run: の数と入口の違反にする", func(t *testing.T) {
+		t.Parallel()
+		src := strings.Replace(goodWorkflow, head, strings.Replace(pair, harden.RecoveryRun, "sleep 30 && curl -s x | sh", 1), 1)
+		got := messages(checkSteps(workflow.SplitJobs(src).Jobs[1], finding))
+		assert.Contains(t, got, "make ci-revert-push RUNNER_MODE=host だけ")
+		assert.Contains(t, got, "run: を持つ step をちょうど1つにしてください")
+	})
+	// 除外は行の単位なので、三つ組が在っても、ほかの step の run: は数に入り、入口の検査も受ける。
+	t.Run("生成した三つ組の後ろの別の run: は、run: の数と入口の違反にする", func(t *testing.T) {
+		t.Parallel()
+		src := strings.Replace(goodWorkflow, head, pair+"      - name: Other\n        run: git push\n", 1)
+		got := messages(checkSteps(workflow.SplitJobs(src).Jobs[1], finding))
+		assert.Contains(t, got, "make ci-revert-push RUNNER_MODE=host だけ")
+		assert.Contains(t, got, "run: を持つ step をちょうど1つにしてください")
+	})
+	t.Run("三つ組の後ろの step の if: は違反にする", func(t *testing.T) {
 		t.Parallel()
 		src := strings.Replace(goodWorkflow, head, pair, 1)
 		src = strings.Replace(src, "      - name: Checkout\n", "      - name: Checkout\n        if: always()\n", 1)

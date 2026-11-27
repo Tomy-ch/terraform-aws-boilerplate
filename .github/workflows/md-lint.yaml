@@ -67,7 +67,13 @@ jobs:
             rekor.sigstore.dev
             fulcio.sigstore.dev
             awscli.amazonaws.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
       - name: Harden the runner (retry)
+        id: harden-runner-retry
         if: steps.harden-runner.outcome != 'success'
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
         with:
@@ -146,7 +152,7 @@ jobs:
         run: git status --porcelain --untracked-files=all | tee /tmp/md-lint-dirty.log && test ! -s /tmp/md-lint-dirty.log
 
       - name: Comment Markdown lint result on PR
-        if: always() && github.event_name == 'pull_request'
+        if: (steps.harden-runner.outcome == 'success' || steps.harden-runner-retry.outcome == 'success') && always() && github.event_name == 'pull_request'
         continue-on-error: true
         uses: ./.github/actions/upsert-pr-comment
         with:
@@ -158,7 +164,7 @@ jobs:
           details-summary: 'md-lint log'
 
       - name: Fail if Markdown lint failed
-        if: always() && steps.md-lint.outputs.status != 'success'
+        if: (steps.harden-runner.outcome == 'success' || steps.harden-runner-retry.outcome == 'success') && always() && steps.md-lint.outputs.status != 'success'
         run: exit 1
 
   # 何を見るかと、なぜ要るかは scripts/README.md の adr-lint 行が持つ。
@@ -208,7 +214,13 @@ jobs:
             rekor.sigstore.dev
             fulcio.sigstore.dev
             awscli.amazonaws.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
       - name: Harden the runner (retry)
+        id: harden-runner-retry
         if: steps.harden-runner.outcome != 'success'
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
         with:
@@ -308,7 +320,13 @@ jobs:
             rekor.sigstore.dev
             fulcio.sigstore.dev
             awscli.amazonaws.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
       - name: Harden the runner (retry)
+        id: harden-runner-retry
         if: steps.harden-runner.outcome != 'success'
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
         with:
@@ -408,7 +426,13 @@ jobs:
             rekor.sigstore.dev
             fulcio.sigstore.dev
             awscli.amazonaws.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
       - name: Harden the runner (retry)
+        id: harden-runner-retry
         if: steps.harden-runner.outcome != 'success'
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
         with:

@@ -72,8 +72,8 @@ ADR-0501 決定4 は、Terraformコードの故障モードごとに道具を割
 
 ### outbound 制限
 
-20. CI のすべての job は、最初の step で runner の外向き通信を許可リストへ固定する。最初の step が落ちたときに限り、同じ設定の2番目の step で1度だけやり直す。2番目の step が落ちれば job は落ちる。許可リストは決定10 の形で持つ —— 宣言は `.github/egress.toml`、適用は `make egress-apply`、検査は `make egress-check` である。Terraform を実行する job の許可リストは、その root が使う resource / data source の型が呼ぶ宛先を含む。`make egress-check` は、usecase の `reference/` の root でも、ブロックの `region` を解けることを確かめる。reference の root が無いか、reference の root を持たない usecase（ADR-0401 決定11）があれば落ちる。CI の root がその usecase を呼ぶ前に、解けない形をその usecase の変更で落とすためである。
-21. 名前解決も、許可したドメインに限る。遮断を始めた後の step に sudo を残さない。sudo が残る job では、step の中から通信制限そのものを外せる。
+20. CI のすべての job は、最初の step で runner の外向き通信を許可リストへ固定する。最初の step が落ちたときに限り、2番目の step で待ってから apt の索引を更新し、同じ設定の3番目の step で1度だけやり直す。2番目の step は生成した固定の字面で、sudo を apt の索引の更新だけに使い、時間の上限を持ち、その失敗は job を落とさない。3番目の step が落ちれば job は落ちる。間を置かないやり直しは、数秒以上続く取得の失敗と、runner の apt の索引に無いパッケージを吸わないためである。最初の3つの step の後で status の関数（`always()`・`failure()`・`cancelled()`）を持つ step の `if:` は、最初か3番目の step が成功したことを先頭の条件に持つ。status の関数は暗黙の成功の条件を外すので、無ければ最初と3番目の step が2つとも落ちた job で、通信の制限の無いまま走る。`oidc-job-lint` と `contents-write-lint` は、生成した三つ組の6行（最初の step の `continue-on-error:`、2番目の step の `if:`・`continue-on-error:`・`timeout-minutes:`・`run:`、3番目の step の `if:`）を見逃す。見逃すのは、`make egress-check` が生成の形と一字一句同じであることを求める行に限る。許可リストは決定10 の形で持つ —— 宣言は `.github/egress.toml`、適用は `make egress-apply`、検査は `make egress-check` である。Terraform を実行する job の許可リストは、その root が使う resource / data source の型が呼ぶ宛先を含む。`make egress-check` は、usecase の `reference/` の root でも、ブロックの `region` を解けることを確かめる。reference の root が無いか、reference の root を持たない usecase（ADR-0401 決定11）があれば落ちる。CI の root がその usecase を呼ぶ前に、解けない形をその usecase の変更で落とすためである。
+21. 名前解決も、許可したドメインに限る。遮断を始めた後の step に sudo を残さない。sudo が残る job では、step の中から通信制限そのものを外せる。決定20 の2番目の step は例外とし、生成した固定の字面で sudo を apt の索引の更新だけに使う。
 22. 手段は `bullfrogsec/bullfrog` とする。契約なしで遮断し、`api-token` を渡さなければ接続の記録を外へ送らない。
 23. 手段の挙動についての本 ADR の記述は、`.github/actions-pin.toml` が固定した版のソースから読んだものとする。版を上げる Pull Request は、その記述を確かめ直す。
 
@@ -144,7 +144,7 @@ runner の DNS 構成の変更（egress proxy による `/etc/resolv.conf` の�
 - 保証しないこと（決定26）: 確認の表が手順書の完了条件を漏れなく覆うこと。対応はレビューが持つ
 - 保証しないこと（決定27）: 手順書の書き込みの手順を漏れなく入口が覆うこと。対応はレビューが持つ
 - 保証しないこと（決定20-22）: port による絞り込み。bullfrog は宛先の IP で判定するため、許可したドメインの IP へは任意の port で繋がり、同じ IP を共有する別のホストへも繋がる。`*.example.com` は添字の回る宛先をまとめて許す。agent が既定で許す宛先（runner の結果と cache の置き場）は宣言に現れない
-- 受け入れた限界（決定22）: 上流の保守の継続を本リポジトリは保証しない。agent に SLSA provenance が無く、action の SHA が固定する sha256 だけで検証される。遮断の前に `nftables` を版の固定なしに `apt-get` で取る。GitHub-hosted の Ubuntu runner 専用である
+- 受け入れた限界（決定22）: 上流の保守の継続を本リポジトリは保証しない。agent に SLSA provenance が無く、action の SHA が固定する sha256 だけで検証される。遮断の前に `nftables` を版の固定なしに `apt-get` で取る。最初の step が落ちたときは、その前に apt の索引を更新する（決定20）。最初の step が agent を起動した後で落ちた場合、待った後の3番目の step は、sudo を外された後の導入で落ちうる。安全側に落ちるが、遅れて起動した agent の準備の印で成功する経路は失う。GitHub-hosted の Ubuntu runner 専用である
 
 ## 検証方法
 
@@ -154,7 +154,7 @@ runner の DNS 構成の変更（egress proxy による `/etc/resolv.conf` の�
 - 各機構のテスト: 解釈できない入力に対してエラーを返すこと（決定14）
 - 各機構のテスト: 確認が組む aws の操作が読み取りの動詞に限ること、profile が渡されなければ確認と手順の実行をせずに失敗として終えること（決定26）
 - 各機構のテスト: 手順の実行が組む書き込みの操作が、その入口の一覧に限ること。確認の入力が無いとき、前提が崩れているとき、標準入力が端末でないときに書き込みを組まないこと。既に望む状態のときに書き込みを組まないこと（決定27）
-- `egress-check`: steps を持つ job に bullfrog の step が無いこと、それが最初の step でないこと、2番目の step が、最初の step が落ちたときだけ同じ設定で走り、自身の失敗で job を落とす形でないこと、`enable-sudo: false` を含む生成済みの `with:` からずれていることで落ちる（決定20・21）。宣言の root が module を辿って使う resource / data source の型が宣言の type に当たらないこと、root が呼ぶ type の宛先を root を実行する job の許可リストが持たないこと、type の宛先を許す job がどの root にも名指されていないこと、job が CI の plan / apply の入口を通して実行する root と宣言の root がその job を名指す先が食い違うこと、root が type の resource / data source を置く region（ブロックの `region` 引数のリテラル。持たないブロックは root の aws の provider のただ 1 つの region）に、その region を含む type の宛先が無いこと、region を含む type の宛先の region に、どの root もその type を置かないこと、ブロックの `region` 引数が region の形のリテラルでないことでも落ちる。ただし、AWS が region を固定した global のサービスの宛先（organizations.us-east-1.amazonaws.com）は、運用機構が閉じた一覧として持ち、この突き合わせから外す（決定20）
+- `egress-check`: steps を持つ job に bullfrog の step が無いこと、それが最初の step でないこと、2番目の step が、最初の step が落ちたときだけ待って apt の索引を更新する生成済みの形でないこと、3番目の step が、最初の step が落ちたときだけ同じ設定で走り、自身の失敗で job を落とす形でないこと、3番目の step の後ろで status の関数を持つ step の `if:` が、最初か3番目の step の成功を `&&` で先頭に持たないか、その後ろの括弧の外に `||` を持つこと、status の関数を名指す行が読めた `if:` の式の外にあること、`enable-sudo: false` を含む生成済みの `with:` からずれていることで落ちる（決定20・21）。宣言の root が module を辿って使う resource / data source の型が宣言の type に当たらないこと、root が呼ぶ type の宛先を root を実行する job の許可リストが持たないこと、type の宛先を許す job がどの root にも名指されていないこと、job が CI の plan / apply の入口を通して実行する root と宣言の root がその job を名指す先が食い違うこと、root が type の resource / data source を置く region（ブロックの `region` 引数のリテラル。持たないブロックは root の aws の provider のただ 1 つの region）に、その region を含む type の宛先が無いこと、region を含む type の宛先の region に、どの root もその type を置かないこと、ブロックの `region` 引数が region の形のリテラルでないことでも落ちる。ただし、AWS が region を固定した global のサービスの宛先（organizations.us-east-1.amazonaws.com）は、運用機構が閉じた一覧として持ち、この突き合わせから外す（決定20）
 - 定期実行: バイパス宣言の期限検査が、Pull Request契機とは独立に実行されること（決定18）
 - レビュー: 決定8・9（既製品で足りるものを自前実装しない）は機械判定できない。運用機構を追加するPull Requestのレビュー観点とする
 - レビュー: 決定22・23（手段の挙動）は機械判定できない。`bullfrogsec/bullfrog` の版を上げるPull Requestのレビュー観点とする
@@ -173,4 +173,4 @@ runner の DNS 構成の変更（egress proxy による `/etc/resolv.conf` の�
 - 運用機構の規模が、単一の言語とディレクトリでは管理できなくなった場合
 - GitHub 純正の hosted runner 向け egress firewall が public preview 以上になり、本リポジトリで使えるようになった場合（決定22）
 - bullfrog の更新が止まるか、sudo や DNS の迂回についての advisory が修正されないまま残った場合（決定22）
-- bullfrog が agent の取得とパッケージの導入を再試行するようになった場合（決定20 の2番目の step を外す）
+- bullfrog が agent の取得とパッケージの導入を、待ちと apt の索引の更新を伴って再試行するようになった場合（決定20 の2番目と3番目の step と、status の関数を持つ step の先頭の条件を外す。`oidc-job-lint` と `contents-write-lint` が生成した三つ組の6行を見逃す例外も、同じときに外す）

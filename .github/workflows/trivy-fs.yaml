@@ -80,7 +80,13 @@ jobs:
             mirror.gcr.io
             ghcr.io
             pkg-containers.githubusercontent.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
       - name: Harden the runner (retry)
+        id: harden-runner-retry
         if: steps.harden-runner.outcome != 'success'
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
         with:
@@ -186,7 +192,7 @@ jobs:
             trivy-fs-summary.md
 
       - name: Comment Trivy FS result on PR
-        if: always() && github.event_name == 'pull_request'
+        if: (steps.harden-runner.outcome == 'success' || steps.harden-runner-retry.outcome == 'success') && always() && github.event_name == 'pull_request'
         continue-on-error: true
         uses: ./.github/actions/upsert-pr-comment
         with:
@@ -198,12 +204,12 @@ jobs:
           details-summary: '📄 Summary'
 
       - name: Trivy FS scan (SARIF)
-        if: always()
+        if: (steps.harden-runner.outcome == 'success' || steps.harden-runner-retry.outcome == 'success') && always()
         run: make -s trivy-fs RUNNER_MODE=host TRIVY_FORMAT=sarif > trivy-fs.sarif
         shell: bash
 
       - name: Upload Trivy FS SARIF to code scanning
-        if: always()
+        if: (steps.harden-runner.outcome == 'success' || steps.harden-runner-retry.outcome == 'success') && always()
         continue-on-error: true
         uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
@@ -265,7 +271,13 @@ jobs:
             mirror.gcr.io
             ghcr.io
             pkg-containers.githubusercontent.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
       - name: Harden the runner (retry)
+        id: harden-runner-retry
         if: steps.harden-runner.outcome != 'success'
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
         with:
@@ -384,7 +396,7 @@ jobs:
             trivy-license-summary.md
 
       - name: Comment license result on PR
-        if: always() && github.event_name == 'pull_request'
+        if: (steps.harden-runner.outcome == 'success' || steps.harden-runner-retry.outcome == 'success') && always() && github.event_name == 'pull_request'
         continue-on-error: true
         uses: ./.github/actions/upsert-pr-comment
         with:

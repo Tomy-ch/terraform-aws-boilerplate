@@ -1235,7 +1235,7 @@ func allowedNeeds() string {
 // checkGateJob は、needs の先の検査の job が skip も失敗の無視もできず、決めたターゲットだけを走らせることを検査します。
 func checkGateJob(d workflow.Job, g gate, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
 	var findings []lintreport.Finding
-	// egress が生成した bullfrog の対の continue-on-error: と if: は見逃す（harden.GeneratedLines。ADR-0702 決定20）。
+	// egress が生成した bullfrog の三つ組は見逃す（harden.GeneratedLines。ADR-0702 決定20）。
 	generated := harden.GeneratedLines(d)
 	// 依存先が skip すると検査の job も skip され、後続は走らないまま失敗も報告されない。
 	if _, at, ok := jobKey(d, "needs"); ok {
@@ -1254,7 +1254,7 @@ func checkGateJob(d workflow.Job, g gate, finding func(int, string, ...any) lint
 		findings = append(findings, checkIndirect(l, finding)...)
 	}
 	for _, step := range workflow.SplitSteps(d) {
-		if runs, ok := stepRunLine(step); ok && !g.marks.MatchString(runs.Text) {
+		if runs, ok := stepRunLine(step); ok && !generated[runs.Number] && !g.marks.MatchString(runs.Text) {
 			findings = append(findings, finding(runs.Number, "%s %s の run: は %s だけにしてください。ほかの run: は後続の step の PATH と環境を替えます", g.label, d.ID, g.check))
 		}
 	}
@@ -1298,10 +1298,12 @@ func checkHidden(job workflow.Job, cred workflow.Line, refusal string, w workflo
 			findings = append(findings, finding(at, "資格情報を取る job に %s: を置かないでください", key))
 		}
 	}
+	// egress が生成した回復の step の run: は見逃す（harden.GeneratedLines。ADR-0702 決定20）。
+	generated := harden.GeneratedLines(job)
 	for _, step := range workflow.SplitSteps(job) {
 		findings = append(findings, checkStepEnv(step, finding)...)
 		runs, ok := stepRunLine(step)
-		if !ok {
+		if !ok || generated[runs.Number] {
 			continue
 		}
 		entry, credStep := ciEntry.MatchString(runs.Text), credentials.MatchString(runs.Text)
@@ -1665,9 +1667,8 @@ func cancelsNothing(lines []workflow.Line, indent string) bool {
 	return false
 }
 
-// makeRun は、step の run: の値が `make`、target の1つ、前後どちらかの RUNNER_MODE=host だけで成る行に当たる正規表現を返します。
-// makeRun は、target を走らせる run: の行です。-k は、検査のターゲットが前提に持つ段を、1つが落ちても残りまで
-// 走らせるためのもので、検査を省かせません。
+// makeRun は、step の run: の値が `make`、`-k`（任意）、target の1つ、前後どちらかの RUNNER_MODE=host だけで成る行に当たる
+// 正規表現を返します。-k は、検査のターゲットが前提に持つ段を、1つが落ちても残りまで走らせるためのもので、検査を省かせません。
 func makeRun(target string) *regexp.Regexp {
 	const mode = `(?:\s+RUNNER_MODE=host)?`
 	return regexp.MustCompile(`^ {6}(?:- | {2})["']?run["']?[ \t]*:[ \t]*make(?:\s+-k)?` + mode + `\s+` + target + mode + `[ \t]*$`)
