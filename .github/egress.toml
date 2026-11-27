@@ -463,7 +463,7 @@ classes = ["mise"]
 classes = ["terraform", "aws-governance"]
 
 [job."terraform-drift.yaml:drift-admin-workload"]
-classes = ["terraform", "aws-notify"]
+classes = ["terraform", "aws-notify", "aws-cost"]
 
 # tf-local は scripts/ から go で建てる。issue の読み書きは GitHub API で、base が許す。
 [job."terraform-drift.yaml:report"]
