@@ -60,6 +60,9 @@ var (
 	stepUsesRe   = regexp.MustCompile(`^ {8}uses: ` + regexp.QuoteMeta(bullfrogAction) + `@[0-9A-Za-z._-]+(?: # \S+)?$`)
 	stepWithRe   = regexp.MustCompile(`^ {8}with:$`)
 	stepIfRe     = regexp.MustCompile(`^ {8}if:(.*)$`)
+	// yamlAliasRe は、アンカー（`&name`）・エイリアス（`*name`）・マージキー（`<<:`）。`*.example.com` のような
+	// ワイルドカードは、`*` の直後が英数字でないので当たらない。
+	yamlAliasRe = regexp.MustCompile(`(?:^|[\s\[{,:])[&*][A-Za-z0-9_]|<<\s*:`)
 	// blockScalarRe は if: の値が block scalar の指示子（字下げと chomping の指示を含む）だけの形。
 	blockScalarRe = regexp.MustCompile(`^[|>][1-9+-]*$`)
 	// stepKeyRe は、bullfrog の step のうち生成器が書き直してよいキーの行。ほかのキーは apply が黙って消すので拒む。
@@ -107,6 +110,9 @@ var (
 	// errStepGuard は、三つ組の後ろで status の関数を持つ step の if: が harden.Guard を先頭に持たない場合のエラー。
 	// apply では直らない（式は人が書く）。
 	errStepGuard = xerrors.New("status の関数を持つ step の if: が、bullfrog の成功の条件で始まっていません")
+	// errYAMLAlias は、workflow が YAML のアンカー・エイリアス・マージキーを持つ場合のエラー。値が別の行から
+	// 持ち込まれ、行を読む検査（Guard の数え直しを含む）がその値を見ない。
+	errYAMLAlias = xerrors.New("workflow に YAML のアンカー・エイリアス・マージキーがあります")
 	// errStepMalformed は、bullfrog の step が生成器の書ける形（name / id / continue-on-error / if / uses / with
 	// だけ）を外れているか、step の外で bullfrog が名指しされている場合のエラー。apply では直らない。
 	errStepMalformed = xerrors.New("bullfrog の step が想定外の形をしています")
@@ -625,6 +631,11 @@ func scanJobs(name, data string) ([]target, error) {
 	if l, ok := unclaimedLine(data, split); ok {
 		return nil, xerrors.Wrap(errJobUnparsed, fmt.Sprintf("%s %d 行目: %q", name, l.Number, l.Text))
 	}
+	for i, text := range strings.Split(data, "\n") {
+		if !commentRe.MatchString(text) && yamlAliasRe.MatchString(text) {
+			return nil, xerrors.Wrap(errYAMLAlias, fmt.Sprintf("%s %d 行目: %q", name, i+1, text))
+		}
+	}
 	var targets []target
 	total := mentionsBullfrog(split.Preamble)
 	for _, job := range split.Jobs {
@@ -738,10 +749,15 @@ func mentionsBullfrog(lines []workflow.Line) int {
 func checkGuards(steps []workflow.Step) error {
 	for _, st := range steps {
 		l, cond, covered, ok := stepIf(st)
+		// 式の外の行は繋いでから見る。関数名と括弧を別の行に割った折り返し（`always` の次の行に `()`）も拾う。
+		var outside []string
 		for _, sl := range st.Lines {
-			if !commentRe.MatchString(sl.Text) && harden.StatusFunc.MatchString(sl.Text) && !covered[sl.Number] {
-				return xerrors.Wrap(errStepGuard, fmt.Sprintf("%d 行目: %q（status の関数は、step の `if:` の式の中にだけ書けます）", sl.Number, sl.Text))
+			if !commentRe.MatchString(sl.Text) && !covered[sl.Number] {
+				outside = append(outside, strings.TrimSpace(sl.Text))
 			}
+		}
+		if harden.StatusFunc.MatchString(strings.Join(outside, " ")) {
+			return xerrors.Wrap(errStepGuard, fmt.Sprintf("%d 行目からの step: status の関数は、step の `if:` の式の中にだけ書けます", st.Number))
 		}
 		if !ok || !harden.StatusFunc.MatchString(cond) {
 			continue

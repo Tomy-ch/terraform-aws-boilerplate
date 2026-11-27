@@ -1148,6 +1148,15 @@ func Test_scanJobs(t *testing.T) {
 			assert.Equal(t, []target{{jobKey: "a.yaml:one", start: 5, end: 5 + len(pair), uses: usesLine, mentions: 2}}, targets)
 		})
 
+		// `*` の直後が英数字でないワイルドカードと、run: の && はエイリアスやアンカーではない。
+		t.Run("ワイルドカードと && をアンカーとして扱わない", func(t *testing.T) {
+			t.Parallel()
+			body := strings.Replace(syncedOne(), "      - name: Checkout\n", "      - name: Checkout\n        run: a && b '*.yaml'\n", 1)
+			require.NotEqual(t, syncedOne(), body)
+			_, err := scanJobs("a.yaml", body)
+			assert.NoError(t, err)
+		})
+
 		t.Run("三つ組の後ろで Guard で始まる always() の step を通す", func(t *testing.T) {
 			t.Parallel()
 			body := strings.Replace(syncedOne(), "      - name: Checkout\n", "      - name: Checkout\n        if: "+harden.Guard+" && always()\n", 1)
@@ -1300,6 +1309,20 @@ func Test_scanJobs(t *testing.T) {
 			_, err := scanJobs("a.yaml", jobWorkflow("one", block))
 			require.ErrorIs(t, err, errStepMalformed)
 		})
+
+		// エイリアスの値は別の行から持ち込まれるので、if: の行を読む検査はその値を見ない。
+		for name, c := range map[string]struct{ from, to string }{
+			"job の env: のアンカーと step の if: のエイリアス": {"    steps:\n", "    env:\n      X: &g ${{ always() }}\n    steps:\n"},
+			"マージキー": {"      - name: Checkout\n", "      - name: Checkout\n        <<: *m\n"},
+		} {
+			t.Run(name+"を弾く", func(t *testing.T) {
+				t.Parallel()
+				body := strings.Replace(syncedOne(), c.from, c.to, 1)
+				require.NotEqual(t, syncedOne(), body)
+				_, err := scanJobs("a.yaml", body)
+				require.ErrorIs(t, err, errYAMLAlias)
+			})
+		}
 
 		t.Run("step の外で bullfrog を名指しすると弾く", func(t *testing.T) {
 			t.Parallel()
@@ -1483,6 +1506,8 @@ func Test_checkGuards(t *testing.T) {
 			"Guard の次の行で || を継ぐ plain scalar": "      - name: S\n        if: " + guarded + "always()\n          || true\n        run: make x\n",
 			"次の行に always() を継ぐ plain scalar":  "      - name: S\n        if: github.event_name == 'push'\n          && always()\n        run: make x\n",
 			"次の行へ続く ${{":                      "      - name: S\n        if: ${{ github.event_name == 'push' &&\n          always() }}\n        run: make x\n",
+			"引用符のキーで関数名と括弧を別の行に割った式":          "      - name: S\n        \"if\": always\n          ()\n        run: make x\n",
+			"フロースタイルで関数名と括弧を別の行に割った式":         "      - {name: S, if: always\n          (), run: make x}\n",
 			"9桁の字下げの block scalar":            "      - name: S\n        if: |\n         always()\n        run: make x\n",
 			"空行の後ろに || を継ぐ block scalar":      "      - name: S\n        if: >-\n          " + guarded + "always()\n\n          || true\n        run: make x\n",
 		} {

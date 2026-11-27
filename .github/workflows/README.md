@@ -624,7 +624,7 @@ status の関数は暗黙の `success()` を外すので、本体と再試行が
 無い。`if:` は `(steps.harden-runner.outcome == 'success' || steps.harden-runner-retry.outcome == 'success') && always()` のように、この条件と `&&` で始め、その後ろで `||` を使うなら括弧で囲む
 （`&&` より弱く結ぶので、先頭の条件を迂回する）。`make egress-check` がこの形を求め、`make egress-apply` は
 書き換えない（式は人が書く）。status の関数は step の `if:` の式の中にだけ書く —— `- if:` の書き出し、引用符で囲んだキー、
-フロースタイル、`run:` の中に現れると、読めない形として落ちる。job の `if:` は別の job を決めるもので、その job の bullfrog が守るので対象外である。
+フロースタイル、`run:` の中に現れると、読めない形として落ちる。YAML のアンカーとエイリアスも同じ理由で使わない。job の `if:` は別の job を決めるもので、その job の bullfrog が守るので対象外である。
 外向きの接続と名前解決を一覧に照らし、それ以外を拒む —— 侵害された action や道具のダウンロードが、
 その job に用の無い宛先へ持ち出せない。sudo を外すのは、sudo が残る job では step の中から通信制限
 そのものを外せるからである。決定と受け入れた限界は [ADR-0702](../../docs/adr/0702-repository-operations-substrate.md)
