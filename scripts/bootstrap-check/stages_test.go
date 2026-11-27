@@ -91,7 +91,7 @@ func stage4Descs(executor string) []string {
 
 const (
 	stage1Count      = 4
-	beforeApplyCount = 25
+	beforeApplyCount = 26
 	stage4Count      = 25
 	stage5Count      = 5
 
