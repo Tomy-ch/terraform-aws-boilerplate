@@ -318,6 +318,11 @@
           "module.deployment_identity.module.github_oidc.aws_iam_policy.members[0]"
         ]
       },
+      "management_only_policies": [
+        "module.deployment_identity.module.github_oidc.aws_iam_policy.governance[0]",
+        "module.deployment_identity.module.github_oidc.aws_iam_policy.governance_2[0]",
+        "module.deployment_identity.module.github_oidc.aws_iam_policy.members[0]"
+      ],
       "bootstrap_assume": {
         "apply_identity_policy": "module.deployment_identity.module.github_oidc.aws_iam_policy.members[0]"
       },

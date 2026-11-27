@@ -287,3 +287,60 @@ creating_unused(inst) if {
 	is_object(inst.creating)
 	not key_created(inst)
 }
+
+# メンバーの形の instance を、正規の instance と同じ規則で評価し直すための入力と宣言（plan.deployment_identity_instances、
+# plan.organization_baseline_bootstrap_read）。入力は、正規の instance の resource を除き、instance の resource を正規の接頭辞へ
+# 付け替え、instance の外の resource はそのまま残す。正規の instance の評価が見る範囲（自分の instance と、instance の外の
+# すべて）と同じ形にする。address のほかは変えない。
+member_view(inst) := [{"path": f.path, "contents": object.union(f.contents, {"resource_changes": [moved(rc, inst) |
+	some rc in f.contents.resource_changes
+	moved(rc, inst)
+]})} |
+	some f in input
+]
+
+moved(rc, inst) := object.union(rc, {"address": canonical_address(rc.address, inst)}) if canonical_address(rc.address, inst)
+
+moved(rc, inst) := rc if {
+	not canonical_address(rc.address, inst)
+	not canonical_resource(rc.address)
+}
+
+canonical_address(address, inst) := concat("", [sb_module, substring(address, count(inst.state_backend), -1)]) if {
+	is_string(address)
+	startswith(address, inst.state_backend)
+}
+
+canonical_address(address, inst) := concat("", [di_module, substring(address, count(inst.deployment_identity), -1)]) if {
+	is_string(address)
+	not startswith(address, inst.state_backend)
+	startswith(address, inst.deployment_identity)
+}
+
+canonical_resource(address) if {
+	is_string(address)
+	startswith(address, sb_module)
+}
+
+canonical_resource(address) if {
+	is_string(address)
+	startswith(address, di_module)
+}
+
+# 管理アカウントにだけ在る policy（宣言 deployment_identity.management_only_policies）を除いた宣言。instances は外す。付け替えた
+# 入力の中では、メンバーの instance が正規の instance になるためである。
+management_only_policies := {a | some a in object.get(instance_di_cfg, "management_only_policies", []); is_string(a)}
+
+member_decl := object.union(object.remove(data.policy_plan, ["deployment_identity", "state_backend"]), {
+	"deployment_identity": object.union(instance_di_cfg, {
+		"apply_identity_role": object.union(object.get(instance_di_cfg, "apply_identity_role", {}), {"managed_policies": [a |
+			some a in object.get(instance_di_cfg, ["apply_identity_role", "managed_policies"], [])
+			not a in management_only_policies
+		]}),
+		"customer_managed_policies": [a |
+			some a in object.get(instance_di_cfg, "customer_managed_policies", [])
+			not a in {strip_index(m) | some m in management_only_policies}
+		],
+	}),
+	"state_backend": object.remove(instance_sb_cfg, ["instances"]),
+})
