@@ -16,16 +16,16 @@ import (
 // permExpand は引数の順に照合するので、長い記号を先に置く。
 var (
 	permS3Descs = []string{
-		"plan $b: 15 件が allowed",
-		"apply-identity $b: 17 件が allowed",
+		"plan $b: 16 件が allowed",
+		"apply-identity $b: 18 件が allowed",
 		"apply-identity $key: 1 件が allowed",
 		"apply-identity $role/plan: 2 件が allowed",
-		"plan $pb: 15 件が allowed",
+		"plan $pb: 16 件が allowed",
 		"plan $pb/pr/1/x: 1 件が allowed",
-		"apply-identity $pb: 16 件が allowed",
+		"apply-identity $pb: 17 件が allowed",
 		"apply-identity $pb/apply/1/x: 1 件が allowed",
-		"plan $ab: 16 件が allowed",
-		"apply-identity $ab: 19 件が allowed",
+		"plan $ab: 17 件が allowed",
+		"apply-identity $ab: 20 件が allowed",
 		"apply-identity $ab: 1 件が implicitDeny",
 		"plan $ab: 2 件が implicitDeny",
 		"apply $b: 2 件が allowed",
@@ -292,7 +292,7 @@ var permExpand = strings.NewReplacer(
 	"$reads", "s3:GetBucketAcl s3:GetBucketCORS s3:GetBucketWebsite s3:GetAccelerateConfiguration s3:GetBucketRequestPayment "+
 		"s3:GetBucketLogging s3:GetLifecycleConfiguration s3:GetReplicationConfiguration s3:GetBucketObjectLockConfiguration "+
 		"s3:GetBucketTagging s3:GetBucketPolicy s3:GetBucketVersioning s3:GetEncryptionConfiguration "+
-		"s3:GetBucketPublicAccessBlock s3:GetBucketOwnershipControls",
+		"s3:GetBucketPublicAccessBlock s3:GetBucketOwnershipControls s3:ListTagsForResource",
 	"$manage", "iam:CreatePolicy iam:CreatePolicyVersion iam:DeletePolicyVersion iam:SetDefaultPolicyVersion iam:GetPolicy iam:GetPolicyVersion iam:ListPolicyVersions",
 	"$bg", "arn:aws:iam::123456789012:role/break-glass/tabp-break-glass",
 	"$budget", "arn:aws:budgets::123456789012:budget/tabp-admin-x",
