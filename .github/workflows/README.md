@@ -96,8 +96,11 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
 —— AWS の側の状態は、どのファイルを変えたかと無関係に plan を変える。
 
 - **公開されるログに plan の全文を出さない。** 全文は plan の出力の Bucket へ置き、ログと job summary
-  には終了コード・件数・object の key・SHA-256・版 ID と、Policy の違反の文（resource の address）だけを
-  出す（ADR-0602 決定13、`.makefiles/terraform/operation/ci.mk`）。identity root の plan の、CI の role の policy の
+  には終了コード・件数・object の key・SHA-256・版 ID と、全文から導いた値のうち許可の文法
+  （`scripts/lib/publicdiag`）に当たるものだけを出す（ADR-0602 決定13、`.makefiles/terraform/operation/ci.mk`）。
+  失敗の診断（AWS の service・operation・error code・拒否された Action、条件の失敗のファイルと行）、変わる
+  resource の address、Policy の違反の規則の ID と件数がそれに当たり、違反の文は全文へ置く。全文は、
+  init・plan・apply の `-json` の stream と、plan の人の読む差分（`terraform show`）を順に持つ。identity root の plan の、CI の role の policy の
   文書の評価（`scripts/bootstrap-check` の `plan-permissions`）も、区分ごとの件数と期待と違う行の要約だけを出す
 - **全文は、ログの版 ID で読み、SHA-256 を確かめる。** plan の role は `pr/*`・`branch/*` のどの key にも
   書けるので、版を指定せずに読んだ最新の版は、別の run が書いたものでありうる（ADR-0602 の保証しないこと）。
@@ -172,9 +175,9 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
   起動できるかは environment が限る
 - **concurrency は workflow 全体に1つ置き、実行中の apply を止めない。** 待っている run は後から来た
   run に置き換わるので、線の途中の commit は apply されず、最新の commit だけが apply される
-- **公開されるログに terraform の出力を出さない。** ログには plan の終了コード・件数・Policy の違反の文と
-  apply の終了コード、全文を置いた object の key・SHA-256・版 ID だけを出し、job summary には件数と apply の
-  成否と同じ key・SHA-256・版 ID だけを出す。apply の全文は、identity root なら plan の全文と同じ Bucket の
+- **公開されるログに terraform の出力を出さない。** ログには plan と apply の終了コード・件数と、全文を置いた
+  object の key・SHA-256・版 ID と、許可の文法に当たる診断の行だけを出し、job summary には件数と apply の成否と
+  同じ key・SHA-256・版 ID と診断の行だけを出す（plan の job と同じ。失敗の経路でも job summary を書く）。apply の全文は、identity root なら plan の全文と同じ Bucket の
   `apply/` の下へ apply-identity の role が置き、workload root なら apply の出力の Bucket へ apply の role が
   置く（ADR-0602 決定13）。Bucket の名前と key を得た後は、plan・Policy・apply の
   どこで失敗しても全文を置いてから失敗する。apply には job の `timeout-minutes` より短い時間

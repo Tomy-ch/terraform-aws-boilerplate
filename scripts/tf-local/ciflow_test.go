@@ -6,15 +6,18 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"html"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/policyresult"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/publicdiag"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun/tooltest"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
@@ -25,9 +28,11 @@ import (
 const (
 	planSecret  = "PLAN-SECRET"
 	applySecret = "APPLY-SECRET"
-	// planLineOne は、偽の show の既定（create 1件）に合う terraform の「Plan:」の行。
-	planLineOne = "Plan: 1 to add, 0 to change, 0 to destroy.\n"
-	onePolicy   = "package plan.p\n\ndeny contains msg if {\n\tfalse\n\tmsg := \"x\"\n}\n"
+	// summaryOne は、偽の show の既定（create 1件）に合う terraform の change_summary の行。
+	summaryOne = `{"@level":"info","type":"change_summary","changes":{"add":1,"change":0,"import":0,"remove":0,"operation":"plan"}}` + "\n"
+	// planLog は、plan の stream の、値を含む info の行。
+	planLog   = `{"@level":"info","@message":"` + planSecret + `","type":"log"}` + "\n"
+	onePolicy = "package plan.p\n\ndeny contains msg if {\n\tfalse\n\tmsg := \"x\"\n}\n"
 )
 
 // fakeFlow は、CI の段の偽の道具を作る。起動ごとに「段 作業ディレクトリの名前 profile と TF_CLI_ARGS_*」を
@@ -41,13 +46,13 @@ func fakeFlow(t *testing.T, knobs map[string]string) (toolFunc, string) {
 		stepCallerIdentity + ".out":       callerIdentity,
 		stepListAliases + ".out":          withAlias,
 		stepBucketEncrypt + ".out":        encKMS(stateKeyARN),
-		stepCIPlanNoLock + ".out":         planSecret + "\n" + planLineOne,
+		stepCIPlanNoLock + ".out":         planLog + summaryOne,
 		stepCIPlanNoLock + ".rc":          "2",
-		stepCIPlanLock + ".out":           planSecret + "\n" + planLineOne,
+		stepCIPlanLock + ".out":           planLog + summaryOne,
 		stepCIPlanLock + ".rc":            "2",
 		stepCIShow + ".out":               planWith(change("a.b", `"create"`), ""),
 		stepCIConftest + ".out":           `[{"namespace":"plan.p","successes":1}]`,
-		stepCIApply + ".out":              applySecret + "\n",
+		stepCIApply + ".out":              `{"@level":"info","@message":"` + applySecret + `","type":"log"}` + "\n",
 		stepCIPutObject + ".out":          `{"VersionId":"v1","ETag":"e"}`,
 		stepCIInit + ".out":               "init\n",
 		stepCIPermissions + ".out":        "# 結果: 209 件のうち NG 0 件\n",
@@ -190,8 +195,15 @@ func (f *flow) calls() string { return readKnob(f.t, f.k, "calls.log") }
 
 func (f *flow) public() {
 	f.t.Helper()
+	summary := readKnob(f.t, filepath.Dir(f.summary), "summary")
+	for _, line := range strings.Split(f.stdout.String()+"\n"+html.UnescapeString(summary), "\n") {
+		if strings.HasPrefix(line, publicdiag.Prefix) {
+			assert.True(f.t, publicdiag.Valid(line), line)
+		}
+	}
 	for _, v := range []string{planSecret, applySecret, account} {
 		assert.NotContains(f.t, f.stdout.String(), v)
+		assert.NotContains(f.t, summary, v)
 		for _, err := range f.errs {
 			if err != nil {
 				assert.NotContains(f.t, err.Error(), v)
@@ -223,7 +235,8 @@ func Test_ciFinishStep(t *testing.T) {
 		assert.JSONEq(t, `{"Bucket":"tabp-admin-tfplan-`+account+`-ap-northeast-1-an","Key":"pr/12/8-1-admin-identity.txt","ChecksumSHA256":"`+mustSHA(t, readKnob(t, f.k, "body.txt"))+`","ExpectedBucketOwner":"`+account+`"}`, strings.TrimSpace(readKnob(t, f.k, "upload.log")))
 		body := readKnob(t, f.k, "body.txt")
 		assert.True(t, strings.HasPrefix(body, "commit: "+commitSHA+"\n"), body)
-		assert.Contains(t, body, "init\n"+planSecret+"\n")
+		assert.Contains(t, body, "init\n"+planLog)
+		assert.NotContains(t, f.stdout.String(), publicdiag.Prefix, "成功した plan（終了コード 2）は診断の行を出さない")
 		assert.Contains(t, readKnob(t, filepath.Dir(f.summary), "summary"), "### admin-identity\n\nPlan: 0 to import, 1 to add, 0 to change, 0 to destroy.\n")
 		assert.Empty(t, readKnob(t, filepath.Dir(f.output), "output"))
 		assert.Contains(t, f.stdout.String(), "plan の終了コード: 2\n")
@@ -239,7 +252,7 @@ func Test_ciFinishStep(t *testing.T) {
 		calls := f.calls()
 		assert.Contains(t, calls, stepCIPlanLock+" identity profile=tabp-admin-ci-apply")
 		assert.NotContains(t, calls, stepCIPlanNoLock)
-		assert.Contains(t, calls, stepCIApply+" identity profile=tabp-admin-ci-apply region= init= plan= show= apply=-input=false -no-color /")
+		assert.Contains(t, calls, stepCIApply+" identity profile=tabp-admin-ci-apply region= init= plan= show= apply=-input=false -no-color -json /")
 		assert.Less(t, strings.Index(calls, stepCIConftest), strings.Index(calls, stepCIApply))
 		assert.Contains(t, readKnob(t, f.k, "upload.log"), `"Bucket":"tabp-admin-tfplan-`)
 		assert.Contains(t, readKnob(t, f.k, "upload.log"), `"Key":"apply/8-1-admin-identity.txt"`)
@@ -701,7 +714,7 @@ func Test_ciRunInit(t *testing.T) {
 	t.Run("init が 0 以外なら errCIInit で、終了コード 2", func(t *testing.T) {
 		t.Parallel()
 		tool, _ := fakeFlow(t, map[string]string{stepCIInit + ".rc": "1"})
-		err := ciRunInit(prepared(t), deps{tool: tool})
+		err := ciRunInit(prepared(t), deps{tool: tool, stderr: &bytes.Buffer{}})
 		require.ErrorIs(t, err, errCIInit)
 		assert.Equal(t, 2, exitCode(err))
 	})
@@ -712,6 +725,19 @@ func Test_ciRunInit(t *testing.T) {
 		require.ErrorIs(t, err, toolrun.ErrTool)
 		assert.NotErrorIs(t, err, errCIInit)
 		assert.Equal(t, 2, exitCode(err))
+	})
+
+	t.Run("init が失敗したら、許可の文法に当たる診断の行を stderr に出す", func(t *testing.T) {
+		t.Parallel()
+		f := newFlow(t, map[string]string{stepCIInit + ".rc": "1", stepCIInit + ".out": `{"@level":"error","type":"diagnostic","diagnostic":` +
+			`{"severity":"error","summary":"Failed to get existing workspaces: operation error S3: ListObjectsV2, https response error StatusCode: 403, ` +
+			`RequestID: a, HostID: b, api error AccessDenied: arn:aws:iam::` + account + `:role/x","address":""}}` + "\n"})
+		require.NoError(t, f.step("ci-prepare", "-mode", ciModePlan, "-project", "tabp", "-env", "admin", "-root", "identity",
+			"-profile", "p", "-base", f.base, "-header", f.header, "-state", f.state))
+		require.ErrorIs(t, f.step("ci-init", "-state", f.state), errCIInit)
+		stderr := f.d.stderr.(*bytes.Buffer).String()
+		assert.Contains(t, stderr, "診断: kind=api-error; service=S3; operation=ListObjectsV2; status=403; code=AccessDenied\n")
+		assert.NotContains(t, stderr, account)
 	})
 }
 
@@ -751,12 +777,12 @@ func Test_ciRunPlan(t *testing.T) {
 			`{"address":"a.c[\"x<y\"]","change":{"actions":["update"],"before":{"v":"` + planSecret + `"}}}]}`
 		f := newFlow(t, map[string]string{
 			stepCIShow + ".out":       show,
-			stepCIPlanNoLock + ".out": planSecret + "\nPlan: 1 to add, 1 to change, 0 to destroy.\n",
+			stepCIPlanNoLock + ".out": planLog + summaryLine(1, 1),
 		})
 		require.NoError(t, f.all(ciModePlan, "identity"))
-		assert.Contains(t, f.stdout.String(), "変わる resource（2 件）:\n  create a.b[<伏せた key>]\n  update a.c[\"x<y\"]\n")
+		assert.Contains(t, f.stdout.String(), "変わる resource（2 件）:\n  create a.b[<伏せた key>]\n  update a.c[<伏せた key>]\n")
 		assert.Contains(t, readKnob(t, filepath.Dir(f.summary), "summary"),
-			"Plan: 0 to import, 1 to add, 1 to change, 0 to destroy.\n\n<pre>\ncreate a.b[&lt;伏せた key&gt;]\nupdate a.c[&#34;x&lt;y&#34;]\n</pre>\n\n- key:")
+			"Plan: 0 to import, 1 to add, 1 to change, 0 to destroy.\n\n<pre>\ncreate a.b[&lt;伏せた key&gt;]\nupdate a.c[&lt;伏せた key&gt;]\n</pre>\n\n- key:")
 		assert.NotContains(t, readKnob(t, filepath.Dir(f.summary), "summary"), planSecret)
 		assert.NotContains(t, readKnob(t, filepath.Dir(f.summary), "summary"), account)
 		f.public()
@@ -771,25 +797,77 @@ func Test_ciRunPlan(t *testing.T) {
 		assert.Contains(t, readKnob(t, filepath.Dir(f.output), "output"), "plan=Plan: 0 to import, 1 to add, 0 to change, 0 to destroy.\n")
 	})
 
-	t.Run("一覧の件数が「Plan:」の行と食い違えば plan の段で落ち、判定に届かないので終了コード 2", func(t *testing.T) {
+	t.Run("一覧の件数が change_summary と食い違えば plan の段で落ち、判定に届かないので終了コード 2", func(t *testing.T) {
 		t.Parallel()
-		f := newFlow(t, map[string]string{stepCIPlanNoLock + ".out": planSecret + "\nPlan: 2 to add, 0 to change, 0 to destroy.\n"})
+		f := newFlow(t, map[string]string{stepCIPlanNoLock + ".out": planLog + summaryLine(2, 0)})
 		err := f.all(ciModePlan, "identity")
 		require.ErrorIs(t, f.errs["ci-plan"], errPlanList)
 		require.ErrorIs(t, err, errCINotEstablished)
 		assert.Equal(t, 2, exitCode(err))
 		assert.NotContains(t, f.stdout.String(), "変わる resource")
-		assert.Empty(t, readKnob(t, filepath.Dir(f.summary), "summary"))
+		assert.Contains(t, readKnob(t, filepath.Dir(f.summary), "summary"), "失敗の段: plan", "失敗の経路でも job summary を書く")
 		assert.NotEmpty(t, readKnob(t, f.k, "body.txt"), "落ちても全文は置く")
 		f.public()
 		f.leftovers()
 	})
 
-	t.Run("変更があるのに「Plan:」の行が無ければ plan の段で落ちる", func(t *testing.T) {
+	t.Run("plan の stream に change_summary が無ければ plan の段で落ちる", func(t *testing.T) {
 		t.Parallel()
-		f := newFlow(t, map[string]string{stepCIPlanNoLock + ".out": planSecret + "\n"})
+		f := newFlow(t, map[string]string{stepCIPlanNoLock + ".out": planLog})
 		require.Error(t, f.all(ciModePlan, "identity"))
-		require.ErrorIs(t, f.errs["ci-plan"], errPlanList)
+		require.ErrorIs(t, f.errs["ci-plan"], errChangeSummary)
+	})
+
+	t.Run("plan の失敗の診断を、許可の文法に当たる欄だけでログと job summary に出す", func(t *testing.T) {
+		t.Parallel()
+		f := newFlow(t, map[string]string{stepCIPlanNoLock + ".rc": "1", stepCIPlanNoLock + ".out": planLog + `{"@level":"error","@message":"Error: creating IAM Role","type":"diagnostic","diagnostic":{"severity":"error",` +
+			`"summary":"creating IAM Role (x): operation error IAM: CreateRole, https response error StatusCode: 403, RequestID: r, ` +
+			`api error AccessDenied: User: arn:aws:sts::` + account + `:assumed-role/tabp-admin-ci-apply-identity/gha is not authorized ` +
+			`to perform: iam:CreateRole on resource: x because no identity-based policy allows the iam:CreateRole action",` +
+			`"detail":"","address":"aws_iam_role.this[\"` + account + `\"]"}}` + "\n"})
+		require.Error(t, f.all(ciModePlan, "identity"))
+		want := "診断: kind=iam-deny; address=aws_iam_role.this[<伏せた key>]; service=IAM; operation=CreateRole; status=403; " +
+			"code=AccessDenied; action=iam:CreateRole; reason=implicit:identity-based"
+		assert.Contains(t, f.stdout.String(), want+"\n")
+		assert.Contains(t, readKnob(t, filepath.Dir(f.summary), "summary"), "失敗の段: plan")
+		assert.Contains(t, readKnob(t, filepath.Dir(f.summary), "summary"), html.EscapeString(want))
+		assert.Contains(t, readKnob(t, f.k, "body.txt"), "is not authorized", "全文は stream をそのまま持つ")
+		f.public()
+	})
+
+	t.Run("壊れた stream でも plan の失敗の種類は変わらない", func(t *testing.T) {
+		t.Parallel()
+		f := newFlow(t, map[string]string{stepCIPlanNoLock + ".rc": "1", stepCIPlanNoLock + ".out": "{\"@level\":\"error\" broken\n"})
+		require.Error(t, f.all(ciModePlan, "identity"))
+		require.ErrorIs(t, f.errs["ci-plan"], errPlanFailed)
+		assert.Contains(t, f.stdout.String(), "診断: count=0; exit=1\n")
+		assert.Contains(t, f.stdout.String(), "診断: masked=1\n")
+		f.public()
+	})
+
+	t.Run("人の読む差分を全文に足す", func(t *testing.T) {
+		t.Parallel()
+		f := newFlow(t, map[string]string{stepCIShowText + ".out": "Terraform will perform the following actions\n"})
+		require.NoError(t, f.all(ciModePlan, "identity"))
+		assert.Contains(t, f.calls(), stepCIShowText+" identity profile=tabp-admin-ci-plan region= init= plan= show=")
+		assert.Contains(t, readKnob(t, f.k, "body.txt"), "Terraform will perform the following actions")
+		assert.NotContains(t, f.stdout.String(), "Terraform will perform")
+	})
+
+	t.Run("診断は plan が書いた区間からだけ読み、init の行を数えない", func(t *testing.T) {
+		t.Parallel()
+		initErr := `{"@level":"error","type":"diagnostic","diagnostic":{"severity":"error","summary":"Error acquiring the state lock"}}` + "\n"
+		f := newFlow(t, map[string]string{stepCIInit + ".out": initErr, stepCIPlanNoLock + ".rc": "1", stepCIPlanNoLock + ".out": planLog})
+		require.Error(t, f.all(ciModePlan, "identity"))
+		assert.Contains(t, f.stdout.String(), "診断: count=0; exit=1\n")
+		assert.NotContains(t, f.stdout.String(), "summary=")
+	})
+
+	t.Run("人の読む差分を足せなければ、そのことを1行出して plan の判定は変えない", func(t *testing.T) {
+		t.Parallel()
+		f := newFlow(t, map[string]string{stepCIShowText + ".rc": "1"})
+		require.NoError(t, f.all(ciModePlan, "identity"))
+		assert.Contains(t, f.stdout.String(), "⚠️ 人の読む差分を全文に足せません\n")
 	})
 }
 
@@ -1095,7 +1173,7 @@ func Test_ciRunPolicy(t *testing.T) {
 	t.Run("root の名前がファイル名の形でなければ、conftest を起動せずに失敗する", func(t *testing.T) {
 		t.Parallel()
 		tool, k := fakeFlow(t, nil)
-		s := ciState{Root: "../x", Out: filepath.Join(t.TempDir(), "o.txt"), JSON: fileWith(t, "{}")}
+		s := ciState{Root: "../x", Out: fileWith(t, ""), JSON: fileWith(t, "{}")}
 		err := ciRunPolicy(s, deps{tool: tool, stderr: &bytes.Buffer{}, root: t.TempDir()}, &bytes.Buffer{}, "tmp/ci-policy", policyDirWith(t, map[string]string{"p.rego": onePolicy}), fileWith(t, "{}"), fileWith(t, "{}"), []string{"plan.p"})
 		require.ErrorIs(t, err, errPolicyJSON)
 		assert.NoFileExists(t, filepath.Join(k, "conftest.ls"))
@@ -1119,7 +1197,7 @@ func Test_ciRunPolicy(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			tool, _ := fakeFlow(t, map[string]string{stepCIConftest + ".out": c.out})
-			s := ciState{Root: "admin-identity", Out: filepath.Join(t.TempDir(), "o.txt"), JSON: fileWith(t, "{}")}
+			s := ciState{Root: "admin-identity", Out: fileWith(t, ""), JSON: fileWith(t, "{}")}
 			err := ciRunPolicy(s, deps{tool: tool, stderr: &bytes.Buffer{}, root: t.TempDir()}, &bytes.Buffer{}, "tmp/ci-policy", policyDirWith(t, c.files), fileWith(t, "{}"), fileWith(t, "{}"), []string{c.ns})
 			require.ErrorIs(t, err, c.want)
 			if c.code != 0 {
@@ -1131,7 +1209,7 @@ func Test_ciRunPolicy(t *testing.T) {
 	t.Run("違反の名前空間と評価できなかった名前空間が混ざれば、評価できなかった側を優先して終了コード 2", func(t *testing.T) {
 		t.Parallel()
 		tool, _ := fakeFlow(t, map[string]string{stepCIConftest + ".out": `[{"namespace":"plan.p","successes":0,"failures":[{"msg":"bad"}]}]`})
-		s := ciState{Root: "admin-identity", Out: filepath.Join(t.TempDir(), "o.txt"), JSON: fileWith(t, "{}")}
+		s := ciState{Root: "admin-identity", Out: fileWith(t, ""), JSON: fileWith(t, "{}")}
 		files := map[string]string{"p.rego": onePolicy, "q.rego": strings.Replace(onePolicy, "plan.p", "plan.q", 1)}
 		for _, order := range [][]string{{"plan.p", "plan.q"}, {"plan.q", "plan.p"}} {
 			err := ciRunPolicy(s, deps{tool: tool, stderr: &bytes.Buffer{}, root: t.TempDir()}, &bytes.Buffer{}, "tmp/ci-policy", policyDirWith(t, files), fileWith(t, "{}"), fileWith(t, "{}"), order)
@@ -1145,10 +1223,44 @@ func Test_ciRunPolicy(t *testing.T) {
 
 	t.Run("conftest を起動できなければ ErrTool で、終了コード 2", func(t *testing.T) {
 		t.Parallel()
-		s := ciState{Root: "admin-identity", Out: filepath.Join(t.TempDir(), "o.txt"), JSON: fileWith(t, "{}")}
+		s := ciState{Root: "admin-identity", Out: fileWith(t, ""), JSON: fileWith(t, "{}")}
 		err := ciRunPolicy(s, deps{tool: tooltest.Missing, stderr: &bytes.Buffer{}, root: t.TempDir()}, &bytes.Buffer{}, "tmp/ci-policy", policyDirWith(t, map[string]string{"p.rego": onePolicy}), fileWith(t, "{}"), fileWith(t, "{}"), []string{"plan.p"})
 		require.ErrorIs(t, err, toolrun.ErrTool)
 		assert.Equal(t, 2, exitCode(err))
+	})
+
+	t.Run("違反の文と conftest の stderr はログへ出さず全文へ置き、規則の ID と件数だけを出す", func(t *testing.T) {
+		t.Parallel()
+		tool, _ := fakeFlow(t, map[string]string{
+			stepCIConftest + ".out":    `[{"namespace":"plan.p","successes":0,"failures":[{"msg":"[PLAN-P-01] ` + account + ` が書ける"}]}]`,
+			stepCIConftest + ".stderr": "warn " + account + "\n",
+		})
+		s := ciState{Root: "admin-identity", Out: fileWith(t, ""), JSON: fileWith(t, "{}")}
+		var stdout, stderr bytes.Buffer
+		err := ciRunPolicy(s, deps{tool: tool, stderr: &stderr, root: t.TempDir()}, &stdout, "tmp/ci-policy", policyDirWith(t, map[string]string{"p.rego": onePolicy}), fileWith(t, "{}"), fileWith(t, "{}"), []string{"plan.p"})
+		require.ErrorIs(t, err, errCIPolicy)
+		assert.Contains(t, stdout.String(), "診断: kind=policy; rule=[PLAN-P-01]; namespace=plan.p; count=1\n")
+		assert.Contains(t, stdout.String(), "conftest の stderr（1 行）は全文にあります")
+		assert.NotContains(t, stdout.String()+stderr.String()+err.Error(), account)
+		raw, rerr := os.ReadFile(s.Out)
+		require.NoError(t, rerr)
+		assert.Contains(t, string(raw), "warn "+account)
+		assert.Contains(t, string(raw), "plan.p: [PLAN-P-01] "+account+" が書ける")
+	})
+
+	t.Run("conftest の stderr の行数を数え、空白だけなら行数を出さない", func(t *testing.T) {
+		t.Parallel()
+		for stderrText, want := range map[string]string{"a\nb\nc\n": "conftest の stderr（3 行）は全文にあります", "\t\n": ""} {
+			tool, _ := fakeFlow(t, map[string]string{stepCIConftest + ".out": `[{"namespace":"plan.p","successes":1}]`, stepCIConftest + ".stderr": stderrText})
+			s := ciState{Root: "admin-identity", Out: fileWith(t, ""), JSON: fileWith(t, "{}")}
+			var stdout bytes.Buffer
+			require.NoError(t, ciRunPolicy(s, deps{tool: tool, stderr: &bytes.Buffer{}, root: t.TempDir()}, &stdout, "tmp/ci-policy", policyDirWith(t, map[string]string{"p.rego": onePolicy}), fileWith(t, "{}"), fileWith(t, "{}"), []string{"plan.p"}))
+			if want == "" {
+				assert.NotContains(t, stdout.String(), "conftest の stderr")
+			} else {
+				assert.Contains(t, stdout.String(), want)
+			}
+		}
 	})
 }
 
@@ -1210,6 +1322,19 @@ func Test_ciApplyStep(t *testing.T) {
 		t.Parallel()
 		_, err := ciApplyStep([]string{"-state", "s", "-timeout", "0s"}, testDeps(nil), &bytes.Buffer{})
 		require.ErrorIs(t, err, errUsage)
+	})
+
+	t.Run("apply の失敗の診断を、apply が書いた区間からだけ出す", func(t *testing.T) {
+		t.Parallel()
+		f := newFlow(t, map[string]string{stepCIApply + ".rc": "1", stepCIApply + ".out": `{"@level":"error","@message":"Error: creating IAM Role","type":"diagnostic","diagnostic":{"severity":"error",` +
+			`"summary":"creating IAM Role (x): operation error IAM: CreateRole, https response error StatusCode: 403, RequestID: r, ` +
+			`api error AccessDenied: User: arn:aws:sts::` + account + `:assumed-role/tabp-admin-ci-apply-identity/gha is not authorized ` +
+			`to perform: iam:CreateRole on resource: x because no identity-based policy allows the iam:CreateRole action",` +
+			`"detail":"","address":"aws_iam_role.this[\"` + account + `\"]"}}` + "\n"})
+		require.Error(t, f.all(ciModeApply, "identity"))
+		assert.Equal(t, 1, strings.Count(f.stdout.String(), "診断: kind=iam-deny"), f.stdout.String())
+		assert.Contains(t, readKnob(t, filepath.Dir(f.output), "output"), "failure=apply\n")
+		f.public()
 	})
 }
 
@@ -1275,6 +1400,17 @@ func Test_ciRunUpload(t *testing.T) {
 		s := ciState{Out: filepath.Join(t.TempDir(), "none.txt")}
 		require.ErrorIs(t, ciRunUpload(&s, deps{tool: tool}, &bytes.Buffer{}), errCIUpload)
 		assert.Empty(t, readKnob(t, k, "calls.log"))
+	})
+
+	t.Run("aws の stderr は、許可の文法に当たる欄だけをログへ出す", func(t *testing.T) {
+		t.Parallel()
+		denied := "\naws: [ERROR]: An error occurred (AccessDenied) when calling the PutObject operation: User: arn:aws:sts::" +
+			account + ":assumed-role/x is not authorized to perform: s3:PutObject\n"
+		tool, _ := fakeFlow(t, map[string]string{stepCIPutObject + ".rc": "254", stepCIPutObject + ".stderr": denied})
+		var stderr bytes.Buffer
+		s := ciState{Out: fileWith(t, "x"), OutBucket: "b", Key: "k", Account: account, Region: "ap-northeast-1"}
+		require.Error(t, ciRunUpload(&s, deps{tool: tool, stderr: &stderr, root: t.TempDir()}, &bytes.Buffer{}))
+		assert.Equal(t, "診断: kind=cli; operation=PutObject; code=AccessDenied; action=s3:PutObject\n", stderr.String())
 	})
 }
 
@@ -1562,4 +1698,9 @@ func Test_isVerdict(t *testing.T) {
 		assert.False(t, isVerdict(errCIInit))
 		assert.False(t, isVerdict(nil))
 	})
+}
+
+func summaryLine(add, chg int) string {
+	return `{"@level":"info","type":"change_summary","changes":{"add":` + strconv.Itoa(add) + `,"change":` + strconv.Itoa(chg) +
+		`,"import":0,"remove":0,"operation":"plan"}}` + "\n"
 }

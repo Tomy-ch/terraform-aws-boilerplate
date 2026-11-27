@@ -234,7 +234,7 @@ func ciCredentials(args []string, d deps, stdout io.Writer) (string, error) {
 	if err := c.assumeInput(work, *role, "gha-"+c.run); err != nil {
 		return "", err
 	}
-	out, err := runTool(d.tool, work, ciAssumeEnv(d.environ, c.region), stepAssumeRole, d.stderr)
+	out, err := ciRunTool(d.tool, work, ciAssumeEnv(d.environ, c.region), stepAssumeRole, d.stderr)
 	if err != nil {
 		return "", err
 	}
@@ -255,7 +255,6 @@ func ciCredentials(args []string, d deps, stdout io.Writer) (string, error) {
 	return "✅ " + profile + " の profile に資格情報を置きました", nil
 }
 
-// credentials は、assume の応答の資格情報です。
 type credentials struct {
 	AccessKeyID     string `json:"AccessKeyId"`
 	SecretAccessKey string `json:"SecretAccessKey"`

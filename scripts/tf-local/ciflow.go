@@ -30,7 +30,8 @@ import (
 // 固定の引数で起動する（ADR-0702 決定3・24）。段の間の値は state のファイル（所有者だけが読める）が運ぶ。
 //
 //	ci-prepare は aws だけを起動し、init の値・出力の Bucket・key を求め、全文の1行目を書く。
-//	ci-init は terraform init、ci-plan は terraform plan と show、ci-apply は terraform apply を起動する。
+//	ci-init は terraform init、ci-plan は terraform plan と show、ci-apply は terraform apply を起動する。init・plan・apply は
+//	`-json` の stream を全文に書き、show は人の読む差分を全文に足す。
 //	ci-policy は conftest を起動し、plan に入口の名前空間の Policy を掛ける。
 //	ci-permissions は bootstrap-check を起動し、identity root の plan の CI の role の文書を、bootstrap の手順書の
 //	permissions と同じ表で simulate にかける。管理アカウントの identity root の plan の入口でだけ要る段で、要るかは
@@ -40,7 +41,9 @@ import (
 //
 // prepare と init が落ちれば、make はそこで止まる（全文はランナーの外に出さない）。それより後の段は make の `-` で
 // 続き、前の段の失敗を state で知って何もしない。upload は必ず走り、finish が最後に落とす。全文は公開される
-// ログに出さず、ログには終了コード・件数・key・SHA-256・版 ID と Policy の違反の文だけを出す（ADR-0602 決定13）。
+// ログに出さない。ログと job summary へは、終了コード・件数・key・SHA-256・版 ID と、許可の文法に当たる診断の行
+// （scripts/lib/publicdiag）だけを出す。aws CLI の stderr も文法に当たる欄だけを出す。Policy の違反は規則の ID と
+// 件数だけを出し、違反の文と conftest の stderr は全文へ置く（ADR-0602 決定13）。
 // plan と apply の段の失敗の種類（state の stage）は scripts/apply-revert の revertKinds と skipKinds が読む。
 // drift の入口（CI_DRIFT）の段は cidrift.go が持ち、prepare・init・plan・upload はここの段を使う。
 
@@ -49,6 +52,7 @@ const (
 	stepCIPlanNoLock = "ci-terraform-plan-nolock"
 	stepCIPlanLock   = "ci-terraform-plan"
 	stepCIShow       = "ci-terraform-show"
+	stepCIShowText   = "ci-terraform-show-text"
 	stepCIApply      = "ci-terraform-apply"
 	stepCIConftest   = "ci-conftest"
 	stepCIPutObject  = "s3api-put-object"
@@ -115,6 +119,8 @@ type ciState struct {
 	Summary     string `json:"summary"`
 	// Changes は、変わる resource の address と操作の一覧。値は持たない（planChanges）。
 	Changes []string `json:"changes"`
+	// Diag は、plan か apply の stream から導いた、公開する診断の行（diagReport）。
+	Diag    []string `json:"diag"`
 	SHA     string   `json:"sha"`
 	Version string   `json:"version"`
 	// PlanChanged は、plan の終了コードが 2（宣言との差がある）だったことです。
@@ -337,7 +343,7 @@ func ciPrepareState(d deps, stdout io.Writer, mode, project, env, root, profile,
 	}
 	defer cleanup()
 	awsEnv := localEnv(d.environ, profile, "AWS_REGION="+s.Region)
-	identity, err := runTool(d.tool, work, awsEnv, stepCallerIdentity, d.stderr)
+	identity, err := ciRunTool(d.tool, work, awsEnv, stepCallerIdentity, d.stderr)
 	if err != nil {
 		return s, err
 	}
@@ -353,7 +359,7 @@ func ciPrepareState(d deps, stdout io.Writer, mode, project, env, root, profile,
 			return s, err
 		}
 	}
-	aliases, err := runTool(d.tool, work, awsEnv, stepListAliases, d.stderr)
+	aliases, err := ciRunTool(d.tool, work, awsEnv, stepListAliases, d.stderr)
 	if err != nil {
 		return s, err
 	}
@@ -364,7 +370,7 @@ func ciPrepareState(d deps, stdout io.Writer, mode, project, env, root, profile,
 	if err := os.WriteFile(filepath.Join(work, "input.json"), input, 0o600); err != nil {
 		return s, xerrors.Wrap(err, "input.json")
 	}
-	encryption, err := runTool(d.tool, work, awsEnv, stepBucketEncrypt, d.stderr)
+	encryption, err := ciRunTool(d.tool, work, awsEnv, stepBucketEncrypt, d.stderr)
 	if err != nil {
 		return s, err
 	}
@@ -436,6 +442,10 @@ func ciRunInit(s ciState, d deps) error {
 		return err
 	}
 	defer func() { _ = f.Close() }()
+	before, err := readInRoot(s.Out)
+	if err != nil {
+		return xerrors.Wrap(err, "全文")
+	}
 	cmd := d.tool(context.Background(), s.Dir, localEnv(d.environ, s.Profile, "TF_CLI_ARGS_init="+strings.Join(s.InitArgs, " ")), stepCIInit)
 	cmd.Stdout, cmd.Stderr = f, f
 	code, err := toolrun.Exec(cmd)
@@ -443,6 +453,13 @@ func ciRunInit(s ciState, d deps) error {
 		return xerrors.Wrap(err, "init")
 	}
 	if code != 0 {
+		// init の失敗では全文を置かないので、診断の行だけが手がかりになる。
+		if out, rerr := readInRoot(s.Out); rerr == nil && len(out) >= len(before) {
+			if werr := writeLines(d.stderr, diagReport(readStream(out[len(before):]), code)); werr != nil {
+				return errors.Join(xerrors.Wrapf(errCIInit, "exit status %d", code), werr)
+			}
+		}
+
 		return xerrors.Wrapf(errCIInit, "exit status %d", code)
 	}
 
@@ -506,6 +523,11 @@ func ciRunPlan(s *ciState, d deps, stdout io.Writer) (string, error) {
 	if k, ok := cientry.Lookup(s.Mode); ok && k.Lock == cientry.LockSkip {
 		step = stepCIPlanNoLock
 	}
+	// 診断は plan が書いた区間の stream だけから読む（全文には先に init の stream がある）。
+	before, err := readInRoot(s.Out)
+	if err != nil {
+		return "", xerrors.Wrap(err, "全文")
+	}
 	cmd := d.tool(context.Background(), s.Dir, localEnv(d.environ, s.Profile, "TF_CLI_ARGS_plan=-out="+s.TFPlan), step)
 	cmd.Stdout, cmd.Stderr = f, f
 	code, err := toolrun.Exec(cmd)
@@ -515,6 +537,12 @@ func ciRunPlan(s *ciState, d deps, stdout io.Writer) (string, error) {
 	if _, err := fmt.Fprintf(stdout, "plan の終了コード: %d\n", code); err != nil {
 		return "", err
 	}
+	// plan の stream は plan の終わりで決まる。show の stderr が全文に足される前に読む。
+	out, err := readInRoot(s.Out)
+	if err != nil || len(out) < len(before) {
+		return "", xerrors.Wrap(errCIState, "全文")
+	}
+	stream := readStream(out[len(before):])
 	show, err := openInRoot(s.JSON, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
 	if err != nil {
 		return "", xerrors.Wrap(err, "plan の JSON")
@@ -525,9 +553,23 @@ func ciRunPlan(s *ciState, d deps, stdout io.Writer) (string, error) {
 	if err := show.Close(); err != nil {
 		return "", xerrors.Wrap(err, "plan の JSON")
 	}
-	out, err := readInRoot(s.Out)
-	if err != nil {
-		return "", xerrors.Wrap(err, "全文")
+	// plan の終了コード 2 は変更があることで、失敗ではない。
+	failed := code
+	if code == 2 {
+		failed = 0
+	}
+	s.Diag = diagReport(stream, failed)
+	if err := writeLines(stdout, s.Diag); err != nil {
+		return "", err
+	}
+	// 人の読む差分は stream に無いので、全文に足す。plan が失敗して tfplan が無ければ、show の失敗が全文に残るだけである。
+	// TF_CLI_ARGS_show は既存の引数の前へ入るので、-no-color も plan のファイルより前に置く。
+	cmd = d.tool(context.Background(), s.Dir, localEnv(d.environ, s.Profile, "TF_CLI_ARGS_show=-no-color "+s.TFPlan), stepCIShowText)
+	cmd.Stdout, cmd.Stderr = f, f
+	if err := cmd.Run(); err != nil && code != 1 {
+		if _, werr := io.WriteString(stdout, "⚠️ 人の読む差分を全文に足せません\n"); werr != nil {
+			return "", werr
+		}
 	}
 	s.Stage = ""
 	s.fail(failureKind(stagePlan, code, out))
@@ -543,7 +585,7 @@ func ciRunPlan(s *ciState, d deps, stdout io.Writer) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	changes, err := planChanges(data, out)
+	changes, err := planChanges(data, stream)
 	if err != nil {
 		return "", err
 	}
@@ -618,7 +660,6 @@ func (l *stringList) Set(v string) error {
 	return nil
 }
 
-// policyInputDir は、conftest に渡す plan を置く作業ディレクトリの下のディレクトリ。
 const policyInputDir = "input"
 
 func ciRunPolicy(s ciState, d deps, stdout io.Writer, parent, policy, decl, layer string, namespaces []string) error {
@@ -643,16 +684,28 @@ func ciRunPolicy(s ciState, d deps, stdout io.Writer, parent, policy, decl, laye
 			return xerrors.Wrap(errPolicyJSON, err.Error())
 		}
 	}
-	var result bytes.Buffer
+	var result, conftestErr bytes.Buffer
 	cmd := d.tool(context.Background(), work, localEnv(d.environ, s.Profile), stepCIConftest)
-	cmd.Stdout, cmd.Stderr = &result, d.stderr
+	cmd.Stdout, cmd.Stderr = &result, &conftestErr
 	// 違反があれば conftest は非ゼロで終わる。判定は結果の JSON で行う。
-	if _, err := toolrun.Exec(cmd); err != nil {
-		return xerrors.Wrap(err, "conftest")
-	}
-	entries, err := policyresult.Parse(result.Bytes())
-	if err != nil {
+	_, runErr := toolrun.Exec(cmd)
+	entries, parseErr := policyresult.Parse(result.Bytes())
+	// conftest の stderr と違反の文は plan の値を含みうるので、全文へ置く。ログへは規則の ID と件数、stderr の行数だけを
+	// 出す（ADR-0602 決定13）。
+	if err := appendPolicyOut(s, conftestErr.String()+policyMessages(entries)); err != nil {
 		return err
+	}
+	if trimmed := strings.TrimSpace(conftestErr.String()); trimmed != "" {
+		n := strings.Count(trimmed, "\n")
+		if _, err := fmt.Fprintf(stdout, "conftest の stderr（%d 行）は全文にあります\n", n+1); err != nil {
+			return err
+		}
+	}
+	if runErr != nil {
+		return xerrors.Wrap(runErr, "conftest")
+	}
+	if parseErr != nil {
+		return parseErr
 	}
 	var failed []string
 	var unestablished []error
@@ -668,7 +721,13 @@ func ciRunPolicy(s ciState, d deps, stdout io.Writer, parent, policy, decl, laye
 		mine := slices.DeleteFunc(slices.Clone(entries), func(e policyresult.Entry) bool { return e.Namespace != ns })
 		line, err := policyresult.Judge(map[string]int{ns: n}, mine)
 		if err != nil {
-			if _, werr := fmt.Fprintln(stdout, err.Error()); werr != nil {
+			// 違反の文は plan の値を含むので、規則の ID と件数だけを出す。ほかの理由（評価の欠け・件数の食い違い）の
+			// 文は名前空間と件数だけを持つので、そのまま出す。
+			text := err.Error()
+			if xerrors.Is(err, policyresult.ErrViolation) {
+				text = policyresult.ErrViolation.Error() + "\n" + strings.Join(policyLines(mine), "\n")
+			}
+			if _, werr := fmt.Fprintln(stdout, text); werr != nil {
 				return werr
 			}
 			failed = append(failed, ns)
@@ -852,6 +911,11 @@ func ciApplyStep(args []string, d deps, stdout io.Writer) (string, error) {
 	if err := s.save(statePath); err != nil {
 		return "", err
 	}
+	// 診断は apply が書いた区間の stream だけから読む。
+	before, err := readInRoot(s.Out)
+	if err != nil {
+		return "", xerrors.Wrap(err, "全文")
+	}
 	code, err := ciRunApply(s, d, limit)
 	if err != nil {
 		return "", err
@@ -860,8 +924,12 @@ func ciApplyStep(args []string, d deps, stdout io.Writer) (string, error) {
 		return "", err
 	}
 	out, err := readInRoot(s.Out)
-	if err != nil {
-		return "", xerrors.Wrap(err, "全文")
+	if err != nil || len(out) < len(before) {
+		return "", xerrors.Wrap(errCIState, "全文")
+	}
+	s.Diag = diagReport(readStream(out[len(before):]), code)
+	if err := writeLines(stdout, s.Diag); err != nil {
+		return "", err
 	}
 	s.Stage = ""
 	kind := failureKind(stageApply, code, out)
@@ -903,7 +971,7 @@ func ciRunApply(s ciState, d deps, limit time.Duration) (int, error) {
 		return 0, err
 	}
 	defer func() { _ = f.Close() }()
-	cmd := d.tool(context.Background(), s.Dir, localEnv(d.environ, s.Profile, "TF_CLI_ARGS_apply=-input=false -no-color "+s.TFPlan), stepCIApply)
+	cmd := d.tool(context.Background(), s.Dir, localEnv(d.environ, s.Profile, "TF_CLI_ARGS_apply=-input=false -no-color -json "+s.TFPlan), stepCIApply)
 	cmd.Stdout, cmd.Stderr = f, f
 	if err := cmd.Start(); err != nil {
 		return 0, xerrors.Wrapf(toolrun.ErrTool, "apply: %v", err)
@@ -982,7 +1050,7 @@ func ciRunUpload(s *ciState, d deps, stdout io.Writer) error {
 	if err := writeInRoot(filepath.Join(work, "input.json"), input); err != nil {
 		return xerrors.Wrap(errCIUpload, err.Error())
 	}
-	out, err := runTool(d.tool, work, localEnv(d.environ, s.Profile, "AWS_REGION="+s.Region), stepCIPutObject, d.stderr)
+	out, err := ciRunTool(d.tool, work, localEnv(d.environ, s.Profile, "AWS_REGION="+s.Region), stepCIPutObject, d.stderr)
 	if err != nil {
 		return xerrors.Wrap(errCIUpload, err.Error())
 	}
@@ -1010,9 +1078,9 @@ func ciRequired(s ciState) []string {
 	return append(steps, stageUpload)
 }
 
-// ciFinishStep は ci-finish です。失敗した段があれば、apply の入口は failure にその種類を書いて落ちる。すべての段が
-// 終わっていれば job summary を書き、apply の入口は outputs の plan に要約を書く。それらを書けなければ、apply の
-// 入口の失敗の種類は applied である。全文・plan の JSON・plan のファイルは消す。
+// ciFinishStep は ci-finish です。失敗した段があれば、診断の節を job summary に書き、apply の入口は failure にその種類を
+// 書いて落ちる。すべての段が終わっていれば job summary を書き、apply の入口は outputs の plan に要約を書く。それらを
+// 書けなければ、apply の入口の失敗の種類は applied である。全文・plan の JSON・plan のファイルは消す。
 func ciFinishStep(args []string, d deps) (string, error) {
 	statePath, err := ciStepArgs("ci-finish", args, d, nil)
 	if err != nil {
@@ -1045,6 +1113,14 @@ func ciFinishStep(args []string, d deps) (string, error) {
 				return "", errors.Join(err, werr)
 			}
 		}
+		// 失敗の経路でも job summary に診断を書く。書けなくても失敗の種類と終了コードは変えない。
+		failed := fmt.Sprintf("### %s\n\n失敗の段: %s\n\n%s", s.Root, s.Stage, diagSection(s.Diag))
+		if s.Key != "" && slices.Contains(s.Done, stageUpload) {
+			failed += fmt.Sprintf("- key: `%s`\n- sha256: `%s`\n- 版 ID: `%s`\n", s.Key, s.SHA, s.Version)
+		}
+		if werr := appendGitHub(envValue(d.environ, "GITHUB_STEP_SUMMARY"), failed); werr != nil {
+			_, _ = fmt.Fprintln(d.stderr, "⚠️ job summary に書けません")
+		}
 
 		return "", xerrors.Wrapf(err, "失敗の段: %s", s.Stage)
 	}
@@ -1056,7 +1132,7 @@ func ciFinishStep(args []string, d deps) (string, error) {
 	if len(s.Changes) > 0 {
 		list = "<pre>\n" + html.EscapeString(strings.Join(s.Changes, "\n")) + "\n</pre>\n\n"
 	}
-	summary := fmt.Sprintf("### %s\n\n%s\n\n%s%s- key: `%s`\n- sha256: `%s`\n- 版 ID: `%s`\n", s.Root, s.Summary, list, done, s.Key, s.SHA, s.Version)
+	summary := fmt.Sprintf("### %s\n\n%s\n\n%s%s%s- key: `%s`\n- sha256: `%s`\n- 版 ID: `%s`\n", s.Root, s.Summary, list, diagSection(s.Diag), done, s.Key, s.SHA, s.Version)
 	err = appendGitHub(envValue(d.environ, "GITHUB_STEP_SUMMARY"), summary)
 	if s.Mode == ciModeApply {
 		err = errors.Join(err, appendGitHub(envValue(d.environ, "GITHUB_OUTPUT"), "plan="+s.Summary+"\n"))
