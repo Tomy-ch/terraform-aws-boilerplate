@@ -607,13 +607,23 @@ Go には `min-release-age` に相当するものが無い。`go get` に「新�
 
 このディレクトリのすべての job は、最初の step で `bullfrogsec/bullfrog` を `egress-policy: block`・
 `dns-policy: allowed-domains-only`・`enable-sudo: false` で、自分の `allowed-domains` とともに開始する。
-最初の step（`id: harden-runner`、`continue-on-error: true`）が落ちたときだけ、同じ設定の2番目の step
-（`if: steps.harden-runner.outcome != 'success'`）がやり直し、2番目が落ちれば job は落ちる。bullfrog は agent の
-取得とパッケージの導入を再試行せず、配布元の一時的なエラーで必須の job を落とすためである。
+最初の step（`id: harden-runner`、`continue-on-error: true`）が落ちたときだけ、2番目の step（回復）が
+30 秒待ってから `sudo apt-get update` を実行し、同じ設定の3番目の step（`id: harden-runner-retry`）がやり直す。
+3番目が落ちれば job は落ちる。bullfrog は agent の取得とパッケージの導入を再試行せず、配布元の一時的な
+エラーで必須の job を落とすためである。間を置かないやり直しは効かなかった —— 取得の失敗は 0.5 秒後にも
+同じ応答で続き、bullfrog は `apt-get update` をせずに `apt-get install` するので、索引に無いパッケージは何度
+やり直しても入らない。回復の step は `continue-on-error: true` と `timeout-minutes: 2` を持ち、失敗しても
+止まっても再試行へ進む。job を落とすかは再試行が決める。
 再試行が成功するのは、agent が準備の印（`/var/run/bullfrog/agent-ready`）を書いたときだけである。本体が
-agent を起動した後で落ちた場合も、再試行は sudo を外された後なら導入で落ち、そうでなければ既に動く agent の
-印で成功する —— どちらでも、通信制限の無いまま job が進むことはない（v0.11.1 の `action/src/main.ts` で確かめた。
-版を上げる Pull Request は確かめ直す。ADR-0702 決定23）。
+agent を起動した後で落ちた場合、待った後の再試行は sudo を外された後の導入で落ちうる —— 安全側に落ちるが、
+遅れて起動した agent の印で成功する経路は失う。どちらでも、通信制限の無いまま job が進むことはない
+（v0.11.1 の `action/src/main.ts` で確かめた。版を上げる Pull Request は確かめ直す。ADR-0702 決定23）。
+
+**status の関数（`always()`・`failure()`・`cancelled()`）を持つ step は、bullfrog の成功を条件の先頭に持つ。**
+status の関数は暗黙の `success()` を外すので、本体と再試行が2つとも落ちた job でも走り、そのとき通信制限は
+無い。`if:` は `(steps.harden-runner.outcome == 'success' || steps.harden-runner-retry.outcome == 'success') && always()` のように、この条件と `&&` で始め、その後ろで `||` を使うなら括弧で囲む
+（`&&` より弱く結ぶので、先頭の条件を迂回する）。`make egress-check` がこの形を求め、`make egress-apply` は
+書き換えない（式は人が書く）。job の `if:` は別の job を決めるもので、その job の bullfrog が守るので対象外である。
 外向きの接続と名前解決を一覧に照らし、それ以外を拒む —— 侵害された action や道具のダウンロードが、
 その job に用の無い宛先へ持ち出せない。sudo を外すのは、sudo が残る job では step の中から通信制限
 そのものを外せるからである。決定と受け入れた限界は [ADR-0702](../../docs/adr/0702-repository-operations-substrate.md)
@@ -625,9 +635,9 @@ bullfrog は checkout の**前**に走らなければならない —— checkou
 それを守ることが目的だからである。括り出すと、塞ぐために置いた窓が開く。
 
 **固定されていないのは一覧の出所の方である。** [`.github/egress.toml`](../egress.toml) が SSOT で、
-`make egress-apply` が各 job の先頭の2つの step を `uses:` を除いて丸ごと書き、`make egress-check` がずれで
-落ちる。step が `name` / `id` / `continue-on-error` / `if` / `uses` / `with` 以外のキーを持つこと、2つの step が
-job の先頭に並んでいないこと、steps を持つ job に bullfrog が無いこと、steps を読み取れない job（`steps:` は4桁、step は
+`make egress-apply` が各 job の先頭の3つの step を本体の `uses:` を写して丸ごと書き、`make egress-check` がずれで
+落ちる。bullfrog の step が `name` / `id` / `continue-on-error` / `if` / `uses` / `with` 以外のキーを持つこと、3つの step が
+job の先頭に並んでいないこと、本体と再試行の間が生成した回復の step と一字一句同じでないこと、steps を持つ job に bullfrog が無いこと、steps を読み取れない job（`steps:` は4桁、step は
 6桁のハイフンで始める）も、同じ検査が拒む。拒む条件の一覧は
 [`scripts/README.md`](../../scripts/README.md) の `egress/` の行が持つ。
 

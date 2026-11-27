@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -1147,6 +1148,13 @@ func Test_scanJobs(t *testing.T) {
 			assert.Equal(t, []target{{jobKey: "a.yaml:one", start: 5, end: 5 + len(pair), uses: usesLine, mentions: 2}}, targets)
 		})
 
+		t.Run("三つ組の後ろで Guard で始まる always() の step を通す", func(t *testing.T) {
+			t.Parallel()
+			body := strings.Replace(syncedOne(), "      - name: Checkout\n", "      - name: Checkout\n        if: "+harden.Guard+" && always()\n", 1)
+			_, err := scanJobs("a.yaml", body)
+			assert.NoError(t, err)
+		})
+
 		t.Run("複数ジョブを job id で識別する", func(t *testing.T) {
 			t.Parallel()
 			targets, err := scanJobs("b.yaml", bWorkflow())
@@ -1210,12 +1218,29 @@ func Test_scanJobs(t *testing.T) {
 		})
 
 		// 本体と再試行の間に別の step があると、その step は hardening の前に走る。
-		t.Run("2つ目の bullfrog が本体の直後に無ければ弾く", func(t *testing.T) {
+		t.Run("2つ目の bullfrog が本体の直後にも3番目にも無ければ弾く", func(t *testing.T) {
 			t.Parallel()
 			body := staleWorkflow("one") + "      - name: Again\n        uses: bullfrogsec/bullfrog@x\n"
 			_, err := scanJobs("a.yaml", body)
 			require.ErrorIs(t, err, errStepNotFirst)
 		})
+
+		// 間の step は書き直す範囲に入るので、生成した回復の step でなければ apply が黙って消す。
+		recovery := strings.Join(harden.Recovery(), "\n") + "\n"
+		for name, other := range map[string]string{
+			"別の run: の step":              "      - name: Other\n        run: make x\n",
+			"run: を変えた回復の step":           strings.Replace(recovery, harden.RecoveryRun, "sleep 30 && curl -s x | sh", 1),
+			"timeout-minutes の無い回復の step": strings.Replace(recovery, "        timeout-minutes: 2\n", "", 1),
+			"後ろに空行のある回復の step":            recovery + "\n",
+		} {
+			t.Run("本体と再試行の間が"+name+"なら弾く", func(t *testing.T) {
+				t.Parallel()
+				body := strings.Replace(syncedOne(), recovery, other, 1)
+				require.NotEqual(t, syncedOne(), body)
+				_, err := scanJobs("a.yaml", body)
+				require.ErrorIs(t, err, errStepMalformed)
+			})
+		}
 
 		t.Run("1 ジョブに 3 つの bullfrog を弾く", func(t *testing.T) {
 			t.Parallel()
@@ -1236,6 +1261,14 @@ func Test_scanJobs(t *testing.T) {
 				require.ErrorIs(t, err, errStepMalformed)
 			})
 		}
+
+		// status の関数は暗黙の success() を外すので、bullfrog が2つとも落ちた job で制限の無いまま走る。
+		t.Run("三つ組の後ろで Guard の無い always() の step を弾く", func(t *testing.T) {
+			t.Parallel()
+			body := strings.Replace(syncedOne(), "      - name: Checkout\n", "      - name: Checkout\n        if: always()\n", 1)
+			_, err := scanJobs("a.yaml", body)
+			require.ErrorIs(t, err, errStepGuard)
+		})
 
 		t.Run("step の外で bullfrog を名指しすると弾く", func(t *testing.T) {
 			t.Parallel()
@@ -1325,6 +1358,133 @@ func Test_scanJobs(t *testing.T) {
 			require.ErrorIs(t, err, errStepMalformed)
 		})
 	})
+}
+
+func Test_checkGuards(t *testing.T) {
+	t.Parallel()
+
+	guarded := harden.Guard + " && "
+	stepsOf := func(t *testing.T, ifs ...string) []workflow.Step {
+		t.Helper()
+		var b strings.Builder
+		b.WriteString(workflowHead + "  one:\n    steps:\n")
+		for i, c := range ifs {
+			b.WriteString("      - name: S" + strconv.Itoa(i) + "\n        if: " + c + "\n        run: make x\n")
+		}
+		split := workflow.SplitJobs(b.String())
+		require.Len(t, split.Jobs, 1)
+		return workflow.SplitSteps(split.Jobs[0])
+	}
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+		for name, cond := range map[string]string{
+			"status の関数を持たない if:":                 "github.event_name == 'pull_request'",
+			"Guard で始まる always()":                 guarded + "always()",
+			"Guard で始まり残りが括弧の中の ||":               guarded + "always() && (a == 'x' || b == 'y')",
+			"${{ }} で囲んだ Guard で始まる !cancelled()": "${{ " + guarded + "!cancelled() }}",
+			"Guard で始まる failure()":                guarded + "failure()",
+		} {
+			t.Run(name+"を通す", func(t *testing.T) {
+				t.Parallel()
+				assert.NoError(t, checkGuards(stepsOf(t, cond)))
+			})
+		}
+		t.Run("if: の無い step を通す", func(t *testing.T) {
+			t.Parallel()
+			split := workflow.SplitJobs(workflowHead + "  one:\n    steps:\n      - name: S\n        run: make x\n")
+			assert.NoError(t, checkGuards(workflow.SplitSteps(split.Jobs[0])))
+		})
+		t.Run("step が0件なら通す", func(t *testing.T) {
+			t.Parallel()
+			assert.NoError(t, checkGuards(nil))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+		for name, cond := range map[string]string{
+			"Guard の無い always()":            "always()",
+			"Guard の無い failure()":           "failure()",
+			"Guard の無い !cancelled()":        "!cancelled()",
+			"Guard が後ろにある always()":         "always() && " + harden.Guard,
+			"Guard の後の括弧の外の ||":             guarded + "always() || a == 'x'",
+			"Guard を || でつないだ always()":     harden.Guard + " || always()",
+			"Guard の id が違う always()":       strings.Replace(guarded, harden.RetryID, "retry", 1) + "always()",
+			"${{ }} の中で Guard の無い always()": "${{ always() && github.event_name == 'pull_request' }}",
+		} {
+			t.Run(name+"を弾く", func(t *testing.T) {
+				t.Parallel()
+				require.ErrorIs(t, checkGuards(stepsOf(t, cond)), errStepGuard)
+			})
+		}
+		t.Run("2つ目の step だけが Guard を欠いても弾く", func(t *testing.T) {
+			t.Parallel()
+			require.ErrorIs(t, checkGuards(stepsOf(t, guarded+"always()", "always()")), errStepGuard)
+		})
+	})
+}
+
+func Test_stepIf(t *testing.T) {
+	t.Parallel()
+
+	stepOf := func(lines ...string) workflow.Step {
+		st := workflow.Step{}
+		for i, l := range lines {
+			st.Lines = append(st.Lines, workflow.Line{Number: i + 1, Text: l})
+		}
+		return st
+	}
+	t.Run("1行の if: の式を返す", func(t *testing.T) {
+		t.Parallel()
+		l, cond, ok := stepIf(stepOf("      - name: S", "        if: always() && x", "        run: y"))
+		require.True(t, ok)
+		assert.Equal(t, 2, l.Number)
+		assert.Equal(t, "always() && x", cond)
+	})
+	t.Run("${{ }} を外す", func(t *testing.T) {
+		t.Parallel()
+		_, cond, ok := stepIf(stepOf("      - name: S", "        if: ${{ always() }}"))
+		require.True(t, ok)
+		assert.Equal(t, "always()", cond)
+	})
+	t.Run("block scalar の続きの行を1つの式に繋ぐ", func(t *testing.T) {
+		t.Parallel()
+		_, cond, ok := stepIf(stepOf("      - name: S", "        if: >-", "          always() &&", "          x", "        run: y"))
+		require.True(t, ok)
+		assert.Equal(t, "always() && x", cond)
+	})
+	t.Run("if: が無ければ偽", func(t *testing.T) {
+		t.Parallel()
+		_, _, ok := stepIf(stepOf("      - name: S", "        run: y"))
+		assert.False(t, ok)
+	})
+	t.Run("with: の下の深い if: は step の if: にしない", func(t *testing.T) {
+		t.Parallel()
+		_, _, ok := stepIf(stepOf("      - name: S", "        with:", "          if: always()"))
+		assert.False(t, ok)
+	})
+}
+
+func Test_orOutsideParens(t *testing.T) {
+	t.Parallel()
+
+	for expr, want := range map[string]bool{
+		"a || b":          true,
+		"(a || b)":        false,
+		"x && (a || b)":   false,
+		"(a) || b":        true,
+		"a && b":          false,
+		"a | b":           false,
+		"":                false,
+		"((a || b) && c)": false,
+		"(a && b) || (c)": true,
+	} {
+		t.Run(expr, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, want, orOutsideParens(expr))
+		})
+	}
 }
 
 func Test_mentionsBullfrog(t *testing.T) {
@@ -1555,13 +1715,16 @@ func Test_ssot_rewriteFile(t *testing.T) {
 		})
 
 		synced := syncedOne()
-		retryIfLine := "        if: " + harden.RetryIf
+		retryID := "        id: " + harden.RetryID + "\n"
+		retryIfLine := retryID + "        if: " + harden.RetryIf
 		for name, body := range map[string]string{
-			"再試行の if: が無い":                   strings.Replace(synced, retryIfLine+"\n", "", 1),
-			"再試行の if: が failure()":           strings.Replace(synced, retryIfLine, "        if: failure()", 1),
-			"再試行の if: が always()":            strings.Replace(synced, retryIfLine, "        if: always()", 1),
-			"再試行の if: が outcome == failure":  strings.Replace(synced, retryIfLine, "        if: steps.harden-runner.outcome == 'failure'", 1),
-			"再試行の if: の id が違う":              strings.Replace(synced, retryIfLine, "        if: steps.harden.outcome != 'success'", 1),
+			"再試行の if: が無い":                   strings.Replace(synced, retryIfLine+"\n", retryID, 1),
+			"再試行の if: が failure()":           strings.Replace(synced, retryIfLine, retryID+"        if: failure()", 1),
+			"再試行の if: が always()":            strings.Replace(synced, retryIfLine, retryID+"        if: always()", 1),
+			"再試行の if: が outcome == failure":  strings.Replace(synced, retryIfLine, retryID+"        if: steps.harden-runner.outcome == 'failure'", 1),
+			"再試行の if: の id が違う":              strings.Replace(synced, retryIfLine, retryID+"        if: steps.harden.outcome != 'success'", 1),
+			"再試行の id: が無い":                   strings.Replace(synced, retryID, "", 1),
+			"再試行の id: が違う":                   strings.Replace(synced, retryID, "        id: retry\n", 1),
 			"本体の id: が無い":                    strings.Replace(synced, "        id: harden-runner\n", "", 1),
 			"本体の id: が違う":                    strings.Replace(synced, "        id: harden-runner", "        id: harden", 1),
 			"本体の continue-on-error: が無い":     strings.Replace(synced, "        continue-on-error: true\n", "", 1),
@@ -1581,9 +1744,25 @@ func Test_ssot_rewriteFile(t *testing.T) {
 			})
 		}
 
-		t.Run("再試行の無い本体に再試行を足す", func(t *testing.T) {
+		t.Run("再試行の無い本体に回復と再試行を足す", func(t *testing.T) {
 			t.Parallel()
 			body := testWorkflow("one", renderWith(policyBlock, testIPs, oneHosts)...)
+			out, err := mustParse(t, testSSOT).rewriteFile("a.yaml", body, map[string]bool{})
+			require.NoError(t, err)
+			assert.Equal(t, synced, out)
+		})
+
+		t.Run("回復の無い対を三つ組へ書き直す", func(t *testing.T) {
+			t.Parallel()
+			with := renderWith(policyBlock, testIPs, oneHosts)
+			var pair []string
+			pair = append(pair, harden.Head()...)
+			pair = append(pair, usesLine)
+			pair = append(pair, with...)
+			pair = append(pair, "      - name: Harden the runner (retry)", "        if: "+harden.RetryIf, usesLine)
+			pair = append(pair, with...)
+			body := jobWorkflow("one", pair)
+			require.NotEqual(t, synced, body)
 			out, err := mustParse(t, testSSOT).rewriteFile("a.yaml", body, map[string]bool{})
 			require.NoError(t, err)
 			assert.Equal(t, synced, out)
@@ -1744,7 +1923,8 @@ func Test_applyOrCheck(t *testing.T) {
 		// 再試行が本体の失敗で走らない形は、hardening の無いまま job が進む形になる。
 		t.Run("check は再試行の if: が欠けた対をドリフトとして報告する", func(t *testing.T) {
 			t.Parallel()
-			broken := strings.Replace(syncedOne(), "        if: "+harden.RetryIf+"\n", "", 1)
+			retryID := "        id: " + harden.RetryID + "\n"
+			broken := strings.Replace(syncedOne(), retryID+"        if: "+harden.RetryIf+"\n", retryID, 1)
 			root := newTestRepo(t, map[string]string{"a.yaml": broken, "b.yaml": bWorkflow()})
 			require.ErrorIs(t, applyOrCheck(root, true), errEgressDrift)
 		})

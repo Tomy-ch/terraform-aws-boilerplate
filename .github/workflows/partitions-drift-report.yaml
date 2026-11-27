@@ -64,7 +64,13 @@ jobs:
             rekor.sigstore.dev
             fulcio.sigstore.dev
             awscli.amazonaws.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
       - name: Harden the runner (retry)
+        id: harden-runner-retry
         if: steps.harden-runner.outcome != 'success'
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
         with:
@@ -137,7 +143,7 @@ jobs:
           esac
 
       - name: Create, update or close the report issue
-        if: ${{ !cancelled() && steps.compare.outputs.state != '' }}
+        if: ${{ (steps.harden-runner.outcome == 'success' || steps.harden-runner-retry.outcome == 'success') && !cancelled() && steps.compare.outputs.state != '' }}
         uses: ./.github/actions/upsert-report-issue
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}

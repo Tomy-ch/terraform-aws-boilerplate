@@ -78,7 +78,13 @@ jobs:
             rekor.sigstore.dev
             fulcio.sigstore.dev
             awscli.amazonaws.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
       - name: Harden the runner (retry)
+        id: harden-runner-retry
         if: steps.harden-runner.outcome != 'success'
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
         with:
@@ -166,7 +172,7 @@ jobs:
           exit 0
 
       - name: Upload zizmor report
-        if: always()
+        if: (steps.harden-runner.outcome == 'success' || steps.harden-runner-retry.outcome == 'success') && always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: zizmor
@@ -175,7 +181,7 @@ jobs:
             zizmor.log
 
       - name: Upload zizmor SARIF to code scanning
-        if: always()
+        if: (steps.harden-runner.outcome == 'success' || steps.harden-runner-retry.outcome == 'success') && always()
         continue-on-error: true
         uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
@@ -183,7 +189,7 @@ jobs:
           category: zizmor
 
       - name: Comment zizmor result on PR
-        if: always() && github.event_name == 'pull_request'
+        if: (steps.harden-runner.outcome == 'success' || steps.harden-runner-retry.outcome == 'success') && always() && github.event_name == 'pull_request'
         continue-on-error: true
         uses: ./.github/actions/upsert-pr-comment
         with:
@@ -195,7 +201,7 @@ jobs:
           details-summary: 'zizmor log'
 
       - name: Fail if zizmor reported findings
-        if: always() && steps.zizmor.outputs.status != 'success'
+        if: (steps.harden-runner.outcome == 'success' || steps.harden-runner-retry.outcome == 'success') && always() && steps.zizmor.outputs.status != 'success'
         run: exit 1
 
   # See README.md の「通知の起動条件」.

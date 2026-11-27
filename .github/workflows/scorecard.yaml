@@ -77,7 +77,13 @@ jobs:
             api.osv.dev
             www.bestpractices.dev
             oss-fuzz-build-logs.storage.googleapis.com
+      - name: Prepare to retry hardening the runner
+        if: steps.harden-runner.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: sleep 30 && sudo apt-get update
       - name: Harden the runner (retry)
+        id: harden-runner-retry
         if: steps.harden-runner.outcome != 'success'
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
         with:
@@ -143,7 +149,7 @@ jobs:
             --policy=.github/scorecard-policy.yml > scorecard.sarif
 
       - name: Upload Scorecard report
-        if: always()
+        if: (steps.harden-runner.outcome == 'success' || steps.harden-runner-retry.outcome == 'success') && always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: scorecard

