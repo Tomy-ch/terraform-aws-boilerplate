@@ -142,6 +142,15 @@ hosts = [
   "chatbot.us-west-2.amazonaws.com",
 ]
 
+# workload root の費用の監視の構成物（finops）の型の宛先。Budgets と Cost Explorer の API は、provider の region に依らず
+# この2つの endpoint を呼ぶ。identity root の job には持たせない。
+[class.aws-cost]
+includes = ["aws"]
+hosts = [
+  "budgets.amazonaws.com",
+  "ce.us-east-1.amazonaws.com",
+]
+
 # 管理アカウントの identity root の、委任管理者の指定（organization-baseline）の型の宛先。workload root の job には持たせない。
 # GuardDuty・Inspector・Security Hub は repository-wide/ADR-0209 の集合の各リージョンに置き、CloudTrail は provider の region の
 # endpoint を呼ぶ。
@@ -173,6 +182,12 @@ jobs = ["terraform-gates.yaml:plan-admin-workload", "terraform-apply.yaml:apply-
 # API を呼ばない型は、型名そのもので hosts を空にする。
 [type.aws_chatbot_]
 hosts = ["chatbot.us-west-2.amazonaws.com"]
+
+[type.aws_budgets_]
+hosts = ["budgets.amazonaws.com"]
+
+[type.aws_ce_]
+hosts = ["ce.us-east-1.amazonaws.com"]
 
 [type.aws_caller_identity]
 hosts = ["sts.ap-northeast-1.amazonaws.com"]
@@ -395,7 +410,7 @@ classes = ["mise"]
 classes = ["terraform", "aws-governance"]
 
 [job."terraform-gates.yaml:plan-admin-workload"]
-classes = ["terraform", "aws-notify"]
+classes = ["terraform", "aws-notify", "aws-cost"]
 
 [job."terraform-apply.yaml:apply-infra-code-gate"]
 classes = ["mise"]
@@ -416,7 +431,7 @@ classes = ["mise"]
 classes = ["terraform", "aws-governance"]
 
 [job."terraform-apply.yaml:apply-admin-workload"]
-classes = ["terraform", "aws-notify"]
+classes = ["terraform", "aws-notify", "aws-cost"]
 
 # apply-revert は scripts/ から go で建てる。GitHub API は base が許す。
 [job."terraform-apply.yaml:revert-plan"]
@@ -434,7 +449,7 @@ classes = ["mise"]
 classes = ["terraform", "aws-governance"]
 
 [job."terraform-lock-hold.yaml:hold-admin-workload"]
-classes = ["terraform", "aws-notify"]
+classes = ["terraform", "aws-notify", "aws-cost"]
 
 [job."terraform-unlock.yaml:unlock-infra-code-gate"]
 classes = ["mise"]

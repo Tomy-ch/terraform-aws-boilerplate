@@ -9,7 +9,7 @@
 ## 実行形態とネットワーク境界
 
 - AWS の上で動く処理は無い。Budgets と Cost Anomaly Detection が、AWS の側で費用を評価して Topic へ送る
-- 外への egress は無い。apply は Budgets と Cost Explorer の API を呼ぶ
+- VPC を持たず、外へ出る経路を作らない。apply は Budgets と Cost Explorer の API を呼ぶ（CI の job の外向き通信は `.github/egress.toml` のクラス `aws-cost` が許す）
 
 ## 公開契約
 
@@ -72,7 +72,7 @@ unsupported:
 - Static Analysis（`make layer-check`・`make infra-code-gate`）: 層の規則と、resource の型の分類を、HCL のソースで確かめる
 - 実環境テストの形: scope.md 第11.1節の区分「破棄できるが、仕様で残るものがある」に当たる。sandbox では常駐の実体と AWS managed monitor の枠を共有して複製を作れないので、[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定14 の既定（作成して破棄する）を常駐の実体で行い、destroy して作り直す。残存は決定16 の期待残存と照合する
 
-env の root、CI の apply の経路、`ops-notification`、sandbox の掃除 CI は無い。いずれも配線された後に遡って検証する。その間に検出できない故障モード（[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定17）:
+管理アカウントの workload root（`env/admin`）が呼び、CI の apply の経路で当たる。ほかの env の root と sandbox の掃除 CI は無い。いずれも配線された後に遡って検証する。その間に検出できない故障モード（[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定17）:
 
 - 通知が Topic に届くこと。Budgets が暗号化した Topic へ送るための鍵の policy の文例を AWS は示していない。Budgets は課金データの反映を、Cost Anomaly Detection は検知までの最大24時間と10日の履歴を待つので、apply の後の検証の時間内には観測できない
 - API が名前・Topic の region・AWS managed monitor の枠で拒むこと。メンバーアカウントに手で作った AWS services monitor が在ると、apply が枠で落ちる
