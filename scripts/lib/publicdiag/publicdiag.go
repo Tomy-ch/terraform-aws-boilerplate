@@ -24,6 +24,10 @@ type Field struct {
 // grammars の欄の名前は、この一覧に閉じる。
 var grammars = map[string]*regexp.Regexp{
 	"kind": regexp.MustCompile(`^(?:iam-deny|api-error|waiter|condition|core|cli|policy|unparsed)$`),
+	// CloudTrail の event の時刻・リージョン・event の出どころ。
+	"time":   regexp.MustCompile(`^20[0-9]{2}-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]Z$`),
+	"region": regexp.MustCompile(`^[a-z]{2}(?:-gov|-iso[a-z]?)?-[a-z]+-[0-9]$`),
+	"source": regexp.MustCompile(`^[a-z0-9-]{1,40}\.amazonaws\.com$`),
 	// AWS の service ID と operation（aws-sdk-go-v2 の `operation error <service>: <operation>`、aws CLI の operation）。
 	"service":   regexp.MustCompile(`^[A-Za-z0-9]+(?: [A-Za-z0-9]+){0,5}$`),
 	"operation": regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]{0,63}$`),
@@ -47,7 +51,7 @@ var grammars = map[string]*regexp.Regexp{
 }
 
 // order は、Format が欄を並べる順です。Valid はこの順を要求しない。
-var order = []string{"kind", "address", "file", "line", "summary", "service", "operation", "status", "code", "action", "reason", "rule", "namespace", "elapsed", "count", "exit", "masked"}
+var order = []string{"kind", "time", "region", "source", "address", "file", "line", "summary", "service", "operation", "status", "code", "action", "reason", "rule", "namespace", "elapsed", "count", "exit", "masked"}
 
 var (
 	// identifierPattern は、文法に当たった後でも出さない識別子（12桁の数字のアカウント ID と、`@` を含むメール）。
@@ -163,7 +167,7 @@ func SDK(text string) ([]Field, bool) {
 	fields := []Field{{"service", m(1)}, {"operation", m(2)}, {"status", m(3)}, {"code", m(4)}}
 
 	kind := "api-error"
-	if denied := deny(text[loc[1]:]); denied != nil {
+	if denied := Deny(text[loc[1]:]); denied != nil {
 		kind = "iam-deny"
 		fields = append(fields, denied...)
 	}
@@ -178,15 +182,16 @@ func CLI(stderr string) ([]Field, bool) {
 		return nil, false
 	}
 
-	denied := deny(stderr[loc[1]:])
+	denied := Deny(stderr[loc[1]:])
 	fields := make([]Field, 0, 3+len(denied))
 	fields = append(fields, Field{"kind", "cli"}, Field{"code", stderr[loc[2]:loc[3]]}, Field{"operation", stderr[loc[4]:loc[5]]})
 
 	return append(fields, denied...), true
 }
 
-// deny は、AccessDenied の message の固定の位置から、拒否された Action と理由の種類を取ります。
-func deny(msg string) []Field {
+// Deny は、AccessDenied の message の固定の位置から、拒否された Action と理由の種類を取ります。Action が無ければ
+// nil を返す。
+func Deny(msg string) []Field {
 	a := actionPattern.FindStringSubmatchIndex(msg)
 	if a == nil {
 		return nil
@@ -208,6 +213,11 @@ func deny(msg string) []Field {
 	}
 
 	return fields
+}
+
+// IsRegion は、s が AWS のリージョンの名前の形かを返します。
+func IsRegion(s string) bool {
+	return regionPattern.MatchString(s)
 }
 
 // MaskAddress は、address の key のうち、allowed が受けるもの（登録簿の env と role の名前）と、リージョンの名前の形の

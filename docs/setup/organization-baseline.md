@@ -95,7 +95,7 @@
 
 StackSet か stack instance の作成で昇格の apply が失敗したときは、失敗した resource が state に残ったかで直し方が分かれる。`prevent_destroy` を持つ resource が tainted で残ると、次の plan は作り直しを求めて止まる。CI の role は削除の権限を持たないので、tainted は人が外す。apply は人が行わず、CI の経路でやり直す。
 
-1. 原因を見る。作成の API が拒まれたなら CloudTrail に `AccessDenied` が残り、resource は state に入らない。API が通って操作が失敗したなら、CloudFormation の「StackSets」で失敗した StackSet の「オペレーション」に失敗した操作とアカウントの理由が残り、resource は tainted で state に残る
+1. 原因を見る。作成の API が拒まれたなら CloudTrail に `AccessDenied` が残り（[段5 の CI の apply が失敗した](bootstrap.md#cloudtrail-で拒否を引く) の `make ci-trail` で引く）、resource は state に入らない。API が通って操作が失敗したなら、CloudFormation の「StackSets」で失敗した StackSet の「オペレーション」に失敗した操作とアカウントの理由が残り、resource は tainted で state に残る
 2. 作成の API が拒まれたとき（resource は state に無い）
    1. 拒否が、同じ apply の権限の更新の直後なら、IAM の反映の遅れである。失敗した job を走らせ直す（[bootstrap 手順書](bootstrap.md#段5-の-ci-の-apply-が失敗した) の `AccessDenied` の行）
    2. 走らせ直しも拒まれるなら、権限の不足である。権限を直す Pull Request を昇格する。resource は state に無いので、同じ apply で作られる
