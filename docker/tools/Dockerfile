@@ -68,7 +68,8 @@ RUN --mount=type=secret,id=github_token \
     && mise install "aqua:crate-ci/typos" \
     && mise install "aqua:editorconfig-checker/editorconfig-checker" \
     && mise install "aqua:zizmorcore/zizmor" \
-    && mise install "aqua:open-policy-agent/conftest"
+    && mise install "aqua:open-policy-agent/conftest" \
+    && mise install "aqua:open-policy-agent/opa"
 
 RUN mkdir /out \
     && cp "$(mise which actionlint)"     /out/ \
@@ -84,7 +85,8 @@ RUN mkdir /out \
     && cp "$(mise which typos)"          /out/ \
     && cp "$(mise which editorconfig-checker)" /out/ \
     && cp "$(mise which zizmor)"         /out/ \
-    && cp "$(mise which conftest)"       /out/
+    && cp "$(mise which conftest)"       /out/ \
+    && cp "$(mise which opa)"            /out/
 
 # ==============================================================================
 # go_tools: 運用機構（scripts/）を走らせる。mise 本体も install キャッシュもここには無い

@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -150,6 +151,38 @@ func hasLinePrefix(src, prefix string) bool {
 	return false
 }
 
+// planDeclName は、Policy の木の直下に置く宣言です。opa test は木の下の .json・.yaml・.yml をすべて data に読むが、
+// 適用の conftest test が読むのは make が --data で渡す宣言だけです。
+const planDeclName = "decl.json"
+
+// strayData は、dir の下の、opa test が data に読むファイルのうち、木の直下の decl.json でないものを返します。
+// それがあると、Rego のテストは適用が見ない data で通ります。
+func strayData(dir string) ([]string, error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, xerrors.Wrapf(errRead, "%s: %v", dir, err)
+	}
+	defer func() { _ = root.Close() }()
+	var stray []string
+	err = fs.WalkDir(root.FS(), ".", func(p string, e fs.DirEntry, err error) error {
+		if err != nil || e.IsDir() || p == planDeclName {
+			return err
+		}
+		switch path.Ext(e.Name()) {
+		case ".json", ".yaml", ".yml":
+			stray = append(stray, p)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, xerrors.Wrapf(errRead, "%s: %v", dir, err)
+	}
+	slices.Sort(stray)
+
+	return stray, nil
+}
+
 func runRegoCheck(args []string, w io.Writer) error {
 	fset := flag.NewFlagSet("tf-policy rego-check", flag.ContinueOnError)
 	fset.SetOutput(w)
@@ -167,7 +200,15 @@ func runRegoCheck(args []string, w io.Writer) error {
 	if !slices.ContainsFunc(files, func(f regoFile) bool { return !f.test }) {
 		return xerrors.Wrapf(errNoInput, "Rego のテストが0件です（Policy も無い: %s）", *policy)
 	}
-	if problems := checkRego(files); len(problems) > 0 {
+	problems := checkRego(files)
+	stray, err := strayData(*policy)
+	if err != nil {
+		return err
+	}
+	if len(stray) > 0 {
+		problems = append(problems, "opa test は data に読むが、適用の conftest test は読まないファイル（宣言は木の直下の "+planDeclName+" に置く）: "+strings.Join(stray, " "))
+	}
+	if len(problems) > 0 {
 		for _, p := range problems {
 			fmt.Fprintf(w, "❌ %s\n", p)
 		}

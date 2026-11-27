@@ -420,18 +420,12 @@
           {
             "name": "security",
             "state_backend": "module.state_backend_security.",
-            "deployment_identity": "module.deployment_identity_security.",
-            "creating": {
-              "reason": "メンバーアカウントの立ち上げの作成の plan。鍵の ARN が作るまで決まらない。apply の後、この宣言を外す PR の plan で全件を見る"
-            }
+            "deployment_identity": "module.deployment_identity_security."
           },
           {
             "name": "log-archive",
             "state_backend": "module.state_backend_log_archive.",
-            "deployment_identity": "module.deployment_identity_log_archive.",
-            "creating": {
-              "reason": "メンバーアカウントの立ち上げの作成の plan。鍵の ARN が作るまで決まらない。apply の後、この宣言を外す PR の plan で全件を見る"
-            }
+            "deployment_identity": "module.deployment_identity_log_archive."
           }
         ]
       }
