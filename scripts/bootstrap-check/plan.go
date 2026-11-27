@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"regexp"
 	"slices"
 	"sort"
@@ -54,6 +55,18 @@ func checkPlan(o options, out io.Writer, d deps) error {
 	raw, err := d.readFile(d.expected)
 	if err != nil {
 		return xerrors.Wrap(errExpectedUnreadable, d.expected)
+	}
+
+	if o.mock && d.bootstrapping != "" {
+		// 無いことは、立ち上げの中のアカウントが無いことを表す。メンバーの resource が plan に残れば余剰で落ちる。
+		extra, err := d.readFile(d.bootstrapping)
+
+		switch {
+		case err == nil:
+			raw = append(append(raw, '\n'), extra...)
+		case !errors.Is(err, fs.ErrNotExist):
+			return xerrors.Wrap(errExpectedUnreadable, d.bootstrapping)
+		}
 	}
 
 	expected, err := parseExpected(raw, d.expected)

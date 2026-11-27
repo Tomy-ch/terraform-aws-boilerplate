@@ -93,6 +93,70 @@ func Test_checkPlan(t *testing.T) {
 		require.NoError(t, checkPlan(o, &bytes.Buffer{}, d))
 	})
 
+	t.Run("mock は立ち上げの期待値を足して判定し、メンバーの resource が足りなければ差分にする", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		d := osDepsExpected("", write(t, dir, "e", expectedBody))
+		d.bootstrapping = write(t, dir, "b", "# 立ち上げ\nadd m.x\n")
+		member := rc("m.x", `["create"]`, false)
+
+		o := options{mock: true, testExitFile: write(t, dir, "x", "0\n"), input: write(t, dir, "t", passingTestOutput(append(matchingChanges(), member)...))}
+		require.NoError(t, checkPlan(o, &bytes.Buffer{}, d))
+
+		o.input = write(t, dir, "t2", passingTestOutput(matchingChanges()...))
+
+		var out bytes.Buffer
+
+		require.ErrorIs(t, checkPlan(o, &out, d), errMismatch)
+		assert.Contains(t, out.String(), "NG  不足  add m.x")
+	})
+
+	t.Run("mock は立ち上げの期待値が無ければ、メンバーの resource を余剰にする", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		d := osDepsExpected("", write(t, dir, "e", expectedBody))
+		d.bootstrapping = filepath.Join(dir, "missing")
+		member := rc("m.x", `["create"]`, false)
+		o := options{mock: true, testExitFile: write(t, dir, "x", "0\n"), input: write(t, dir, "t", passingTestOutput(append(matchingChanges(), member)...))}
+
+		var out bytes.Buffer
+
+		require.ErrorIs(t, checkPlan(o, &out, d), errMismatch)
+		assert.Contains(t, out.String(), "NG  余剰  add m.x")
+	})
+
+	t.Run("mock は立ち上げの期待値を読めなければ失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		d := osDepsExpected("", write(t, dir, "e", expectedBody))
+		d.bootstrapping = dir
+		o := options{mock: true, testExitFile: write(t, dir, "x", "0\n"), input: write(t, dir, "t", passingTestOutput(matchingChanges()...))}
+		require.ErrorIs(t, checkPlan(o, &bytes.Buffer{}, d), errExpectedUnreadable)
+	})
+
+	t.Run("mock は2つの期待値にまたがる重複を拒む", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		d := osDepsExpected("", write(t, dir, "e", expectedBody))
+		d.bootstrapping = write(t, dir, "b", "add a.x\n")
+		o := options{mock: true, testExitFile: write(t, dir, "x", "0\n"), input: write(t, dir, "t", passingTestOutput(matchingChanges()...))}
+		require.ErrorIs(t, checkPlan(o, &bytes.Buffer{}, d), errExpectedDuplicate)
+	})
+
+	t.Run("実 plan は立ち上げの期待値を読まない", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		d := osDepsExpected("", write(t, dir, "e", expectedBody))
+		d.bootstrapping = write(t, dir, "b", "add m.x\n")
+		o := options{headerFile: write(t, dir, "h", headerClean), input: write(t, dir, "p", planJSON(matchingChanges()...))}
+		require.NoError(t, checkPlan(o, &bytes.Buffer{}, d))
+	})
+
 	t.Run("mock は terraform test の失敗を差分にも一致にもしない", func(t *testing.T) {
 		t.Parallel()
 

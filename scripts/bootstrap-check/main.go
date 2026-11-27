@@ -36,6 +36,9 @@ import (
 
 const (
 	defaultExpected = "docs/setup/scripts/check-plan.expected"
+	// defaultBootstrapping は、立ち上げの中のメンバーアカウントの分の期待値。メンバーのアカウントは段2-4 の実 plan の
+	// 時点で無いので、-mock の突き合わせだけが読む。立ち上げの中のアカウントが無いときは置かない。
+	defaultBootstrapping = "docs/setup/scripts/check-plan-bootstrapping.expected"
 	// commitLinePrefix は、checkPlan が header から作る commit の行の先頭。
 	commitLinePrefix = "# commit: "
 
@@ -53,16 +56,17 @@ var (
 )
 
 type deps struct {
-	expected string
-	readFile func(string) ([]byte, error)
-	stdin    io.Reader
-	aws      awsFunc
-	getenv   func(string) string
+	expected      string
+	bootstrapping string
+	readFile      func(string) ([]byte, error)
+	stdin         io.Reader
+	aws           awsFunc
+	getenv        func(string) string
 }
 
 func main() {
 	os.Exit(execute(os.Args[1:], os.Stdout, deps{
-		expected: defaultExpected, readFile: os.ReadFile, stdin: os.Stdin, aws: hostAWS("aws"), getenv: os.Getenv,
+		expected: defaultExpected, bootstrapping: defaultBootstrapping, readFile: os.ReadFile, stdin: os.Stdin, aws: hostAWS("aws"), getenv: os.Getenv,
 	}))
 }
 
