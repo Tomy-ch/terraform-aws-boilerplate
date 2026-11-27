@@ -94,7 +94,7 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
     - すべてのアカウント（管理アカウントを含む）に break-glass の role を置く。信頼条件は、管理アカウントの break-glass の IAM user に限り、MFA で認証したことを要求する。権限は AWS managed policy の `AdministratorAccess` とする。これは決定8・10 の例外である。緊急時に要る作業を前もって列挙できないためであり、例外は break-glass の role に限る
     - メンバーアカウントの break-glass の role を SCP の拒否から外すのは、回復を妨げる拒否（state の書き込みの拒否。ADR-0602 決定11）に限り、外すのは break-glass の role の ARN に限る。検知を止めることの拒否と、監査ログとその鍵を守る拒否からは外さない。緊急の作業にそれらは要らず、外すと管理アカウントの側が自分の記録を読めなくする経路になる
     - break-glass の IAM user のサインインと、break-glass の role の引き受けを、平時には起きない事象として必ず通知する（`ops-notification` の Topic）。管理アカウントの root の使用と `sts:AssumeRoot` の呼び出しも同じく通知する
-    - 管理アカウントの root と、メンバーアカウントの root の集中管理（`sts:AssumeRoot`）は、break-glass が使えないときの最後の手段として残す。管理アカウントで `sts:AssumeRoot` を許す主体は、break-glass の role に限る（管理アカウントには SCP が効かないので、IAM で限る）
+    - 管理アカウントの root と、メンバーアカウントの root の集中管理（`sts:AssumeRoot`）は、break-glass が使えないときの最後の手段として残す。管理アカウントで `sts:AssumeRoot` を許す主体は、break-glass の role と、`sts:AssumeRoot` を条件なしの Deny で拒む `AdministratorAccess` の permission set に限る（管理アカウントには SCP が効かないので、IAM で限る）。後者の限定は誤操作の防止であって境界ではない（organization-baseline/ADR-0204）
 
 ### 検証
 
@@ -185,7 +185,7 @@ IAM Identity Center の文書の手順である。外部 IdP を前提とし、I
   - break-glass の role の信頼条件が、break-glass の IAM user の ARN と `aws:MultiFactorAuthPresent` を要求すること
   - 決定8・10 の例外（`AdministratorAccess`）が break-glass の role にだけ付いていること
   - SCP の除外が、回復を妨げる拒否についての break-glass の role の ARN に限られること
-  - 管理アカウントで `sts:AssumeRoot` を許す主体が break-glass の role に限られること
+  - 管理アカウントで `sts:AssumeRoot` を許す主体が break-glass の role に限られ、`AdministratorAccess` の permission set が `sts:AssumeRoot` を条件なしで Deny すること
   - permission set に付く AWS managed policy が、設計記録の一覧（permission set ごとの許可リスト）に一致すること。一覧に無い policy の attachment が無いこと、一覧に使われていない項目が残っていないこと
   - `AdministratorAccess` を付ける permission set の割当が、管理アカウントだけ、かつ `principal_type = "USER"` だけであること。メンバーアカウントへの割当に、`AdministratorAccess` を付けた permission set が無いこと
   - 排他の resource（`aws_iam_role_policy_attachments_exclusive`）が載せる policy ごとに、同じ role への attachment がちょうど1つ在ること。排他の resource に載らない attachment が無いこと（決定21。`plan.iam_role_attachment_pairing`、`PLAN-ATTACH-*`）

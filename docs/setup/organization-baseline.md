@@ -2,12 +2,12 @@
 
 ## 1. 設定の概要
 
-管理アカウントに AWS Organizations の組織と OU、SCP・RCP・declarative policy、root の資格情報の中央管理、break-glass を置く（[`usecases/organization-baseline/README.md`](../../usecases/organization-baseline/README.md)）。resource は bootstrap の段4 が管理アカウントの identity root の apply で作り（[ADR-0602](../adr/0602-bootstrap-and-ci-authentication.md) 決定1）、以後の変更は CI の apply-identity の role が apply する。人が行うのは、Terraform が持たない有効化と資格情報の設定、apply の後の確認である。
+管理アカウントに AWS Organizations の組織と OU、SCP・RCP・declarative policy、root の資格情報の中央管理、break-glass、IAM Identity Center の permission set と割当を置く（[`usecases/organization-baseline/README.md`](../../usecases/organization-baseline/README.md)）。resource は bootstrap の段4 が管理アカウントの identity root の apply で作り（[ADR-0602](../adr/0602-bootstrap-and-ci-authentication.md) 決定1）、以後の変更は CI の apply-identity の role が apply する。人が行うのは、Terraform が持たない有効化と資格情報の設定、apply の後の確認である。
 
 | 実施者 | 担当 |
 | --- | --- |
 | リポジトリの管理者 | 昇格の Pull Request |
-| 管理アカウントの管理者の資格情報（`organization_admin` の permission set か、それに代わるもの）を持つ人 | Identity Center の有効化の後の作業、break-glass の資格情報の設定、apply の後の確認、定期の試験の忘れの確認 |
+| 管理アカウントの管理者の資格情報（`organization_admin` の permission set か、それに代わるもの）を持つ人。`organization_admin` の割当が作られるまでは、break-glass の role（3.4 が済み、3.6 の試験が45日以内のもの）か、それが使えなければ root | Identity Center の有効化の後の作業、break-glass の資格情報の設定、apply の後の確認、定期の試験の忘れの確認 |
 | break-glass の資格情報を持つ人 | 定期の試験 |
 
 [`bootstrap.md`](bootstrap.md) の段5 が終わった後に、3.2 から行う。
@@ -22,6 +22,7 @@
 - 管理アカウントに break-glass の IAM user が2つ在り、それぞれにパスワードと FIDO の MFA（セキュリティキーかパスキー）が設定されている
 - 管理アカウントの password policy が、14文字以上・24世代の再利用の禁止・4種の文字を求める
 - Security OU にメンバーアカウント security と log-archive が在り、それぞれに break-glass の role が StackSet で置かれている
+- IAM Identity Center の permission set（`<project>-read-only`・`-terraform-plan`・`-billing`・`-support`・`-organization-admin`）が在り、管理アカウントへは user で、メンバーアカウントへは group で割り当てられている。`organization_admin` のセッションは `sts:AssumeRoot` と bootstrap の構成物の書き込みを拒まれる
 
 ## 3. 手順
 
@@ -65,6 +66,13 @@
    - 「ユーザーを追加」では、ユーザー名・メールアドレス・名・姓・表示名だけを入れる。任意の「お問い合わせ方法」「ジョブ関連情報」「アドレス」「環境設定」「追加の属性」（日本語のコンソールでの表記）は空のままにする。追加の属性は属性で権限を分ける ABAC のためのもので、この構成は使わない。CIS AWS Foundations Benchmark 1.1・1.2 の連絡先は AWS アカウントの代替連絡先で、[`bootstrap.md`](bootstrap.md#2-1-連絡先を登録する) の 2-1 で登録する
    - 招待のメールから AWS access portal でパスワードと MFA を登録し、サインインできることを確かめる。割り当てたアカウントが無い間、ポータルには何も表示されない
    - `make setup-organization-baseline-identity-center-user-check PROFILE=<管理アカウントの profile> IDC_USER=<user 名>` で user ID（`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` の形）を控える。同じ出力が、すべての user の名前が環境の接尾辞（`-admin` とメンバーアカウントの env）で終わらないことを確かめる
+5. メンバーアカウントへ入る人の group をコンソールの「グループを作成」で作り、手順4 の user を入れる。group の名前にも環境の接尾辞を付けない。group の詳細の画面で group ID を控える
+6. 割当の主体の parameter を置く。ID は repository・Pull Request・issue に書かない
+   - user と group に label を付ける。label は `env/admin/identity/main.tf` の `identity_center` が user と group を名指す識別子で、英小文字で始まり英小文字・数字・ハイフンだけの32文字以内にする。resource の address と公開の CI のログに載るので、人の名前とメールを使わない（[organization-baseline/ADR-0204](../../usecases/organization-baseline/docs/adr/0204-identity-center-permission-sets.md) 決定8）。同じ label を user と group の両方に付けない
+   - `env/admin/identity/main.tf` の `locals` の `identity_center` は、管理アカウントへ入る user の label を `owner`、メンバーアカウントへ入る group の label を `operators` として書いてある。ほかの label を使うなら、手順7 の同じ Pull Request で `env/admin/identity/main.tf` の label を直す
+   - `aws ssm put-parameter --profile <管理アカウントの profile> --region ap-northeast-1 --type String --name /<project>/organization-baseline/identity-center-principals --value '{"users":{"<user の label>":"<user ID>"},"groups":{"<group の label>":"<group ID>"}}'` で置く。key は `users` と `groups` だけにする。形が違うか、割当が名指す label が無ければ、次の plan が落ちる
+   - 管理アカウントに SAML provider `AWSSSO_<ID>_DO_NOT_DELETE` が在るかを `aws iam list-saml-providers --profile <管理アカウントの profile>` で読み、結果を手順7 の Pull Request に書く（ARN のアカウント ID は伏せる）。管理アカウントへの割当で、Identity Center は呼び手の資格情報でこの provider を読む
+7. [bootstrap 手順書](bootstrap.md#段2-plan-で突合する) の段2 の最初の plan の前に消した、`env/admin/identity/main.tf` の `module "organization_baseline"` の `identity_center = local.identity_center` の行と `locals` の `identity_center` を戻す Pull Request を出す。割当は label で書き、管理アカウントへは user、メンバーアカウントへは group で入れる。`identity_center` が null の間は permission set を作らない。`organization_admin` の割当は1つ以上要る。昇格の後に 3.10 を行う
 
 ### 3.4 break-glass の資格情報を設定する
 
@@ -108,7 +116,7 @@ StackSet か stack instance の作成で昇格の apply が失敗したときは
 
 ### 3.6 break-glass を試す（毎月）
 
-45日より短い間隔で行う。CIS AWS Foundations Benchmark は、45日使われていない資格情報を無効にするよう求める。試験を忘れていないかは、`make setup-organization-baseline-break-glass-usage-check PROFILE=<管理アカウントの profile>` で確かめる。break-glass の user の最後のサインインか、管理アカウントの break-glass の role の最後の引き受けが45日以上前か、記録が無ければ `❌` を出す（Security Hub の IAM.22 と同じ境界）。メンバーアカウントの role は見ない。
+45日より短い間隔で行い、Identity Center の `organization_admin` の割当を作った後にも1回行う。CIS AWS Foundations Benchmark は、45日使われていない資格情報を無効にするよう求める。試験を忘れていないかは、`make setup-organization-baseline-break-glass-usage-check PROFILE=<管理アカウントの profile>` で確かめる。break-glass の user の最後のサインインか、管理アカウントの break-glass の role の最後の引き受けが45日以上前か、記録が無ければ `❌` を出す（Security Hub の IAM.22 と同じ境界）。メンバーアカウントの role は見ない。
 
 1. break-glass の user でコンソールにサインインし、MFA を使う
 2. 管理アカウントの break-glass の role（`/break-glass/<project>-break-glass`）へ切り替えられることを確かめる。メンバーアカウントが在れば、そのうち1つの同じ名前の role へも切り替える
@@ -156,3 +164,32 @@ declarative policy は、付ける前に account status report で影響を見�
 2. `make setup-organization-baseline-service-access-check PROFILE=<管理アカウントの profile>` の出力を Pull Request に書く（3つの信頼アクセスが有効である）
 
 指定の変更が昇格した後に、`make setup-organization-baseline-delegated-admin-check PROFILE=<管理アカウントの profile>` の出力を Pull Request に書く（サービスの主体のそれぞれで、委任管理者が security のアカウントだけである）。
+
+### 3.10 昇格の後: Identity Center から入る
+
+3.3 の手順7 の変更が昇格した後に行い、結果を Pull Request に書く。アカウント ID・user ID・group ID・AWS access portal の URL は書かない。
+
+日常の入口は次のとおりにする（[organization-baseline/ADR-0204](../../usecases/organization-baseline/docs/adr/0204-identity-center-permission-sets.md) 決定7）。
+
+- 手元の端末の日常の profile は `<project>-read-only` の permission set で作る
+- `<project>-organization-admin` は日常の profile にしない。要る作業のときだけ AWS access portal から入り、終えたらサインアウトする
+- `<project>-terraform-plan` の profile を日常の端末に置かない
+
+確かめること:
+
+1. AWS access portal で、管理アカウントに `<project>-organization-admin`・`<project>-read-only` などが見え、入れることを確かめる
+2. `organization_admin` のセッションで `aws sts assume-root --target-principal <メンバーアカウントの ID> --task-policy-arn arn=arn:aws:iam::aws:policy/root-task/IAMAuditRootUserCredentials` が、`explicit deny in an identity-based policy` で拒まれることを確かめる
+3. `organization_admin` のセッションで、state Bucket の `aws s3api get-bucket-policy` と state の鍵の `aws kms describe-key` が通ることを確かめる（読みは拒まない）
+4. メンバーアカウントへ、group の割当の `<project>-read-only` で入れることを確かめる
+5. `make setup-organization-baseline-identity-center-check PROFILE=<管理アカウントの profile>` が `✅` だけを出すことを確かめる
+6. 次の CI の plan が変更を示さないことを確かめる
+7. 3.6 の試験を1回行う
+
+### 3.11 Identity Center の user が MFA を失ったとき
+
+管理アカウントへ入る Identity Center の user が1人で、その MFA の装置を失うと、`organization_admin` で入れなくなる。
+
+1. break-glass の role でコンソールに入る（3.6 の手順1・2）
+2. IAM Identity Center の「ユーザー」→ その user →「MFA デバイス」で、失った装置を削除する
+3. user が次のサインインで MFA の装置を登録し直す（3.3 の手順3 の「サインイン時に MFA デバイスの登録を求める」）
+4. break-glass を使ったことを記録し、3.6 の手順4 の出力と一緒に残す

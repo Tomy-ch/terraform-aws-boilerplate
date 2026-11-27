@@ -60,6 +60,7 @@ AWS Security Reference Architecture（SRA）は、Identity Center の管理を S
 - 保証すること: 信頼アクセスの一覧を Terraform が書かないこと（決定5）
 - 保証しないこと: この usecase を管理アカウントの identity root のほかの root が呼ばないこと（決定1）。これを見る検査は無い
 - 保証しないこと: 管理アカウントの `organization_admin` を持つ人が、CI を通さずに Identity Center を変えること。SCP は管理アカウントに効かない
+- 保証しないこと: 決定3 の「`sts:AssumeRoot` を呼べる主体は break-glass の role に限る」を、管理アカウントの `organization_admin`（`AdministratorAccess`）を持つ人に対して保つこと。この限定は、CI の role の権限と、`organization_admin` の permission set の inline の Deny（organization-baseline/ADR-0204）で保つ。`AdministratorAccess` を持つ人は新しい IAM の主体を作って許可を与えれば越えられ、管理アカウントには SCP が効かない。Deny は誤操作を止めるもので、境界ではない
 
 ## 検証方法
 

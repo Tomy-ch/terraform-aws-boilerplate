@@ -224,6 +224,8 @@ Billing and Cost Management コンソール →「Cost Explorer」→「Launch C
 
 > **重要**: 段2 では apply しない。
 
+最初の plan の前に、`env/admin/identity/main.tf` の `module "organization_baseline"` の `identity_center = local.identity_center` の行と、`locals` の `identity_center` を消して（`identity_center` を既定の `null` にする）commit する。この commit は段3 の Pull Request に含める。IAM Identity Center は組織の後でしか有効にできず、`identity_center` があると段2-4 の plan が Identity Center のインスタンスを読めずに落ちる。Identity Center は段5 の後に [organization-baseline 手順書](organization-baseline.md#33-identity-center-を有効にする) の 3.3 で有効にし、その手順7 で戻す。
+
 1. init する。段2 から段4 の `make` には `TF_LOCAL_MISSING_STATE_KEY=sse-s3` を付ける
 
    ```bash
