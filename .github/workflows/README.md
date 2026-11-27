@@ -101,6 +101,9 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
   resource の address、Policy の違反の規則の ID と件数がそれに当たり、違反の文は全文へ置く。全文は、
   init・plan・apply の `-json` の stream と、plan の人の読む差分（`terraform show`）を順に持つ。identity root の plan の、CI の role の policy の
   文書の評価（`scripts/bootstrap-check` の `plan-permissions`）も、区分ごとの件数と期待と違う行の要約だけを出す
+- **失敗の診断は、ログと job summary の診断の行、`make ci-trail`（CloudTrail）の順に読む。** `make ci-trail` は
+  人の手元の入口で、主体は IAM Identity Center の permission set である。permission set が配線されるまでは、
+  管理アカウントの一時 IAM user で走らせる（`docs/setup/bootstrap.md` の「CloudTrail で拒否を引く」）
 - **全文は、ログの版 ID で読み、SHA-256 を確かめる。** plan の role は `pr/*`・`branch/*` のどの key にも
   書けるので、版を指定せずに読んだ最新の版は、別の run が書いたものでありうる（ADR-0602 の保証しないこと）。
   `aws s3api get-object --bucket <Bucket> --key <key> --version-id <版 ID> plan.txt` の後、

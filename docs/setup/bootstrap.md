@@ -619,7 +619,7 @@ credential_process = aws configure export-credentials --profile tabp-bootstrap -
 | 拒否の step が secret の不在で落ちた | secret を置き、「Re-run failed jobs」で再実行する。段4 の[適用前の準備](#適用前の準備)で `admin` を作った push の run は再実行しない |
 | `admin` の最初の apply が落ちた | 成功した apply が無いので、revert のブランチは用意されない。原因を直す変更をリリース線へ merge して昇格する。戻すなら、リリース線の先頭の上で `git revert -m 1 <失敗した admin の merge>` を行う Pull Request を merge してから昇格する |
 | 昇格の Pull Request で `deploy-source-check` が落ちた | ログの理由を見る。デフォルトブランチがリリース線でない（hotfix の間、最初のリリース線を切る前）なら、デフォルトブランチがリリース線に戻ってから昇格する。到達できない・木が一致しないなら、[`.github/workflows/README.md`](../../.github/workflows/README.md) の「apply の job」に従う |
-| `AccessDenied` で落ち、同じ apply が apply-identity の権限を変えている | CloudTrail で、拒否の時刻が、同じ apply の権限の更新（`PutRolePolicy`・`CreatePolicyVersion`・`AttachRolePolicy`）の成功の直後であれば、IAM の反映の遅れである。「Re-run failed jobs」で走らせ直し、緑になったら、用意された revert のブランチを消す。走らせ直しも同じ `AccessDenied` で落ちるなら、権限の不足である。直す変更を昇格する |
+| `AccessDenied` で落ち、同じ apply が apply-identity の権限を変えている | `make ci-trail RUN=<run ID> ATTEMPT=<n>`（下の「CloudTrail で拒否を引く」）で、拒否の時刻が、同じ apply の権限の更新（`PutRolePolicy`・`CreatePolicyVersion`・`AttachRolePolicy`）の成功の直後であれば、IAM の反映の遅れである。「Re-run failed jobs」で走らせ直し、緑になったら、用意された revert のブランチを消す。走らせ直しも同じ `AccessDenied` で落ちるなら、権限の不足である。直す変更を昇格する |
 | 書き込みの拒否を入れる変更か、段3 の値を外す変更の apply が落ちた | 下の診断を行う |
 
 診断: 一時 IAM user で次を読む。
@@ -631,6 +631,20 @@ aws s3api list-objects-v2 --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_I
 
 - 1つ目を宣言（`modules/s3/policy.tf` と `usecases/state-backend/main.tf`）と比べ、2つ目で lock の残存を見る
 - Bucket Policy の例外が CI の role か state の鍵の ARN と食い違っていたら、回復手順は無い（ADR-0602 決定9）。Pull Request に記録して**止まる**
+
+#### CloudTrail で拒否を引く
+
+ログと job summary の診断の行で足りないときは、`make aws-login` の後に `make ci-trail RUN=<run ID> ATTEMPT=<n>` を実行する。run ID と attempt は、失敗した run の URL（`/actions/runs/<run ID>/attempts/<n>`）から取る。その run の CI の role の session が AWS で拒まれた・失敗した呼び出しを、root の region と us-east-1 と ADR-0209 のリージョンの集合で引き、1件ずつ出す（`scripts/ci-trail`）。CI がメンバーへ引き受けた role の呼び出しは、`MEMBER_PROFILE=<メンバーの profile>` で引く。
+
+| 失敗の類型 | 手段 |
+| --- | --- |
+| IAM の拒否（`AccessDenied`）、IAM の拒否を伴わない API の error | 診断の行。足りなければ `make ci-trail` |
+| 権限の反映の遅れ | `make ci-trail` の拒否の時刻を、同じ apply の権限の更新の成功の時刻と比べる |
+| 構成の条件の失敗、Terraform の error | 診断の行のファイルと行 |
+| 待ちの打ち切り、StackSets の中の失敗 | 診断の行の分類。StackSets はコンソールの「StackSets」のオペレーション |
+| init と prepare の失敗、打ち切り、全文の置き場への書き込みの失敗 | ログの診断の行。全文は残らない |
+
+写してよいのは既定の出力（許可の文法に当たる欄だけの行。[ADR-0602](../adr/0602-bootstrap-and-ci-authentication.md) 決定13）に限る。`RAW=1` は errorMessage をそのまま出すので、人の端末だけで読み、エージェントは使わず、会話・issue・Pull Request へ写さない。保証しないこと: event history への反映は遅れることがあり、90日を過ぎた event は引けない。メンバーの経路は、メンバーを引ける主体が IAM Identity Center で配線されるまで、実 API で確かめていない。
 
 ### 段5 で lock が残った
 
