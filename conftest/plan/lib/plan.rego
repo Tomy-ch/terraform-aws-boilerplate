@@ -133,7 +133,8 @@ default inline_arguments := null
 
 effective_policy_plan := object.union(data.policy_plan, {"inline_arguments": inline_arguments}) if is_object(data.policy_plan)
 
-# Policy Test が持つ宣言そのもの（導く前）の形。導く分が在るので空でもよい。ほかは inline_arguments_shape と同じ。
+# Policy Test が持つ宣言そのもの（導く前）の形。導く分が在るので空でもよい。documents との排他は、導いた後の
+# 実効の宣言に inline_arguments_shape が見る（実効の宣言は導く前の引数を含む）。
 raw_inline_shape(decl) if {
 	is_object(decl.inline_arguments)
 	every _, args in decl.inline_arguments {
