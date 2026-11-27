@@ -121,6 +121,8 @@ var (
 		"apply-identity $policy/apply-identity-governance-2: 7 件が allowed",
 		"apply-identity $role/apply-identity [iam:PolicyARN=$policy/apply-identity-governance-2]: 1 件が allowed",
 		"plan *: 1 件が allowed",
+		"apply-identity arn:aws:organizations::123456789012:account/o-exampleorg1/111111111111: 1 件が allowed",
+		"apply-identity arn:aws:organizations::123456789012:ou/o-exampleorg1/ou-ab12-exampl01: 1 件が allowed",
 		"plan * [aws:RequestedRegion=ap-northeast-1]: 2 件が allowed",
 		"plan * [aws:RequestedRegion=af-south-1]: 2 件が explicitDeny",
 		"plan arn:aws:securityhub:ap-northeast-1:123456789012:hub/default [aws:RequestedRegion=ap-northeast-1]: 1 件が allowed",
@@ -143,6 +145,9 @@ var (
 		"apply-identity *: 2 件が allowed",
 		"apply-identity $iam:role/aws-service-role/cloudtrail.amazonaws.com/AWSServiceRoleForCloudTrail [iam:AWSServiceName=cloudtrail.amazonaws.com]: 1 件が allowed",
 		"apply-identity $iam:role/aws-service-role/cloudtrail.amazonaws.com/AWSServiceRoleForCloudTrail [iam:AWSServiceName=guardduty.amazonaws.com]: 1 件が implicitDeny",
+		"apply-identity $iam:role/AWSServiceRoleForCloudTrail: 1 件が allowed",
+		"apply-identity $iam:role/aws-service-role/inspector2.amazonaws.com/AWSServiceRoleForAmazonInspector2 [iam:AWSServiceName=inspector2.amazonaws.com]: 1 件が allowed",
+		"apply-identity $iam:role/aws-service-role/inspector2.amazonaws.com/AWSServiceRoleForAmazonInspector2 [iam:AWSServiceName=guardduty.amazonaws.com]: 1 件が implicitDeny",
 	}
 	permSLRDescs = []string{
 		"apply-identity $slr [iam:AWSServiceName=management.chatbot.amazonaws.com]: 1 件が allowed",
@@ -262,9 +267,9 @@ var (
 
 const (
 	// permissions の件数。条件つきの確認の有無で変わる。
-	permissionsBase     = 126
+	permissionsBase     = 128
 	governanceGated     = 31
-	delegatedGated      = 13
+	delegatedGated      = 16
 	delegatedAbsent     = "  委任管理者の policy がまだ付いていないので、指定と解除の権限は確かめない（委任管理者の policy を作って付ける apply の後にもう一度走らせる）"
 	delegatedUnknown    = "  apply-identity の role の managed policy を確かめられないので（上の NG）、委任管理者の指定と解除の権限は確かめない"
 	workloadGatedCount  = 28
@@ -426,6 +431,8 @@ var permRowActions = []string{
 	"$manage",
 	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-identity-governance-2 (arn)",
 	"organizations:ListDelegatedAdministrators",
+	"organizations:DescribeAccount",
+	"organizations:DescribeOrganizationalUnit",
 	"guardduty:ListOrganizationAdminAccounts inspector2:ListDelegatedAdminAccounts ; aws:RequestedRegion = ap-northeast-1 (string)",
 	"guardduty:ListOrganizationAdminAccounts inspector2:ListDelegatedAdminAccounts ; aws:RequestedRegion = af-south-1 (string)",
 	"securityhub:ListOrganizationAdminAccounts ; aws:RequestedRegion = ap-northeast-1 (string)",
@@ -445,6 +452,9 @@ var permRowActions = []string{
 	"organizations:EnableAWSServiceAccess ; organizations:ServicePrincipal = securityhub.amazonaws.com (string)",
 	"cloudtrail:RegisterOrganizationDelegatedAdmin cloudtrail:DeregisterOrganizationDelegatedAdmin",
 	"iam:CreateServiceLinkedRole ; iam:AWSServiceName = cloudtrail.amazonaws.com (string)",
+	"iam:CreateServiceLinkedRole ; iam:AWSServiceName = guardduty.amazonaws.com (string)",
+	"iam:GetRole",
+	"iam:CreateServiceLinkedRole ; iam:AWSServiceName = inspector2.amazonaws.com (string)",
 	"iam:CreateServiceLinkedRole ; iam:AWSServiceName = guardduty.amazonaws.com (string)",
 	// Chatbot の service-linked role
 	"iam:CreateServiceLinkedRole ; iam:AWSServiceName = management.chatbot.amazonaws.com (string)",
@@ -1361,15 +1371,15 @@ func Test_permissionsSteps(t *testing.T) {
 		result                                 string
 	}{
 		"条件つきの確認がすべて走る": {governanceAttached, workloadAttached, nil, nil, nil, nil, permissionsBase + governanceGated + delegatedGated + workloadGatedCount + budgetsGatedCount,
-			"# 結果: 202 件のうち NG 0 件"},
+			"# 結果: 207 件のうち NG 0 件"},
 		"統制の policy が付いていない": {noneAttached, workloadAttached, []string{governanceAbsent}, []string{delegatedAbsent}, nil, nil, permissionsBase + workloadGatedCount + budgetsGatedCount,
-			"# 結果: 158 件のうち NG 0 件（確かめていない区分 2）"},
+			"# 結果: 160 件のうち NG 0 件（確かめていない区分 2）"},
 		"委任管理者の policy だけが付いていない": {`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-manage"},{"PolicyName":"tabp-admin-ci-apply-identity-members"},{"PolicyName":"tabp-admin-ci-apply-identity-governance"}]}`, workloadAttached,
-			nil, []string{delegatedAbsent}, nil, nil, permissionsBase + governanceGated + workloadGatedCount + budgetsGatedCount, "# 結果: 189 件のうち NG 0 件（確かめていない区分 1）"},
+			nil, []string{delegatedAbsent}, nil, nil, permissionsBase + governanceGated + workloadGatedCount + budgetsGatedCount, "# 結果: 191 件のうち NG 0 件（確かめていない区分 1）"},
 		"workload の policy が付いていない": {governanceAttached, noneAttached, nil, nil, []string{workloadAbsent}, []string{budgetsAbsent},
-			permissionsBase + governanceGated + delegatedGated, "# 結果: 170 件のうち NG 0 件（確かめていない区分 2）"},
+			permissionsBase + governanceGated + delegatedGated, "# 結果: 175 件のうち NG 0 件（確かめていない区分 2）"},
 		"どちらも付いていない": {noneAttached, noneAttached, []string{governanceAbsent}, []string{delegatedAbsent}, []string{workloadAbsent}, []string{budgetsAbsent}, permissionsBase,
-			"# 結果: 126 件のうち NG 0 件（確かめていない区分 4）"},
+			"# 結果: 128 件のうち NG 0 件（確かめていない区分 4）"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
