@@ -105,7 +105,7 @@ unsupported:
 - 鍵の Key Policy で、ECR が repository の作成時に grant を作れること。repository の削除で ECR が grant を廃止するのに、apply の role の IAM の側にも `kms:RetireGrant` が要るか
 - OCI 1.1 の referrer が、lifecycle の `tagged` の件数に数えられないこと
 - 複製の repository が ENHANCED の filter に当たらず、継続スキャンされないこと（Integration の複製は別の `project` の token を持つ）
-- 定期 plan（#77）と掃除 CI（#76）は未配線で、常駐の drift と除外の漏れを見る手段はまだ無い
+- 常駐の drift と除外の漏れを見る手段はまだ無い。定期 plan（`terraform-drift.yaml`）が plan するのは env の root だけで、このユースケースを呼ぶ env は無い。掃除 CI（#76）は未配線である
 
 ## 公式実装の参照（[ADR-0206](../../docs/adr/0206-official-implementations-as-reference.md) 決定7・8）
 
