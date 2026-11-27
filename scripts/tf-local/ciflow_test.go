@@ -691,9 +691,19 @@ func Test_ciRunPolicy(t *testing.T) {
 		f := newFlow(t, nil)
 		require.NoError(t, f.all(ciModePlan, "identity"))
 		ls := readKnob(t, f.k, "conftest.ls")
-		for _, name := range []string{"rego", "decl.json", "layer.json", "plan.json", "p.rego"} {
+		for _, name := range []string{"rego", "decl.json", "layer.json", "p.rego", "admin-identity.json"} {
 			assert.Contains(t, ls, name)
 		}
+		assert.NotContains(t, ls, "plan.json")
+	})
+
+	t.Run("root の名前がファイル名の形でなければ、conftest を起動せずに失敗する", func(t *testing.T) {
+		t.Parallel()
+		tool, k := fakeFlow(t, nil)
+		s := ciState{Root: "../x", Out: filepath.Join(t.TempDir(), "o.txt"), JSON: fileWith(t, "{}")}
+		err := ciRunPolicy(s, deps{tool: tool, stderr: &bytes.Buffer{}, root: t.TempDir()}, &bytes.Buffer{}, "tmp/ci-policy", policyDirWith(t, map[string]string{"p.rego": onePolicy}), fileWith(t, "{}"), fileWith(t, "{}"), []string{"plan.p"})
+		require.ErrorIs(t, err, errPolicyJSON)
+		assert.NoFileExists(t, filepath.Join(k, "conftest.ls"))
 	})
 
 	for name, c := range map[string]struct {
@@ -714,7 +724,7 @@ func Test_ciRunPolicy(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			tool, _ := fakeFlow(t, map[string]string{stepCIConftest + ".out": c.out})
-			s := ciState{Out: filepath.Join(t.TempDir(), "o.txt"), JSON: fileWith(t, "{}")}
+			s := ciState{Root: "admin-identity", Out: filepath.Join(t.TempDir(), "o.txt"), JSON: fileWith(t, "{}")}
 			err := ciRunPolicy(s, deps{tool: tool, stderr: &bytes.Buffer{}, root: t.TempDir()}, &bytes.Buffer{}, "tmp/ci-policy", policyDirWith(t, c.files), fileWith(t, "{}"), fileWith(t, "{}"), []string{c.ns})
 			require.ErrorIs(t, err, c.want)
 			if c.code != 0 {
@@ -726,7 +736,7 @@ func Test_ciRunPolicy(t *testing.T) {
 	t.Run("違反の名前空間と評価できなかった名前空間が混ざれば、評価できなかった側を優先して終了コード 2", func(t *testing.T) {
 		t.Parallel()
 		tool, _ := fakeFlow(t, map[string]string{stepCIConftest + ".out": `[{"namespace":"plan.p","successes":0,"failures":[{"msg":"bad"}]}]`})
-		s := ciState{Out: filepath.Join(t.TempDir(), "o.txt"), JSON: fileWith(t, "{}")}
+		s := ciState{Root: "admin-identity", Out: filepath.Join(t.TempDir(), "o.txt"), JSON: fileWith(t, "{}")}
 		files := map[string]string{"p.rego": onePolicy, "q.rego": strings.Replace(onePolicy, "plan.p", "plan.q", 1)}
 		for _, order := range [][]string{{"plan.p", "plan.q"}, {"plan.q", "plan.p"}} {
 			err := ciRunPolicy(s, deps{tool: tool, stderr: &bytes.Buffer{}, root: t.TempDir()}, &bytes.Buffer{}, "tmp/ci-policy", policyDirWith(t, files), fileWith(t, "{}"), fileWith(t, "{}"), order)
@@ -740,7 +750,7 @@ func Test_ciRunPolicy(t *testing.T) {
 
 	t.Run("conftest を起動できなければ ErrTool で、終了コード 2", func(t *testing.T) {
 		t.Parallel()
-		s := ciState{Out: filepath.Join(t.TempDir(), "o.txt"), JSON: fileWith(t, "{}")}
+		s := ciState{Root: "admin-identity", Out: filepath.Join(t.TempDir(), "o.txt"), JSON: fileWith(t, "{}")}
 		err := ciRunPolicy(s, deps{tool: tooltest.Missing, stderr: &bytes.Buffer{}, root: t.TempDir()}, &bytes.Buffer{}, "tmp/ci-policy", policyDirWith(t, map[string]string{"p.rego": onePolicy}), fileWith(t, "{}"), fileWith(t, "{}"), []string{"plan.p"})
 		require.ErrorIs(t, err, toolrun.ErrTool)
 		assert.Equal(t, 2, exitCode(err))

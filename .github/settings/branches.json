@@ -1,6 +1,8 @@
 {
   "deploy": [
     { "branch": "admin", "env": "admin", "from": ["release/"] },
+    { "branch": "security", "env": "security", "from": ["release/"] },
+    { "branch": "log-archive", "env": "log-archive", "from": ["release/"] },
     { "branch": "production", "release_base": true },
     { "branch": "staging" },
     { "branch": "develop" }

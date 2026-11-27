@@ -43,6 +43,7 @@
 - 2-2 の結果と 2-4 は翌日以降に揃う。待つ間に段1 へ進んでよい。2-4 は、管理アカウントの workload root に finops を置く apply より前に済ませる
 - 一時 IAM user は段5 の成功まで削除しない
 - 段5 の後、[organization-baseline 手順書](organization-baseline.md) の 3.2 以降を行う
+- メンバーアカウントの `state-backend`・`deployment-identity` は、[メンバーアカウントの立ち上げ 手順書](member-bootstrap.md) が置く
 
 ## 4. 手順
 
@@ -178,7 +179,7 @@ Billing and Cost Management コンソール →「Cost Explorer」→「Launch C
 
 #### 2-5. メンバーアカウントのメールを置く
 
-段4 の apply は、security と log-archive のメンバーアカウントも作る。段2 の plan はそのメールを管理アカウントの parameter から読むので、parameter が無いと落ちる。[organization-baseline 手順書](organization-baseline.md#38-メンバーアカウントを作る) の手順1-3 を行う。
+段4 の apply は、security と log-archive のメンバーアカウントも作る。`env/admin/identity` が立ち上げの中のメンバーアカウントの module を呼んでいる間（[メンバーアカウントの立ち上げ 手順書](member-bootstrap.md)）は、新しいアカウントの段2-4 を行えない。その provider がまだ無いアカウントの ID を読むためである。段2 の plan はそのメールを管理アカウントの parameter から読むので、parameter が無いと落ちる。[organization-baseline 手順書](organization-baseline.md#38-メンバーアカウントを作る) の手順1-3 を行う。
 
 ### 段1. state Bucket を作る
 
@@ -653,7 +654,7 @@ aws s3api delete-object --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"
 ## この文書の保守
 
 - アカウントの準備（1-0 から 2-4）の作業や番号を変える変更は、`scripts/bootstrap-check` の `accountChecks` を同じ変更で更新する。ずれると、確認は古い手順を確かめて通るか、行頭の番号が手順と食い違う
-- identity root の resource を足すか消す変更は、[`scripts/check-plan.expected`](scripts/check-plan.expected) を同じ変更で更新する。ずれは CI の `make check-plan-expected` が落とし、足りない行と余る行を `NG` で示す
+- identity root の resource を足すか消す変更は、[`scripts/check-plan.expected`](scripts/check-plan.expected) を同じ変更で更新する。立ち上げの中のメンバーアカウントの module の resource は、mock の突き合わせだけが読む [`scripts/check-plan-bootstrapping.expected`](scripts/check-plan-bootstrapping.expected) に書く。ずれは CI の `make check-plan-expected` が落とし、足りない行と余る行を `NG` で示す
 - identity root が作る IAM の user・group・role・policy の名前を変えるか足す変更は、`scripts/bootstrap-check` の `beforeApplySteps` を同じ変更で更新する。名前がずれると、その確認は無いものを確かめて通る
 - apply-identity の権限を足す変更は、`scripts/bootstrap-check` の `permissionSections` を同じ変更で更新する（段5 の手順4）
 - state の鍵の Key Policy の `users` を変える変更は、`scripts/bootstrap-check` の `keyPolicy` と、その文の数を同じ変更で更新する

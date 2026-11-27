@@ -5,6 +5,7 @@
       "data.aws_availability_zones": {"executes_code": false},
       "data.aws_caller_identity": {"executes_code": false},
       "data.aws_iam_role": {"executes_code": false},
+      "data.aws_iam_session_context": {"executes_code": false},
       "data.aws_lambda_invocation": {"executes_code": true},
       "data.aws_partition": {"executes_code": false},
       "data.aws_region": {"executes_code": false},

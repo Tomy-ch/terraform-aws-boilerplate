@@ -12,6 +12,8 @@ on:
   push:
     branches: # branch-set: deploy
       - 'admin'
+      - 'security'
+      - 'log-archive'
       - 'production'
       - 'staging'
       - 'develop'
@@ -34,7 +36,7 @@ concurrency:
 jobs:
   trivy-fs-release:
     # Why the trigger condition lives in a job: README.md の「必須検査はすべての Pull Request で報告される」.
-    if: ${{ github.event_name != 'pull_request' || contains(fromJSON('["admin", "production", "staging", "develop"]'), github.base_ref) }} # branch-set: deploy
+    if: ${{ github.event_name != 'pull_request' || contains(fromJSON('["admin", "security", "log-archive", "production", "staging", "develop"]'), github.base_ref) }} # branch-set: deploy
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

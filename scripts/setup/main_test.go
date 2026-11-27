@@ -68,6 +68,7 @@ func Test_entries(t *testing.T) {
 			"bootstrap-contacts":         {"account put-contact-information", "account put-alternate-contact"},
 			"bootstrap-anomaly-tag":      {"ce tag-resource"},
 			"bootstrap-env-secrets":      {"gh secret set"},
+			"member-env-secrets":         {"gh secret set"},
 			"ops-chatbot-role-check":     nil,
 			"ops-workspace-check":        nil,
 			"ops-subscriptions-check":    nil,
@@ -177,6 +178,12 @@ func Test_entries(t *testing.T) {
 			return anomalyWorld(t, map[string]bool{monitorARN: true})
 		}, "tabp\n", tagResource(subARN)},
 		"bootstrap-env-secrets": {[]string{"-environments", "admin-plan", "-repo", testRepo}, callerWorld, "tabp\n", "sts get-caller-identity"},
+		"member-env-secrets": {[]string{"-environments", "security-plan", "-repo", testRepo}, func(t *testing.T) *fakeAWS {
+			m := managementWorld("111111111111", "111111111111")
+			m[listAccountsCall] = ok(`{"Accounts":[{"Id":"111111111111","Name":"tabp-security","State":"ACTIVE"}]}`)
+
+			return newFakeAWS(t, m)
+		}, "tabp\n", listAccountsCall},
 		"ops-chatbot-role-check": {[]string{"-env", "dev"}, func(t *testing.T) *fakeAWS {
 			return newFakeAWS(t, map[string]awsResult{getChatRole: ok(`{"Role":{"RoleName":"AWSServiceRoleForAWSChatbot"}}`)})
 		}, "", getChatRole},
@@ -244,10 +251,14 @@ func Test_entries(t *testing.T) {
 			d.gh = g.fn()
 			require.NoError(t, run(args, &bytes.Buffer{}, d))
 
-			if name == "bootstrap-env-secrets" {
+			switch name {
+			case "bootstrap-env-secrets":
 				assert.Equal(t, []string{listPlan, setPlan, listPlan}, g.calls)
 				assert.Equal(t, "111111111111", g.stdins[1])
-			} else {
+			case "member-env-secrets":
+				assert.Equal(t, []string{listSecurity, setSecurity, listSecurity}, g.calls)
+				assert.Equal(t, "111111111111", g.stdins[1])
+			default:
 				assert.Empty(t, g.calls)
 			}
 			assert.Contains(t, append(f.joined(), f.writes()...), tc.want)
@@ -513,6 +524,8 @@ func Test_parseArgs(t *testing.T) {
 		"bootstrap-env-secrets に -environments が無い": {[]string{"bootstrap-env-secrets", "-project", "p", "-region", "r"}, "-environments と -repo は"},
 		"ほかの入口に -environments":                      {[]string{"bootstrap-contacts", "-project", "p", "-region", "r", "-environments", "x"}, "-environments と -repo は"},
 		"bootstrap-env-secrets に -repo が無い":         {[]string{"bootstrap-env-secrets", "-project", "p", "-region", "r", "-environments", "x"}, "-environments と -repo は"},
+		"member-env-secrets に -environments が無い":    {[]string{"member-env-secrets", "-project", "p", "-region", "r", "-repo", "a/b"}, "-environments と -repo は"},
+		"member-env-secrets に -repo が無い":            {[]string{"member-env-secrets", "-project", "p", "-region", "r", "-environments", "x"}, "-environments と -repo は"},
 		"ほかの入口に -repo だけ":                           {[]string{"bootstrap-contacts", "-project", "p", "-region", "r", "-repo", "a/b"}, "-environments と -repo は"},
 		"ほかの入口に -replace":                           {[]string{"bootstrap-contacts", "-project", "p", "-region", "r", "-replace"}, "-replace は"},
 		"member-accounts-check でない入口に -ids":         {[]string{"member-emails-check", "-project", "p", "-region", "r", "-usecase", "a", "-ids"}, "-ids は"},
@@ -557,6 +570,19 @@ func Test_parseArgs(t *testing.T) {
 
 func Test_run(t *testing.T) {
 	t.Parallel()
+
+	t.Run("member-env-secrets は、組織の管理アカウントでない資格情報なら gh を起動せずに止まる", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFakeAWS(t, managementWorld("111111111111", "222222222222"))
+		d := testDeps(f, "tabp\n", nil)
+		g := &fakeGH{t: t}
+		d.gh = g.fn()
+		args := []string{"member-env-secrets", "-project", testProject, "-region", testRegion, "-environments", "security-plan", "-repo", testRepo}
+		require.ErrorIs(t, run(args, &bytes.Buffer{}, d), errPrecondition)
+		assert.Empty(t, g.calls)
+		assert.NotContains(t, f.joined(), listAccountsCall)
+	})
 
 	args := []string{"member-emails", "-project", testProject, "-region", testRegion, "-usecase", testUsecase}
 

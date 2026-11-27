@@ -41,7 +41,7 @@
 | キー | 意味 |
 | --- | --- |
 | `branch` | デプロイブランチの名前。保護対象に入ります |
-| `env` | そのブランチへの merge が apply する env（`env/<env>/` の root）。env をまだ配線していないデプロイブランチは持ちません |
+| `env` | そのブランチの env。`deployment-identity` の env のどれかで、その env の environment の宣言を要します（`repo-settings-check` が見る）。そのブランチへの merge が apply するのは、その env の root（`env/<env>/`）と apply の job が在るときだけです |
 | `from` | そのデプロイブランチが変更を受け取る線の接頭辞の一覧。各要素は `lines` のどれかで、重複できません。`env` を持つ要素だけが持ち、持つときは1つ以上が必須です |
 | `release_base` | タグを打ち、新しい線を切る基点のブランチの印。宣言にちょうど1つ置きます |
 

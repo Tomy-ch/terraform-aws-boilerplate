@@ -289,7 +289,7 @@ func permissionSections(n names, sk, skReason string) []section {
 	reads := []string{"s3:GetBucketAcl", "s3:GetBucketCORS", "s3:GetBucketWebsite", "s3:GetAccelerateConfiguration", "s3:GetBucketRequestPayment",
 		"s3:GetBucketLogging", "s3:GetLifecycleConfiguration", "s3:GetReplicationConfiguration", "s3:GetBucketObjectLockConfiguration",
 		"s3:GetBucketTagging", "s3:GetBucketPolicy", "s3:GetBucketVersioning", "s3:GetEncryptionConfiguration",
-		"s3:GetBucketPublicAccessBlock", "s3:GetBucketOwnershipControls"}
+		"s3:GetBucketPublicAccessBlock", "s3:GetBucketOwnershipControls", "s3:ListTagsForResource"}
 	with := func(a ...string) []string { return append(slices.Clone(reads), a...) }
 	plus := func(head []string, a ...string) []string { return append(append(head, reads...), a...) }
 
@@ -318,6 +318,7 @@ func permissionSections(n names, sk, skReason string) []section {
 	ctslrByName := iam + ":role/AWSServiceRoleForCloudTrail"
 	inslr := iam + ":role/aws-service-role/inspector2.amazonaws.com/AWSServiceRoleForAmazonInspector2"
 	inAgentlessSlr := iam + ":role/aws-service-role/agentless.inspector2.amazonaws.com/AWSServiceRoleForAmazonInspector2Agentless"
+	inAmiSlr := iam + ":role/aws-service-role/ami.inspector2.amazonaws.com/AWSServiceRoleForAmazonInspector2Ami"
 	delegatedRegional := []string{"guardduty:EnableOrganizationAdminAccount", "guardduty:DisableOrganizationAdminAccount", "inspector2:EnableDelegatedAdminAccount", "inspector2:DisableDelegatedAdminAccount"}
 	delegatedLists := []string{"guardduty:ListOrganizationAdminAccounts", "inspector2:ListDelegatedAdminAccounts"}
 	hub := func(r string) string { return "arn:aws:securityhub:" + r + ":" + n.account + ":hub/default" }
@@ -493,6 +494,7 @@ func permissionSections(n names, sk, skReason string) []section {
 				simCtx(allowed, ai, inslr, serviceName("inspector2.amazonaws.com"), "iam:CreateServiceLinkedRole"),
 				simCtx(implicitDeny, ai, inslr, serviceName("guardduty.amazonaws.com"), "iam:CreateServiceLinkedRole"),
 				simCtx(allowed, ai, inAgentlessSlr, serviceName("agentless.inspector2.amazonaws.com"), "iam:CreateServiceLinkedRole"),
+				simCtx(allowed, ai, inAmiSlr, serviceName("ami.inspector2.amazonaws.com"), "iam:CreateServiceLinkedRole"),
 			},
 			absentNote:  "  委任管理者の policy がまだ付いていないので、指定と解除の権限は確かめない（委任管理者の policy を作って付ける apply の後にもう一度走らせる）",
 			unknownNote: "  apply-identity の role の managed policy を確かめられないので（上の NG）、委任管理者の指定と解除の権限は確かめない",
@@ -648,8 +650,7 @@ func stackInstanceRows(n names, other string) []simRow {
 	zss, zst, _ := stackSetARNs(n, n.project+"-bootstrap-read-x")
 	ai := n.applyIdentity
 	inst := []string{"cloudformation:CreateStackInstances", "cloudformation:UpdateStackInstances"}
-	// TargetRegion は type の評価にだけ付き、stackset と stackset-target の評価には付かない（実際の要求での観測。
-	// Service Authorization Reference は3つとも受けると書く）。付かないキーを context に与える行は、IAM が見ないものを確かめる。
+	// TargetRegion は type の評価にだけ付く（deployment-identity/ADR-0201 決定4）。付かないキーを context に与える行は、IAM が見ないものを確かめる。
 	// type の条件は一覧を受けるキー（ArrayOfString）を provider の region に限る（deployment-identity/ADR-0201 決定4）。
 	// provider の region だけの一覧は、条件が StringEquals なら implicitDeny になるので、StringEquals で書いた条件を見つける。
 	// 同じ region を2つ並べた一覧は、`,` を含む1つの値として渡ったときに allowed にならない。
@@ -875,7 +876,6 @@ func outputPolicySteps(e verifyEnv) ([]step, error) {
 	return append(steps, rows(adoc, areason, applyRows)...), nil
 }
 
-// outputPolicyRows は、plan と apply の出力の Bucket の Bucket Policy を含めて評価する行。
 func outputPolicyRows(n names) ([]simRow, []simRow) {
 	pb := "arn:aws:s3:::" + n.planBucket
 	ab := "arn:aws:s3:::" + n.applyBucket

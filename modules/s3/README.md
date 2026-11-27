@@ -25,7 +25,7 @@ S3 の Bucket と、その不変条件を持つ一般 module（ADR-0102 決定12
 | 出力 | 使う側 |
 | --- | --- |
 | `bucket_name` | `state-backend`（backend の設定と、env の identity root の段2 の `import` block の id） |
-| `bucket_arn` | `state-backend` を経て `deployment-identity`（CI の role の IAM で Resource を state Bucket に絞る） |
+| `bucket_arn` | `state-backend` を経て `deployment-identity`（CI の role の IAM で Resource を state Bucket に絞る）。名前から組むので、Bucket を作る plan でも決まる |
 | `noncurrent_version_retention_days` | `state-backend` の Contract Test（公開入力が規則の日数に届くこと） |
 | `kms_key_arn` | `state-backend` の Contract Test（既定の暗号化が state の鍵を名指すこと） |
 | `object_writers` | `state-backend` の Contract Test（`ci_role_arns` と `bootstrap_executor_user_name` が書き込みの例外へ届くこと） |

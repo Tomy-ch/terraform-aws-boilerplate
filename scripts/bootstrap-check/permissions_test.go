@@ -16,16 +16,16 @@ import (
 // permExpand は引数の順に照合するので、長い記号を先に置く。
 var (
 	permS3Descs = []string{
-		"plan $b: 15 件が allowed",
-		"apply-identity $b: 17 件が allowed",
+		"plan $b: 16 件が allowed",
+		"apply-identity $b: 18 件が allowed",
 		"apply-identity $key: 1 件が allowed",
 		"apply-identity $role/plan: 2 件が allowed",
-		"plan $pb: 15 件が allowed",
+		"plan $pb: 16 件が allowed",
 		"plan $pb/pr/1/x: 1 件が allowed",
-		"apply-identity $pb: 16 件が allowed",
+		"apply-identity $pb: 17 件が allowed",
 		"apply-identity $pb/apply/1/x: 1 件が allowed",
-		"plan $ab: 16 件が allowed",
-		"apply-identity $ab: 19 件が allowed",
+		"plan $ab: 17 件が allowed",
+		"apply-identity $ab: 20 件が allowed",
 		"apply-identity $ab: 1 件が implicitDeny",
 		"plan $ab: 2 件が implicitDeny",
 		"apply $b: 2 件が allowed",
@@ -149,6 +149,7 @@ var (
 		"apply-identity $iam:role/aws-service-role/inspector2.amazonaws.com/AWSServiceRoleForAmazonInspector2 [iam:AWSServiceName=inspector2.amazonaws.com]: 1 件が allowed",
 		"apply-identity $iam:role/aws-service-role/inspector2.amazonaws.com/AWSServiceRoleForAmazonInspector2 [iam:AWSServiceName=guardduty.amazonaws.com]: 1 件が implicitDeny",
 		"apply-identity $iam:role/aws-service-role/agentless.inspector2.amazonaws.com/AWSServiceRoleForAmazonInspector2Agentless [iam:AWSServiceName=agentless.inspector2.amazonaws.com]: 1 件が allowed",
+		"apply-identity $iam:role/aws-service-role/ami.inspector2.amazonaws.com/AWSServiceRoleForAmazonInspector2Ami [iam:AWSServiceName=ami.inspector2.amazonaws.com]: 1 件が allowed",
 	}
 	permSLRDescs = []string{
 		"apply-identity $slr [iam:AWSServiceName=management.chatbot.amazonaws.com]: 1 件が allowed",
@@ -270,7 +271,7 @@ const (
 	// permissions の件数。条件つきの確認の有無で変わる。
 	permissionsBase     = 128
 	governanceGated     = 31
-	delegatedGated      = 17
+	delegatedGated      = 18
 	delegatedAbsent     = "  委任管理者の policy がまだ付いていないので、指定と解除の権限は確かめない（委任管理者の policy を作って付ける apply の後にもう一度走らせる）"
 	delegatedUnknown    = "  apply-identity の role の managed policy を確かめられないので（上の NG）、委任管理者の指定と解除の権限は確かめない"
 	workloadGatedCount  = 28
@@ -291,7 +292,7 @@ var permExpand = strings.NewReplacer(
 	"$reads", "s3:GetBucketAcl s3:GetBucketCORS s3:GetBucketWebsite s3:GetAccelerateConfiguration s3:GetBucketRequestPayment "+
 		"s3:GetBucketLogging s3:GetLifecycleConfiguration s3:GetReplicationConfiguration s3:GetBucketObjectLockConfiguration "+
 		"s3:GetBucketTagging s3:GetBucketPolicy s3:GetBucketVersioning s3:GetEncryptionConfiguration "+
-		"s3:GetBucketPublicAccessBlock s3:GetBucketOwnershipControls",
+		"s3:GetBucketPublicAccessBlock s3:GetBucketOwnershipControls s3:ListTagsForResource",
 	"$manage", "iam:CreatePolicy iam:CreatePolicyVersion iam:DeletePolicyVersion iam:SetDefaultPolicyVersion iam:GetPolicy iam:GetPolicyVersion iam:ListPolicyVersions",
 	"$bg", "arn:aws:iam::123456789012:role/break-glass/tabp-break-glass",
 	"$budget", "arn:aws:budgets::123456789012:budget/tabp-admin-x",
@@ -458,6 +459,7 @@ var permRowActions = []string{
 	"iam:CreateServiceLinkedRole ; iam:AWSServiceName = inspector2.amazonaws.com (string)",
 	"iam:CreateServiceLinkedRole ; iam:AWSServiceName = guardduty.amazonaws.com (string)",
 	"iam:CreateServiceLinkedRole ; iam:AWSServiceName = agentless.inspector2.amazonaws.com (string)",
+	"iam:CreateServiceLinkedRole ; iam:AWSServiceName = ami.inspector2.amazonaws.com (string)",
 	// Chatbot の service-linked role
 	"iam:CreateServiceLinkedRole ; iam:AWSServiceName = management.chatbot.amazonaws.com (string)",
 	"iam:CreateServiceLinkedRole ; iam:AWSServiceName = config.amazonaws.com (string)",
@@ -1373,13 +1375,13 @@ func Test_permissionsSteps(t *testing.T) {
 		result                                 string
 	}{
 		"条件つきの確認がすべて走る": {governanceAttached, workloadAttached, nil, nil, nil, nil, permissionsBase + governanceGated + delegatedGated + workloadGatedCount + budgetsGatedCount,
-			"# 結果: 208 件のうち NG 0 件"},
+			"# 結果: 209 件のうち NG 0 件"},
 		"統制の policy が付いていない": {noneAttached, workloadAttached, []string{governanceAbsent}, []string{delegatedAbsent}, nil, nil, permissionsBase + workloadGatedCount + budgetsGatedCount,
 			"# 結果: 160 件のうち NG 0 件（確かめていない区分 2）"},
 		"委任管理者の policy だけが付いていない": {`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-manage"},{"PolicyName":"tabp-admin-ci-apply-identity-members"},{"PolicyName":"tabp-admin-ci-apply-identity-governance"}]}`, workloadAttached,
 			nil, []string{delegatedAbsent}, nil, nil, permissionsBase + governanceGated + workloadGatedCount + budgetsGatedCount, "# 結果: 191 件のうち NG 0 件（確かめていない区分 1）"},
 		"workload の policy が付いていない": {governanceAttached, noneAttached, nil, nil, []string{workloadAbsent}, []string{budgetsAbsent},
-			permissionsBase + governanceGated + delegatedGated, "# 結果: 176 件のうち NG 0 件（確かめていない区分 2）"},
+			permissionsBase + governanceGated + delegatedGated, "# 結果: 177 件のうち NG 0 件（確かめていない区分 2）"},
 		"どちらも付いていない": {noneAttached, noneAttached, []string{governanceAbsent}, []string{delegatedAbsent}, []string{workloadAbsent}, []string{budgetsAbsent}, permissionsBase,
 			"# 結果: 128 件のうち NG 0 件（確かめていない区分 4）"},
 	} {
