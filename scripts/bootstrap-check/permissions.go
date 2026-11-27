@@ -165,6 +165,11 @@ func simCheck(r simRow, n names) check {
 				return verdict{reason: "応答を読めない"}, nil
 			}
 
+			if len(r.docs) > 0 {
+				// simulate-custom-policy は、渡した文書のすべての条件キーを足りないものとして返す。行に関わる文のキーだけを数える。
+				keys = relevantMissing(r.docs, action, r.resource, keys)
+			}
+
 			got = append(got, action)
 			missing = append(missing, keys...)
 

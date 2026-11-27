@@ -1054,7 +1054,7 @@ func Test_checkPlanPermissions(t *testing.T) {
 		assert.Equal(t, "# 結果: "+strconv.Itoa(planPermTotal)+" 件のうち NG 1 件", lines(out)[len(lines(out))-1])
 	})
 
-	t.Run("simulate の失敗の理由はエラーコードだけで、stderr の ARN を出さない", func(t *testing.T) {
+	t.Run("simulate の失敗の理由はエラーコードと ARN を伏せた本文で、stderr の ARN を出さない", func(t *testing.T) {
 		t.Parallel()
 
 		f, d := setup(t, identityPlanChanges(), nil)
@@ -1071,12 +1071,12 @@ func Test_checkPlanPermissions(t *testing.T) {
 		var out bytes.Buffer
 
 		require.ErrorIs(t, checkPlanPermissions(opts, &out, d), errMismatch)
-		assert.Contains(t, lines(out), "NG  plan: iam:SimulateCustomPolicy が allowed（呼び出しが失敗: AccessDenied）")
+		assert.Contains(t, lines(out), "NG  plan: iam:SimulateCustomPolicy が allowed（呼び出しが失敗: AccessDenied: User: <arn> is not authorized to perform: iam:SimulateCustomPolicy）")
 		assert.NotContains(t, out.String(), "arn:")
 		assert.NotContains(t, out.String(), "assumed-role")
 	})
 
-	t.Run("state の鍵を読めない理由も、エラーコードだけを出す", func(t *testing.T) {
+	t.Run("state の鍵を読めない理由も、エラーコードと ARN を伏せた本文だけを出す", func(t *testing.T) {
 		t.Parallel()
 
 		f, d := setup(t, identityPlanChanges(), nil)
@@ -1085,7 +1085,7 @@ func Test_checkPlanPermissions(t *testing.T) {
 		var out bytes.Buffer
 
 		require.ErrorIs(t, checkPlanPermissions(opts, &out, d), errMismatch)
-		assert.Contains(t, lines(out), "NG  state の鍵の ARN（alias/tabp-admin-tfstate）を読めない（呼び出しが失敗: NotFoundException）")
+		assert.Contains(t, lines(out), "NG  state の鍵の ARN（alias/tabp-admin-tfstate）を読めない（呼び出しが失敗: NotFoundException: Alias <arn> is not found.）")
 		assert.Contains(t, lines(out), "NG  apply-identity: kms:DescribeKey kms:GetKeyPolicy kms:GetKeyRotationStatus kms:ListResourceTags kms:EnableKeyRotation kms:PutKeyPolicy が allowed（state の鍵の ARN を読めない）")
 		assert.Equal(t, "# 結果: "+strconv.Itoa(planPermTotal+1)+" 件のうち NG 9 件", lines(out)[len(lines(out))-1])
 		assert.NotContains(t, out.String(), "arn:")
@@ -1319,6 +1319,85 @@ func Test_checkPlanPermissions(t *testing.T) {
 		}
 	})
 
+	// withMissing は、simulate-custom-policy の各結果の MissingContextValues に keys を足す handler。
+	withMissing := func(inner func([]string) (awsResult, bool), keys ...string) func([]string) (awsResult, bool) {
+		return func(args []string) (awsResult, bool) {
+			r, ok := inner(args)
+			if !ok || r.failed() {
+				return r, ok
+			}
+
+			var v map[string][]map[string]any
+			require.NoError(t, json.Unmarshal(r.stdout, &v))
+
+			for _, e := range v["EvaluationResults"] {
+				e["MissingContextValues"] = keys
+			}
+
+			b, err := json.Marshal(v)
+			require.NoError(t, err)
+
+			return okResult(string(b)), true
+		}
+	}
+
+	t.Run("simulate-custom-policy が文書のすべての条件キーを足りないと返しても、行に関わらないキーは数えない", func(t *testing.T) {
+		t.Parallel()
+
+		f, d := setup(t, identityPlanChanges(), nil)
+		f.handler = withMissing(f.handler, "kms:BypassPolicyLockoutSafetyCheck", "iam:PolicyARN", "aws:TagKeys")
+
+		var out bytes.Buffer
+
+		require.NoError(t, checkPlanPermissions(opts, &out, d))
+		assert.NotContains(t, out.String(), "足りない context")
+	})
+
+	t.Run("行に関わる Deny の文の条件キーが足りなければ、context を与える行は NG", func(t *testing.T) {
+		t.Parallel()
+
+		doc := `{"Version":"2012-10-17","Statement":[{"Sid":"unlockidentity","Effect":"Allow","Action":"s3:GetObject","Resource":"*"},` +
+			`{"Sid":"DenyOutside","Effect":"Deny","Action":"s3:ListBucket","Resource":"*","Condition":{"StringNotEquals":{"aws:RequestedRegion":["ap-northeast-1"]}}}]}`
+		changes := withChange(identityPlanChanges(), `aws_iam_role_policy.this["unlock_identity"]`,
+			setAfter(jsonOf(map[string]any{"name": "unlock_identity", "role": "tabp-admin-ci-unlock-identity", "policy": doc}), `{}`))
+		f, d := setup(t, changes, nil)
+		f.handler = withMissing(f.handler, "aws:RequestedRegion", "kms:KeySpec")
+
+		var out bytes.Buffer
+
+		require.ErrorIs(t, checkPlanPermissions(opts, &out, d), errMismatch)
+		// context を与える unlock-identity の ListBucket の2行（prefix が lock と state）。
+		assert.Contains(t, lines(out), "NG  unlock-identity: s3:ListBucket が allowed（評価に足りない context: aws:RequestedRegion）")
+		assert.Contains(t, lines(out), "NG  unlock-identity: s3:ListBucket が implicitDeny（評価に足りない context: aws:RequestedRegion）")
+		assert.Equal(t, "# 結果: "+strconv.Itoa(planPermTotal)+" 件のうち NG 2 件", lines(out)[len(lines(out))-1])
+	})
+
+	t.Run("arn の型の context の行の ValidationError は、本文を出しても ARN・ID・context の値を出さない", func(t *testing.T) {
+		t.Parallel()
+
+		f, d := setup(t, identityPlanChanges(), nil)
+		inner := f.handler
+		f.handler = func(args []string) (awsResult, bool) {
+			if slices.ContainsFunc(args, func(a string) bool { return strings.HasSuffix(a, ",ContextKeyType=arn") }) {
+				entry := args[slices.Index(args, "--context-entries")+1]
+
+				return failed("\nAn error occurred (ValidationError) when calling the SimulateCustomPolicy operation: Invalid context entry " + entry +
+					" for resource arn:aws:iam::" + testAccount + ":role/tabp-admin-ci-apply in account " + testAccount + "\n"), true
+			}
+
+			return inner(args)
+		}
+
+		var out bytes.Buffer
+
+		require.ErrorIs(t, checkPlanPermissions(opts, &out, d), errMismatch)
+		assert.Contains(t, lines(out), "NG  apply-identity: iam:AttachRolePolicy が allowed（呼び出しが失敗: ValidationError: Invalid context entry <context> for resource <arn> in account <account>）")
+
+		for _, v := range []string{"arn:", "ContextKey", testAccount, "tabp-admin-ci-apply-identity-governance", "AdministratorAccess"} {
+			assert.NotContains(t, out.String(), v)
+		}
+	})
+
 	t.Run("CI の role の1つだけ文書が決まらなければ、その role の行を NG にし、ほかの行は評価して errMismatch", func(t *testing.T) {
 		t.Parallel()
 
@@ -1347,4 +1426,99 @@ func Test_checkPlanPermissions(t *testing.T) {
 
 		assert.Equal(t, planPermTotal-len(permUnlockDescs)+1, sims, "決まらない role の行は aws を呼ばない")
 	})
+}
+
+func Test_relevantMissing(t *testing.T) {
+	t.Parallel()
+
+	deny := `{"Statement":[{"Effect":"Allow","Action":"s3:ListBucket","Resource":"arn:aws:s3:::b","Condition":{"StringLike":{"s3:prefix":"x/*"}}},` +
+		`{"Effect":"Deny","Action":["s3:List*"],"Resource":"*","Condition":{"StringNotEquals":{"aws:RequestedRegion":["r"]}}},` +
+		`{"Effect":"Allow","Action":"kms:Decrypt","Resource":"*","Condition":{"StringEquals":{"kms:KeySpec":"x"}}}]}`
+
+	for name, tc := range map[string]struct {
+		docs     []string
+		action   string
+		resource string
+		keys     []string
+		want     []string
+	}{
+		"関わる Deny の文のキーは残す":      {[]string{deny}, "s3:ListBucket", "arn:aws:s3:::b", []string{"aws:RequestedRegion", "kms:KeySpec"}, []string{"aws:RequestedRegion"}},
+		"関わらない文のキーだけなら空":         {[]string{deny}, "s3:ListBucket", "arn:aws:s3:::b", []string{"kms:KeySpec", "ec2:Region"}, []string{}},
+		"Resource が当たらない文のキーは除く": {[]string{deny}, "s3:ListBucket", "arn:aws:s3:::other", []string{"s3:prefix", "aws:RequestedRegion"}, []string{"aws:RequestedRegion"}},
+		"キーは大文字小文字を区別しない":        {[]string{deny}, "S3:listbucket", "arn:aws:s3:::b", []string{"AWS:RequestedRegion"}, []string{"AWS:RequestedRegion"}},
+		"複数の文書の文を合わせる":           {[]string{`{"Statement":[]}`, deny}, "kms:Decrypt", "arn:k", []string{"kms:KeySpec", "s3:prefix"}, []string{"kms:KeySpec"}},
+		"Statement が object 1つで Action と Resource が文字列でも読む": {[]string{`{"Statement":{"Effect":"Deny","Action":"iam:PassRole","Resource":"arn:r","Condition":{"StringNotEquals":{"iam:PassedToService":"x"}}}}`},
+			"iam:PassRole", "arn:r", []string{"iam:PassedToService", "aws:TagKeys"}, []string{"iam:PassedToService"}},
+		"NotAction の文は当たるとみなす": {[]string{`{"Statement":[{"Effect":"Deny","NotAction":"s3:*","Resource":"*","Condition":{"Bool":{"aws:SecureTransport":"false"}}}]}`},
+			"s3:GetObject", "arn:x", []string{"aws:SecureTransport"}, []string{"aws:SecureTransport"}},
+		"文書を読めなければ keys をそのまま返す": {[]string{"x"}, "s3:A", "arn:x", []string{"a", "b"}, []string{"a", "b"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tc.want, relevantMissing(tc.docs, tc.action, tc.resource, tc.keys))
+		})
+	}
+}
+
+func Test_statementApplies(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		st       string
+		action   string
+		resource string
+		want     bool
+	}{
+		"Action と Resource が当たる":              {`{"Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*"}`, "s3:GetObject", "arn:aws:s3:::b/k", true},
+		"Action が当たらない":                       {`{"Action":["s3:PutObject"],"Resource":"*"}`, "s3:GetObject", "arn:x", false},
+		"Action の wildcard":                   {`{"Action":"s3:Get*","Resource":"*"}`, "s3:GetObject", "arn:x", true},
+		"Action は大文字小文字を区別しない":                {`{"Action":"S3:GETOBJECT","Resource":"*"}`, "s3:GetObject", "arn:x", true},
+		"Resource が当たらない":                     {`{"Action":"*","Resource":"arn:aws:s3:::b"}`, "s3:GetObject", "arn:aws:s3:::c", false},
+		"NotAction を持てば当たる":                   {`{"NotAction":"s3:GetObject","Resource":"*"}`, "s3:GetObject", "arn:x", true},
+		"NotResource を持てば当たる":                 {`{"Action":"s3:GetObject","NotResource":"arn:x"}`, "s3:GetObject", "arn:x", true},
+		"行の resource が * ならどの Resource にも当たる": {`{"Action":"kms:ListAliases","Resource":"arn:aws:kms:r:1:key/k"}`, "kms:ListAliases", "*", true},
+		"Action を読めなければ当たる":                   {`{"Resource":"*"}`, "s3:GetObject", "arn:x", true},
+		"object でなければ当たる":                     {`"x"`, "s3:GetObject", "arn:x", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			var st any
+			require.NoError(t, json.Unmarshal([]byte(tc.st), &st))
+
+			assert.Equal(t, tc.want, statementApplies(st, tc.action, tc.resource))
+		})
+	}
+}
+
+func Test_wildcardMatch(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		pattern, s string
+		want       bool
+	}{
+		{"s3:GetObject", "s3:GetObject", true},
+		{"s3:GetObject", "s3:GetObjectAcl", false},
+		{"s3:Get*", "s3:Get", true},
+		{"s3:Get*", "s3:Ge", false},
+		{"s3:*Object", "s3:Object", true},
+		{"s3:*Object", "s3:GetObjects", false},
+		{"s3:Get?bject", "s3:GetObject", true},
+		{"s3:Get?bject", "s3:Getbject", false},
+		{"s3:Get??bject", "s3:GetObject", false},
+		{"*", "", true},
+		{"?", "", false},
+		{"", "", true},
+		{"a*b*c", "aXbYbZc", true},
+		{"a*b*c", "aXbYbZ", false},
+		{"S3:GETOBJECT", "s3:getobject", true},
+	} {
+		t.Run(tc.pattern+" と "+tc.s, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tc.want, wildcardMatch(tc.pattern, tc.s))
+		})
+	}
 }

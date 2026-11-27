@@ -457,7 +457,7 @@ func Test_query_object(t *testing.T) {
 		})
 	}
 
-	t.Run("terse なら、呼び出しの失敗の理由は stderr の文ではなくエラーコード", func(t *testing.T) {
+	t.Run("terse なら、呼び出しの失敗の理由はエラーコードと、ARN を伏せた本文", func(t *testing.T) {
 		t.Parallel()
 
 		q := newQuery(func(...string) awsResult {
@@ -468,7 +468,7 @@ func Test_query_object(t *testing.T) {
 		_, reason, err := q.object("iam", "get-x")
 
 		require.NoError(t, err)
-		assert.Equal(t, "呼び出しが失敗: AccessDenied", reason)
+		assert.Equal(t, "呼び出しが失敗: AccessDenied: User: <arn>", reason)
 	})
 
 	t.Run("起動できなければ errAWSStart", func(t *testing.T) {
@@ -491,10 +491,16 @@ func Test_query_failure(t *testing.T) {
 		stderr string
 		want   string
 	}{
-		"terse でなければ stderr の1行目":         {false, "\n" + arnLine + "\nmore", arnLine},
-		"terse ならエラーコードだけで、ARN を出さない":     {true, "\n" + arnLine + "\nmore", "AccessDenied"},
-		"terse でエラーコードが無ければ、文を出さないことを述べる": {true, "arn:aws:iam::123456789012:role/x", "エラーの文は出さない"},
-		"terse で stderr が空":               {true, "", "エラーの文は出さない"},
+		"terse でなければ stderr の1行目":          {false, "\n" + arnLine + "\nmore", arnLine},
+		"terse ならエラーコードと、ARN を伏せて1行に縮めた本文": {true, "\n" + arnLine + "\nmore", "AccessDenied: User: <arn> is not authorized more"},
+		"terse で、本文の context の entry・ARN・12桁の数字を伏せる": {true,
+			"An error occurred (ValidationError) when calling the SimulateCustomPolicy operation: Invalid value " +
+				"ContextKeyName=iam:PolicyARN,ContextKeyValues=arn:aws:iam::123456789012:policy/tabp-admin-ci-x,ContextKeyType=arn for key iam:PolicyARN (arn:aws:iam::aws:policy/AdministratorAccess) in 210987654321",
+			"ValidationError: Invalid value <context> for key iam:PolicyARN (<arn>) in <account>"},
+		"terse で本文が無ければコードだけ":                      {true, "An error occurred (Throttling)", "Throttling"},
+		"terse で operation の前置きが無ければ、コードの後ろを本文にする": {true, "An error occurred (X): bad arn:aws:iam::123456789012:role/r", "X: : bad <arn>"},
+		"terse でエラーコードが無ければ、文を出さないことを述べる":          {true, "arn:aws:iam::123456789012:role/x", "エラーの文は出さない"},
+		"terse で stderr が空": {true, "", "エラーの文は出さない"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -502,7 +508,33 @@ func Test_query_failure(t *testing.T) {
 			q := newQuery(nil, testRegion)
 			q.terse = tc.terse
 
-			assert.Equal(t, tc.want, q.failure(tc.stderr))
+			got := q.failure(tc.stderr)
+
+			assert.Equal(t, tc.want, got)
+
+			if tc.terse {
+				for _, v := range []string{"arn:", "123456789012", "210987654321", "ContextKey", "tabp-admin-ci-x"} {
+					assert.NotContains(t, got, v)
+				}
+			}
+		})
+	}
+}
+
+func Test_terseBody(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct{ in, want string }{
+		"ARN を伏せる":             {"for arn:aws:iam::aws:policy/A, and arn:aws:s3:::b/k.", "for <arn>, and <arn>"},
+		"context の entry を伏せる": {"bad ContextKeyName=k,ContextKeyValues=v,ContextKeyType=string here", "bad <context> here"},
+		"12桁の数字を伏せる":           {"account 123456789012.", "account <account>."},
+		"改行と連続する空白を1つに縮める":     {"  a\n\tb   c\n", "a b c"},
+		"空": {"", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tc.want, terseBody(tc.in))
 		})
 	}
 }

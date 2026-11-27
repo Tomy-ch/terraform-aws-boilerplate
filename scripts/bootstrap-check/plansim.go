@@ -582,3 +582,88 @@ func checkPlanPermissions(o planPermOptions, out io.Writer, d deps) error {
 
 	return runPlanChecks(q, out, planPermissionGroups(n, policies, sk, skReason))
 }
+
+// relevantMissing は、keys（simulate-custom-policy が返した足りない context）のうち、docs の文のうち action と
+// resource に当たる文（statementApplies）の Condition に出てくるキーだけ。キーは大文字小文字を区別しない。文書を
+// 読めなければ keys をそのまま返す。
+func relevantMissing(docs []string, action, resource string, keys []string) []string {
+	relevant := map[string]bool{}
+
+	for _, d := range docs {
+		doc, ok := decodeObject([]byte(d))
+		if !ok {
+			return keys
+		}
+
+		for _, st := range arrOf(doc["Statement"]) {
+			if !statementApplies(st, action, resource) {
+				continue
+			}
+
+			conditions, _ := at(st, "Condition").(map[string]any)
+			for _, byKey := range conditions {
+				m, _ := byKey.(map[string]any)
+				for k := range m {
+					relevant[strings.ToLower(k)] = true
+				}
+			}
+		}
+	}
+
+	return slices.DeleteFunc(slices.Clone(keys), func(k string) bool { return !relevant[strings.ToLower(k)] })
+}
+
+// statementApplies は、文 st が action と resource の要求に当たること。NotAction・NotResource を持つ文、Action や
+// Resource を読めない文は当たるとみなす（足りないキーを多く数える側）。resource が `*` の行は、どの Resource にも当たる。
+func statementApplies(st any, action, resource string) bool {
+	m, ok := st.(map[string]any)
+	if !ok {
+		return true
+	}
+
+	if _, not := m["NotAction"]; !not {
+		patterns, ok := strs(arrOf(m["Action"]))
+		if ok && !slices.ContainsFunc(patterns, func(p string) bool { return wildcardMatch(p, action) }) {
+			return false
+		}
+	}
+
+	if _, not := m["NotResource"]; !not && resource != "*" {
+		patterns, ok := strs(arrOf(m["Resource"]))
+		if ok && !slices.ContainsFunc(patterns, func(p string) bool { return wildcardMatch(p, resource) }) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// wildcardMatch は、IAM の pattern（`*` は0文字以上、`?` は1文字）が s の全体に当たること。大文字小文字を区別しない。
+func wildcardMatch(pattern, s string) bool {
+	p, t := []rune(strings.ToLower(pattern)), []rune(strings.ToLower(s))
+	star, mark := -1, 0
+	i, j := 0, 0
+
+	for j < len(t) {
+		switch {
+		case i < len(p) && (p[i] == '?' || p[i] == t[j]):
+			i++
+			j++
+		case i < len(p) && p[i] == '*':
+			star, mark = i, j
+			i++
+		case star >= 0:
+			i = star + 1
+			mark++
+			j = mark
+		default:
+			return false
+		}
+	}
+
+	for i < len(p) && p[i] == '*' {
+		i++
+	}
+
+	return i == len(p)
+}
