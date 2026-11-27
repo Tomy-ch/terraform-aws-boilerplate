@@ -149,6 +149,7 @@ var (
 		"apply-identity $iam:role/aws-service-role/inspector2.amazonaws.com/AWSServiceRoleForAmazonInspector2 [iam:AWSServiceName=inspector2.amazonaws.com]: 1 件が allowed",
 		"apply-identity $iam:role/aws-service-role/inspector2.amazonaws.com/AWSServiceRoleForAmazonInspector2 [iam:AWSServiceName=guardduty.amazonaws.com]: 1 件が implicitDeny",
 		"apply-identity $iam:role/aws-service-role/agentless.inspector2.amazonaws.com/AWSServiceRoleForAmazonInspector2Agentless [iam:AWSServiceName=agentless.inspector2.amazonaws.com]: 1 件が allowed",
+		"apply-identity $iam:role/aws-service-role/ami.inspector2.amazonaws.com/AWSServiceRoleForAmazonInspector2Ami [iam:AWSServiceName=ami.inspector2.amazonaws.com]: 1 件が allowed",
 	}
 	permSLRDescs = []string{
 		"apply-identity $slr [iam:AWSServiceName=management.chatbot.amazonaws.com]: 1 件が allowed",
@@ -270,7 +271,7 @@ const (
 	// permissions の件数。条件つきの確認の有無で変わる。
 	permissionsBase     = 128
 	governanceGated     = 31
-	delegatedGated      = 17
+	delegatedGated      = 18
 	delegatedAbsent     = "  委任管理者の policy がまだ付いていないので、指定と解除の権限は確かめない（委任管理者の policy を作って付ける apply の後にもう一度走らせる）"
 	delegatedUnknown    = "  apply-identity の role の managed policy を確かめられないので（上の NG）、委任管理者の指定と解除の権限は確かめない"
 	workloadGatedCount  = 28
@@ -458,6 +459,7 @@ var permRowActions = []string{
 	"iam:CreateServiceLinkedRole ; iam:AWSServiceName = inspector2.amazonaws.com (string)",
 	"iam:CreateServiceLinkedRole ; iam:AWSServiceName = guardduty.amazonaws.com (string)",
 	"iam:CreateServiceLinkedRole ; iam:AWSServiceName = agentless.inspector2.amazonaws.com (string)",
+	"iam:CreateServiceLinkedRole ; iam:AWSServiceName = ami.inspector2.amazonaws.com (string)",
 	// Chatbot の service-linked role
 	"iam:CreateServiceLinkedRole ; iam:AWSServiceName = management.chatbot.amazonaws.com (string)",
 	"iam:CreateServiceLinkedRole ; iam:AWSServiceName = config.amazonaws.com (string)",
@@ -1373,13 +1375,13 @@ func Test_permissionsSteps(t *testing.T) {
 		result                                 string
 	}{
 		"条件つきの確認がすべて走る": {governanceAttached, workloadAttached, nil, nil, nil, nil, permissionsBase + governanceGated + delegatedGated + workloadGatedCount + budgetsGatedCount,
-			"# 結果: 208 件のうち NG 0 件"},
+			"# 結果: 209 件のうち NG 0 件"},
 		"統制の policy が付いていない": {noneAttached, workloadAttached, []string{governanceAbsent}, []string{delegatedAbsent}, nil, nil, permissionsBase + workloadGatedCount + budgetsGatedCount,
 			"# 結果: 160 件のうち NG 0 件（確かめていない区分 2）"},
 		"委任管理者の policy だけが付いていない": {`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-manage"},{"PolicyName":"tabp-admin-ci-apply-identity-members"},{"PolicyName":"tabp-admin-ci-apply-identity-governance"}]}`, workloadAttached,
 			nil, []string{delegatedAbsent}, nil, nil, permissionsBase + governanceGated + workloadGatedCount + budgetsGatedCount, "# 結果: 191 件のうち NG 0 件（確かめていない区分 1）"},
 		"workload の policy が付いていない": {governanceAttached, noneAttached, nil, nil, []string{workloadAbsent}, []string{budgetsAbsent},
-			permissionsBase + governanceGated + delegatedGated, "# 結果: 176 件のうち NG 0 件（確かめていない区分 2）"},
+			permissionsBase + governanceGated + delegatedGated, "# 結果: 177 件のうち NG 0 件（確かめていない区分 2）"},
 		"どちらも付いていない": {noneAttached, noneAttached, []string{governanceAbsent}, []string{delegatedAbsent}, []string{workloadAbsent}, []string{budgetsAbsent}, permissionsBase,
 			"# 結果: 128 件のうち NG 0 件（確かめていない区分 4）"},
 	} {
