@@ -67,4 +67,9 @@ run "outputs" {
     condition     = output.bootstrap_read_role == { name = "${var.project}-bootstrap-read", path = "/bootstrap/" }
     error_message = "bootstrap_read_role が、メンバーへ配る読み取りの role の名前と path を返していません。"
   }
+
+  assert {
+    condition     = output.member_break_glass_role == { name = "${var.project}-break-glass", path = "/break-glass/" }
+    error_message = "member_break_glass_role が、メンバーへ配る break-glass の role の名前と path を返していません。"
+  }
 }
