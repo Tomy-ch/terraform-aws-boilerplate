@@ -104,11 +104,13 @@ func parseAccountArgs(args []string) (accountOptions, error) {
 	return o, nil
 }
 
-// query は、aws の呼び出しに --output と --region を付けて起動し、同じ引数の結果を使い回す。
+// query は、aws の呼び出しに --output と --region を付けて起動し、同じ引数の結果を使い回す。terse なら、失敗の理由に
+// stderr の文を使わず、エラーコードだけを使う（stderr の文は ARN を含む。公開されるログに出す経路で使う）。
 type query struct {
 	aws    awsFunc
 	region string
 	cache  map[string]awsResult
+	terse  bool
 }
 
 func newQuery(aws awsFunc, region string) *query {
@@ -149,7 +151,7 @@ func (q *query) object(args ...string) (map[string]any, string, error) {
 	}
 
 	if r.failed() {
-		return nil, "呼び出しが失敗: " + firstLine(r.stderr), nil
+		return nil, "呼び出しが失敗: " + q.failure(r.stderr), nil
 	}
 
 	v, ok := decodeObject(r.stdout)
@@ -158,6 +160,20 @@ func (q *query) object(args ...string) (map[string]any, string, error) {
 	}
 
 	return v, "", nil
+}
+
+// failure は、aws の失敗の stderr から理由に使う文。terse なら `An error occurred (<code>)` のコードだけで、コードが
+// 無ければ文を出さないことを述べる。
+func (q *query) failure(stderr string) string {
+	if !q.terse {
+		return firstLine(stderr)
+	}
+
+	if m := awsErrorCode.FindStringSubmatch(stderr); m != nil {
+		return m[1]
+	}
+
+	return "エラーの文は出さない"
 }
 
 // decodeObject は、JSON の object を読む。空、JSON でない、object でない（null を含む）ものは false。

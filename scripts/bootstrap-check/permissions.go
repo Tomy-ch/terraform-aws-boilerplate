@@ -21,7 +21,8 @@ const (
 
 // simRow は、role の policy を resource に対して評価する simulate-principal-policy の1回。actions の判定が
 // すべて want であれば ok。bucketPolicy なら、doc を resource の Bucket Policy として含めて評価する。
-// unresolved が空でなければ、aws を呼ばずにそれを理由とする NG にする。
+// docs を持てば、role に付いた policy ではなく docs の文書を simulate-custom-policy で評価する。bucketPolicy と docs を
+// 併せ持つ行は評価しない（simCheck が NG にする）。unresolved が空でなければ、aws を呼ばずにそれを理由とする NG にする。
 type simRow struct {
 	want         string
 	role         string
@@ -30,6 +31,7 @@ type simRow struct {
 	actions      []string
 	bucketPolicy bool
 	doc          string
+	docs         []string
 	unresolved   string
 }
 
@@ -90,6 +92,19 @@ func (r simRow) desc() string {
 }
 
 func (r simRow) args(n names) []string {
+	if len(r.docs) > 0 {
+		// --policy-input-list は、文書の文字列を要素とする JSON の配列を1つの引数で受ける。file:// で文書を渡すと、
+		// aws-cli は文字列を1文字ずつの要素に分けて送る。
+		list, _ := json.Marshal(r.docs)
+		args := []string{"iam", "simulate-custom-policy", "--policy-input-list", string(list), "--resource-arns", r.resource}
+
+		if len(r.context) > 0 {
+			args = append(append(args, "--context-entries"), r.context...)
+		}
+
+		return append(append(args, "--action-names"), r.actions...)
+	}
+
 	role := n.roleARN(r.role)
 	args := []string{"iam", "simulate-principal-policy", "--policy-source-arn", role}
 
@@ -116,6 +131,10 @@ func simCheck(r simRow, n names) check {
 	return check{desc: r.desc(), eval: func(q *query) (verdict, error) {
 		if r.unresolved != "" {
 			return verdict{reason: r.unresolved}, nil
+		}
+
+		if r.bucketPolicy && len(r.docs) > 0 {
+			return verdict{reason: "Bucket Policy を含む行は、plan の文書では評価しない"}, nil
 		}
 
 		v, reason, err := q.object(r.args(n)...)
@@ -245,6 +264,14 @@ func governanceGate(q *query, n names) (gateResult, gateResult, error) {
 		return unknown, gateResult{state: gateUnknown}, nil
 	}
 
+	governance, delegated := governanceGateOf(n, got)
+
+	return governance, delegated, nil
+}
+
+// governanceGateOf は、apply-identity の role に付く managed policy の名前の一覧 got から、統制の側と委任管理者の側の
+// 付き方を決める。
+func governanceGateOf(n names, got []string) (gateResult, gateResult) {
 	delegated := gateResult{state: gateAbsent}
 	if slices.Contains(got, n.roleName(n.applyIdentity+"-governance-2")) {
 		delegated = gateResult{state: gateAttached}
@@ -256,11 +283,11 @@ func governanceGate(q *query, n names) (gateResult, gateResult, error) {
 
 	switch {
 	case governance && members:
-		return gateResult{state: gateAttached}, delegated, nil
+		return gateResult{state: gateAttached}, delegated
 	case !governance && !members:
-		return gateResult{state: gateAbsent}, delegated, nil
+		return gateResult{state: gateAbsent}, delegated
 	default:
-		return gateResult{state: gateUnknown, ng: fixedCheck(n.applyIdentity+" に、統制の policy とメンバーの role の policy の片方だけが付いている", verdict{reason: strings.Join(got, "、")})}, delegated, nil
+		return gateResult{state: gateUnknown, ng: fixedCheck(n.applyIdentity+" に、統制の policy とメンバーの role の policy の片方だけが付いている", verdict{reason: strings.Join(got, "、")})}, delegated
 	}
 }
 
@@ -270,17 +297,24 @@ func workloadGate(q *query, n names) (gateResult, error) {
 		return gateResult{}, err
 	}
 
+	if reason != "" {
+		return gateResult{state: gateUnknown, ng: fixedCheck(n.apply+": list-attached-role-policies を読めないので、workload の3つの policy が付いているかを決められない", verdict{reason: reason})}, nil
+	}
+
+	return workloadGateOf(n, got), nil
+}
+
+// workloadGateOf は、apply の role に付く managed policy の名前（並べ替えたもの）got から、workload の側の付き方を決める。
+func workloadGateOf(n names, got []string) gateResult {
 	want := []string{n.roleName(n.apply + "-workload"), n.roleName(n.apply + "-workload-2"), n.roleName(n.apply + "-workload-read")}
 
 	switch {
-	case reason != "":
-		return gateResult{state: gateUnknown, ng: fixedCheck(n.apply+": list-attached-role-policies を読めないので、workload の3つの policy が付いているかを決められない", verdict{reason: reason})}, nil
 	case slices.Equal(got, want):
-		return gateResult{state: gateAttached}, nil
+		return gateResult{state: gateAttached}
 	case len(got) == 0:
-		return gateResult{state: gateAbsent}, nil
+		return gateResult{state: gateAbsent}
 	default:
-		return gateResult{state: gateUnknown, ng: fixedCheck("apply の role に付く managed policy が workload の3つの policy ではない", verdict{reason: strings.Join(got, "、")})}, nil
+		return gateResult{state: gateUnknown, ng: fixedCheck("apply の role に付く managed policy が workload の3つの policy ではない", verdict{reason: strings.Join(got, "、")})}
 	}
 }
 
@@ -387,6 +421,8 @@ func permissionSections(n names, sk, skReason string) []section {
 			sim(allowed, apply, b, "s3:ListBucket", "s3:GetEncryptionConfiguration"),
 			sim(implicitDeny, plan, key, "s3:PutObject"),
 			sim(implicitDeny, plan, n.roleARN(plan), "iam:PutRolePolicy"),
+			// CI の plan の job が plan の文書を評価する（plan-permissions）。
+			sim(allowed, plan, "*", "iam:SimulateCustomPolicy"),
 			sim(implicitDeny, plan, pb+"/pr/1/x", "s3:DeleteObject", "s3:DeleteObjectVersion"),
 			sim(implicitDeny, plan, pb+"/x", "s3:PutObject"),
 			sim(implicitDeny, ai, pb+"/pr/1/x", "s3:PutObject", "s3:DeleteObject"),
@@ -614,8 +650,7 @@ func permissionSections(n names, sk, skReason string) []section {
 	}
 }
 
-// otherRegion は、provider の region でない region。workload の権限は provider の region と us-east-1 に及び、ほかの
-// region には及ばない（ADR-0208 決定4）。
+// otherRegion は、workload の権限が及ばない region。権限は provider の region と us-east-1 に及ぶ（ADR-0208 決定4）。
 func otherRegion(n names) string {
 	if n.region == "us-west-2" {
 		return "eu-west-1"

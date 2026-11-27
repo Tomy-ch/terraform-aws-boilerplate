@@ -50,6 +50,10 @@ type toolFunc = toolrun.Func
 func command(ctx context.Context, dir string, env []string, step string, _ ...string) *exec.Cmd {
 	var cmd *exec.Cmd
 	switch step {
+	case stepCIPermissions:
+		// bootstrap-check の置き場はリポジトリ直下を知る commandAt が決める。
+		cmd = exec.CommandContext(ctx, bootstrapCheckBin)
+		cmd.Err = xerrors.New("bootstrap-check の置き場を決められません（commandAt を使ってください）")
 	case stepCallerIdentity:
 		cmd = exec.CommandContext(ctx, "aws", "sts", "get-caller-identity", "--query", "[Account,Arn]", "--output", "text")
 	case stepListAliases:
@@ -90,6 +94,38 @@ func command(ctx context.Context, dir string, env []string, step string, _ ...st
 	cmd.Env = env
 
 	return cmd
+}
+
+// commandAt は、root をリポジトリ直下とする toolFunc の実物です。bootstrap-check の段だけを permissionsCommand で組み、
+// ほかの段は command に渡します。
+func commandAt(root string) toolFunc {
+	return func(ctx context.Context, dir string, env []string, step string, operands ...string) *exec.Cmd {
+		if step != stepCIPermissions {
+			return command(ctx, dir, env, step, operands...)
+		}
+		cmd := permissionsCommand(ctx, root, operands)
+		cmd.Dir, cmd.Env = dir, env
+
+		return cmd
+	}
+}
+
+// permissionsCommand は、bootstrap-check の plan-permissions を起動するコマンドです。bootstrap-check は make が build した
+// root の tmp/bin の下のものです。operand は project と region で、option の値として `-<名前>=<値>` の1つの引数にし、
+// option と読ませません。組み立てられなければ、起動せずに道具を起動できない（toolrun.ErrTool）とするコマンドを返します。
+func permissionsCommand(ctx context.Context, root string, operands []string) *exec.Cmd {
+	bin, err := filepath.Abs(filepath.Join(root, bootstrapCheckBin))
+	if err == nil && len(operands) != 2 {
+		err = xerrors.Newf("bootstrap-check の operand は project と region の2つです（%d 個）", len(operands))
+	}
+	if err != nil {
+		cmd := exec.CommandContext(ctx, bootstrapCheckBin)
+		cmd.Err = err
+
+		return cmd
+	}
+
+	return exec.CommandContext(ctx, bin, "plan-permissions", "-plan", "plan.json", "-project="+operands[0], "-region="+operands[1]) //nolint:gosec // G204: 道具は tmp/bin の bootstrap-check、option はリテラルで、project と region は呼び出し側が形を確かめた値を option の値にだけ置く
 }
 
 // localEnv は、aws と terraform に渡す環境です。資格情報・引数・対象の state・provider を変える変数を外し
