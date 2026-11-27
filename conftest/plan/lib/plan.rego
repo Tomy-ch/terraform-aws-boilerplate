@@ -48,7 +48,21 @@ policy_variable(v) if contains(v, "${")
 # 入れ子や既定値の中の } と改行でも、当たりうる範囲を狭めない（ADR-0402 決定21）。
 policy_variable_as_wildcard(p) := regex.replace(p, `(?s)\$\{(.*\}|.*$)`, "*")
 
-iam_match(pattern, value) if regex.match(sprintf("^%s$", [iam_regex(pattern)]), value)
+# wildcard を持たない pattern は文字列そのものと比べる。正規表現を組み立てて評価するより安い。
+iam_match(pattern, value) if {
+	is_string(pattern)
+	not iam_wildcard(pattern)
+	pattern == value
+}
+
+iam_match(pattern, value) if {
+	iam_wildcard(pattern)
+	regex.match(sprintf("^%s$", [iam_regex(pattern)]), value)
+}
+
+iam_wildcard(p) if contains(p, "*")
+
+iam_wildcard(p) if contains(p, "?")
 
 # 鍵の暗号操作と grant。Key Policy のアカウントへの委任と IAM の Allow に置かない（ADR-0301 決定12）。
 crypto_actions := {
@@ -77,12 +91,24 @@ layer_decl_ok if {
 	is_object(data.layer_decl.inline_owned)
 }
 
+# attachments を1回だけ回し、型ごとに引ける形にする。保護の対象の型ごとに attachments を回し直すと、評価のたびに
+# 型の数 × attachments の数を払う。
+parent_argument_entries := [[t, arg, v] |
+	some _, a in data.layer_decl.attachments
+	some t, args in object.get(a, "parent_arguments", {})
+	some arg, v in args
+]
+
+parent_arguments_by_type := {t: {e[1]: e[2] | some e in parent_argument_entries; e[0] == t} |
+	some e0 in parent_argument_entries
+	t := e0[0]
+}
+
 derived_inline_arguments := {t: args |
 	some t in data.policy_plan.stateful_protection.protected_types
 	args := object.union(
 		{arg: v |
-			some _, a in data.layer_decl.attachments
-			some arg, v in object.get(object.get(a, "parent_arguments", {}), t, {})
+			some arg, v in object.get(parent_arguments_by_type, t, {})
 			not owned(t, arg)
 		},
 		{arg: e.unwritten |
