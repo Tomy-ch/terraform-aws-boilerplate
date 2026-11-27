@@ -7,7 +7,7 @@ mock_provider "aws" {
     defaults = { account_id = "123456789012", arn = "arn:aws:sts::123456789012:assumed-role/tabp-admin-ci-plan/session" }
   }
   mock_data "aws_iam_session_context" {
-    defaults = { issuer_name = "tabp-admin-ci-plan" }
+    defaults = { issuer_arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan" }
   }
   mock_data "aws_region" {
     defaults = { region = "ap-northeast-1" }
@@ -46,7 +46,7 @@ mock_provider "aws" {
   alias = "log_archive"
 
   mock_data "aws_caller_identity" {
-    defaults = { account_id = "111111111111" }
+    defaults = { account_id = "222222222222" }
   }
   mock_data "aws_region" {
     defaults = { region = "ap-northeast-1" }
@@ -107,7 +107,7 @@ override_resource {
 override_resource {
   target          = module.organization_baseline.module.organization.aws_organizations_account.this["log-archive"]
   override_during = plan
-  values          = { id = "111111111111" }
+  values          = { id = "222222222222" }
 }
 
 run "apply_identity_assumes_organization_access_role" {
@@ -115,51 +115,73 @@ run "apply_identity_assumes_organization_access_role" {
 
   override_data {
     target = data.aws_iam_session_context.current
-    values = { issuer_name = "tabp-admin-ci-apply-identity" }
+    values = { issuer_arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity" }
   }
 
   assert {
     condition = local.bootstrap_role_arns == {
       security      = "arn:aws:iam::111111111111:role/OrganizationAccountAccessRole"
-      "log-archive" = "arn:aws:iam::111111111111:role/OrganizationAccountAccessRole"
+      "log-archive" = "arn:aws:iam::222222222222:role/OrganizationAccountAccessRole"
     }
-    error_message = "apply-identity の role の session で、メンバーの provider が OrganizationAccountAccessRole を引き受けていません。"
+    error_message = "apply-identity の role の session で、メンバーの provider がそのアカウントの OrganizationAccountAccessRole を引き受けていません。"
   }
 }
 
 run "plan_assumes_bootstrap_read_role" {
   command = plan
 
-  override_data {
-    target = data.aws_iam_session_context.current
-    values = { issuer_name = "tabp-admin-ci-plan" }
-  }
-
   assert {
     condition = local.bootstrap_role_arns == {
       security      = "arn:aws:iam::111111111111:role/bootstrap/tabp-bootstrap-read"
-      "log-archive" = "arn:aws:iam::111111111111:role/bootstrap/tabp-bootstrap-read"
+      "log-archive" = "arn:aws:iam::222222222222:role/bootstrap/tabp-bootstrap-read"
     }
-    error_message = "plan の role の session で、メンバーの provider が立ち上げの読み取りの role を引き受けていません。"
+    error_message = "plan の role の session で、メンバーの provider がそのアカウントの立ち上げの読み取りの role を引き受けていません。"
   }
 }
 
-# role の session でない主体（IAM user）は発行元を持たない。OrganizationAccountAccessRole へ落ちないことを見る。
+# apply-identity の role と名前の先頭が同じ role や、role の session でない主体（発行元を持たない）が、
+# OrganizationAccountAccessRole へ落ちないことを見る。
+run "near_name_assumes_bootstrap_read_role" {
+  command = plan
+
+  override_data {
+    target = data.aws_iam_session_context.current
+    values = { issuer_arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply" }
+  }
+
+  assert {
+    condition     = local.bootstrap_role_arns["security"] == "arn:aws:iam::111111111111:role/bootstrap/tabp-bootstrap-read"
+    error_message = "apply-identity の role でない session で、メンバーの provider が立ち上げの読み取りの role のほかを引き受けています。"
+  }
+}
+
 run "other_principal_assumes_bootstrap_read_role" {
   command = plan
 
   override_data {
     target = data.aws_iam_session_context.current
-    values = { issuer_name = "" }
+    values = { issuer_arn = "" }
   }
 
   assert {
-    condition     = values(local.bootstrap_role_arns) == ["arn:aws:iam::111111111111:role/bootstrap/tabp-bootstrap-read", "arn:aws:iam::111111111111:role/bootstrap/tabp-bootstrap-read"]
+    condition     = local.bootstrap_role_arns["security"] == "arn:aws:iam::111111111111:role/bootstrap/tabp-bootstrap-read"
     error_message = "発行元を持たない主体で、メンバーの provider が立ち上げの読み取りの role のほかを引き受けています。"
   }
+}
+
+run "member_modules_use_member_accounts" {
+  command = plan
 
   assert {
-    condition     = local.member_break_glass_arns == { security = "arn:aws:iam::111111111111:role/break-glass/tabp-break-glass", "log-archive" = "arn:aws:iam::111111111111:role/break-glass/tabp-break-glass" }
-    error_message = "メンバーの deployment-identity に渡す break-glass の ARN が、メンバーのアカウントの role の ARN になっていません。"
+    condition = local.member_break_glass_arns == {
+      security      = "arn:aws:iam::111111111111:role/break-glass/tabp-break-glass"
+      "log-archive" = "arn:aws:iam::222222222222:role/break-glass/tabp-break-glass"
+    }
+    error_message = "メンバーの deployment-identity に渡す break-glass の ARN が、そのメンバーのアカウントの role の ARN になっていません。"
+  }
+
+  assert {
+    condition     = module.state_backend_security.bucket_name == "tabp-security-tfstate-111111111111-ap-northeast-1-an" && module.state_backend_log_archive.bucket_name == "tabp-log-archive-tfstate-222222222222-ap-northeast-1-an"
+    error_message = "メンバーの state-backend が、その env とメンバーのアカウントの provider で呼ばれていません。"
   }
 }

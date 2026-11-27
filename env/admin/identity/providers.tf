@@ -14,7 +14,7 @@ data "aws_iam_session_context" "current" {
 
 locals {
   bootstrap_role = (
-    data.aws_iam_session_context.current.issuer_name == "tabp-admin-ci-apply-identity"
+    data.aws_iam_session_context.current.issuer_arn == module.deployment_identity.apply_identity_role_arn
     ? "role/OrganizationAccountAccessRole"
     : "role${module.organization_baseline.bootstrap_read_role.path}${module.organization_baseline.bootstrap_read_role.name}"
   )

@@ -8,7 +8,7 @@ mock_provider "aws" {
     defaults = { account_id = "123456789012", arn = "arn:aws:sts::123456789012:assumed-role/tabp-admin-ci-plan/session" }
   }
   mock_data "aws_iam_session_context" {
-    defaults = { issuer_name = "tabp-admin-ci-plan" }
+    defaults = { issuer_arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan" }
   }
   mock_data "aws_region" {
     defaults = { region = "ap-northeast-1" }
