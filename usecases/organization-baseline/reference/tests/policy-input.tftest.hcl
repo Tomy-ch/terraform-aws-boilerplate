@@ -75,6 +75,61 @@ override_resource {
   values          = { arn = "arn:aws:iam::111111111111:user/break-glass/break-glass-2" }
 }
 
+override_data {
+  override_during = plan
+  target          = module.organization_baseline.module.access[0].data.aws_ssoadmin_instances.this
+  values          = { arns = ["arn:aws:sso:::instance/ssoins-0000000000000000"], identity_store_ids = ["d-0000000000"] }
+}
+
+override_data {
+  override_during = plan
+  target          = module.organization_baseline.module.access[0].data.aws_ssm_parameter.principals
+  values          = { value = "{\"users\":{\"owner\":\"00000000-0000-0000-0000-000000000001\"},\"groups\":{\"operators\":\"00000000-0000-0000-0000-000000000002\"}}" }
+}
+
+# 付与・inline・割当の permission_set_arn と、割当の target_id を plan で決め、付く policy と対象のアカウントで判定させる。
+override_resource {
+  target          = module.organization_baseline.module.organization.aws_organizations_account.this["security"]
+  override_during = plan
+  values          = { id = "222222222222" }
+}
+
+override_resource {
+  target          = module.organization_baseline.module.organization.aws_organizations_account.this["log-archive"]
+  override_during = plan
+  values          = { id = "333333333333" }
+}
+
+override_resource {
+  target          = module.organization_baseline.module.access[0].aws_ssoadmin_permission_set.this["read_only"]
+  override_during = plan
+  values          = { arn = "arn:aws:sso:::permissionSet/ssoins-0000000000000000/ps-000000000000000a" }
+}
+
+override_resource {
+  target          = module.organization_baseline.module.access[0].aws_ssoadmin_permission_set.this["terraform_plan"]
+  override_during = plan
+  values          = { arn = "arn:aws:sso:::permissionSet/ssoins-0000000000000000/ps-000000000000000b" }
+}
+
+override_resource {
+  target          = module.organization_baseline.module.access[0].aws_ssoadmin_permission_set.this["billing"]
+  override_during = plan
+  values          = { arn = "arn:aws:sso:::permissionSet/ssoins-0000000000000000/ps-000000000000000c" }
+}
+
+override_resource {
+  target          = module.organization_baseline.module.access[0].aws_ssoadmin_permission_set.this["support"]
+  override_during = plan
+  values          = { arn = "arn:aws:sso:::permissionSet/ssoins-0000000000000000/ps-000000000000000d" }
+}
+
+override_resource {
+  target          = module.organization_baseline.module.access[0].aws_ssoadmin_permission_set.this["organization_admin"]
+  override_during = plan
+  values          = { arn = "arn:aws:sso:::permissionSet/ssoins-0000000000000000/ps-000000000000000e" }
+}
+
 # 付け先の policy_id を plan で決め、付け先の宣言と突き合わせる。
 override_resource {
   target          = module.organization_baseline.module.organization.aws_organizations_policy.this["deny-leave-and-close"]

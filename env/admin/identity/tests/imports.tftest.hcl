@@ -57,6 +57,17 @@ mock_provider "aws" {
   }
 }
 
+# Identity Center のインスタンスと主体の ID は、人が有効にして置くもので、mock の provider は持たない。
+override_data {
+  target = module.organization_baseline.module.access[0].data.aws_ssoadmin_instances.this
+  values = { arns = ["arn:aws:sso:::instance/ssoins-0000000000000000"], identity_store_ids = ["d-0000000000"] }
+}
+
+override_data {
+  target = module.organization_baseline.module.access[0].data.aws_ssm_parameter.principals
+  values = { value = "{\"users\":{\"owner\":\"00000000-0000-0000-0000-000000000001\"},\"groups\":{\"operators\":\"00000000-0000-0000-0000-000000000002\"}}" }
+}
+
 # state の鍵の Key Policy の precondition（同じアカウントの role）を plan で評価させるため、role の ARN を既知の値にする。
 override_resource {
   target          = module.deployment_identity.module.github_oidc.aws_iam_role.this["plan"]
@@ -135,6 +146,20 @@ run "admin_break_glass_arns" {
       "arn:aws:iam::123456789012:role/break-glass/tabp-break-glass",
     ]
     error_message = "管理アカウントの break-glass の ARN が、path と名前から組んだ値になっていません。"
+  }
+}
+
+run "admin_identity_center" {
+  command = plan
+
+  assert {
+    condition     = module.organization_baseline.identity_center_instance_arn == "arn:aws:sso:::instance/ssoins-0000000000000000"
+    error_message = "管理アカウントの identity root が、Identity Center の permission set と割当を組んでいません。"
+  }
+
+  assert {
+    condition     = length(local.identity_center.management_assignments) == 5 && length(local.identity_center.member_assignments) == 8
+    error_message = "管理アカウントの割当は permission set 5つ、メンバー2つへの割当は organization_admin の外の4つずつです。"
   }
 }
 

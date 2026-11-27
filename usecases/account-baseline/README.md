@@ -62,7 +62,7 @@ unsupported:
 | --- | --- |
 | 組織の側の検知（組織の trail、GuardDuty、Config の集約、組織の analyzer、Inspector、Security Hub、検知の通知） | 委任管理者で持つ `security-tooling`（#473）の責務（[account-baseline/ADR-0001](docs/adr/0001-workload-root-in-every-account.md)） |
 | Macie（Security Hub の Macie.1・2） | アカウント単位の安全側の設定ではなく、データの検知である。持つかどうかは `security-tooling`（#473）で決める |
-| AWS Support の role（Security Hub の IAM.18） | 人の到達の経路は `organization-baseline` が持つ。満たす形は permission set（#21） |
+| AWS Support の role（Security Hub の IAM.18） | 人の到達の経路は `organization-baseline` が持つ。`support` の permission set の割当が、割り当てたアカウントで満たす（[organization-baseline/ADR-0204](../organization-baseline/docs/adr/0204-identity-center-permission-sets.md)） |
 | Access Analyzer の unused access の analyzer | Security Hub のコントロールに無く、有料で、要求する利用者が無い（[ADR-0102](../../docs/adr/0102-use-case-centric-scope.md) 決定6） |
 | Config rule と conformance pack | 組織に配る形は委任管理者が持つ（#362） |
 | EBS の既定の暗号化の鍵を customer managed key にすること | 公式推奨に一意の値が無い。一般 module は region を受けない（[ADR-0208](../../docs/adr/0208-us-east-1-resources-by-region-argument.md) 決定2） |

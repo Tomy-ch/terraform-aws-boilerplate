@@ -39,6 +39,21 @@ module "bootstrap_access" {
   organization_root_id  = module.organization.root_id
 }
 
+# Identity Center を有効にする前は作らない（organization-baseline/ADR-0204 決定5）。
+module "access" {
+  source = "./internal/access"
+  count  = var.identity_center == null ? 0 : 1
+
+  project                = var.project
+  partition              = data.aws_partition.current.partition
+  management_account_id  = module.organization.management_account_id
+  member_account_ids     = module.organization.account_ids
+  management_assignments = var.identity_center.management_assignments
+  member_assignments     = var.identity_center.member_assignments
+  bootstrap_bucket_arns  = [var.state_bucket_arn, var.plan_output_bucket_arn, var.apply_output_bucket_arn]
+  state_key_arn          = var.state_key_arn
+}
+
 # partition ごとの、既定で有効なリージョン（repository-wide/ADR-0209）。
 module "default_regions" {
   source = "../../modules/default-regions"

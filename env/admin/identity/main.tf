@@ -41,6 +41,26 @@ module "organization_baseline" {
   bootstrap_read_principal_arn = module.deployment_identity.plan_role_arn
   # 立ち上げを終えたアカウントを外す PR で、OrganizationAccountAccessRole が使えなくなる（docs/setup/organization-baseline.md）。
   bootstrapping = ["security", "log-archive"]
+
+  state_bucket_arn        = module.state_backend.bucket_arn
+  plan_output_bucket_arn  = module.state_backend.plan_output_bucket_arn
+  apply_output_bucket_arn = module.state_backend.apply_output_bucket_arn
+  state_key_arn           = module.state_backend.state_key_arn
+
+  identity_center = local.identity_center
+}
+
+locals {
+  # user と group は人が付けた label で、ID は管理アカウントの parameter が持つ（docs/setup/organization-baseline.md 3.3）。
+  identity_center = {
+    management_assignments = [
+      for p in ["read_only", "terraform_plan", "billing", "support", "organization_admin"] : { permission_set = p, user = "owner" }
+    ]
+    member_assignments = [
+      for pair in setproduct(["security", "log-archive"], ["read_only", "terraform_plan", "billing", "support"]) :
+      { account = pair[0], permission_set = pair[1], group = "operators" }
+    ]
+  }
 }
 
 module "state_backend_security" {

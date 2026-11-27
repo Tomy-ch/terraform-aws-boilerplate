@@ -807,6 +807,7 @@ jobs:
             securityhub.us-west-1.amazonaws.com
             securityhub.us-west-2.amazonaws.com
             cloudtrail.ap-northeast-1.amazonaws.com
+            sso.ap-northeast-1.amazonaws.com
       - name: Prepare to retry hardening the runner
         if: steps.harden-runner.outcome != 'success'
         continue-on-error: true
@@ -915,6 +916,7 @@ jobs:
             securityhub.us-west-1.amazonaws.com
             securityhub.us-west-2.amazonaws.com
             cloudtrail.ap-northeast-1.amazonaws.com
+            sso.ap-northeast-1.amazonaws.com
 
       # skip ではなく失敗にする（ADR-0602 決定14）。fork と Dependabot の run は secret を受けない。
       - name: Refuse untrusted Pull Requests

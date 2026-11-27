@@ -102,6 +102,30 @@
         "resource": "aws_iam_role_policy_attachments_exclusive.this",
         "after": "aws_iam_role_policy_attachment.plan_workload_read",
         "adr": "usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md"
+      },
+      {
+        "module": "usecases/organization-baseline/internal/access",
+        "resource": "aws_ssoadmin_account_assignment.management",
+        "after": "aws_ssoadmin_permission_set_inline_policy.organization_admin",
+        "adr": "usecases/organization-baseline/docs/adr/0204-identity-center-permission-sets.md"
+      },
+      {
+        "module": "usecases/organization-baseline/internal/access",
+        "resource": "aws_ssoadmin_account_assignment.management",
+        "after": "aws_ssoadmin_managed_policy_attachments_exclusive.this",
+        "adr": "usecases/organization-baseline/docs/adr/0204-identity-center-permission-sets.md"
+      },
+      {
+        "module": "usecases/organization-baseline/internal/access",
+        "resource": "aws_ssoadmin_account_assignment.member",
+        "after": "aws_ssoadmin_permission_set_inline_policy.organization_admin",
+        "adr": "usecases/organization-baseline/docs/adr/0204-identity-center-permission-sets.md"
+      },
+      {
+        "module": "usecases/organization-baseline/internal/access",
+        "resource": "aws_ssoadmin_account_assignment.member",
+        "after": "aws_ssoadmin_managed_policy_attachments_exclusive.this",
+        "adr": "usecases/organization-baseline/docs/adr/0204-identity-center-permission-sets.md"
       }
     ]
   }

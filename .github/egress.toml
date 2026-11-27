@@ -142,9 +142,9 @@ hosts = [
   "chatbot.us-west-2.amazonaws.com",
 ]
 
-# 管理アカウントの identity root の、委任管理者の指定（organization-baseline）の型の宛先。workload root の job には持たせない。
-# GuardDuty・Inspector・Security Hub は repository-wide/ADR-0209 の集合の各リージョンに置き、CloudTrail は provider の region の
-# endpoint を呼ぶ。
+# 管理アカウントの identity root の、委任管理者の指定と IAM Identity Center（organization-baseline）の型の宛先。workload root の
+# job には持たせない。GuardDuty・Inspector・Security Hub は repository-wide/ADR-0209 の集合の各リージョンに置き、CloudTrail と
+# Identity Center は provider の region の endpoint を呼ぶ。
 [class.aws-governance]
 includes = ["aws"]
 hosts = [
@@ -152,6 +152,7 @@ hosts = [
   "inspector2.{default-regions}.amazonaws.com",
   "securityhub.{default-regions}.amazonaws.com",
   "cloudtrail.ap-northeast-1.amazonaws.com",
+  "sso.ap-northeast-1.amazonaws.com",
 ]
 
 # repository-wide/ADR-0209 の集合（modules/default-regions の aws）の写し。ずれると egress-check が落とす。
@@ -221,6 +222,9 @@ hosts = ["securityhub.{default-regions}.amazonaws.com"]
 
 [type.aws_ssm_]
 hosts = ["ssm.ap-northeast-1.amazonaws.com"]
+
+[type.aws_ssoadmin_]
+hosts = ["sso.ap-northeast-1.amazonaws.com"]
 
 [type.aws_sns_]
 hosts = ["sns.ap-northeast-1.amazonaws.com", "sns.us-east-1.amazonaws.com"]
