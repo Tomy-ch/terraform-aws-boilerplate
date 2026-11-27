@@ -13,6 +13,21 @@ mock_provider "aws" {
   }
 }
 
+mock_provider "aws" {
+  alias           = "security"
+  override_during = plan
+
+  mock_data "aws_caller_identity" {
+    defaults = { account_id = "111111111111" }
+  }
+  mock_data "aws_region" {
+    defaults = { region = "ap-northeast-1" }
+  }
+  mock_data "aws_partition" {
+    defaults = { partition = "aws" }
+  }
+}
+
 override_resource {
   target          = module.deployment_identity.module.github_oidc.aws_iam_openid_connect_provider.github
   override_during = plan
@@ -107,6 +122,78 @@ override_resource {
   target          = module.deployment_identity.module.service_linked_roles.aws_iam_service_linked_role.chatbot[0]
   override_during = plan
   values          = { arn = "arn:aws:iam::123456789012:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot" }
+}
+
+override_resource {
+  target          = module.deployment_identity_security.module.github_oidc.aws_iam_openid_connect_provider.github
+  override_during = plan
+  values          = { arn = "arn:aws:iam::111111111111:oidc-provider/token.actions.githubusercontent.com" }
+}
+
+override_resource {
+  target          = module.deployment_identity_security.module.github_oidc.aws_iam_role.this["plan"]
+  override_during = plan
+  values          = { arn = "arn:aws:iam::111111111111:role/tabp-security-ci-plan" }
+}
+
+override_resource {
+  target          = module.deployment_identity_security.module.github_oidc.aws_iam_role.this["apply"]
+  override_during = plan
+  values          = { arn = "arn:aws:iam::111111111111:role/tabp-security-ci-apply" }
+}
+
+override_resource {
+  target          = module.deployment_identity_security.module.github_oidc.aws_iam_role.this["unlock_identity"]
+  override_during = plan
+  values          = { arn = "arn:aws:iam::111111111111:role/tabp-security-ci-unlock-identity" }
+}
+
+override_resource {
+  target          = module.deployment_identity_security.module.github_oidc.aws_iam_role.this["unlock"]
+  override_during = plan
+  values          = { arn = "arn:aws:iam::111111111111:role/tabp-security-ci-unlock" }
+}
+
+override_resource {
+  target          = module.deployment_identity_security.module.github_oidc.aws_iam_role.apply_identity
+  override_during = plan
+  values          = { arn = "arn:aws:iam::111111111111:role/tabp-security-ci-apply-identity" }
+}
+
+override_resource {
+  target          = module.deployment_identity_security.module.github_oidc.aws_iam_policy.manage
+  override_during = plan
+  values          = { arn = "arn:aws:iam::111111111111:policy/tabp-security-ci-apply-identity-manage" }
+}
+
+override_resource {
+  target          = module.deployment_identity_security.module.github_oidc.aws_iam_policy.workload
+  override_during = plan
+  values          = { arn = "arn:aws:iam::111111111111:policy/tabp-security-ci-apply-workload" }
+}
+
+override_resource {
+  target          = module.deployment_identity_security.module.github_oidc.aws_iam_policy.workload_read
+  override_during = plan
+  values          = { arn = "arn:aws:iam::111111111111:policy/tabp-security-ci-apply-workload-read" }
+}
+
+override_resource {
+  target          = module.deployment_identity_security.module.github_oidc.aws_iam_policy.workload_2
+  override_during = plan
+  values          = { arn = "arn:aws:iam::111111111111:policy/tabp-security-ci-apply-workload-2" }
+}
+
+override_resource {
+  target          = module.deployment_identity_security.module.github_oidc.aws_iam_policy.boundary["ops-notification"]
+  override_during = plan
+  values          = { arn = "arn:aws:iam::111111111111:policy/tabp-security-ci-boundary-ops-notification" }
+}
+
+override_resource {
+  target          = module.deployment_identity_security.module.service_linked_roles.aws_iam_service_linked_role.chatbot[0]
+  override_during = plan
+  values          = { arn = "arn:aws:iam::111111111111:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot" }
 }
 
 run "policy_input" {

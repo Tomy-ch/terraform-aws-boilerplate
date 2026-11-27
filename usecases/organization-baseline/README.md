@@ -40,6 +40,7 @@ AWS Organizations の組織と OU、SCP・RCP・declarative policy、root の資
 - OU の木: Root の直下に Security・Workloads・Sandbox・PolicyStaging、Workloads の下に Prod・NonProd（[organization-baseline/ADR-0101](docs/adr/0101-organizational-units-and-policies.md)）
 - SCP 10個・RCP 2つ・EC2 の declarative policy 1つと、その付け先。Root には組織からの離脱とアカウントの閉鎖の拒否だけを付け、ほかは PolicyStaging に付ける。最終の付け先は [organization-baseline/ADR-0101](docs/adr/0101-organizational-units-and-policies.md) 決定5-7 が持つ
 - 管理アカウントの break-glass の IAM user 2つ、group とその policy、break-glass の role（`AdministratorAccess`）、IAM の password policy（[organization-baseline/ADR-0201](docs/adr/0201-break-glass.md)）
+- group の policy の `aws login` の2文（同じ端末の流れの `oauth2/public-client/localhost` に限る。[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定19 の期間だけ） <!-- v1.0.0 で削除: #141 -->
 - メンバーアカウント security と log-archive（Security OU）。env と OU の対応表は `internal/organization/accounts.tf` の1つの local が持つ。`OrganizationAccountAccessRole`・請求情報への IAM の到達・閉じない削除は書かず、AWS と Provider の既定に任せる（Provider の Read はこの3つを state に書かないので、書くと import の後に作り直しの差分が出る）。名前は `<project>-<env>` で変えない
 - 立ち上げを終えたメンバーアカウントに付ける `deny-bootstrap-role`（アカウントごと）
 - セキュリティのサービス（GuardDuty・Inspector・Security Hub・CloudTrail・AWS Config・IAM Access Analyzer）の委任管理者を security のアカウントにする指定（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定1）。GuardDuty・Inspector・Security Hub はリージョンごとで、[repository-wide/ADR-0209](../../docs/adr/0209-default-regions-for-regional-controls.md) の集合の各リージョンに置く。CloudTrail は CloudTrail の API で、Config と Access Analyzer は Organizations の API で登録する。委任管理者の側の設定（組織の trail、GuardDuty の組織の設定など）は `security-tooling`（#473）が持つ
@@ -100,7 +101,7 @@ unsupported:
 | root の中央管理の有効化が、アカウントの作成より後になる | 既存のメンバーに root の資格情報が残る | `depends_on` と、人の確認（`aws iam list-organizations-features`） |
 | アカウントの作成が途中で失敗し、アカウントは在るが state に無い | 再実行がメールの重複で落ちる | 人が手順書の回復（`import` block の Pull Request）で取り込む |
 | 新しいアカウントへの break-glass の StackSet の自動展開が失敗する | 新しいアカウントへ break-glass で入れない | 昇格の後の人の確認（stack instance が `CURRENT`、引き受け） |
-| 立ち上げの読み取りの role の読み取りが、立ち上げの plan に足りない | 立ち上げの CI の plan が `AccessDenied` で落ちる（書き込みには広がらない） | `PLAN-BR-04`（plan の role の読みとの突き合わせ）と、最初の立ち上げの CI の plan |
+| 立ち上げの読み取りの role の読み取りが、立ち上げの plan に足りない | 立ち上げの CI の plan が `AccessDenied` で落ちる（書き込みには広がらない） | `PLAN-BR-04`（plan の role の読みとの突き合わせ）と `PLAN-BR-07`（reference のメンバーの形の instance の構成物の ARN ごとの、Action と Resource の組）と、最初の立ち上げの CI の plan |
 | `aws:PrincipalArn` の条件が、assumed-role のセッションや root のセッションに一致しない | SCP が拒まない、または回復の経路を拒む | Policy Test は文書の形までしか見ない。PolicyStaging での人の確認 |
 | 実 API が読み戻した policy の文書が宣言と違う | plan が毎回差分を出す | 昇格の後の plan |
 | RCP が想定しない AWS のサービスの経路を止める | 配送や連携が止まる | PolicyStaging での確認と、付けた直後の読み取りの確認 |
@@ -108,7 +109,7 @@ unsupported:
 
 ## 公式実装の参照（[ADR-0206](../../docs/adr/0206-official-implementations-as-reference.md) 決定7・8）
 
-参照日: 2026-11-19（break-glass の role の attachment の項は 2026-11-20）
+参照日: 2026-11-19（break-glass の role の attachment の項は 2026-11-20、`aws login` の項は 2026-11-27）
 
 - AWS / HashiCorp が publisher の Registry module: `aws`・`aws-ia`・`hashicorp` の namespace の一覧から引いた
 - 参照した一次資料: AWS Provider v6.70.0 の文書と source（`organizations_organization`・`organizations_aws_service_access`・`iam_organizations_features`・`organizations_policy`）、AWS Provider v6.73.0 の `aws_iam_role`・`aws_iam_role_policy_attachment`・`aws_iam_role_policy_attachments_exclusive` の文書と `internal/service/iam/role.go`、AWS Organizations User Guide（管理アカウントのベストプラクティス、SCP、RCP、declarative policy、既定の統制、信頼アクセス、クォータ）、IAM User Guide（root の中央管理、`aws:AssumedRoot`）、whitepaper「Organizing Your AWS Environment Using Multiple Accounts」、AWS Security Reference Architecture、Well-Architected Framework（2026-11-16 の版。FND01・FND02・FND05）、Security Hub の標準（FSBP、CIS AWS Foundations Benchmark v3.0.0・v5.0.0）
@@ -123,6 +124,7 @@ unsupported:
 - メンバーの root と IAM user を SCP で縛る、データ境界の SCP と RCP、検知の停止の拒否（Well-Architected Framework）
 - break-glass の role に `AdministratorAccess` を `aws_iam_role_policy_attachment` で付け、排他の resource を併用して同じ ARN を載せる（AWS Provider v6.73.0、[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定21）
 - IAM.2（group で権限を与える）、IAM.7・IAM.15・IAM.16（password policy）（Security Hub の標準）
+- `aws login` の権限を `signin:AuthorizeOAuth2Access` と `signin:CreateOAuth2Token` の2つにし、Resource を resource type `oauth2-public-client-localhost`（`arn:${Partition}:signin:${Region}:${Account}:oauth2/public-client/localhost`）に限る。`signin:OAuthGrantType` は `CreateOAuth2Token` にだけ在る条件キーなので、文を分ける（AWS CLI User Guide の `aws login`、Service Authorization Reference の AWS Sign-In、AWS Sign-In condition keys reference） <!-- v1.0.0 で削除: #141 -->
 - `aws-ia/iam-identity-center` を permission set と割当の形の参照先とする（Registry module）
 
 採用しなかった知見と理由:
@@ -135,6 +137,9 @@ unsupported:
 - `force_detach_policies`: role の削除だけに効く。role は `prevent_destroy`
 - `aws-ia/control_tower_account_factory`: AWS Control Tower を前提とする。この usecase は Control Tower を使わない
 - Registry module を依存として使うこと: [ADR-0205](../../docs/adr/0205-module-dependency-policy.md)
+- `signin:MaxSigninSessionDuration` で sign-in のセッションの長さを限る Deny: 要求を拒むのか長さを縮めるのかが文書から一意に読めない。role の `MaxSessionDuration`（1時間）と `aws logout` に頼る <!-- v1.0.0 で削除: #141 -->
+- `signin:OAuthRedirectUri` の限定: CLI が使う redirect URI の形を文書で確かめていない <!-- v1.0.0 で削除: #141 -->
+- managed policy `SignInLocalDevelopmentAccess`: Resource を `localhost` の client に限れない <!-- v1.0.0 で削除: #141 -->
 
 ## 公式推奨からの逸脱（[ADR-0207](../../docs/adr/0207-default-value-policy.md) 決定11）
 

@@ -320,6 +320,11 @@
           "module.deployment_identity.module.github_oidc.aws_iam_policy.members[0]"
         ]
       },
+      "management_only_policies": [
+        "module.deployment_identity.module.github_oidc.aws_iam_policy.governance[0]",
+        "module.deployment_identity.module.github_oidc.aws_iam_policy.governance_2[0]",
+        "module.deployment_identity.module.github_oidc.aws_iam_policy.members[0]"
+      ],
       "bootstrap_assume": {
         "apply_identity_policy": "module.deployment_identity.module.github_oidc.aws_iam_policy.members[0]"
       },
@@ -429,6 +434,14 @@
             "name": "log-archive",
             "state_backend": "module.state_backend_log_archive.",
             "deployment_identity": "module.deployment_identity_log_archive."
+          }
+        ],
+        "state-backend": [
+          {
+            "name": "security",
+            "state_backend": "module.state_backend_security.",
+            "deployment_identity": "module.deployment_identity_security.",
+            "deployment_identity_root": "deployment-identity"
           }
         ]
       }

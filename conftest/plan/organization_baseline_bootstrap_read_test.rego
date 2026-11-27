@@ -8,8 +8,25 @@ plan_policy := "module.d.aws_iam_role_policy.this[\"plan\"]"
 plan_role_address := "module.d.aws_iam_role.this[\"plan\"]"
 
 decl := {
-	"documents": {"aws_iam_role_policy": ["policy"]},
-	"deployment_identity": {"plan_role": {"role": plan_role_address, "policy": plan_policy}},
+	"documents": {"aws_iam_role_policy": ["policy"], "aws_iam_policy": ["policy"]},
+	"deployment_identity": {
+		"module": "module.d.",
+		"management_only_policies": ["module.d.aws_iam_policy.governance[0]"],
+		"plan_role": {"role": plan_role_address, "policy": plan_policy, "managed_policies": ["module.d.aws_iam_policy.read"]},
+		"apply_role": {"bootstrap": {
+			"modules": ["module.s.", "module.d."],
+			"types": {
+				"aws_s3_bucket": {"class": "target"},
+				"aws_kms_key": {"class": "key"},
+				"aws_iam_role": {"class": "target"},
+				"aws_iam_service_linked_role": {"class": "service_linked"},
+			},
+			"children": {},
+			"prerequisite_module": "module.d.",
+			"prerequisite_services": ["management.chatbot.amazonaws.com"],
+		}},
+	},
+	"state_backend": {"module": "module.s.", "instances": {"sb": [member]}},
 	"organization_baseline": {
 		"organization": "module.o.aws_organizations_organization.this",
 		"policies": {
@@ -46,7 +63,18 @@ trust := {
 
 read := {"Sid": "ListBuckets", "Effect": "Allow", "Action": "s3:ListBucket", "Resource": [{"Fn::Sub": "arn:${AWS::Partition}:s3:::tabp-*-tfstate-${AWS::AccountId}-*"}]}
 
-properties(trusts, reads) := {
+# PLAN-BR-07 のケースのほかは、テンプレートに常に足す（properties）。
+member_key_read := {"Sid": "ReadStateKey", "Effect": "Allow", "Action": "kms:DescribeKey", "Resource": {"Fn::Sub": "arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/*"}}
+
+member_role_read := {"Sid": "ReadCiRoles", "Effect": "Allow", "Action": "iam:GetRole", "Resource": {"Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/tabp-*-ci-*"}}
+
+member_slr_read := {"Sid": "ReadServiceLinkedRoles", "Effect": "Allow", "Action": "iam:GetRole", "Resource": {"Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot"}}
+
+member_reads := [member_key_read, member_role_read, member_slr_read]
+
+properties(trusts, reads) := properties_with(trusts, array.concat(reads, member_reads))
+
+properties_with(trusts, reads) := {
 	"RoleName": "tabp-bootstrap-read",
 	"Path": "/bootstrap/",
 	"MaxSessionDuration": 3600,
@@ -62,7 +90,9 @@ stack_set_with(attrs, props) := change("module.b.aws_cloudformation_stack_set.th
 	"template_body": json.marshal({"AWSTemplateFormatVersion": "2010-09-09", "Resources": {"BootstrapReadRole": {"Type": "AWS::IAM::Role", "Properties": props}}}),
 }, attrs))
 
-instances_with(target) := change("module.b.aws_cloudformation_stack_instances.this", "aws_cloudformation_stack_instances", {"stack_set_name": "tabp-bootstrap-read", "deployment_targets": [target]})
+instances_with(target) := instances_in(target, ["ap-northeast-1"])
+
+instances_in(target, regions) := change("module.b.aws_cloudformation_stack_instances.this", "aws_cloudformation_stack_instances", {"stack_set_name": "tabp-bootstrap-read", "deployment_targets": [target], "regions": regions})
 
 root_target := {"organizational_unit_ids": ["r-exam"], "accounts": null}
 
@@ -87,8 +117,63 @@ rcs(set, inst, bootstrap_deny_scp, protect_scp, role_policy) := [organization, p
 valid_rcs := rcs(stack_set_with({}, properties([trust], [read])), instances_with(root_target), valid_bootstrap_scp, protect(pattern), valid_plan_role)
 
 messages(rs) := msgs if {
-	msgs := p.deny with input as fixture.plan(rs) with data.policy_plan as decl
+	msgs := p.deny with input as array.concat(fixture.plan(rs), member_files(member_sb, member_di)) with data.policy_plan as decl
 }
+
+# --- メンバーの形の instance（reference の security）。state-backend と deployment-identity の側は別の root のファイルに在る ---
+
+member := {"name": "security", "state_backend": "module.s_m.", "deployment_identity": "module.d_m.", "deployment_identity_root": "di"}
+
+member_account := "111111111111"
+
+bucket_arn := "arn:aws:s3:::tabp-security-tfstate-111111111111-ap-northeast-1-an"
+
+key_arn := "arn:aws:kms:ap-northeast-1:111111111111:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+
+role_arn := "arn:aws:iam::111111111111:role/tabp-security-ci-plan"
+
+slr_arn := "arn:aws:iam::111111111111:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot"
+
+member_bucket := change("module.s_m.module.s3.aws_s3_bucket.this", "aws_s3_bucket", {"arn": bucket_arn})
+
+member_key := change("module.s_m.module.kms.aws_kms_key.this", "aws_kms_key", {"arn": key_arn})
+
+member_role := change("module.d_m.aws_iam_role.this[\"plan\"]", "aws_iam_role", {"arn": role_arn, "name": "tabp-security-ci-plan"})
+
+member_slr := change("module.d_m.aws_iam_service_linked_role.chatbot[0]", "aws_iam_service_linked_role", {"arn": slr_arn, "aws_service_name": "management.chatbot.amazonaws.com"})
+
+# メンバーの plan の role の inline policy と、付けた customer managed policy（Chatbot の SLR の読みは managed の側に在る）。
+member_plan_statements := [
+	{"Sid": "ListBuckets", "Effect": "Allow", "Action": "s3:ListBucket", "Resource": "arn:aws:s3:::tabp-security-tfstate-111111111111-*"},
+	{"Sid": "ReadStateKey", "Effect": "Allow", "Action": "kms:DescribeKey", "Resource": "arn:aws:kms:ap-northeast-1:111111111111:key/*"},
+	{"Sid": "ListKeyAliases", "Effect": "Allow", "Action": "kms:ListAliases", "Resource": "*"},
+	{"Sid": "ReadCiRoles", "Effect": "Allow", "Action": "iam:GetRole", "Resource": "arn:aws:iam::111111111111:role/tabp-security-ci-*"},
+]
+
+member_plan_policy(statements) := fixture.doc("aws_iam_role_policy", "module.d_m.aws_iam_role_policy.this[\"plan\"]", "policy", {"Statement": statements})
+
+member_managed_policy(statements) := fixture.doc("aws_iam_policy", "module.d_m.aws_iam_policy.read", "policy", {"Statement": statements})
+
+member_slr_statement := {"Sid": "ReadChatbotServiceLinkedRole", "Effect": "Allow", "Action": "iam:GetRole", "Resource": slr_arn}
+
+member_sb := [member_bucket, member_key]
+
+member_di := [member_role, member_slr, member_plan_policy(member_plan_statements), member_managed_policy([member_slr_statement])]
+
+member_files(sb, di) := [
+	{"path": "sb.json", "contents": {"plan_format_version": "1.2", "resource_changes": sb}},
+	{"path": "di.json", "contents": {"plan_format_version": "1.2", "resource_changes": di}},
+]
+
+valid_stack_set := stack_set_with({}, properties([trust], [read]))
+
+member_messages(set, inst, sb, di) := msgs if {
+	msgs := p.deny with input as array.concat(fixture.plan(rcs(set, inst, valid_bootstrap_scp, protect(pattern), valid_plan_role)), member_files(sb, di)) with data.policy_plan as decl
+}
+
+not_covered(x, a) := sprintf("[PLAN-BR-07] instance security の plan の role が構成物 %s に許す %s を、立ち上げの読み取りの role がその ARN に許しません", [x, a])
+
+br07(msgs) := {m | some m in msgs; startswith(m, "[PLAN-BR-07]")}
 
 test_pass_reference_shape if {
 	count(messages(valid_rcs)) == 0
@@ -164,9 +249,9 @@ test_violation_plan_role_read_not_covered if {
 		{"Sid": "ListBuckets", "Effect": "Allow", "Action": "s3:ListBucket", "Resource": "arn:aws:s3:::b"},
 		{"Sid": "ReadState", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::b/k"},
 		{"Sid": "ReadOrganization", "Effect": "Allow", "Action": "organizations:DescribeOrganization", "Resource": "*"},
-		{"Sid": "ReadSlr", "Effect": "Allow", "Action": "iam:GetRole", "Resource": "*"},
+		{"Sid": "ReadPolicies", "Effect": "Allow", "Action": "iam:GetPolicy", "Resource": "*"},
 	])
-	fixture.has("[PLAN-BR-04] plan の role の iam:getrole", messages(rcs(stack_set_with({}, properties([trust], [read])), instances_with(root_target), valid_bootstrap_scp, protect(pattern), r)))
+	fixture.has("[PLAN-BR-04] plan の role の iam:getpolicy", messages(rcs(stack_set_with({}, properties([trust], [read])), instances_with(root_target), valid_bootstrap_scp, protect(pattern), r)))
 }
 
 # plan の role の読みを持つ customer managed policy も突き合わせる（deployment-identity/ADR-0201 決定21）。
@@ -539,3 +624,140 @@ test_pass_plan_role_path_in_trust if {
 	t := object.union(trust, {"Condition": {"ArnEquals": {"aws:PrincipalArn": "arn:aws:iam::111111111111:role/ci/tabp-admin-ci-plan"}}})
 	not fixture.has("[PLAN-BR-02]", plan_role_messages({"name": "tabp-admin-ci-plan", "path": "/ci/"}, [t]))
 }
+
+# --- PLAN-BR-07: メンバーの構成物の ARN ごとの読み ---
+
+test_pass_member_resources_covered if {
+	count(member_messages(valid_stack_set, instances_with(root_target), member_sb, member_di)) == 0
+}
+
+test_violation_service_linked_role_not_covered if {
+	set := stack_set_with({}, properties_with([trust], [read, member_key_read, member_role_read]))
+	br07(member_messages(set, instances_with(root_target), member_sb, member_di)) == {not_covered(slr_arn, "iam:getrole")}
+}
+
+test_violation_action_on_other_statement if {
+	other := object.union(member_slr_read, {"Action": "iam:GetPolicy"})
+	set := stack_set_with({}, properties_with([trust], [read, member_key_read, member_role_read, other]))
+	fixture.has(not_covered(slr_arn, "iam:getrole"), member_messages(set, instances_with(root_target), member_sb, member_di))
+}
+
+# pattern を管理アカウントの env に狭めると、メンバーの env の名前に当たらない。
+test_violation_env_narrowed_pattern if {
+	narrowed := object.union(member_role_read, {"Resource": {"Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/tabp-admin-ci-*"}})
+	set := stack_set_with({}, properties_with([trust], [read, member_key_read, narrowed, member_slr_read]))
+	fixture.has(not_covered(role_arn, "iam:getrole"), member_messages(set, instances_with(root_target), member_sb, member_di))
+}
+
+# 正規の instance（管理アカウントの形）の構成物は照らさない。管理アカウントにだけ在る policy の読みを要求しない。
+test_pass_canonical_resources_ignored if {
+	canonical_role := change("module.d.aws_iam_role.this[\"governance\"]", "aws_iam_role", {"arn": "arn:aws:iam::111111111111:role/tabp-admin-governance"})
+	msgs := p.deny with input as array.concat(fixture.plan(array.concat(valid_rcs, [canonical_role])), member_files(member_sb, member_di)) with data.policy_plan as decl
+	count(msgs) == 0
+}
+
+test_pass_management_only_action_subtracted if {
+	di := [member_role, member_slr, member_plan_policy(array.concat(member_plan_statements, [{"Sid": "State", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::tabp-security-tfstate-111111111111-*"}])), member_managed_policy([member_slr_statement])]
+	count(br07(member_messages(valid_stack_set, instances_with(root_target), member_sb, di))) == 0
+}
+
+# Resource "*" の文（kms:ListAliases）は特定の ARN への認可ではない。鍵の ARN に要求しない。
+test_pass_resource_wildcard_statement_excluded if {
+	di := [member_role, member_slr, member_plan_policy(array.concat(member_plan_statements, [{"Sid": "Wild", "Effect": "Allow", "Action": "kms:GetKeyPolicy", "Resource": "*"}])), member_managed_policy([member_slr_statement])]
+	count(br07(member_messages(valid_stack_set, instances_with(root_target), member_sb, di))) == 0
+}
+
+# ${AWS::AccountId} は IAM と KMS の ARN のアカウントで置き換える。Bucket の名前の中のアカウントが違えば当たらない。
+test_violation_bucket_other_account if {
+	other := change("module.s_m.module.s3.aws_s3_bucket.this", "aws_s3_bucket", {"arn": "arn:aws:s3:::tabp-security-tfstate-222222222222-ap-northeast-1-an"})
+	di := [member_role, member_slr, member_plan_policy(array.concat(member_plan_statements, [{"Sid": "Other", "Effect": "Allow", "Action": "s3:ListBucket", "Resource": "arn:aws:s3:::tabp-security-tfstate-222222222222-*"}])), member_managed_policy([member_slr_statement])]
+	fixture.has(not_covered("arn:aws:s3:::tabp-security-tfstate-222222222222-ap-northeast-1-an", "s3:listbucket"), member_messages(valid_stack_set, instances_with(root_target), [other, member_key], di))
+}
+
+# ${AWS::Region} は stack instance の region で置き換える。鍵の region が違えば当たらない。
+test_violation_stack_instance_region if {
+	fixture.has(not_covered(key_arn, "kms:describekey"), member_messages(valid_stack_set, instances_in(root_target, ["us-west-2"]), member_sb, member_di))
+}
+
+test_violation_stack_instance_regions_not_single if {
+	every regions in [[], ["ap-northeast-1", "us-west-2"]] {
+		fixture.has("[PLAN-BR-00] 立ち上げの読み取りの stack instance の region", member_messages(valid_stack_set, instances_in(root_target, regions), member_sb, member_di))
+	}
+}
+
+test_violation_member_instance_missing if {
+	msgs := p.deny with input as fixture.plan(valid_rcs) with data.policy_plan as decl
+	fixture.has("[PLAN-BR-00] 入力に、構成物の ARN を照らすメンバーの形の instance", msgs)
+}
+
+test_violation_member_instance_management_shape if {
+	d := json.patch(decl, [{"op": "add", "path": "/deployment_identity/management_only_policies", "value": ["module.d.aws_iam_policy.governance[0]"]}])
+	governance := change("module.d_m.aws_iam_policy.governance[0]", "aws_iam_policy", {"arn": "arn:aws:iam::111111111111:policy/tabp-security-ci-apply-identity-governance"})
+	msgs := p.deny with input as array.concat(fixture.plan(valid_rcs), member_files(member_sb, array.concat(member_di, [governance]))) with data.policy_plan as d
+	fixture.has("[PLAN-BR-00] instance security が管理アカウントの形です", msgs)
+}
+
+test_violation_member_side_missing if {
+	fixture.has("[PLAN-BR-00] instance security の state_backend の側に", member_messages(valid_stack_set, instances_with(root_target), [], member_di))
+	fixture.has("[PLAN-BR-00] instance security の deployment_identity の側に", member_messages(valid_stack_set, instances_with(root_target), member_sb, [member_plan_policy(member_plan_statements)]))
+}
+
+test_violation_member_arn_not_concrete if {
+	every after in [{}, {"arn": null}, {"arn": "arn:aws:s3:::tabp-security-tfstate-*"}, {"arn": "${x}"}] {
+		bucket := change("module.s_m.module.s3.aws_s3_bucket.this", "aws_s3_bucket", after)
+		fixture.has("[PLAN-BR-00] instance security の構成物 module.s_m.module.s3.aws_s3_bucket.this の ARN", member_messages(valid_stack_set, instances_with(root_target), [bucket, member_key], member_di))
+	}
+}
+
+test_violation_member_accounts_ambiguous if {
+	key := change("module.s_m.module.kms.aws_kms_key.this", "aws_kms_key", {"arn": "arn:aws:kms:ap-northeast-1:222222222222:key/1234abcd-12ab-34cd-56ef-1234567890ab"})
+	fixture.has("[PLAN-BR-00] instance security の構成物の IAM と KMS の ARN のアカウント", member_messages(valid_stack_set, instances_with(root_target), [member_bucket, key], member_di))
+}
+
+test_violation_plan_role_grants_nothing if {
+	statements := [s | some s in member_plan_statements; s.Sid != "ReadStateKey"]
+	di := [member_role, member_slr, member_plan_policy(statements), member_managed_policy([member_slr_statement])]
+	fixture.has(sprintf("[PLAN-BR-00] instance security の plan の role が、構成物 %s に Resource を限った読みを1つも許していません", [key_arn]), member_messages(valid_stack_set, instances_with(root_target), member_sb, di))
+}
+
+# NotResource の Allow は、どの pattern も当たらない ARN の読みを許す。
+test_violation_plan_role_not_resource if {
+	nr := {"Sid": "NotResource", "Effect": "Allow", "Action": "iam:ListRoleTags", "NotResource": "arn:aws:iam::111111111111:role/other"}
+	di := [member_role, member_slr, member_plan_policy(array.concat(member_plan_statements, [nr])), member_managed_policy([member_slr_statement])]
+	fixture.has(not_covered(role_arn, "iam:listroletags"), member_messages(valid_stack_set, instances_with(root_target), member_sb, di))
+	excluded := object.union(nr, {"NotResource": role_arn})
+	di2 := [member_role, member_slr, member_plan_policy(array.concat(member_plan_statements, [excluded])), member_managed_policy([member_slr_statement])]
+	not fixture.has(not_covered(role_arn, "iam:listroletags"), member_messages(valid_stack_set, instances_with(root_target), member_sb, di2))
+}
+
+test_violation_unknown_substitution_not_counted if {
+	odd := object.union(member_slr_read, {"Resource": {"Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${Other}"}})
+	set := stack_set_with({}, properties_with([trust], [read, member_key_read, member_role_read, odd]))
+	fixture.has(not_covered(slr_arn, "iam:getrole"), member_messages(set, instances_with(root_target), member_sb, member_di))
+}
+
+test_violation_management_only_policies_missing if {
+	d := json.patch(decl, [{"op": "remove", "path": "/deployment_identity/management_only_policies"}])
+	msgs := p.deny with input as array.concat(fixture.plan(valid_rcs), member_files(member_sb, member_di)) with data.policy_plan as d
+	fixture.has("[PLAN-BR-00] 宣言 deployment_identity.management_only_policies が無いか空です", msgs)
+}
+
+# Resource に "*" と ARN が混ざる文は、ARN の要素で要求する。
+test_violation_mixed_wildcard_resource_still_requires if {
+	mixed := {"Sid": "Mixed", "Effect": "Allow", "Action": "iam:ListRoleTags", "Resource": ["*", "arn:aws:iam::111111111111:role/tabp-security-ci-*"]}
+	di := [member_role, member_slr, member_plan_policy(array.concat(member_plan_statements, [mixed])), member_managed_policy([member_slr_statement])]
+	fixture.has(not_covered(role_arn, "iam:listroletags"), member_messages(valid_stack_set, instances_with(root_target), member_sb, di))
+}
+
+test_violation_stack_instance_regions_absent if {
+	inst := change("module.b.aws_cloudformation_stack_instances.this", "aws_cloudformation_stack_instances", {"stack_set_name": "tabp-bootstrap-read", "deployment_targets": [root_target]})
+	fixture.has("[PLAN-BR-00] 立ち上げの読み取りの stack instance の region []", member_messages(valid_stack_set, inst, member_sb, member_di))
+}
+
+test_violation_member_accounts_none if {
+	bucket_only := [member_bucket]
+	di := [member_plan_policy(member_plan_statements), member_slr_policy_only]
+	fixture.has("[PLAN-BR-00] instance security の構成物の IAM と KMS の ARN のアカウント [] が", member_messages(valid_stack_set, instances_with(root_target), bucket_only, di))
+}
+
+member_slr_policy_only := member_managed_policy([member_slr_statement])

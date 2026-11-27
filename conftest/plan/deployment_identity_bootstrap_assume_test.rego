@@ -177,3 +177,27 @@ test_violation_other_ci_policy_not_action_excludes_only_assume_role if {
 	other := other_doc("module.deployment_identity.module.g.aws_iam_policy.manage", [{"Effect": "Allow", "NotAction": ["sts:AssumeRole"], "Resource": "*"}])
 	fixture.has("[PLAN-ASSUME-03]", messages(array.concat(valid, [other])))
 }
+
+member_messages(rs) := msgs if {
+	msgs := messages(rs) with data.plan.lib.member_form as true
+}
+
+member_assume_denied(address) := sprintf("[PLAN-ASSUME-03] p.json: %s が sts:AssumeRole・sts:TagSession・sts:SetSourceIdentity のどれかを許します。メンバーアカウントの deployment-identity は、ほかのアカウントの引き受けを持ちません", [address])
+
+test_pass_member_form_without_assume if {
+	count(member_messages([plan_doc([read])])) == 0
+}
+
+test_violation_member_form_plan_assumes if {
+	fixture.has(member_assume_denied(plan_policy), member_messages([plan_doc([read, assume([read_role])])]))
+}
+
+test_violation_member_form_other_policy_assumes if {
+	address := "module.deployment_identity.module.g.aws_iam_policy.other"
+	fixture.has(member_assume_denied(address), member_messages([plan_doc([read]), other_doc(address, [assume([access_role])])]))
+}
+
+test_violation_member_form_plan_policy_absent if {
+	fixture.has(sprintf("[PLAN-ASSUME-00] 宣言した引き受けの policy %s", [plan_policy]), member_messages([]))
+	not fixture.has(sprintf("[PLAN-ASSUME-00] 宣言した引き受けの policy %s", [members_policy]), member_messages([]))
+}

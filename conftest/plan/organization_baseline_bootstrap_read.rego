@@ -2,6 +2,8 @@
 # plan.organization_baseline_bootstrap_read）。
 package plan.organization_baseline_bootstrap_read
 
+import data.plan.deployment_identity_apply_role as di_apply_role
+import data.plan.deployment_identity_plan_role as di_plan_role
 import data.plan.lib
 
 ob := object.get(data.policy_plan, "organization_baseline", {})
@@ -302,4 +304,161 @@ bootstrap_role_protected if {
 	every a in {"iam:create*", "iam:update*", "iam:put*", "iam:attach*", "iam:delete*", "iam:passrole"} {
 		a in lib.lower_all(s.Action)
 	}
+}
+
+# メンバーの構成物の ARN ごとに、そのメンバーの plan の role が Resource を限って許す読みを、この role がその ARN に許す
+# （organization-baseline/ADR-0203 決定4）。構成物と plan の role の Allow は、reference のメンバーの形の instance を正規の
+# 接頭辞へ付け替えた入力（lib.member_view）の上で、deployment-identity の規則から取る。
+members contains i if {
+	some i in lib.instances
+	i.root != null
+}
+
+member_classes := {"target", "key", "service_linked"}
+
+member_resources(i) := {r |
+	some r in di_apply_role.resources with input as lib.member_view(i) with data.policy_plan as lib.member_decl with data.plan.lib.member_form as true
+	di_apply_role.class_of(r.type) in member_classes
+}
+
+member_allows(i) := x if {
+	x := di_plan_role.allows with input as lib.member_view(i) with data.policy_plan as lib.member_decl with data.plan.lib.member_form as true
+}
+
+concrete_arn(x) if {
+	is_string(x)
+	regex.match(`^arn:[a-z-]+:[a-z0-9-]+:`, x)
+	not contains(x, "*")
+	not contains(x, "?")
+	not contains(x, "${")
+}
+
+member_arns(i) := {r.change.after.arn | some r in member_resources(i); concrete_arn(object.get(r.change.after, "arn", null))}
+
+# S3 の ARN はアカウントの欄を持たないので、IAM と KMS の ARN から取る。
+member_accounts(i) := {a |
+	some x in member_arns(i)
+	split(x, ":")[2] in {"iam", "kms"}
+	a := split(x, ":")[4]
+	a != ""
+}
+
+# ${AWS::Region} は stack instance の region で置き換える（決定1。region は provider の region だけ）。
+stack_regions := {x | some x in object.get(instances, "regions", [])}
+
+substituted(p, x, i) := strings.replace_n({"${AWS::Partition}": split(x, ":")[1], "${AWS::Region}": region, "${AWS::AccountId}": account}, p) if {
+	is_string(p)
+	count(stack_regions) == 1
+	some region in stack_regions
+	count(member_accounts(i)) == 1
+	some account in member_accounts(i)
+}
+
+# 3つの疑似パラメータのほかの ${...} が残る pattern は、wildcard の無い ARN（concrete_arn）に当たらない。
+read_allows(a, x, i) if {
+	some s in read_statements
+	a in lib.lower_all(s.Action)
+	some r in lib.as_array(s.Resource)
+	read_resource_matches(r, x, i)
+}
+
+read_resource_matches("*", _, _)
+
+read_resource_matches(r, x, i) if {
+	is_object(r)
+	p := substituted(r["Fn::Sub"], x, i)
+	lib.iam_match(p, x)
+}
+
+# Resource "*" の Allow は特定の ARN への認可ではない（PLAN-IAM-03 が resource-level の権限を持たない Action に限る）。
+# Condition は無視して数え、要求を広い側に倒す。NotResource の Allow は、どの pattern も当たらない ARN に当たる。
+plan_allows_arn(s, x) if {
+	some r in lib.as_array(object.get(s, "Resource", []))
+	r != "*"
+	lib.iam_match(lib.policy_variable_as_wildcard(r), x)
+}
+
+plan_allows_arn(s, x) if {
+	"NotResource" in object.keys(s)
+	not not_resource_matches(s, x)
+}
+
+not_resource_matches(s, x) if {
+	some r in lib.as_array(s.NotResource)
+	lib.iam_match(lib.policy_variable_as_wildcard(r), x)
+}
+
+required(x, i) := {lower(a) |
+	some al in member_allows(i)
+	plan_allows_arn(al.statement, x)
+	some a in lib.as_array(object.get(al.statement, "Action", []))
+} - management_only
+
+deny contains msg if {
+	role_properties
+	count(members) == 0
+	msg := "[PLAN-BR-00] 入力に、構成物の ARN を照らすメンバーの形の instance（state_backend.instances）がありません。reference に置いてください"
+}
+
+# 管理アカウントの形の instance から取ると、メンバーに無い構成物への読みを要求する。形の印は宣言が持つ。
+deny contains msg if {
+	role_properties
+	count(lib.management_only_policies) == 0
+	msg := "[PLAN-BR-00] 宣言 deployment_identity.management_only_policies が無いか空です。メンバーの形の instance が管理アカウントの形でないことを見られません"
+}
+
+deny contains msg if {
+	role_properties
+	some i in members
+	some a in lib.management_only_policies
+	some f in input
+	some rc in f.contents.resource_changes
+	rc.address == lib.rebase(a, i)
+	msg := sprintf("[PLAN-BR-00] instance %s が管理アカウントの形です（%s が入力に在ります）。構成物の ARN をメンバーの形の instance から取れません", [i.name, rc.address])
+}
+
+deny contains msg if {
+	role_properties
+	some i in members
+	some side, prefix in {"state_backend": lib.sb_module, "deployment_identity": lib.di_module}
+	count({r | some r in member_resources(i); startswith(r.address, prefix)}) == 0
+	msg := sprintf("[PLAN-BR-00] instance %s の %s の側に、照らす構成物（%v）が入力にありません", [i.name, side, sort(member_classes)])
+}
+
+deny contains msg if {
+	role_properties
+	some i in members
+	some r in member_resources(i)
+	not concrete_arn(object.get(r.change.after, "arn", null))
+	msg := sprintf("[PLAN-BR-00] instance %s の構成物 %s の ARN が、plan で決まった wildcard の無い ARN ではありません", [i.name, lib.rebase(r.address, i)])
+}
+
+deny contains msg if {
+	role_properties
+	some i in members
+	count(member_accounts(i)) != 1
+	msg := sprintf("[PLAN-BR-00] instance %s の構成物の IAM と KMS の ARN のアカウント %v が、ちょうど1つではありません", [i.name, sort(member_accounts(i))])
+}
+
+deny contains msg if {
+	role_properties
+	count(stack_regions) != 1
+	msg := sprintf("[PLAN-BR-00] 立ち上げの読み取りの stack instance の region %v が、plan で決まったちょうど1つではありません", [sort(stack_regions)])
+}
+
+deny contains msg if {
+	role_properties
+	some i in members
+	some x in member_arns(i)
+	count(required(x, i)) == 0
+	msg := sprintf("[PLAN-BR-00] instance %s の plan の role が、構成物 %s に Resource を限った読みを1つも許していません。fixture の値がずれたか、読みが Resource \"*\" だけの型なら deployment_identity.apply_role.bootstrap.types の分類を見直してください", [i.name, x])
+}
+
+deny contains msg if {
+	role_properties
+	some i in members
+	some x in member_arns(i)
+	some a in required(x, i)
+	not read_allows(a, x, i)
+	msg := sprintf("[PLAN-BR-07] instance %s の plan の role が構成物 %s に許す %s を、立ち上げの読み取りの role がその ARN に許しません", [i.name, x, a])
 }

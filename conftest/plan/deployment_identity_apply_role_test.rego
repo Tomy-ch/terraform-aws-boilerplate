@@ -1396,6 +1396,29 @@ test_violation_prerequisite_only_outside_one_denied if {
 	fixture.has(sprintf("[PLAN-APPLY-07] p.json: %s が", [outside_address]), msgs)
 }
 
+member_slr_address := "module.deployment_identity_m.module.service_linked_roles.aws_iam_service_linked_role.chatbot[0]"
+
+member_slr_decl := json.patch(slr_decl, [
+	{"op": "add", "path": "/state_backend/module", "value": "module.state_backend."},
+	{"op": "add", "path": "/deployment_identity/module", "value": "module.deployment_identity."},
+	{"op": "add", "path": "/state_backend/instances", "value": {"p": [{"name": "m", "state_backend": "module.state_backend_m.", "deployment_identity": "module.deployment_identity_m."}]}},
+])
+
+test_pass_prerequisite_in_member_instance if {
+	count(messages_for(slr_world([], [slr_create], [slr_read], [boundary_allow], [slr(slr_address), slr(member_slr_address)]), member_slr_decl)) == 0
+}
+
+test_violation_prerequisite_in_undeclared_instance if {
+	address := "module.deployment_identity_x.module.service_linked_roles.aws_iam_service_linked_role.chatbot[0]"
+	msgs := messages_for(slr_world([], [slr_create], [slr_read], [boundary_allow], [slr(slr_address), slr(address)]), member_slr_decl)
+	fixture.has(sprintf("[PLAN-APPLY-07] p.json: %s が、宣言した前提の service-linked role（%s）を module.deployment_identity. の外で作っています", [address, slr_service]), msgs)
+}
+
+test_violation_prerequisite_count_ignores_member_instance if {
+	msgs := messages_for(slr_world([], [slr_create], [slr_read], [boundary_allow], [slr(member_slr_address)]), member_slr_decl)
+	fixture.has(sprintf("[PLAN-APPLY-07] 宣言した前提の service-linked role（%s）が、module.deployment_identity. の下に 0 件です（1件を期待）", [slr_service]), msgs)
+}
+
 test_violation_service_linked_role_service_unknown if {
 	every after in [{"arn": slr_arn}, {"arn": slr_arn, "aws_service_name": null}, {"arn": slr_arn, "aws_service_name": 1}] {
 		rcs := with_after(slr_world([], [slr_create], [slr_read], [boundary_allow], [slr(slr_address)]), slr_address, after)
@@ -1616,4 +1639,25 @@ test_violation_management_policy_missing if {
 
 test_violation_management_policy_empty if {
 	management_malformed({"op": "replace", "path": "/deployment_identity/apply_role/governance/management_policy", "value": ""})
+}
+
+member_messages_for(rcs, d) := msgs if {
+	msgs := messages_for(rcs, d) with data.plan.lib.member_form as true
+}
+
+test_pass_member_form_without_governance_policy if {
+	msgs := member_messages_for(without(world(without_management_deny), governance_policy_address), decl)
+	not fixture.has("[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.governance.management_policy", msgs)
+	not fixture.has(denied_06("iam:UpdateAccountPasswordPolicy"), msgs)
+}
+
+test_pass_member_form_does_not_require_management_actions if {
+	not fixture.has(denied_06("iam:UpdateAccountPasswordPolicy"), member_messages_for(world(without_management_deny), decl))
+	fixture.has(denied_06("iam:UpdateAccountPasswordPolicy"), messages_for(world(without_management_deny), decl))
+}
+
+test_violation_member_form_still_requires_governance_actions if {
+	some a in governance_actions
+	statements := [s | some s in valid_statements; not s == governance_deny]
+	fixture.has(denied_06(a), member_messages_for(without(world(statements), governance_policy_address), decl))
 }

@@ -509,7 +509,7 @@ func Test_check(t *testing.T) {
 		n, f := check("p.yaml", strings.Replace(planWorkflow, "      id-token: write\n", "", 1), envs)
 		assert.Zero(t, n)
 		require.Len(t, f, 1, messages(f))
-		assert.Regexp(t, `^job plan-admin-identity は CI の入口（make ci-plan-\*・ci-apply-\*・ci-unlock-\*・ci-hold-\*）を走らせますが（\d+ 行目）、job の permissions に id-token: write がありません。この job はこの検査の規則を受けず、root の経路にも数えません$`, f[0].Message)
+		assert.Regexp(t, `^job plan-admin-identity は CI の入口（make ci-plan-\*・ci-apply-\*・ci-unlock-\*・ci-hold-\*・ci-drift-\*）を走らせますが（\d+ 行目）、job の permissions に id-token: write がありません。この job はこの検査の規則を受けず、root の経路にも数えません$`, f[0].Message)
 		before, _, found := strings.Cut(planWorkflow, "  plan-admin-identity:\n")
 		require.True(t, found)
 		assert.Equal(t, strings.Count(before, "\n")+1, f[0].Line)
@@ -541,7 +541,7 @@ func Test_check(t *testing.T) {
 		n, f := check("p.yaml", "on:\n  push:\nx: make ci-apply-a\n", envs)
 		assert.Zero(t, n)
 		require.Len(t, f, 1, messages(f))
-		assert.Equal(t, "CI の入口（make ci-plan-*・ci-apply-*・ci-unlock-*・ci-hold-*）を持つ行 1 件のうち 1 件を、job の行として読めません", f[0].Message)
+		assert.Equal(t, "CI の入口（make ci-plan-*・ci-apply-*・ci-unlock-*・ci-hold-*・ci-drift-*）を持つ行 1 件のうち 1 件を、job の行として読めません", f[0].Message)
 	})
 
 	t.Run("job の外の入口が2行なら2件と報せる", func(t *testing.T) {
@@ -551,7 +551,7 @@ func Test_check(t *testing.T) {
 		assert.Equal(t, 1, n)
 		require.Len(t, f, 1, messages(f))
 		require.Equal(t, 1, strings.Count(planWorkflow, "ci-plan-"), "planWorkflow の入口の行の数が前提と違う")
-		assert.Equal(t, "CI の入口（make ci-plan-*・ci-apply-*・ci-unlock-*・ci-hold-*）を持つ行 3 件のうち 2 件を、job の行として読めません", f[0].Message)
+		assert.Equal(t, "CI の入口（make ci-plan-*・ci-apply-*・ci-unlock-*・ci-hold-*・ci-drift-*）を持つ行 3 件のうち 2 件を、job の行として読めません", f[0].Message)
 	})
 
 	t.Run("permissions を持たない入口の job は違反にする", func(t *testing.T) {
@@ -594,7 +594,7 @@ func Test_check(t *testing.T) {
 			n, f := check("p.yaml", strings.Replace(planWorkflow, c.from, c.to, 1), envs)
 			assert.Equal(t, 1, n)
 			require.Len(t, f, 1, messages(f))
-			assert.Regexp(t, `^CI の入口（make ci-plan-\*・ci-apply-\*・ci-unlock-\*・ci-hold-\*）を持つ行 \d+ 件のうち 1 件を、job の行として読めません$`, f[0].Message)
+			assert.Regexp(t, `^CI の入口（make ci-plan-\*・ci-apply-\*・ci-unlock-\*・ci-hold-\*・ci-drift-\*）を持つ行 \d+ 件のうち 1 件を、job の行として読めません$`, f[0].Message)
 		})
 	}
 
@@ -1396,7 +1396,7 @@ func Test_checkDetection(t *testing.T) {
 
 		j, aw := applyWith(t, "  apply-admin-identity:\n    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check, apply-root-check]\n",
 			"  other:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo\n\n  apply-admin-identity:\n    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check, apply-root-check, other]\n")
-		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "needs の other は、検出の job（make infra-code-gate）・順序の検査の job（make resource-order-check）・層の検査の job（make layer-check）・root の検査の job（make root-check）・workload root の apply の job に限り同じ env の identity root の apply の job（make ci-apply-<env>-identity） ではありません")
+		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "needs の other は、検出の job（make infra-code-gate）・順序の検査の job（make resource-order-check）・層の検査の job（make layer-check）・root の検査の job（make root-check）・workload root の apply の job に限り同じ env の identity root の apply の job（make ci-apply-<env>-identity）・drift の job に限り drift の木の job（make ci-target-drift CI_ENV=<env>） ではありません")
 	})
 
 	t.Run("if: が順序の検査の成功を見なければ違反", func(t *testing.T) {
@@ -1646,7 +1646,7 @@ func Test_checkUpstream(t *testing.T) {
 func Test_allowedNeeds(t *testing.T) {
 	t.Parallel()
 
-	assert.Equal(t, "検出の job（make infra-code-gate）・順序の検査の job（make resource-order-check）・層の検査の job（make layer-check）・root の検査の job（make root-check）・workload root の apply の job に限り同じ env の identity root の apply の job（make ci-apply-<env>-identity）", allowedNeeds())
+	assert.Equal(t, "検出の job（make infra-code-gate）・順序の検査の job（make resource-order-check）・層の検査の job（make layer-check）・root の検査の job（make root-check）・workload root の apply の job に限り同じ env の identity root の apply の job（make ci-apply-<env>-identity）・drift の job に限り drift の木の job（make ci-target-drift CI_ENV=<env>）", allowedNeeds())
 }
 
 func Test_checkGateJob(t *testing.T) {
@@ -1662,7 +1662,33 @@ func Test_checkGateJob(t *testing.T) {
 	t.Run("順序の検査の2つの make だけなら違反0件", func(t *testing.T) {
 		t.Parallel()
 
-		assert.Empty(t, checkGateJob(jobOf(t, applyWorkflow, "apply-resource-order-check"), orderGate, formatted))
+		assert.Empty(t, checkGateJob(jobOf(t, applyWorkflow, "apply-resource-order-check"), orderGate, nil, formatted))
+	})
+
+	gateOf := func(t *testing.T) workflow.Job {
+		t.Helper()
+		return jobOf(t, driftWorkflow, "drift-infra-code-gate-admin")
+	}
+
+	t.Run("drift の木の job だけを needs に置いた検出の job は、その job を許せば違反0件", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Empty(t, checkGateJob(gateOf(t), detectionGate, []string{"drift-target-admin"}, formatted))
+	})
+
+	for name, allowed := range map[string][]string{"許す job が無い": nil, "許す job が違う": {"other"}, "許す job が多い": {"drift-target-admin", "other"}} {
+		t.Run("needs を置いた検出の job は、"+name+"なら違反", func(t *testing.T) {
+			t.Parallel()
+
+			assert.Contains(t, messages(checkGateJob(gateOf(t), detectionGate, allowed, formatted)), "drift-infra-code-gate-admin に needs: を置かないでください")
+		})
+	}
+
+	t.Run("drift の木の job は検出の job と同じ形の規則で見る", func(t *testing.T) {
+		t.Parallel()
+
+		target := jobOf(t, replaced(t, driftWorkflow, "      - id: target\n", "      - id: target\n        if: false\n"), "drift-target-admin")
+		assert.Contains(t, messages(checkGateJob(target, targetGate, nil, formatted)), "drift の木の job drift-target-admin に if:")
 	})
 
 	// pair は egress が生成する bullfrog の三つ組。with: は形の検査に関わらないので省く。
@@ -1671,7 +1697,7 @@ func Test_checkGateJob(t *testing.T) {
 	t.Run("生成した bullfrog の三つ組の continue-on-error:・if:・回復の run: は違反にしない", func(t *testing.T) {
 		t.Parallel()
 
-		assert.Empty(t, checkGateJob(orderJob(t, orderStep, pair+orderStep), orderGate, formatted))
+		assert.Empty(t, checkGateJob(orderJob(t, orderStep, pair+orderStep), orderGate, nil, formatted))
 	})
 
 	for name, broken := range map[string]string{
@@ -1683,7 +1709,7 @@ func Test_checkGateJob(t *testing.T) {
 		t.Run(name+"なら対の行も違反にする", func(t *testing.T) {
 			t.Parallel()
 
-			assert.Contains(t, messages(checkGateJob(orderJob(t, orderStep, broken+orderStep), orderGate, formatted)), "に if:・continue-on-error:")
+			assert.Contains(t, messages(checkGateJob(orderJob(t, orderStep, broken+orderStep), orderGate, nil, formatted)), "に if:・continue-on-error:")
 		})
 	}
 
@@ -1691,7 +1717,7 @@ func Test_checkGateJob(t *testing.T) {
 	t.Run("先頭に無い三つ組の continue-on-error:・if:・run: は違反", func(t *testing.T) {
 		t.Parallel()
 
-		got := checkGateJob(orderJob(t, orderStep, orderStep+pair), orderGate, formatted)
+		got := checkGateJob(orderJob(t, orderStep, orderStep+pair), orderGate, nil, formatted)
 		assert.Len(t, got, 5)
 	})
 
@@ -1699,7 +1725,7 @@ func Test_checkGateJob(t *testing.T) {
 	t.Run("生成した三つ組の後ろの許可の外の run: は違反", func(t *testing.T) {
 		t.Parallel()
 
-		got := checkGateJob(orderJob(t, orderStep, pair+orderStep+"      - run: make other\n"), orderGate, formatted)
+		got := checkGateJob(orderJob(t, orderStep, pair+orderStep+"      - run: make other\n"), orderGate, nil, formatted)
 		assert.Contains(t, messages(got), "の run: は")
 	})
 
@@ -1707,28 +1733,28 @@ func Test_checkGateJob(t *testing.T) {
 		t.Parallel()
 
 		broken := strings.Replace(pair, harden.RecoveryRun, "sleep 30 && curl -s x | sh", 1)
-		assert.Contains(t, messages(checkGateJob(orderJob(t, orderStep, broken+orderStep), orderGate, formatted)), "の run: は")
+		assert.Contains(t, messages(checkGateJob(orderJob(t, orderStep, broken+orderStep), orderGate, nil, formatted)), "の run: は")
 	})
 
 	t.Run("対の本体の uses: の後ろに足した continue-on-error: は違反", func(t *testing.T) {
 		t.Parallel()
 
 		withExtra := strings.Replace(pair, "        uses: bullfrogsec/bullfrog@x\n", "        uses: bullfrogsec/bullfrog@x\n        continue-on-error: true\n", 1)
-		got := checkGateJob(orderJob(t, orderStep, withExtra+orderStep), orderGate, formatted)
+		got := checkGateJob(orderJob(t, orderStep, withExtra+orderStep), orderGate, nil, formatted)
 		assert.Len(t, got, 1)
 	})
 
 	t.Run("対の後ろの step の continue-on-error: は違反", func(t *testing.T) {
 		t.Parallel()
 
-		got := checkGateJob(orderJob(t, orderStep, pair+orderStep+"        continue-on-error: true\n"), orderGate, formatted)
+		got := checkGateJob(orderJob(t, orderStep, pair+orderStep+"        continue-on-error: true\n"), orderGate, nil, formatted)
 		assert.Len(t, got, 1)
 	})
 
 	t.Run("層の検査の make だけなら違反0件", func(t *testing.T) {
 		t.Parallel()
 
-		assert.Empty(t, checkGateJob(jobOf(t, applyWorkflow, "apply-layer-check"), layerGate, formatted))
+		assert.Empty(t, checkGateJob(jobOf(t, applyWorkflow, "apply-layer-check"), layerGate, nil, formatted))
 	})
 
 	t.Run("層の検査の job のほかの run: は違反", func(t *testing.T) {
@@ -1736,7 +1762,7 @@ func Test_checkGateJob(t *testing.T) {
 
 		const layerStep = "      - run: make layer-check RUNNER_MODE=host\n"
 		j := jobOf(t, replaced(t, applyWorkflow, layerStep, "      - run: make layer-check RUNNER_MODE=host LY_NS=x\n"), "apply-layer-check")
-		assert.Contains(t, messages(checkGateJob(j, layerGate, formatted)), "層の検査の job apply-layer-check の run: は make layer-check だけ")
+		assert.Contains(t, messages(checkGateJob(j, layerGate, nil, formatted)), "層の検査の job apply-layer-check の run: は make layer-check だけ")
 	})
 
 	t.Run("層の検査の job の make layer-check-test は違反", func(t *testing.T) {
@@ -1744,13 +1770,13 @@ func Test_checkGateJob(t *testing.T) {
 
 		const layerStep = "      - run: make layer-check RUNNER_MODE=host\n"
 		j := jobOf(t, replaced(t, applyWorkflow, layerStep, "      - run: make layer-check-test RUNNER_MODE=host\n"+layerStep), "apply-layer-check")
-		assert.Contains(t, messages(checkGateJob(j, layerGate, formatted)), "層の検査の job apply-layer-check の run: は make layer-check だけ")
+		assert.Contains(t, messages(checkGateJob(j, layerGate, nil, formatted)), "層の検査の job apply-layer-check の run: は make layer-check だけ")
 	})
 
 	t.Run("root の検査の2つの make だけなら違反0件", func(t *testing.T) {
 		t.Parallel()
 
-		assert.Empty(t, checkGateJob(jobOf(t, applyWorkflow, "apply-root-check"), rootGate, formatted))
+		assert.Empty(t, checkGateJob(jobOf(t, applyWorkflow, "apply-root-check"), rootGate, nil, formatted))
 	})
 
 	t.Run("root の検査の job のほかの run: は違反", func(t *testing.T) {
@@ -1758,7 +1784,7 @@ func Test_checkGateJob(t *testing.T) {
 
 		const rootStep = "      - run: make root-check RUNNER_MODE=host\n"
 		j := jobOf(t, replaced(t, applyWorkflow, rootStep, "      - run: make root-check RUNNER_MODE=host RT_NS=x\n"), "apply-root-check")
-		assert.Contains(t, messages(checkGateJob(j, rootGate, formatted)), "root の検査の job apply-root-check の run: は make root-check だけ")
+		assert.Contains(t, messages(checkGateJob(j, rootGate, nil, formatted)), "root の検査の job apply-root-check の run: は make root-check だけ")
 	})
 
 	for name, c := range map[string]struct{ from, to, want string }{
@@ -1773,7 +1799,7 @@ func Test_checkGateJob(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			assert.Contains(t, messages(checkGateJob(orderJob(t, c.from, c.to), orderGate, formatted)), c.want)
+			assert.Contains(t, messages(checkGateJob(orderJob(t, c.from, c.to), orderGate, nil, formatted)), c.want)
 		})
 	}
 }
@@ -1957,7 +1983,7 @@ func Test_checkHidden(t *testing.T) {
 		t.Parallel()
 
 		j, aw := applyWith(t, entry, "      - run: make ci-assume-denied CI_ENV=admin RUNNER_MODE=host\n"+entry)
-		assert.Contains(t, messages(hiddenOf(t, j, aw, formatted)), "plan の job にだけ")
+		assert.Contains(t, messages(hiddenOf(t, j, aw, formatted)), "plan と drift の job にだけ")
 	})
 
 	for name, c := range map[string]struct{ to, want string }{
@@ -2295,7 +2321,7 @@ func Test_checkDenied(t *testing.T) {
 		t.Parallel()
 
 		job := jobOf(t, planWorkflow, "plan-admin-identity")
-		assert.Empty(t, checkDenied(job, credOf(job), formatted))
+		assert.Empty(t, checkDenied(job, credOf(job), cientry.Plan, formatted))
 	})
 
 	t.Run("checkPlan が呼ぶ", func(t *testing.T) {
@@ -2321,7 +2347,7 @@ func Test_checkDenied(t *testing.T) {
 			t.Parallel()
 
 			job := planWith(t, c.from, c.to)
-			assert.Contains(t, messages(checkDenied(job, credOf(job), formatted)), c.want)
+			assert.Contains(t, messages(checkDenied(job, credOf(job), cientry.Plan, formatted)), c.want)
 		})
 	}
 
@@ -2331,7 +2357,7 @@ func Test_checkDenied(t *testing.T) {
 		src := replaced(t, planWorkflow, denied, "        run: echo moved\n")
 		src = replaced(t, src, "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n", "      - {run: make ci-assume-denied CI_ENV=admin RUNNER_MODE=host}\n      - run: make ci-plan-admin-identity RUNNER_MODE=host\n")
 		job := jobOf(t, src, "plan-admin-identity")
-		assert.Contains(t, messages(checkDenied(job, credOf(job), formatted)), "run: make ci-assume-denied CI_ENV=<env> RUNNER_MODE=host だけ")
+		assert.Contains(t, messages(checkDenied(job, credOf(job), cientry.Plan, formatted)), "run: make ci-assume-denied CI_ENV=<env> RUNNER_MODE=host だけ")
 	})
 
 	t.Run("資格情報より前なら違反", func(t *testing.T) {
@@ -2340,7 +2366,7 @@ func Test_checkDenied(t *testing.T) {
 		src := replaced(t, planWorkflow, denied, "        run: echo moved\n")
 		src = replaced(t, src, "      - name: Run terraform plan through make\n", "      - run: make ci-assume-denied CI_ENV=admin RUNNER_MODE=host\n      - name: Run terraform plan through make\n")
 		job := jobOf(t, src, "plan-admin-identity")
-		assert.Contains(t, messages(checkDenied(job, credOf(job), formatted)), "資格情報を取る step より後")
+		assert.Contains(t, messages(checkDenied(job, credOf(job), cientry.Plan, formatted)), "資格情報を取る step より後")
 	})
 
 	t.Run("plan の入口より後なら違反", func(t *testing.T) {
@@ -2349,7 +2375,7 @@ func Test_checkDenied(t *testing.T) {
 		src := replaced(t, planWorkflow, denied, "        run: echo moved\n")
 		src = replaced(t, src, "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n", "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n      - run: make ci-assume-denied CI_ENV=admin RUNNER_MODE=host\n")
 		job := jobOf(t, src, "plan-admin-identity")
-		assert.Contains(t, messages(checkDenied(job, credOf(job), formatted)), "plan の入口より前")
+		assert.Contains(t, messages(checkDenied(job, credOf(job), cientry.Plan, formatted)), "plan の入口より前")
 	})
 }
 
@@ -3450,9 +3476,9 @@ func Test_checkUnlock(t *testing.T) {
 		"concurrency が無ければ違反":            {unlockWfConcurrency, "", "cancel-in-progress: false の concurrency"},
 		"実行中を取り消す concurrency は違反":       {"  cancel-in-progress: false\n", "  cancel-in-progress: true\n", "cancel-in-progress: false の concurrency"},
 		"refuse-stale が無ければ違反":           {"        id: refuse-stale\n", "", "refuse-stale の step"},
-		"同じ workflow の apply の job は違反":  {"jobs:\n", "jobs:\n  apply:\n    steps:\n      - run: make ci-apply-admin-identity RUNNER_MODE=host\n", "plan と apply と lock を残す job（apply）を置かないで"},
-		"同じ workflow の plan の job は違反":   {"jobs:\n", "jobs:\n  plan:\n    steps:\n      - run: make ci-plan-admin-identity RUNNER_MODE=host\n", "plan と apply と lock を残す job（plan）を置かないで"},
-		"同じ workflow の lock を残す job は違反": {"jobs:\n", "jobs:\n  hold:\n    steps:\n      - run: make ci-hold-admin-identity RUNNER_MODE=host\n", "plan と apply と lock を残す job（hold）を置かないで"},
+		"同じ workflow の apply の job は違反":  {"jobs:\n", "jobs:\n  apply:\n    steps:\n      - run: make ci-apply-admin-identity RUNNER_MODE=host\n", "plan と apply と drift と lock を残す job（apply）を置かないで"},
+		"同じ workflow の plan の job は違反":   {"jobs:\n", "jobs:\n  plan:\n    steps:\n      - run: make ci-plan-admin-identity RUNNER_MODE=host\n", "plan と apply と drift と lock を残す job（plan）を置かないで"},
+		"同じ workflow の lock を残す job は違反": {"jobs:\n", "jobs:\n  hold:\n    steps:\n      - run: make ci-hold-admin-identity RUNNER_MODE=host\n", "plan と apply と drift と lock を残す job（hold）を置かないで"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -4233,8 +4259,9 @@ func Test_namedKinds(t *testing.T) {
 		t.Parallel()
 		got, err := namedKinds(cientry.Lookup)
 		require.NoError(t, err)
-		assert.Len(t, got, 4)
+		assert.Len(t, got, 5)
 		assert.Equal(t, cientry.Hold, got[cientry.Hold].Name)
+		assert.Equal(t, cientry.Drift, got[cientry.Drift].Name)
 	})
 
 	t.Run("登録簿に無い種別があれば失敗する", func(t *testing.T) {
@@ -4276,7 +4303,7 @@ func Test_entryNames(t *testing.T) {
 	t.Run("違反の文の入口の並びは種別の一覧から組む", func(t *testing.T) {
 		t.Parallel()
 
-		assert.Equal(t, "make ci-plan-*・ci-apply-*・ci-unlock-*・ci-hold-*", entryNames)
+		assert.Equal(t, "make ci-plan-*・ci-apply-*・ci-unlock-*・ci-hold-*・ci-drift-*", entryNames)
 	})
 
 	t.Run("登録簿のすべての種別を登録簿の順に並べる", func(t *testing.T) {
@@ -4297,14 +4324,15 @@ func Test_entryRegexps(t *testing.T) {
 		got  *regexp.Regexp
 		want string
 	}{
-		"ciEntry":     {ciEntry, `\bmake\b.*\bci-(?:plan|apply|unlock|hold)-[a-z0-9-]+`},
-		"entryToken":  {entryToken, `\bci-(?:plan|apply|unlock|hold)-`},
+		"ciEntry":     {ciEntry, `\bmake\b.*\bci-(?:plan|apply|unlock|hold|drift)-[a-z0-9-]+`},
+		"entryToken":  {entryToken, `\bci-(?:plan|apply|unlock|hold|drift)-`},
 		"unlockEntry": {unlockEntry, `\bmake\b.*\bci-(?:unlock)-([a-z0-9-]+)`},
 		"holdEntry":   {holdEntry, `\bmake\b.*\bci-(?:hold)-([a-z0-9-]+)`},
-		"otherEntry":  {otherEntry, `\bmake\b.*\bci-(?:plan|apply|unlock)-[a-z0-9-]+`},
+		"otherEntry":  {otherEntry, `\bmake\b.*\bci-(?:plan|apply|unlock|drift)-[a-z0-9-]+`},
 		"applyEntry":  {applyEntry, `\bmake\b.*\bci-(?:apply)-([a-z0-9-]+)`},
 		"planEntry":   {planEntry, `\bmake\b.*\bci-(?:plan)-[a-z0-9-]+`},
-		"runEntry":    {runEntry, `\bmake\b.*\bci-(?:plan|apply)-[a-z0-9-]+`},
+		"runEntry":    {runEntry, `\bmake\b.*\bci-(?:plan|apply|drift)-[a-z0-9-]+`},
+		"driftEntry":  {driftEntry, `\bmake\b.*\bci-(?:drift)-([a-z0-9-]+)`},
 	} {
 		t.Run(name+" は登録簿から同じ字面に組まれる", func(t *testing.T) {
 			t.Parallel()
@@ -4337,7 +4365,8 @@ func Test_entryRegexps(t *testing.T) {
 		"otherEntry":  {otherEntry, `\bmake\b.*\bci-` + alt(func(k cientry.Kind) bool { return k.Name != cientry.Hold }) + `-[a-z0-9-]+`},
 		"applyEntry":  {applyEntry, `\bmake\b.*\bci-` + alt(is(cientry.Apply)) + `-([a-z0-9-]+)`},
 		"planEntry":   {planEntry, `\bmake\b.*\bci-` + alt(is(cientry.Plan)) + `-[a-z0-9-]+`},
-		"runEntry":    {runEntry, `\bmake\b.*\bci-` + alt(is(cientry.Plan, cientry.Apply)) + `-[a-z0-9-]+`},
+		"runEntry":    {runEntry, `\bmake\b.*\bci-` + alt(is(cientry.Plan, cientry.Apply, cientry.Drift)) + `-[a-z0-9-]+`},
+		"driftEntry":  {driftEntry, `\bmake\b.*\bci-` + alt(is(cientry.Drift)) + `-([a-z0-9-]+)`},
 	} {
 		t.Run(name+" の種別の並びは登録簿の種別から導かれる", func(t *testing.T) {
 			t.Parallel()
@@ -4351,16 +4380,18 @@ func Test_entryRegexps(t *testing.T) {
 		line string
 		want bool
 	}{
-		"ciEntry は make の hold の入口に当たる": {ciEntry, "run: make ci-hold-admin-identity", true},
-		"ciEntry は make の無い入口に当たらない":    {ciEntry, "run: echo ci-hold-admin-identity", false},
-		"entryToken は make の無い入口にも当たる":  {entryToken, "group: ci-apply-x", true},
-		"entryToken は語の途中に当たらない":        {entryToken, "xci-apply-x", false},
-		"otherEntry は hold の入口に当たらない":   {otherEntry, "run: make ci-hold-admin-identity", false},
-		"otherEntry は unlock の入口に当たる":   {otherEntry, "run: make ci-unlock-admin-identity", true},
-		"runEntry は unlock の入口に当たらない":   {runEntry, "run: make ci-unlock-admin-identity", false},
-		"runEntry は apply の入口に当たる":      {runEntry, "run: make ci-apply-admin-identity", true},
-		"applyEntry は plan の入口に当たらない":   {applyEntry, "run: make ci-plan-admin-identity", false},
-		"planEntry は ci-planner に当たらない": {planEntry, "run: make ci-planner-x", false},
+		"ciEntry は make の hold の入口に当たる":        {ciEntry, "run: make ci-hold-admin-identity", true},
+		"ciEntry は make の無い入口に当たらない":           {ciEntry, "run: echo ci-hold-admin-identity", false},
+		"entryToken は make の無い入口にも当たる":         {entryToken, "group: ci-apply-x", true},
+		"entryToken は語の途中に当たらない":               {entryToken, "xci-apply-x", false},
+		"otherEntry は hold の入口に当たらない":          {otherEntry, "run: make ci-hold-admin-identity", false},
+		"otherEntry は unlock の入口に当たる":          {otherEntry, "run: make ci-unlock-admin-identity", true},
+		"runEntry は unlock の入口に当たらない":          {runEntry, "run: make ci-unlock-admin-identity", false},
+		"runEntry は apply の入口に当たる":             {runEntry, "run: make ci-apply-admin-identity", true},
+		"applyEntry は plan の入口に当たらない":          {applyEntry, "run: make ci-plan-admin-identity", false},
+		"planEntry は ci-planner に当たらない":        {planEntry, "run: make ci-planner-x", false},
+		"entryToken は drift の入口でないターゲットに当たらない": {entryToken, "run: make ci-target-drift CI_ENV=admin", false},
+		"driftEntry は報告のターゲットに当たらない":           {driftEntry, "run: make ci-report-drift", false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -4510,8 +4541,9 @@ func rootsWith(t *testing.T, roots ...string) string {
 const rootPerm = "    permissions:\n      contents: read\n      id-token: write\n"
 
 func rootJobs(roots ...string) map[string]string {
-	var plan, apply, unlock, hold strings.Builder
+	var plan, apply, unlock, hold, drift strings.Builder
 	plan.WriteString("on:\n  pull_request:\njobs:\n")
+	drift.WriteString("on:\n  schedule:\njobs:\n")
 	apply.WriteString("on:\n  push:\njobs:\n")
 	unlock.WriteString("on:\n  workflow_dispatch:\njobs:\n")
 	hold.WriteString("on:\n  workflow_dispatch:\njobs:\n")
@@ -4520,14 +4552,15 @@ func rootJobs(roots ...string) map[string]string {
 		apply.WriteString("  apply-" + r + ":\n" + rootPerm + "    steps:\n      - run: make ci-apply-" + r + " RUNNER_MODE=host\n")
 		unlock.WriteString("  unlock-" + r + ":\n" + rootPerm + "    steps:\n      - run: make ci-unlock-" + r + " RUNNER_MODE=host\n")
 		hold.WriteString("  hold-" + r + ":\n" + rootPerm + "    steps:\n      - run: make ci-hold-" + r + " RUNNER_MODE=host\n")
+		drift.WriteString("  drift-" + r + ":\n" + rootPerm + "    steps:\n      - run: make ci-drift-" + r + " RUNNER_MODE=host\n")
 	}
-	return map[string]string{"plan.yaml": plan.String(), "apply.yaml": apply.String(), "unlock.yaml": unlock.String(), "hold.yaml": hold.String()}
+	return map[string]string{"plan.yaml": plan.String(), "apply.yaml": apply.String(), "unlock.yaml": unlock.String(), "hold.yaml": hold.String(), "drift.yaml": drift.String()}
 }
 
 func Test_runRoots(t *testing.T) {
 	t.Parallel()
 
-	wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": applyWorkflow, "unlock.yaml": unlockWorkflow, "hold.yaml": holdWorkflow}, envDecl)
+	wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": applyWorkflow, "unlock.yaml": unlockWorkflow, "hold.yaml": holdWorkflow, "drift.yaml": driftWorkflow}, envDecl)
 
 	t.Run("root ごとの CI の経路を数えて報せる", func(t *testing.T) {
 		t.Parallel()
@@ -4591,7 +4624,7 @@ func Test_checkRootCoverage(t *testing.T) {
 	t.Run("同じ root の plan が2つあっても違反にしない（定期 plan）", func(t *testing.T) {
 		t.Parallel()
 		jobs := rootJobs(four...)
-		jobs["drift.yaml"] = drift
+		jobs["scheduled-plan.yaml"] = drift
 		_, findings, err := checkRootCoverage(rootsWith(t, dirs...), jobs)
 		require.NoError(t, err)
 		assert.Empty(t, messages(findings))
@@ -4600,7 +4633,7 @@ func Test_checkRootCoverage(t *testing.T) {
 	t.Run("定期 plan の job も plan として数える", func(t *testing.T) {
 		t.Parallel()
 		jobs := withoutPlan(rootJobs(four...))
-		jobs["drift.yaml"] = drift
+		jobs["scheduled-plan.yaml"] = drift
 		_, findings, err := checkRootCoverage(rootsWith(t, dirs...), jobs)
 		require.NoError(t, err)
 		assert.Empty(t, messages(findings))
@@ -4609,7 +4642,7 @@ func Test_checkRootCoverage(t *testing.T) {
 	t.Run("id-token を持たない plan の job は数えない", func(t *testing.T) {
 		t.Parallel()
 		jobs := withoutPlan(rootJobs(four...))
-		jobs["drift.yaml"] = strings.Replace(drift, "      id-token: write\n", "", 1)
+		jobs["scheduled-plan.yaml"] = strings.Replace(drift, "      id-token: write\n", "", 1)
 		_, findings, err := checkRootCoverage(rootsWith(t, dirs...), jobs)
 		require.NoError(t, err)
 		assert.Equal(t, "root admin-identity を Pull Request で plan する job がありません\n", messages(findings))
@@ -4721,7 +4754,22 @@ func Test_checkRootCoverage(t *testing.T) {
 		n    int
 	}{
 		"配置の外の root は違反":               {append(slices.Clone(dirs), "admin/extra"), func() map[string]string { return rootJobs(four...) }, "admin/extra", 1},
-		"名前が前方一致する別の root の job は数えない": {[]string{"admin/identity"}, func() map[string]string { return rootJobs("admin-identity-x") }, "root admin-identity を apply する job が 0 件", 4},
+		"名前が前方一致する別の root の job は数えない": {[]string{"admin/identity"}, func() map[string]string { return rootJobs("admin-identity-x") }, "root admin-identity を apply する job が 0 件", 5},
+		"drift の job が無い root は違反": {dirs, func() map[string]string {
+			j := rootJobs(four...)
+			j["drift.yaml"] = strings.Replace(j["drift.yaml"], "make ci-drift-admin-workload", "echo", 1)
+			return j
+		}, "root admin-workload の drift を検出する job が 0 件です（1件を期待。ADR-0601 決定12）", 1},
+		"drift の job が2つの root は違反": {dirs, func() map[string]string {
+			j := rootJobs(four...)
+			j["drift2.yaml"] = j["drift.yaml"]
+			return j
+		}, "drift を検出する job が 2 件", 4},
+		"id-token を持たない drift の job は数えない": {dirs, func() map[string]string {
+			j := rootJobs(four...)
+			j["drift.yaml"] = strings.Replace(j["drift.yaml"], "  drift-admin-identity:\n"+rootPerm, "  drift-admin-identity:\n    permissions:\n      contents: read\n", 1)
+			return j
+		}, "root admin-identity の drift を検出する job が 0 件", 1},
 		"apply の job が無い root は違反": {dirs, func() map[string]string {
 			j := rootJobs(four...)
 			j["apply.yaml"] = strings.Replace(j["apply.yaml"], "make ci-apply-security-workload", "echo", 1)
@@ -5162,4 +5210,462 @@ func Test_holdProblem(t *testing.T) {
 			assert.Contains(t, got, "lock を残す job の concurrency の group を字面で書いて")
 		})
 	}
+}
+
+// driftWorkflow は、admin の identity root の drift を検出する workflow。terraform-drift.yaml の形（bullfrog の step を除く）。
+var driftWorkflow = strings.Join([]string{
+	"name: Terraform Drift",
+	"",
+	"on:",
+	"  schedule:",
+	"    - cron: '23 4 * * *'",
+	"  workflow_dispatch:",
+	"",
+	"permissions:",
+	"  contents: read",
+	"",
+	"concurrency:",
+	"  group: terraform-drift",
+	"  cancel-in-progress: false",
+	"",
+	"jobs:",
+	"  drift-target-admin:",
+	"    runs-on: ubuntu-24.04",
+	"    permissions:",
+	"      contents: read",
+	"    outputs:",
+	"      sha: ${{ steps.target.outputs.sha }}",
+	"      promoted-admin-identity: ${{ steps.target.outputs.promoted-admin-identity }}",
+	"    steps:",
+	"      - uses: actions/checkout@0000000000000000000000000000000000000000",
+	"        with:",
+	"          persist-credentials: false",
+	"      - id: target",
+	"        run: make ci-target-drift CI_ENV=admin RUNNER_MODE=host",
+	"",
+	"  drift-infra-code-gate-admin:",
+	"    needs: drift-target-admin",
+	"    runs-on: ubuntu-24.04",
+	"    permissions:",
+	"      contents: read",
+	"    steps:",
+	"      - uses: actions/checkout@0000000000000000000000000000000000000000",
+	"        with:",
+	"          ref: ${{ needs.drift-target-admin.outputs.sha }}",
+	"          persist-credentials: false",
+	"      - run: make -k infra-code-gate RUNNER_MODE=host",
+	"",
+	"  drift-admin-identity:",
+	"    needs: [drift-target-admin, drift-infra-code-gate-admin]",
+	"    if: ${{ needs.drift-target-admin.result == 'success' && needs.drift-infra-code-gate-admin.result == 'success' && needs.drift-target-admin.outputs.promoted-admin-identity == 'true' }}",
+	"    runs-on: ubuntu-24.04",
+	"    environment: admin-plan",
+	"    permissions:",
+	"      contents: read",
+	"      id-token: write",
+	"    steps:",
+	"      - name: Refuse runs outside the default branch",
+	"        id: refuse-off-default",
+	"        env:",
+	"          ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}",
+	"        run: test -n \"$ACCOUNT_ID\"",
+	"      - uses: actions/checkout@0000000000000000000000000000000000000000",
+	"        with:",
+	"          ref: ${{ needs.drift-target-admin.outputs.sha }}",
+	"          persist-credentials: false",
+	"      - run: make ci-aws-credentials CI_ENV=admin CI_ROLE=plan RUNNER_MODE=host",
+	"      - run: make ci-assume-denied CI_ENV=admin RUNNER_MODE=host",
+	"      - id: drift",
+	"        run: make ci-drift-admin-identity RUNNER_MODE=host",
+	"",
+	"  report:",
+	"    needs: [drift-target-admin, drift-infra-code-gate-admin, drift-admin-identity]",
+	"    if: ${{ !cancelled() }}",
+	"    runs-on: ubuntu-24.04",
+	"    permissions:",
+	"      contents: read",
+	"      issues: write",
+	"    steps:",
+	"      - id: report",
+	"        run: make ci-report-drift RUNNER_MODE=host",
+	"",
+	"  notify-drift:",
+	"    needs: report",
+	"    if: ${{ needs.report.result == 'success' && needs.report.outputs.notify == 'drift' }}",
+	"    uses: ./.github/workflows/notify.yaml",
+	"",
+	"  mark-report:",
+	"    needs: [report, notify-drift]",
+	"    if: ${{ needs.report.result == 'success' && needs.notify-drift.result == 'success' && needs.report.outputs.mark-state != '' }}",
+	"    runs-on: ubuntu-24.04",
+	"    permissions:",
+	"      contents: read",
+	"      issues: write",
+	"    steps:",
+	"      - uses: ./.github/actions/upsert-report-issue",
+	"",
+	"  notify-failure:",
+	"    needs: report",
+	"    if: ${{ always() && (needs.report.result != 'success' || needs.report.outputs.notify == 'failure') }}",
+	"    uses: ./.github/workflows/notify.yaml",
+	"",
+}, "\n")
+
+func driftInfo(t *testing.T, src string) (workflow.Job, workflowInfo) {
+	t.Helper()
+	return jobOf(t, src, "drift-admin-identity"), infoOf(src)
+}
+
+func Test_isDrift(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		line string
+		want bool
+	}{
+		"drift の入口":            {"      - run: make ci-drift-admin-identity RUNNER_MODE=host", true},
+		"drift の木の job のターゲット": {"      - run: make ci-target-drift CI_ENV=admin RUNNER_MODE=host", false},
+		"drift の報告のターゲット":      {"      - run: make ci-report-drift RUNNER_MODE=host", false},
+		"plan の入口":             {"      - run: make ci-plan-admin-identity RUNNER_MODE=host", false},
+		"コメントの drift の入口":      {"      # make ci-drift-admin-identity", false},
+		"name: の drift の入口":    {"      - name: make ci-drift-admin-identity", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, isDrift(workflow.Job{Lines: lines(c.line)}))
+		})
+	}
+}
+
+func Test_checkDrift(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("規則を満たす drift の workflow は違反0件で、drift の job を対象に数える", func(t *testing.T) {
+			t.Parallel()
+			n, f := check("d.yaml", driftWorkflow, envs)
+			assert.Equal(t, 1, n)
+			assert.Empty(t, messages(f))
+		})
+
+		t.Run("drift の job は drift の規則で見る", func(t *testing.T) {
+			t.Parallel()
+			j, _ := driftInfo(t, driftWorkflow)
+			assert.Equal(t, cientry.Drift, jobKind(j, "plan"))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		for name, c := range map[string]struct{ from, to, want string }{
+			"pull_request でも起動する":   {"  workflow_dispatch:\n", "  workflow_dispatch:\n  pull_request:\n", "起動は schedule と workflow_dispatch だけ"},
+			"push でも起動する":           {"  workflow_dispatch:\n", "  workflow_dispatch:\n  push:\n", "起動は schedule と workflow_dispatch だけ"},
+			"手動の起動が inputs を取る":     {"  workflow_dispatch:\n", "  workflow_dispatch:\n    inputs:\n      ref:\n", "workflow_dispatch に inputs を置かないで"},
+			"concurrency が無い":       {"concurrency:\n  group: terraform-drift\n  cancel-in-progress: false\n", "", "cancel-in-progress: false の concurrency"},
+			"concurrency が実行中を取り消す": {"  cancel-in-progress: false\n", "  cancel-in-progress: true\n", "cancel-in-progress: false の concurrency"},
+			"group が式":              {"  group: terraform-drift\n", "  group: ${{ github.workflow }}\n", "group を字面で書いて"},
+			"拒否の step が無い":          {"        id: refuse-off-default\n", "        id: refuse\n", "id が refuse-off-default の step"},
+			"拒否の step が skip できる":   {"        id: refuse-off-default\n", "        id: refuse-off-default\n        if: false\n", "step refuse-off-default に if: と continue-on-error: を置かないで"},
+			"拒否の確認が無い":              {"      - run: make ci-assume-denied CI_ENV=admin RUNNER_MODE=host\n", "", "drift の job に make ci-assume-denied を1回だけ"},
+			"拒否の確認が入口より後":           {"      - run: make ci-assume-denied CI_ENV=admin RUNNER_MODE=host\n      - id: drift\n        run: make ci-drift-admin-identity RUNNER_MODE=host\n", "      - id: drift\n        run: make ci-drift-admin-identity RUNNER_MODE=host\n      - run: make ci-assume-denied CI_ENV=admin RUNNER_MODE=host\n", "drift の入口より前"},
+			"plan の入口も走らせる":         {"        run: make ci-drift-admin-identity RUNNER_MODE=host\n", "        run: make ci-drift-admin-identity RUNNER_MODE=host\n      - run: make ci-plan-admin-identity RUNNER_MODE=host\n", "drift の job は terraform を make ci-drift-* でだけ"},
+			"apply の role を取る":      {"CI_ROLE=plan", "CI_ROLE=apply", "drift の job は plan の role を取って"},
+			"job の id が入口と違う":       {"  drift-admin-identity:\n", "  drift-identity:\n", "id を drift-admin-identity にして"},
+		} {
+			t.Run(name+"なら違反", func(t *testing.T) {
+				t.Parallel()
+				src := replaced(t, driftWorkflow, c.from, c.to)
+				_, f := check("d.yaml", src, envs)
+				assert.Contains(t, messages(f), c.want)
+			})
+		}
+	})
+}
+
+func Test_checkDriftTree(t *testing.T) {
+	t.Parallel()
+
+	tree := func(t *testing.T, src string) string {
+		t.Helper()
+		j, w := driftInfo(t, src)
+		return messages(checkDriftTree(j, "admin", "admin-identity", w.jobs, formatted))
+	}
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("木の job と検出の job を待ち、同じ commit を checkout すれば違反0件", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, tree(t, driftWorkflow))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		for name, c := range map[string]struct{ from, to, want string }{
+			"needs に検出の job が無い":     {"    needs: [drift-target-admin, drift-infra-code-gate-admin]\n", "    needs: [drift-target-admin]\n", "needs は drift-target-admin と drift-infra-code-gate-admin だけ"},
+			"needs に余計な job がある":     {"    needs: [drift-target-admin, drift-infra-code-gate-admin]\n", "    needs: [drift-target-admin, drift-infra-code-gate-admin, report]\n", "needs は drift-target-admin と drift-infra-code-gate-admin だけ"},
+			"木の job が無い":             {"      - id: target\n        run: make ci-target-drift CI_ENV=admin RUNNER_MODE=host\n", "      - run: echo\n", "make ci-target-drift CI_ENV=admin を走らせる job drift-target-admin を置いて"},
+			"木の job の env が違う":       {"ci-target-drift CI_ENV=admin", "ci-target-drift CI_ENV=security", "CI_ENV=security が、drift の job の env admin と違います"},
+			"検出の job が無い":            {"      - run: make -k infra-code-gate RUNNER_MODE=host\n", "      - run: echo\n", "検出の job drift-infra-code-gate-admin を置いて"},
+			"検出の job が木の job を待たない":  {"  drift-infra-code-gate-admin:\n    needs: drift-target-admin\n", "  drift-infra-code-gate-admin:\n", "needs を drift-target-admin だけに"},
+			"if: が昇格の済みを見ない":         {" && needs.drift-target-admin.outputs.promoted-admin-identity == 'true' }}", " }}", "needs.drift-target-admin.outputs.promoted-admin-identity == 'true' を含めて"},
+			"if: が別の root の昇格の済みを見る": {"outputs.promoted-admin-identity == 'true'", "outputs.promoted-admin-workload == 'true'", "promoted-admin-identity == 'true' を含めて"},
+			"if: が env 単位の昇格の済みを見る":  {"outputs.promoted-admin-identity == 'true'", "outputs.promoted == 'true'", "promoted-admin-identity == 'true' を含めて"},
+			"if: が always() で失敗を越える": {"'true' }}\n    runs-on: ubuntu-24.04\n    environment", "'true' || always() }}\n    runs-on: ubuntu-24.04\n    environment", "status の関数・|| ・! を置かないで"},
+			"if: が cancelled() を足す":  {"    if: ${{ needs.drift-target-admin.result", "    if: ${{ !cancelled() && needs.drift-target-admin.result", "status の関数・|| ・! を置かないで"},
+			"if: が否定で失敗を越える":         {"    if: ${{ needs.drift-target-admin.result", "    if: ${{ !(needs.drift-infra-code-gate-admin.result == 'failure') && needs.drift-target-admin.result", "status の関数・|| ・! を置かないで"},
+			"if: が failure() を足す":    {"    if: ${{ needs.drift-target-admin.result", "    if: ${{ failure() && needs.drift-target-admin.result", "status の関数・|| ・! を置かないで"},
+			"if: が木の job の成功を見ない":    {"needs.drift-target-admin.result == 'success' && needs.drift-infra-code-gate-admin", "needs.drift-infra-code-gate-admin", "needs.drift-target-admin.result == 'success' を含めて"},
+			"if: が検出の job の成功を見ない":   {"needs.drift-infra-code-gate-admin.result == 'success' && needs.drift-target-admin.outputs", "needs.drift-target-admin.outputs", "needs.drift-infra-code-gate-admin.result == 'success' を含めて"},
+			"if: が検出の job の失敗を待つ":    {"needs.drift-infra-code-gate-admin.result == 'success'", "needs.drift-infra-code-gate-admin.result != 'success'", "needs.drift-infra-code-gate-admin.result == 'success' を含めて"},
+		} {
+			t.Run(name+"なら違反", func(t *testing.T) {
+				t.Parallel()
+				assert.Contains(t, tree(t, replaced(t, driftWorkflow, c.from, c.to)), c.want)
+			})
+		}
+
+		t.Run("drift の job の checkout がデフォルトブランチなら違反", func(t *testing.T) {
+			t.Parallel()
+			src := driftWorkflow
+			i := strings.Index(src, "  drift-admin-identity:\n")
+			src = src[:i] + strings.Replace(src[i:], "          ref: ${{ needs.drift-target-admin.outputs.sha }}\n", "", 1)
+			assert.Contains(t, tree(t, src), "job drift-admin-identity の actions/checkout に ref: ${{ needs.drift-target-admin.outputs.sha }} を置いて")
+		})
+
+		t.Run("検出の job の checkout が別の job の出力なら違反", func(t *testing.T) {
+			t.Parallel()
+			src := replaced(t, driftWorkflow, "    steps:\n      - uses: actions/checkout@0000000000000000000000000000000000000000\n        with:\n          ref: ${{ needs.drift-target-admin.outputs.sha }}\n          persist-credentials: false\n      - run: make -k",
+				"    steps:\n      - uses: actions/checkout@0000000000000000000000000000000000000000\n        with:\n          ref: ${{ needs.other.outputs.sha }}\n          persist-credentials: false\n      - run: make -k")
+			assert.Contains(t, tree(t, src), "job drift-infra-code-gate-admin の actions/checkout に ref:")
+		})
+
+		t.Run("if: が無ければ違反", func(t *testing.T) {
+			t.Parallel()
+			src := replaced(t, driftWorkflow, "    if: ${{ needs.drift-target-admin.result == 'success' && needs.drift-infra-code-gate-admin.result == 'success' && needs.drift-target-admin.outputs.promoted-admin-identity == 'true' }}\n", "")
+			got := tree(t, src)
+			assert.Contains(t, got, "outputs.promoted-admin-identity == 'true' を含めて")
+			assert.Contains(t, got, "needs.drift-target-admin.result == 'success' を含めて")
+		})
+	})
+}
+
+func Test_checkCheckoutRef(t *testing.T) {
+	t.Parallel()
+
+	job := func(body string) workflow.Job {
+		return workflow.SplitJobs("jobs:\n  j:\n    steps:\n" + body).Jobs[0]
+	}
+	const checkout = "      - uses: actions/checkout@0000000000000000000000000000000000000000\n        with:\n"
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("すべての checkout が木の job の commit を指せば違反0件", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, checkCheckoutRef(job(checkout+"          ref: ${{ needs.t.outputs.sha }}\n"), "t", formatted))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		for name, c := range map[string]struct{ body, want string }{
+			"checkout が無い":      {"      - run: echo\n", "ref: ${{ needs.t.outputs.sha }} の actions/checkout を置いて"},
+			"ref が無い":           {checkout + "          persist-credentials: false\n", "actions/checkout に ref:"},
+			"ref が別の job":       {checkout + "          ref: ${{ needs.u.outputs.sha }}\n", "actions/checkout に ref:"},
+			"ref が別の出力":         {checkout + "          ref: ${{ needs.t.outputs.promoted }}\n", "actions/checkout に ref:"},
+			"2つ目の checkout が既定": {checkout + "          ref: ${{ needs.t.outputs.sha }}\n" + checkout + "          path: x\n", "actions/checkout に ref:"},
+		} {
+			t.Run(name+"なら違反", func(t *testing.T) {
+				t.Parallel()
+				assert.Contains(t, messages(checkCheckoutRef(job(c.body), "t", formatted)), c.want)
+			})
+		}
+	})
+}
+
+func Test_checkDriftIsolation(t *testing.T) {
+	t.Parallel()
+
+	rec := func(kind, group string) groupRecord {
+		return groupRecord{file: kind + ".yaml", job: workflow.Job{ID: kind, Number: 1}, root: "admin-identity", group: group, kind: kind}
+	}
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("drift の group が apply・lock の解除・lock を残す job の group と違えば違反0件", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, checkDriftIsolation([]groupRecord{rec(cientry.Drift, "d"), rec(cientry.Apply, "a"), rec(cientry.Unlock, "u"), rec(cientry.Hold, "a")}))
+		})
+
+		t.Run("drift の job どうしは同じ group でよい", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, checkDriftIsolation([]groupRecord{rec(cientry.Drift, "d"), rec(cientry.Drift, "d")}))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		for _, kind := range []string{cientry.Apply, cientry.Unlock, cientry.Hold} {
+			t.Run(kind+" の job と同じ group なら違反", func(t *testing.T) {
+				t.Parallel()
+				got := checkDriftIsolation([]groupRecord{rec(cientry.Drift, "g"), rec(kind, "g")})
+				require.Len(t, got, 1)
+				assert.Contains(t, got[0].Message, "job drift: concurrency の group \"g\" が、job "+kind)
+			})
+		}
+
+		t.Run("drift と apply の workflow の組み合わせで apply と同じ group なら run の違反", func(t *testing.T) {
+			t.Parallel()
+			src := replaced(t, driftWorkflow, "  group: terraform-drift\n", "  group: terraform-apply-admin\n")
+			wf, env := repoWith(t, map[string]string{"d.yaml": src, "apply.yml": applyWorkflow}, envDecl)
+			var out bytes.Buffer
+			require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
+			assert.Contains(t, out.String(), "待っている drift と apply の run")
+		})
+	})
+}
+
+func Test_checkDriftWiring(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("report の job が無い workflow は、run 経由でも違反で失敗する", func(t *testing.T) {
+			t.Parallel()
+			wf, env := repoWith(t, map[string]string{"d.yaml": replaced(t, driftWorkflow, "  report:\n", "  summary:\n")}, envDecl)
+			var out bytes.Buffer
+			require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
+			assert.Contains(t, out.String(), "report の job がありません")
+		})
+
+		t.Run("報告と2つの通知と印を書く job が規則の形なら違反0件", func(t *testing.T) {
+			t.Parallel()
+			has, f := checkDriftWiring("d.yaml", driftWorkflow)
+			assert.True(t, has)
+			assert.Empty(t, messages(f))
+		})
+
+		t.Run("drift の job が無い workflow は見ない", func(t *testing.T) {
+			t.Parallel()
+			has, f := checkDriftWiring("p.yaml", planWorkflow)
+			assert.False(t, has)
+			assert.Empty(t, f)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		for name, c := range map[string]struct{ from, to, want string }{
+			"report が無い":                              {"  report:\n", "  summary:\n", "report の job がありません"},
+			"notify-failure が無い":                      {"  notify-failure:\n", "  notify-other:\n", "notify-failure の job がありません"},
+			"notify-drift が無い":                        {"  notify-drift:\n", "  notify-other:\n", "notify-drift の job がありません"},
+			"notify-failure が report を待たない":           {"  notify-failure:\n    needs: report\n", "  notify-failure:\n    needs: drift-admin-identity\n", "notify-failure の needs に report がありません"},
+			"notify-failure が report の skip を見ない":     {"    if: ${{ always() && (needs.report.result != 'success' || needs.report.outputs.notify == 'failure') }}\n", "    if: ${{ needs.report.outputs.notify == 'failure' }}\n", "notify-failure の if: は"},
+			"notify-drift が報告の成功を見ない":                 {"    if: ${{ needs.report.result == 'success' && needs.report.outputs.notify == 'drift' }}\n", "    if: ${{ always() }}\n", "notify-drift の if: は"},
+			"mark-report が無い":                         {"  mark-report:\n", "  mark-other:\n", "mark-report の job がありません"},
+			"mark-report が通知を待たない":                    {"    needs: [report, notify-drift]\n", "    needs: [report]\n", "mark-report の needs に notify-drift がありません"},
+			"mark-report が通知の成功を見ない":                  {"    if: ${{ needs.report.result == 'success' && needs.notify-drift.result == 'success' && needs.report.outputs.mark-state != '' }}\n", "    if: ${{ needs.report.result == 'success' && needs.report.outputs.mark-state != '' }}\n", "mark-report の if: は"},
+			"mark-report が通知の失敗でも走る":                  {"    if: ${{ needs.report.result == 'success' && needs.notify-drift.result == 'success' && needs.report.outputs.mark-state != '' }}\n", "    if: ${{ always() && needs.report.outputs.mark-state != '' }}\n", "mark-report の if: は"},
+			"mark-report が資格情報を持つ":                    {"      issues: write\n    steps:\n      - uses: ./.github/actions/upsert-report-issue\n", "      issues: write\n      id-token: write\n    steps:\n      - uses: ./.github/actions/upsert-report-issue\n", "mark-report に id-token: write を置かないで"},
+			"mark-report が upsert-report-issue を使わない": {"      - uses: ./.github/actions/upsert-report-issue\n", "      - run: echo\n", "mark-report は uses: ./.github/actions/upsert-report-issue"},
+			"notify-drift が notify.yaml を使わない":        {"  notify-drift:\n    needs: report\n    if: ${{ needs.report.result == 'success' && needs.report.outputs.notify == 'drift' }}\n    uses: ./.github/workflows/notify.yaml\n", "  notify-drift:\n    needs: report\n    if: ${{ needs.report.result == 'success' && needs.report.outputs.notify == 'drift' }}\n    uses: ./.github/workflows/other.yaml\n", "notify-drift は uses: ./.github/workflows/notify.yaml"},
+		} {
+			t.Run(name+"なら違反", func(t *testing.T) {
+				t.Parallel()
+				_, f := checkDriftWiring("d.yaml", replaced(t, driftWorkflow, c.from, c.to))
+				assert.Contains(t, messages(f), c.want)
+			})
+		}
+	})
+}
+
+func Test_checkDriftReport(t *testing.T) {
+	t.Parallel()
+
+	want := []string{"drift-admin-identity", "drift-infra-code-gate-admin", "drift-target-admin"}
+	report := func(t *testing.T, from, to string) string {
+		t.Helper()
+		return messages(checkDriftReport(jobOf(t, replaced(t, driftWorkflow, from, to), "report"), want, formatted))
+	}
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("すべての drift の job とその needs を待てば違反0件", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, messages(checkDriftReport(jobOf(t, driftWorkflow, "report"), want, formatted)))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		for name, c := range map[string]struct{ from, to, want string }{
+			"needs に drift の job が無い": {"    needs: [drift-target-admin, drift-infra-code-gate-admin, drift-admin-identity]\n", "    needs: [drift-target-admin, drift-infra-code-gate-admin]\n", "report の needs に drift-admin-identity がありません"},
+			"needs に木の job が無い":       {"    needs: [drift-target-admin, drift-infra-code-gate-admin, drift-admin-identity]\n", "    needs: [drift-infra-code-gate-admin, drift-admin-identity]\n", "report の needs に drift-target-admin がありません"},
+			"if: が成功を待つ":              {"    if: ${{ !cancelled() }}\n", "    if: ${{ needs.drift-admin-identity.result == 'success' }}\n", "report の if: は ${{ !cancelled() }} だけ"},
+			"if: が無い":                 {"    if: ${{ !cancelled() }}\n", "", "report の if: は ${{ !cancelled() }} だけ"},
+			"資格情報を持つ":                 {"      issues: write\n", "      issues: write\n      id-token: write\n", "report に id-token: write を置かないで"},
+			"報告の入口が無い":                {"        run: make ci-report-drift RUNNER_MODE=host\n", "        run: echo\n", "make ci-report-drift を1回だけ走らせてください（0 回）"},
+			"報告の入口が2回":                {"        run: make ci-report-drift RUNNER_MODE=host\n", "        run: make ci-report-drift RUNNER_MODE=host\n      - run: make ci-report-drift RUNNER_MODE=host\n", "（2 回）"},
+		} {
+			t.Run(name+"なら違反", func(t *testing.T) {
+				t.Parallel()
+				assert.Contains(t, report(t, c.from, c.to), c.want)
+			})
+		}
+	})
+}
+
+func Test_checkDriftMark(t *testing.T) {
+	t.Parallel()
+
+	mark := func(t *testing.T, src string) string {
+		t.Helper()
+		return messages(checkDriftMark(jobOf(t, src, "mark-report"), formatted))
+	}
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("報告と drift の通知を待ち、通知が届いたときだけ upsert-report-issue で書けば違反0件", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, mark(t, driftWorkflow))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		for name, c := range map[string]struct{ from, to, want string }{
+			"report を待たない":  {"    needs: [report, notify-drift]\n", "    needs: [notify-drift]\n", "mark-report の needs に report がありません"},
+			"if: が無い":       {"    if: ${{ needs.report.result == 'success' && needs.notify-drift.result == 'success' && needs.report.outputs.mark-state != '' }}\n", "", "mark-report の if: は"},
+			"if: が通知の前でも走る": {"needs.notify-drift.result == 'success' && ", "", "mark-report の if: は"},
+			"資格情報を持つ":       {"      issues: write\n    steps:\n      - uses: ./.github/actions/upsert-report-issue\n", "      issues: write\n      id-token: write\n    steps:\n      - uses: ./.github/actions/upsert-report-issue\n", "id-token: write を置かないで"},
+			"別の action で書く": {"      - uses: ./.github/actions/upsert-report-issue\n", "      - uses: ./.github/actions/other\n", "uses: ./.github/actions/upsert-report-issue で"},
+		} {
+			t.Run(name+"なら違反", func(t *testing.T) {
+				t.Parallel()
+				assert.Contains(t, mark(t, replaced(t, driftWorkflow, c.from, c.to)), c.want)
+			})
+		}
+	})
+
+	t.Run("drift の job の if: の違反は、検出の規則と重ねずに1件だけ出す", func(t *testing.T) {
+		t.Parallel()
+		src := replaced(t, driftWorkflow, "'true' }}\n    runs-on: ubuntu-24.04\n    environment", "'true' || always() }}\n    runs-on: ubuntu-24.04\n    environment")
+		_, f := check("d.yaml", src, envs)
+		assert.Equal(t, 1, strings.Count(messages(f), "status の関数・|| ・! を置かないで"), messages(f))
+	})
 }
