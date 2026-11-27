@@ -66,7 +66,7 @@ run "outputs" {
   }
 
   assert {
-    condition = [for sid in ["ReadBreakGlassUsers", "ReadBreakGlassGroup", "ReadBreakGlassRole"] : one([for s in jsondecode(module.github_oidc.role_policies["plan"]).Statement : s.Resource if s.Sid == sid])] == [
+    condition = [for sid in ["ReadBreakGlassUsers", "ReadBreakGlassGroup", "ReadBreakGlassRole"] : one([for s in jsondecode(module.github_oidc.governance_read_policy).Statement : s.Resource if s.Sid == sid])] == [
       ["arn:aws:iam::123456789012:user/break-glass/break-glass-1", "arn:aws:iam::123456789012:user/break-glass/break-glass-2"],
       ["arn:aws:iam::123456789012:group/break-glass/break-glass"],
       ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"],
@@ -77,7 +77,7 @@ run "outputs" {
   assert {
     condition = [
       one([for s in jsondecode(module.github_oidc.role_policies["plan"]).Statement : s.Resource if s.Sid == "AssumeBootstrapReadRoles"]),
-      one([for s in jsondecode(module.github_oidc.role_policies["plan"]).Statement : s.Resource if s.Sid == "ReadMemberRoleStackSets"]),
+      one([for s in jsondecode(module.github_oidc.governance_read_policy).Statement : s.Resource if s.Sid == "ReadMemberRoleStackSets"]),
       ] == [
       ["arn:aws:iam::111111111111:role/bootstrap/tabp-bootstrap-read"],
       ["arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-break-glass:*", "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-bootstrap-read:*"],

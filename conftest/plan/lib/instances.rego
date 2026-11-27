@@ -348,6 +348,10 @@ member_decl := object.union(object.remove(data.policy_plan, ["deployment_identit
 			some a in object.get(instance_di_cfg, ["apply_identity_role", "managed_policies"], [])
 			not a in management_only_policies
 		]}),
+		"plan_role": object.union(object.get(instance_di_cfg, "plan_role", {}), {"managed_policies": [a |
+			some a in object.get(instance_di_cfg, ["plan_role", "managed_policies"], [])
+			not a in management_only_policies
+		]}),
 		"customer_managed_policies": [a |
 			some a in object.get(instance_di_cfg, "customer_managed_policies", [])
 			not a in {strip_index(m) | some m in management_only_policies}

@@ -254,6 +254,47 @@ test_violation_plan_role_read_not_covered if {
 	fixture.has("[PLAN-BR-04] plan の role の iam:getpolicy", messages(rcs(stack_set_with({}, properties([trust], [read])), instances_with(root_target), valid_bootstrap_scp, protect(pattern), r)))
 }
 
+# plan の role の読みを持つ customer managed policy も突き合わせる（deployment-identity/ADR-0201 決定21）。
+managed_address := "module.d.aws_iam_policy.governance_read[0]"
+
+with_managed := object.union(decl, {
+	"organization_baseline": object.union(decl.organization_baseline, {"bootstrap_read": object.union(decl.organization_baseline.bootstrap_read, {"plan_managed_policies": [managed_address]})}),
+})
+
+managed_policy(statements) := fixture.doc("aws_iam_policy", managed_address, "policy", {"Statement": statements})
+
+inline_without_organization := plan_role([
+	{"Sid": "ListBuckets", "Effect": "Allow", "Action": "s3:ListBucket", "Resource": "arn:aws:s3:::b"},
+	{"Sid": "ReadState", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::b/k"},
+])
+
+managed_messages(policy) := msgs if {
+	rs := array.concat(rcs(stack_set_with({}, properties([trust], [read])), instances_with(root_target), valid_bootstrap_scp, protect(pattern), inline_without_organization), [policy])
+	msgs := p.deny with input as array.concat(fixture.plan(rs), member_files(member_sb, member_di)) with data.policy_plan as with_managed
+}
+
+test_pass_management_only_in_managed_policy if {
+	count(managed_messages(managed_policy([{"Sid": "ReadOrganization", "Effect": "Allow", "Action": "organizations:DescribeOrganization", "Resource": "*"}]))) == 0
+}
+
+test_violation_managed_policy_read_not_covered if {
+	m := managed_policy([
+		{"Sid": "ReadOrganization", "Effect": "Allow", "Action": "organizations:DescribeOrganization", "Resource": "*"},
+		{"Sid": "ReadPolicies", "Effect": "Allow", "Action": "iam:GetPolicy", "Resource": "*"},
+	])
+	fixture.has("[PLAN-BR-04] plan の role の iam:getpolicy", managed_messages(m))
+}
+
+test_violation_managed_policy_missing if {
+	msgs := p.deny with input as array.concat(fixture.plan(valid_rcs), member_files(member_sb, member_di)) with data.policy_plan as with_managed
+	fixture.has("[PLAN-BR-00] 宣言 plan_managed_policies の module.d.aws_iam_policy.governance_read[0]", msgs)
+}
+
+test_violation_managed_policies_not_array if {
+	d := object.union(decl, {"organization_baseline": object.union(decl.organization_baseline, {"bootstrap_read": object.union(decl.organization_baseline.bootstrap_read, {"plan_managed_policies": managed_address})})})
+	fixture.has("[PLAN-BR-00] 宣言 organization_baseline.bootstrap_read", p.deny) with input as fixture.plan(valid_rcs) with data.policy_plan as d
+}
+
 test_violation_management_only_unused if {
 	r := plan_role([
 		{"Sid": "ListBuckets", "Effect": "Allow", "Action": "s3:ListBucket", "Resource": "arn:aws:s3:::b"},

@@ -38,13 +38,18 @@ read_statements := [s | some p in role_properties.Policies; some s in lib.statem
 
 read_actions := {lower(a) | some s in read_statements; some a in lib.as_array(s.Action)}
 
-# 管理アカウントの plan の role の inline policy の Allow（deployment-identity の reference の plan）。
+# 管理アカウントの plan の role の inline policy と、統制の読み取りを持つ customer managed policy の Allow
+# （deployment-identity の reference の plan。deployment-identity/ADR-0201 決定21）。
 plan_policy := object.get(object.get(object.get(data.policy_plan, "deployment_identity", {}), "plan_role", {}), "policy", "")
+
+plan_managed_policies := object.get(br, "plan_managed_policies", [])
+
+plan_documents := {"aws_iam_role_policy": [plan_policy], "aws_iam_policy": plan_managed_policies}
 
 plan_actions := {lower(a) |
 	some r in lib.readable
-	r.document.type == "aws_iam_role_policy"
-	r.document.address == plan_policy
+	r.document.attr == "policy"
+	r.document.address in object.get(plan_documents, r.document.type, [])
 	some s in lib.statements(r.body)
 	s.Effect == "Allow"
 	some a in lib.as_array(s.Action)
@@ -56,6 +61,10 @@ management_only := {lower(e.action) | some e in object.get(br, "management_only_
 well_formed_declaration if {
 	is_string(br.stack_set)
 	is_string(br.stack_instances)
+	is_array(plan_managed_policies)
+	every m in plan_managed_policies {
+		is_string(m)
+	}
 	is_array(br.management_only_actions)
 	count(br.management_only_actions) > 0
 	every e in br.management_only_actions {
@@ -85,6 +94,20 @@ deny contains msg if {
 	stack_set
 	not role_properties
 	msg := "[PLAN-BR-00] 立ち上げの読み取りの StackSet のテンプレートが、文を持つ inline policy を1つだけ持つ AWS::IAM::Role を1つだけ持つ JSON ではありません"
+}
+
+deny contains msg if {
+	well_formed_declaration
+	some m in plan_managed_policies
+	not plan_managed_present(m)
+	msg := sprintf("[PLAN-BR-00] 宣言 plan_managed_policies の %s が、policy を持つ aws_iam_policy として入力にありません", [m])
+}
+
+plan_managed_present(m) if {
+	some r in lib.readable
+	r.document.type == "aws_iam_policy"
+	r.document.attr == "policy"
+	r.document.address == m
 }
 
 # 上位集合の突き合わせの相手が無ければ、何も見ずに通さない。

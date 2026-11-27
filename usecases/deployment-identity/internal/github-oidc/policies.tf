@@ -162,9 +162,15 @@ locals {
   members_policy_name        = "${var.name_prefix}-ci-apply-identity-members"
   members_policy_arns        = [for a in ["${local.iam_arn_prefix}:policy/${local.members_policy_name}"] : a if local.management]
   apply_identity_policy_arns = concat([local.manage_policy_arn], local.governance_policy_arns, local.members_policy_arns)
-  managed_policy_arns        = { apply_identity = local.apply_identity_policy_arns, apply = local.workload_policy_arns, plan = [local.workload_read_policy_arn] }
   # 統制の読み取りは、plan と apply-identity の role が共有する policy に置く（決定7・21）。
-  governance_read_policy_arns = [for a in ["${local.iam_arn_prefix}:policy/${var.name_prefix}-ci-governance-read"] : a if local.management]
+  governance_read_policy_name = "${var.name_prefix}-ci-governance-read"
+  governance_read_policy_arns = [for a in ["${local.iam_arn_prefix}:policy/${local.governance_read_policy_name}"] : a if local.management]
+
+  managed_policy_arns = {
+    apply_identity = concat(local.apply_identity_policy_arns, local.governance_read_policy_arns)
+    apply          = local.workload_policy_arns
+    plan           = concat([local.workload_read_policy_arn], local.governance_read_policy_arns)
+  }
 
   regional_arn_suffix = "${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}"
   # workload root の usecase の構成物は、名前を `<name_prefix>-` で始める pattern で限る（決定13）。
@@ -713,14 +719,14 @@ locals {
       Effect    = "Allow"
       Action    = "iam:AttachRolePolicy"
       Resource  = local.role_arns.plan
-      Condition = { ArnEquals = { "iam:PolicyARN" = concat([local.workload_read_policy_arn], local.governance_read_policy_arns) } }
+      Condition = { ArnEquals = { "iam:PolicyARN" = local.managed_policy_arns.plan } }
     },
     {
       Sid       = "AttachApplyIdentityPolicies"
       Effect    = "Allow"
       Action    = "iam:AttachRolePolicy"
       Resource  = local.role_arns.apply_identity
-      Condition = { ArnEquals = { "iam:PolicyARN" = concat(local.apply_identity_policy_arns, local.governance_read_policy_arns) } }
+      Condition = { ArnEquals = { "iam:PolicyARN" = local.managed_policy_arns.apply_identity } }
     },
   ]
 
@@ -796,9 +802,7 @@ locals {
         { Sid = "SimulatePolicyDocuments", Effect = "Allow", Action = "iam:SimulateCustomPolicy", Resource = "*" },
       ],
       local.identity_read_statements,
-      local.governance_read_statements,
       local.bootstrap_assume_statements.plan,
-      local.delegated_admin_read_statements,
       local.baseline_region_deny.plan,
       local.delegated_admin_region_deny.plan,
     )
@@ -849,7 +853,6 @@ locals {
       ],
       local.identity_read_statements,
       [{ Sid = "WriteApplyOutput", Effect = "Allow", Action = "s3:PutObject", Resource = "${var.plan_output_bucket_arn}/apply/*" }],
-      local.governance_read_statements,
       local.ci_policy_management_statements,
       local.chatbot_slr_read_statements,
     )
@@ -875,7 +878,8 @@ resource "aws_iam_role_policy" "apply_identity" {
     Statement = local.statements.apply_identity
   })
 
-  depends_on = [aws_iam_role_policy_attachment.manage]
+  # 文を受け取る policy を付けてから、inline policy から外す（決定21）。
+  depends_on = [aws_iam_role_policy_attachment.manage, aws_iam_role_policy_attachment.governance_read]
 
   lifecycle {
     # 別のアカウントやリージョンの鍵を渡すと、apply-identity は自分の state の鍵を管理できなくなる。他の role は
@@ -925,4 +929,7 @@ resource "aws_iam_role_policy" "this" {
     Version   = "2012-10-17"
     Statement = local.statements[each.key]
   })
+
+  # plan の role の統制の読み取りは、共有の policy を付けてから inline policy から外す（決定21）。
+  depends_on = [aws_iam_role_policy_attachment.plan_governance_read]
 }

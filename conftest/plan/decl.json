@@ -117,7 +117,8 @@
           "iam:SimulateCustomPolicy"
         ],
         "managed_policies": [
-          "module.deployment_identity.module.github_oidc.aws_iam_policy.workload_read"
+          "module.deployment_identity.module.github_oidc.aws_iam_policy.workload_read",
+          "module.deployment_identity.module.github_oidc.aws_iam_policy.governance_read[0]"
         ]
       },
       "apply_role": {
@@ -315,12 +316,14 @@
           "module.deployment_identity.module.github_oidc.aws_iam_policy.manage",
           "module.deployment_identity.module.github_oidc.aws_iam_policy.governance[0]",
           "module.deployment_identity.module.github_oidc.aws_iam_policy.governance_2[0]",
+          "module.deployment_identity.module.github_oidc.aws_iam_policy.governance_read[0]",
           "module.deployment_identity.module.github_oidc.aws_iam_policy.members[0]"
         ]
       },
       "management_only_policies": [
         "module.deployment_identity.module.github_oidc.aws_iam_policy.governance[0]",
         "module.deployment_identity.module.github_oidc.aws_iam_policy.governance_2[0]",
+        "module.deployment_identity.module.github_oidc.aws_iam_policy.governance_read[0]",
         "module.deployment_identity.module.github_oidc.aws_iam_policy.members[0]"
       ],
       "bootstrap_assume": {
@@ -330,6 +333,7 @@
         "module.deployment_identity.module.github_oidc.aws_iam_policy.boundary",
         "module.deployment_identity.module.github_oidc.aws_iam_policy.governance",
         "module.deployment_identity.module.github_oidc.aws_iam_policy.governance_2",
+        "module.deployment_identity.module.github_oidc.aws_iam_policy.governance_read",
         "module.deployment_identity.module.github_oidc.aws_iam_policy.manage",
         "module.deployment_identity.module.github_oidc.aws_iam_policy.members",
         "module.deployment_identity.module.github_oidc.aws_iam_policy.workload",
@@ -689,6 +693,9 @@
       "bootstrap_read": {
         "stack_set": "module.organization_baseline.module.bootstrap_access.aws_cloudformation_stack_set.this",
         "stack_instances": "module.organization_baseline.module.bootstrap_access.aws_cloudformation_stack_instances.this",
+        "plan_managed_policies": [
+          "module.deployment_identity.module.github_oidc.aws_iam_policy.governance_read[0]"
+        ],
         "management_only_actions": [
           {"action": "cloudformation:DescribeStackInstance", "reason": "管理アカウントの break-glass の StackSet（organization-baseline/ADR-0202）"},
           {"action": "cloudformation:DescribeStackSet", "reason": "管理アカウントの break-glass の StackSet（organization-baseline/ADR-0202）"},

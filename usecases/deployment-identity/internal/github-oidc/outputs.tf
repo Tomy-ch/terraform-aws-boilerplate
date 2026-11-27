@@ -15,6 +15,11 @@ output "role_policies" {
   value       = { for k, p in local.all_policies : k => p.policy }
 }
 
+output "governance_read_policy" {
+  description = "管理アカウントの plan と apply-identity の role が共有する、統制の読み取りの customer managed policy の文書（JSON）。管理アカウントの外では null。"
+  value       = one(aws_iam_policy.governance_read[*].policy)
+}
+
 output "oidc_provider_arn" {
   description = "GitHub Actions の OIDC provider の ARN。"
   value       = aws_iam_openid_connect_provider.github.arn
