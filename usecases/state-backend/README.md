@@ -49,7 +49,7 @@ state Bucket の完全な名前は `<project>-<env>-tfstate-<account_id>-<region
 | 段 | 持つもの | 状態 |
 | --- | --- | --- |
 | 段1・段2 | Bucket、Public Access Block、`BucketOwnerEnforced`、版管理。`env/admin/identity/` の `import` block。既定の暗号化は取り込まず、段4 の apply までは AWS の既定（SSE-S3 と SSE-C の拒否）が掛かる | 本ディレクトリと [`docs/setup/bootstrap.md`](../../docs/setup/bootstrap.md) |
-| 段3-4 | TLS を要求し、object の書き込みを CI の role と key と操作の組に限り、state の鍵以外の暗号化を拒否する Bucket Policy（[state-backend/ADR-0104](docs/adr/0104-state-object-write-deny.md)）。新しいアカウントでは段4 の実行者を `bootstrap_executor_user_name` で例外に入れる | `modules/s3`。state Bucket に入るのは段4 の apply で、その Pull Request の merge の前に、CI の plan（`terraform-gates.yaml` の `plan-admin-identity`）が変更なしを示す |
+| 段3-4 | TLS を要求し、object の書き込みを CI の role と key と操作の組に限り、state の鍵以外の暗号化を拒否する Bucket Policy（[state-backend/ADR-0104](docs/adr/0104-state-object-write-deny.md)）。新しいアカウントでは段4 の実行者を `bootstrap_executor_user_name` で例外に入れる | `modules/s3`。state Bucket に入るのは段4 の apply で、その Pull Request の merge の前に、CI の plan（`deploy-gate.yaml` の `plan-admin-identity`。線宛は gate が呼ぶ `terraform-plan.yaml` の `admin-identity`）が変更なしを示す |
 | 段4 | plan の出力の Bucket（state Bucket と同じ不変条件と、lifecycle） | `internal/plan-output`。段1 の CLI では作らず、段2 の plan に追加として現れる |
 | 段4 | apply の出力の Bucket（plan の出力の Bucket と同じ module） | `internal/plan-output`。段1 の CLI では作らず、段2 の plan に追加として現れる。既存のアカウントでは CI の apply-identity が作る |
 | 段4 | state Bucket の lifecycle（上書きされた版を保持日数で消す） | `modules/s3`。段1 の CLI では作らず、段2 の plan に追加として現れる |
