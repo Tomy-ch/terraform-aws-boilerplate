@@ -417,13 +417,39 @@ func Test_deployContexts(t *testing.T) {
 
 	t.Run("決定31 の検査、その env の plan を宣言の順、線の検証の順に並べる", func(t *testing.T) {
 		t.Parallel()
-		assert.Equal(t, []string{contextDeploySource, "a1", "a2", "b1", contextLineGate}, deployContexts("x", checks))
+		got, err := deployContexts("x", checks)
+		require.NoError(t, err)
+		assert.Equal(t, []string{contextDeploySource, "a1", "a2", "b1", contextLineGate}, got)
 	})
 
 	t.Run("plan の無い env は決定31 の検査と線の検証だけ", func(t *testing.T) {
 		t.Parallel()
-		assert.Equal(t, []string{contextDeploySource, contextLineGate}, deployContexts("z", checks))
+		got, err := deployContexts("z", checks)
+		require.NoError(t, err)
+		assert.Equal(t, []string{contextDeploySource, contextLineGate}, got)
 	})
+
+	plan := func(name, env string, contexts ...string) string {
+		return `{"name": "` + name + `", "workflow": "` + name + `.yaml", "paths": [], "scope": "tree", "required": true, "plan_env": "` + env + `", "contexts": ["` + strings.Join(contexts, `", "`) + `"]}`
+	}
+	for name, c := range map[string]struct {
+		checks []string
+		want   string
+	}{
+		"plan の context が決定31 の検査と同じ名前": {[]string{plan("plan-x", "x", contextDeploySource)}, "別に required とする名前です"},
+		"plan の context が線の検証と同じ名前":     {[]string{plan("plan-x", "x", "a1", contextLineGate)}, "別に required とする名前です"},
+		"同じ env の2つの plan が同じ context":  {[]string{plan("plan-x-a", "x", "a1"), plan("plan-x-b", "x", "b1", "a1")}, "plan-x-a と plan-x-b が同じ context \"a1\""},
+		"別の env の2つの plan が同じ context":  {[]string{plan("plan-x", "x", "a1"), plan("plan-y", "y", "a1")}, "plan-x と plan-y が同じ context \"a1\""},
+	} {
+		t.Run(name+"なら失敗する", func(t *testing.T) {
+			t.Parallel()
+			d, err := checksdecl.Parse([]byte(`{"checks": [` + strings.Join(c.checks, ", ") + `]}`))
+			require.NoError(t, err)
+			_, err = deployContexts("x", d)
+			require.ErrorIs(t, err, errDeployRuleset)
+			assert.ErrorContains(t, err, c.want)
+		})
+	}
 }
 
 func Test_renderDeployRuleset(t *testing.T) {
@@ -520,6 +546,16 @@ func Test_checkCoverage(t *testing.T) {
 		err := checkCoverage([]rulesetDecl{decl(commonSpec, syncedCommon), decl(deploySpec, other)}, protected)
 		require.ErrorIs(t, err, errRulesetPolicy)
 		assert.ErrorContains(t, err, deployMainFile+" の include refs/heads/other")
+	})
+
+	t.Run("common の include が保護対象を重ねて含めば失敗する", func(t *testing.T) {
+		t.Parallel()
+		doubled := strings.Replace(syncedCommon, `"refs/heads/main",`, `"refs/heads/main",
+        "refs/heads/main",`, 1)
+		require.NotEqual(t, syncedCommon, doubled)
+		err := checkCoverage([]rulesetDecl{decl(commonSpec, doubled)}, protected)
+		require.ErrorIs(t, err, errRulesetPolicy)
+		assert.ErrorContains(t, err, "保護対象の全集合と一致しません")
 	})
 
 	t.Run("common が無ければ失敗する", func(t *testing.T) {

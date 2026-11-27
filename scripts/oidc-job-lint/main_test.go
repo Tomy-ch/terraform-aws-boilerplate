@@ -339,6 +339,25 @@ func Test_run(t *testing.T) {
 		assert.Contains(t, out.String(), "revert-plan の job がありません")
 	})
 
+	t.Run("id-token: write を渡して呼ぶ workflow が push でも起動すれば違反で失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		callee := strings.Replace(planWorkflow, "on:\n  pull_request:\n", "on:\n  workflow_call:\n  push:\n", 1)
+		wf, env := repoWith(t, map[string]string{deployGateFile: planWorkflow, "pr-call.yaml": callerWorkflow, "plan.yaml": callee}, envDecl)
+		var out bytes.Buffer
+		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
+		assert.Contains(t, out.String(), "id-token: write を渡して呼ぶ ./.github/workflows/plan.yaml の起動は workflow_call だけにしてください（push, workflow_call）")
+	})
+
+	t.Run("id-token: write を渡して呼ぶ workflow が無ければ違反で失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		wf, env := repoWith(t, map[string]string{deployGateFile: planWorkflow, "pr-call.yaml": callerWorkflow}, envDecl)
+		var out bytes.Buffer
+		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
+		assert.Contains(t, out.String(), "呼び出し先 ./.github/workflows/plan.yaml が "+wf+" にありません")
+	})
+
 	t.Run("対象の job が無ければ errNoTarget", func(t *testing.T) {
 		t.Parallel()
 

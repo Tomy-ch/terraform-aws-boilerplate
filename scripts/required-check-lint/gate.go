@@ -50,6 +50,9 @@ var (
 	makeTarget = regexp.MustCompile(`\bmake\s+(ci-gate|ci-line-gate|ci-changes)\b`)
 	// secretRef は、call-* の job の secrets: に置ける値。呼ぶ側の secret を1つ名指す。
 	secretRef = regexp.MustCompile(`^\$\{\{\s*secrets\.[A-Za-z_][A-Za-z0-9_]*\s*\}\}$`)
+
+	// errEvents は、on: の値からイベントを読めないことを表す。
+	errEvents = xerrors.New("on: のイベントを読めません")
 )
 
 // gateInput は、gate と線の検証の検査の入力。どれも宣言から読んだもので、検査が独自に持つ一覧は無い（決定20）。
@@ -215,7 +218,7 @@ func readEvents(on *yaml.Node) ([]wfEvent, error) {
 		out := make([]wfEvent, 0, len(on.Content))
 		for _, e := range on.Content {
 			if e.Kind != yaml.ScalarNode {
-				return nil, xerrors.Newf("on: の配列の %d 行目がイベント名ではありません", e.Line)
+				return nil, xerrors.Wrapf(errEvents, "on: の配列の %d 行目がイベント名ではありません", e.Line)
 			}
 			out = append(out, wfEvent{name: e.Value, line: e.Line})
 		}
@@ -225,13 +228,19 @@ func readEvents(on *yaml.Node) ([]wfEvent, error) {
 		for i := 0; i+1 < len(on.Content); i += 2 {
 			k := on.Content[i]
 			if k.Kind != yaml.ScalarNode {
-				return nil, xerrors.Newf("on: の %d 行目のキーがイベント名ではありません", k.Line)
+				return nil, xerrors.Wrapf(errEvents, "on: の %d 行目のキーがイベント名ではありません", k.Line)
 			}
 			out = append(out, wfEvent{name: k.Value, line: k.Line, value: on.Content[i+1]})
 		}
 		return out, nil
 	}
-	return nil, xerrors.New("on: の値が単一値・配列・マッピングのどれでもありません")
+	return nil, xerrors.Wrap(errEvents, "on: の値が単一値・配列・マッピングのどれでもありません")
+}
+
+// emptyEvent は、イベントの値が無い（配列や単一値の記法か、値が空か null）かを返します。マッピングでもなく空でも
+// ない値（別名など）は中身を読めないので、呼び出し側は違反にする。
+func emptyEvent(v *yaml.Node) bool {
+	return v == nil || (v.Kind == yaml.ScalarNode && (v.Value == "" || v.ShortTag() == "!!null"))
 }
 
 func (d wfDoc) event(name string) (wfEvent, bool) {
@@ -393,7 +402,11 @@ func directJobFindings(context, set string, d wfDoc, j wfJob) []lintreport.Findi
 		add(1, "の workflow に pull_request トリガーがありません")
 		return findings
 	}
-	if pr.value == nil || pr.value.Kind != yaml.MappingNode {
+	if emptyEvent(pr.value) {
+		return findings
+	}
+	if pr.value.Kind != yaml.MappingNode {
+		add(pr.line, "の workflow の pull_request の値を読めません。フィルタを置くならマッピングで書きます（別名は使えません）")
 		return findings
 	}
 	for i := 0; i+1 < len(pr.value.Content); i += 2 {
@@ -703,7 +716,14 @@ func lineVerifyTriggerFindings(d wfDoc) []lintreport.Finding {
 			continue
 		}
 		push = true
-		if e.value == nil || e.value.Kind != yaml.MappingNode {
+		if emptyEvent(e.value) {
+			continue
+		}
+		if e.value.Kind != yaml.MappingNode {
+			findings = append(findings, lintreport.Finding{
+				File: d.file, Line: e.line,
+				Message: lineVerifyFile + " の push の値を読めません。フィルタを置くならマッピングで書きます（別名は使えません）",
+			})
 			continue
 		}
 		for i := 0; i+1 < len(e.value.Content); i += 2 {

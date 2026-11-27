@@ -45,7 +45,14 @@ func Test_parseNeeds(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		for name, raw := range map[string]string{"空": "", "JSON でない": "{", "job が0件": "{}"} {
+		for name, raw := range map[string]string{
+			"空":            "",
+			"JSON でない":     "{",
+			"job が0件":      "{}",
+			"値が文字列":        `{"changes": "success"}`,
+			"値が数":          `{"changes": 1}`,
+			"全体がオブジェクトでない": `[{"result": "success"}]`,
+		} {
 			t.Run(name+"なら誤りにする", func(t *testing.T) {
 				t.Parallel()
 				_, err := parseNeeds(raw)
@@ -109,7 +116,21 @@ func Test_judgePR(t *testing.T) {
 			rows, err := judgePR(judgeDecl(), nil, []string{"a", "c", "info"}, okNeeds(`["a","c","info"]`,
 				map[string]string{"a": "success", "b": "skipped", "c": "success", "info": "success"}))
 			require.NoError(t, err)
-			assert.Len(t, rows, 5)
+			assert.Equal(t, []row{
+				{Name: changesJob, Required: true, Should: true, Result: "success", OK: true},
+				{Name: "a", Required: true, Should: true, Result: "success", OK: true},
+				{Name: "b", Required: true, Should: false, Result: "skipped", OK: true},
+				{Name: "c", Required: true, Should: true, Result: "success", OK: true},
+				{Name: "info", Required: false, Should: true, Result: "success", OK: true},
+			}, rows)
+		})
+
+		t.Run("走るべきでない検査が success でも合格", func(t *testing.T) {
+			t.Parallel()
+			rows, err := judgePR(judgeDecl(), nil, []string{"a", "c", "info"}, okNeeds(`["a","c","info"]`,
+				map[string]string{"a": "success", "b": "success", "c": "success", "info": "success"}))
+			require.NoError(t, err)
+			assert.Equal(t, row{Name: "b", Required: true, Should: false, Result: "success", OK: true}, rows[2])
 		})
 
 		t.Run("required でない検査の失敗は合否に数えない", func(t *testing.T) {
@@ -147,6 +168,8 @@ func Test_judgePR(t *testing.T) {
 			"走るべき検査が failure":      {"a": "failure", "b": "skipped", "c": "success", "info": "success"},
 			"走るべきでない検査が failure":   {"a": "success", "b": "failure", "c": "success", "info": "success"},
 			"走るべきでない検査が cancelled": {"a": "success", "b": "cancelled", "c": "success", "info": "success"},
+			"走るべき検査の result が空":    {"a": "", "b": "skipped", "c": "success", "info": "success"},
+			"走るべきでない検査の result が空": {"a": "success", "b": "", "c": "success", "info": "success"},
 		} {
 			t.Run(name+"なら不合格", func(t *testing.T) {
 				t.Parallel()
@@ -160,8 +183,9 @@ func Test_judgePR(t *testing.T) {
 		// changes の出力を信じると、それが過小なときに検査を省いたまま合格する。
 		t.Run("changes の出力が決め直した集合と違えば不合格", func(t *testing.T) {
 			t.Parallel()
-			_, err := judgePR(judgeDecl(), nil, []string{"a", "c", "info"}, okNeeds(`["a","info"]`, all))
+			rows, err := judgePR(judgeDecl(), nil, []string{"a", "c", "info"}, okNeeds(`["a","info"]`, all))
 			require.ErrorIs(t, err, errFailed)
+			assert.Equal(t, row{Name: changesJob + "（出力の照合）", Required: true, Should: true, Result: "mismatch"}, rows[0])
 		})
 
 		t.Run("changes の出力が JSON でなければ不合格", func(t *testing.T) {
@@ -170,13 +194,16 @@ func Test_judgePR(t *testing.T) {
 			require.ErrorIs(t, err, errFailed)
 		})
 
-		t.Run("changes の job が success でなければ不合格", func(t *testing.T) {
-			t.Parallel()
-			n := okNeeds(`["a","c","info"]`, all)
-			n[changesJob] = need{Result: "failure"}
-			_, err := judgePR(judgeDecl(), nil, []string{"a", "c", "info"}, n)
-			require.ErrorIs(t, err, errFailed)
-		})
+		for name, result := range map[string]string{"failure": "failure", "空": ""} {
+			t.Run("changes の job の result が"+name+"なら不合格", func(t *testing.T) {
+				t.Parallel()
+				n := okNeeds(`["a","c","info"]`, all)
+				n[changesJob] = need{Result: result, Outputs: map[string]string{"run": `["a","c","info"]`}}
+				rows, err := judgePR(judgeDecl(), nil, []string{"a", "c", "info"}, n)
+				require.ErrorIs(t, err, errFailed)
+				assert.Equal(t, row{Name: changesJob, Required: true, Should: true, Result: result}, rows[0])
+			})
+		}
 
 		t.Run("合否に数える検査が無ければ合格と区別する", func(t *testing.T) {
 			t.Parallel()
@@ -275,7 +302,10 @@ func Test_judgeLine(t *testing.T) {
 			t.Parallel()
 			rows, err := judgeLine(judgeDecl(), map[string]need{"call-a": {Result: "success"}, "call-b": {Result: "success"}})
 			require.NoError(t, err)
-			assert.Len(t, rows, 2)
+			assert.Equal(t, []row{
+				{Name: "a", Required: true, Should: true, Result: "success", OK: true},
+				{Name: "b", Required: true, Should: true, Result: "success", OK: true},
+			}, rows)
 		})
 	})
 
@@ -283,11 +313,19 @@ func Test_judgeLine(t *testing.T) {
 		t.Parallel()
 
 		// 線の検証は path で絞らないので、skipped は走らなかったことを表す。
-		t.Run("skipped があれば不合格", func(t *testing.T) {
-			t.Parallel()
-			_, err := judgeLine(judgeDecl(), map[string]need{"call-a": {Result: "success"}, "call-b": {Result: "skipped"}})
-			require.ErrorIs(t, err, errFailed)
-		})
+		for name, b := range map[string]need{
+			"skipped":   {Result: "skipped"},
+			"failure":   {Result: "failure"},
+			"cancelled": {Result: "cancelled"},
+			"result が空": {},
+		} {
+			t.Run(name+"があれば不合格", func(t *testing.T) {
+				t.Parallel()
+				rows, err := judgeLine(judgeDecl(), map[string]need{"call-a": {Result: "success"}, "call-b": b})
+				require.ErrorIs(t, err, errFailed)
+				assert.Equal(t, row{Name: "b", Required: true, Should: true, Result: b.Result}, rows[1])
+			})
+		}
 
 		t.Run("needs が木の検査と合わなければ誤りにする", func(t *testing.T) {
 			t.Parallel()

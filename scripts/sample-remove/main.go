@@ -361,12 +361,16 @@ func dropContexts(root string, ds []domain, p *plan) error {
 }
 
 // dropChecks は、manifest の検査を gate の検査の宣言から外す書き換えを p へ加えます。宣言は lib/checksdecl で
-// 読み、外した後も同じ読み手で読めることを確かめてから書く。宣言に無い名前は、外したつもりで残る経路になるので
-// エラーにする。
+// 読み、外した後も同じ読み手で読め、線の検証が走らせる検査（TreeChecks）が残ることを確かめてから書く。宣言に
+// 無い名前は、外したつもりで残る経路になるのでエラーにする。複数の domain が名指す検査は1度だけ外す。
 func dropChecks(root string, ds []domain, p *plan) error {
 	var targets []string
 	for _, d := range ds {
-		targets = append(targets, d.checks...)
+		for _, c := range d.checks {
+			if !slices.Contains(targets, c) {
+				targets = append(targets, c)
+			}
+		}
 	}
 	if len(targets) == 0 {
 		return nil
@@ -377,7 +381,7 @@ func dropChecks(root string, ds []domain, p *plan) error {
 	}
 	decl, err := checksdecl.Parse(b)
 	if err != nil {
-		return xerrors.Wrapf(errRead, "%s: %v", checksdecl.File, err)
+		return xerrors.Join(errRead, xerrors.Wrap(err, checksdecl.File))
 	}
 	drop := map[string]bool{}
 	for _, name := range targets {
@@ -400,8 +404,12 @@ func dropChecks(root string, ds []domain, p *plan) error {
 	if err := enc.Encode(decl); err != nil {
 		return xerrors.Wrapf(errRead, "%s: %v", checksdecl.File, err)
 	}
-	if _, err := checksdecl.Parse(buf.Bytes()); err != nil {
-		return xerrors.Wrapf(errRead, "%s を外した後に読めません: %v", checksdecl.File, err)
+	after, err := checksdecl.Parse(buf.Bytes())
+	if err != nil {
+		return xerrors.Join(errRead, xerrors.Wrapf(err, "%s を外した後", checksdecl.File))
+	}
+	if len(after.TreeChecks()) == 0 {
+		return xerrors.Wrapf(checksdecl.ErrNoChecks, "❌ %s を外した後に scope が tree で required の検査がありません（線の検証が何も見ません）", checksdecl.File)
 	}
 	p.droppedChecks = append(p.droppedChecks, targets...)
 	p.writes[checksdecl.File] = buf.String()

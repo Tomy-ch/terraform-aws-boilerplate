@@ -202,6 +202,18 @@ func Test_build(t *testing.T) {
 			assert.NotContains(t, p.markedFiles, "tool/main.go")
 		})
 
+		t.Run("manifest の検査を gate の検査の宣言から外す計画を加える", func(t *testing.T) {
+			t.Parallel()
+			root, list := fixtureTree(t)
+			writeTree(t, root, map[string]string{checksdecl.File: fixtureChecks})
+			ds := append(append([]domain{}, fixtureDomains...), domain{name: "scan-check", checks: []string{"scan-check"}})
+			p, err := build(root, ds, func(string) ([]string, error) { return list, nil })
+			require.NoError(t, err)
+			assert.Equal(t, []string{"scan-check"}, p.droppedChecks)
+			assert.Contains(t, p.writes, checksdecl.File)
+			assert.NotContains(t, p.writes[checksdecl.File], "scan-check")
+		})
+
 		t.Run("消すパスが0件でも印があれば通す", func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
@@ -863,6 +875,17 @@ func Test_dropChecks(t *testing.T) {
 			assert.Equal(t, "{\n  \"checks\": [\n    {\n      \"name\": \"a\",\n      \"workflow\": \"a.yaml\",\n      \"paths\": [],\n      \"scope\": \"tree\",\n      \"required\": true\n    }\n  ]\n}\n", p.writes[checksdecl.File])
 		})
 
+		t.Run("複数の domain が名指す検査は1度だけ外す", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeTree(t, root, map[string]string{checksdecl.File: fixtureChecks})
+			p := plan{writes: map[string]string{}}
+			ds := []domain{{name: "x", checks: []string{"scan-check"}}, {name: "y", checks: []string{"scan-check"}}}
+			require.NoError(t, dropChecks(root, ds, &p))
+			assert.Equal(t, []string{"scan-check"}, p.droppedChecks)
+			assert.NotContains(t, p.writes[checksdecl.File], "scan-check")
+		})
+
 		t.Run("manifest に検査が無ければ宣言を読まない", func(t *testing.T) {
 			t.Parallel()
 			p := plan{writes: map[string]string{}}
@@ -895,7 +918,9 @@ func Test_dropChecks(t *testing.T) {
 			root := t.TempDir()
 			writeTree(t, root, map[string]string{checksdecl.File: "{"})
 			p := plan{writes: map[string]string{}}
-			require.ErrorIs(t, dropChecks(root, []domain{{name: "x", checks: []string{"a"}}}, &p), errRead)
+			err := dropChecks(root, []domain{{name: "x", checks: []string{"a"}}}, &p)
+			require.ErrorIs(t, err, errRead)
+			require.ErrorIs(t, err, checksdecl.ErrDecl)
 		})
 
 		// 唯一の検査を外すと、検査の無い宣言になり gate が何も見なくなる。
@@ -904,7 +929,27 @@ func Test_dropChecks(t *testing.T) {
 			root := t.TempDir()
 			writeTree(t, root, map[string]string{checksdecl.File: `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true}]}`})
 			p := plan{writes: map[string]string{}}
-			require.ErrorIs(t, dropChecks(root, []domain{{name: "x", checks: []string{"a"}}}, &p), errRead)
+			err := dropChecks(root, []domain{{name: "x", checks: []string{"a"}}}, &p)
+			require.ErrorIs(t, err, errRead)
+			require.ErrorIs(t, err, checksdecl.ErrNoChecks)
+			assert.Empty(t, p.writes)
+			assert.Empty(t, p.droppedChecks)
+		})
+
+		// required-check-lint と ci-gate line は、線の検証の検査が無い宣言を ErrNoChecks で落とす。
+		t.Run("外すと線の検証が走らせる検査が0件になるなら誤りにする", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeTree(t, root, map[string]string{checksdecl.File: `{"checks": [
+  {"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true},
+  {"name": "c", "workflow": "c.yaml", "paths": [], "scope": "change", "required": true},
+  {"name": "info", "workflow": "info.yaml", "paths": [], "scope": "tree", "required": false}
+]}`})
+			p := plan{writes: map[string]string{}}
+			err := dropChecks(root, []domain{{name: "x", checks: []string{"a"}}}, &p)
+			require.ErrorIs(t, err, checksdecl.ErrNoChecks)
+			assert.Empty(t, p.writes)
+			assert.Empty(t, p.droppedChecks)
 		})
 	})
 }

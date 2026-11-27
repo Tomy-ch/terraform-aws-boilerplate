@@ -105,14 +105,22 @@ func Test_feedsEnv(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("from の線なら真、線でない名前や別の線なら偽", func(t *testing.T) {
-			t.Parallel()
-			for base, want := range map[string]bool{"release/v0.2.0": true, "release/": false, "hotfix/v0.2.1": false, "admin": false} {
-				got, err := feedsEnv(testBranches(), "admin", base)
+		for name, c := range map[string]struct {
+			base string
+			want bool
+		}{
+			"from の線なら真":       {"release/v0.2.0", true},
+			"接頭辞だけの名前は線でないので偽": {"release/", false},
+			"from でない線なら偽":     {"hotfix/v0.2.1", false},
+			"デプロイブランチなら偽":      {"admin", false},
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				got, err := feedsEnv(testBranches(), "admin", c.base)
 				require.NoError(t, err)
-				assert.Equal(t, want, got, base)
-			}
-		})
+				assert.Equal(t, c.want, got)
+			})
+		}
 	})
 
 	t.Run("異常系", func(t *testing.T) {
@@ -132,25 +140,36 @@ func Test_baseRole(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("線とデプロイブランチを見分ける", func(t *testing.T) {
-			t.Parallel()
-			for base, want := range map[string]string{"release/v0.2.0": checksdecl.BaseLine, "hotfix/v0.2.1": checksdecl.BaseLine, "admin": checksdecl.BaseDeploy, "production": checksdecl.BaseDeploy} {
-				got, err := baseRole(testBranches(), base)
+		for name, c := range map[string]struct {
+			base, want string
+		}{
+			"release の線は線": {"release/v0.2.0", checksdecl.BaseLine},
+			"hotfix の線は線":  {"hotfix/v0.2.1", checksdecl.BaseLine},
+			"env を持つデプロイブランチはデプロイブランチ":   {"admin", checksdecl.BaseDeploy},
+			"env を持たないデプロイブランチもデプロイブランチ": {"production", checksdecl.BaseDeploy},
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				got, err := baseRole(testBranches(), c.base)
 				require.NoError(t, err)
-				assert.Equal(t, want, got, base)
-			}
-		})
+				assert.Equal(t, c.want, got)
+			})
+		}
 	})
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("どちらでもない base は誤りにする", func(t *testing.T) {
-			t.Parallel()
-			for _, base := range []string{"feature/x", "release/", ""} {
+		for name, base := range map[string]string{
+			"線でもデプロイブランチでもない名前": "feature/x",
+			"線の接頭辞だけの名前":        "release/",
+			"空の名前":              "",
+		} {
+			t.Run(name+"は誤りにする", func(t *testing.T) {
+				t.Parallel()
 				_, err := baseRole(testBranches(), base)
-				require.ErrorIs(t, err, errBase, base)
-			}
-		})
+				require.ErrorIs(t, err, errBase)
+			})
+		}
 	})
 }

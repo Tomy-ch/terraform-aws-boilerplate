@@ -176,6 +176,16 @@ func Test_gateFindings(t *testing.T) {
 		assert.Contains(t, got[0].Message, "（実際: [build, gate]）")
 	})
 
+	t.Run("線の検証の workflow が push のほかのイベントでも起動すれば違反", func(t *testing.T) {
+		t.Parallel()
+		srcs := valid()
+		srcs[1].Source = strings.Replace(lineVerifySrc, "on:\n  push:\n", "on:\n  push:\n  pull_request:\n", 1)
+		got := gateFindings(in, srcs)
+		require.Len(t, got, 1, messages(got))
+		assert.Equal(t, "wf/line-verify.yaml", got[0].File)
+		assert.Contains(t, got[0].Message, "push のほかのイベント（pull_request）")
+	})
+
 	t.Run("古い宣言の context と同じ名前の call-* も衝突にする", func(t *testing.T) {
 		t.Parallel()
 		withLegacy := in
@@ -305,15 +315,44 @@ func Test_readEvents(t *testing.T) {
 		t.Run(name+"ならエラー", func(t *testing.T) {
 			t.Parallel()
 			_, err := readEvents(yamlNode(t, src))
-			require.Error(t, err)
+			require.ErrorIs(t, err, errEvents)
 		})
 	}
 
 	t.Run("単一値・配列・マッピングのどれでもなければエラー", func(t *testing.T) {
 		t.Parallel()
 		_, err := readEvents(&yaml.Node{Kind: yaml.AliasNode})
-		require.Error(t, err)
+		require.ErrorIs(t, err, errEvents)
 	})
+}
+
+func Test_emptyEvent(t *testing.T) {
+	t.Parallel()
+
+	t.Run("配列や単一値の記法で値の node が無ければ空", func(t *testing.T) {
+		t.Parallel()
+		assert.True(t, emptyEvent(nil))
+	})
+
+	for name, c := range map[string]struct {
+		src  string
+		want bool
+	}{
+		"空の値は空":      {"e:\n", true},
+		"~ は空":       {"e: ~\n", true},
+		"null は空":    {"e: null\n", true},
+		"マッピングは空でない": {"e: {}\n", false},
+		"空でないスカラーは空でない":    {"e: x\n", false},
+		"別名は中身を読めないので空でない": {"a: &x {}\ne: *x\n", false},
+		"配列は空でない":          {"e: []\n", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, v := lookup(yamlNode(t, c.src), "e")
+			require.NotNil(t, v)
+			assert.Equal(t, c.want, emptyEvent(v))
+		})
+	}
 }
 
 func Test_wfDoc_event(t *testing.T) {
@@ -321,27 +360,37 @@ func Test_wfDoc_event(t *testing.T) {
 
 	d := parsed(t, "a.yaml", "on:\n  push:\n  pull_request:\njobs:\n  a:\n    runs-on: x\n")
 
-	e, ok := d.event("pull_request")
-	require.True(t, ok)
-	assert.Equal(t, 3, e.line)
+	t.Run("在るイベントはその行とともに返す", func(t *testing.T) {
+		t.Parallel()
+		e, ok := d.event("pull_request")
+		require.True(t, ok)
+		assert.Equal(t, 3, e.line)
+	})
 
-	_, ok = d.event("workflow_call")
-	assert.False(t, ok)
+	t.Run("無いイベントは偽を返す", func(t *testing.T) {
+		t.Parallel()
+		_, ok := d.event("workflow_call")
+		assert.False(t, ok)
+	})
 }
 
 func Test_wfJob_get(t *testing.T) {
 	t.Parallel()
 
-	j := parsed(t, "a.yaml", "on: push\njobs:\n  a:\n    if: always()\n    steps:\n      - if: x\n").jobs[0]
+	t.Run("job の直下の key と値の node を返す", func(t *testing.T) {
+		t.Parallel()
+		j := parsed(t, "a.yaml", "on: push\njobs:\n  a:\n    if: always()\n    steps:\n      - if: x\n").jobs[0]
+		k, v := j.get("if")
+		require.NotNil(t, k)
+		assert.Equal(t, 4, k.Line)
+		assert.Equal(t, "always()", v.Value)
+	})
 
-	k, v := j.get("if")
-	require.NotNil(t, k)
-	assert.Equal(t, 4, k.Line)
-	assert.Equal(t, "always()", v.Value)
-
-	// step の if: は job の直下ではない。
-	k, _ = parsed(t, "a.yaml", "on: push\njobs:\n  a:\n    steps:\n      - if: x\n").jobs[0].get("if")
-	assert.Nil(t, k)
+	t.Run("step の key は job の直下の key として返さない", func(t *testing.T) {
+		t.Parallel()
+		k, _ := parsed(t, "a.yaml", "on: push\njobs:\n  a:\n    steps:\n      - if: x\n").jobs[0].get("if")
+		assert.Nil(t, k)
+	})
 }
 
 func Test_treeChecks(t *testing.T) {
@@ -356,12 +405,19 @@ func Test_treeChecks(t *testing.T) {
 	plan := declCheck("plan", "plan.yaml", checksdecl.ScopeTree, true)
 	plan.PlanEnv = "admin"
 	d.Checks = append(d.Checks, plan)
-	got := treeChecks(d)
-	require.Len(t, got, 2)
-	assert.Equal(t, "t1", got[0].Name)
-	assert.Equal(t, "t2", got[1].Name)
 
-	assert.Empty(t, treeChecks(checksdecl.Decl{}))
+	t.Run("scope が tree で required の検査を宣言の順に返し、plan_env を持つものは外す", func(t *testing.T) {
+		t.Parallel()
+		got := treeChecks(d)
+		require.Len(t, got, 2)
+		assert.Equal(t, "t1", got[0].Name)
+		assert.Equal(t, "t2", got[1].Name)
+	})
+
+	t.Run("検査の無い宣言からは何も返さない", func(t *testing.T) {
+		t.Parallel()
+		assert.Empty(t, treeChecks(checksdecl.Decl{}))
+	})
 }
 
 func Test_directFindings(t *testing.T) {
@@ -461,6 +517,8 @@ func Test_directJobFindings(t *testing.T) {
 		"配列記法":              "on: [pull_request]\njobs:\n  build:\n    runs-on: x\n",
 		"印の付いた branches":    marked("deploy"),
 		"types は絞り込みとみなさない": "on:\n  pull_request:\n    types: [opened]\njobs:\n  build:\n    runs-on: x\n",
+		"値が null":           "on:\n  pull_request: ~\njobs:\n  build:\n    runs-on: x\n",
+		"値が空のマッピング":         "on:\n  pull_request: {}\njobs:\n  build:\n    runs-on: x\n",
 	} {
 		t.Run(name+"なら違反0件", func(t *testing.T) {
 			t.Parallel()
@@ -474,12 +532,16 @@ func Test_directJobFindings(t *testing.T) {
 		assert.Empty(t, findSet(t, "ci.yaml", setDeployEnv, marked(setDeployEnv)))
 	})
 
-	t.Run("branches が無ければ、どの集合を求められても違反0件", func(t *testing.T) {
-		t.Parallel()
-		for _, set := range []string{setNone, setGate, setDeployEnv} {
+	for name, set := range map[string]string{
+		"印の集合で表せない ruleset": setNone,
+		"線の ruleset":        setGate,
+		"デプロイブランチの ruleset": setDeployEnv,
+	} {
+		t.Run("branches が無ければ、"+name+"の context でも違反0件", func(t *testing.T) {
+			t.Parallel()
 			assert.Empty(t, findSet(t, "ci.yaml", set, "on:\n  pull_request:\njobs:\n  build:\n    runs-on: x\n"))
-		}
-	})
+		})
+	}
 
 	for name, c := range map[string]struct {
 		set, src, want string
@@ -511,6 +573,8 @@ func Test_directJobFindings(t *testing.T) {
 		"branches-ignore は印があっても":    {"on:\n  pull_request:\n    branches-ignore: # branch-set: deploy\n      - x\njobs:\n  build:\n    runs-on: x\n", 3, "`branches-ignore` が残っています"},
 		"印の無い branches":              {"on:\n  pull_request:\n    branches:\n      - main\njobs:\n  build:\n    runs-on: x\n", 3, "印 `# branch-set: <集合>`"},
 		"印がほかの行にある branches":         {"on:\n  pull_request:\n    branches:\n      - main # branch-set: deploy\njobs:\n  build:\n    runs-on: x\n", 3, "印 `# branch-set: <集合>`"},
+		"pull_request の値が別名":         {"x-pr: &pr\n  paths: [x]\non:\n  pull_request: *pr\njobs:\n  build:\n    runs-on: x\n", 4, "pull_request の値を読めません"},
+		"pull_request の値が空でないスカラー":   {"on:\n  pull_request: x\njobs:\n  build:\n    runs-on: x\n", 2, "pull_request の値を読めません"},
 	} {
 		t.Run(name+"は違反", func(t *testing.T) {
 			t.Parallel()
@@ -531,7 +595,9 @@ func Test_directJobFindings(t *testing.T) {
 	t.Run("線の検証の workflow でも uses: と name: は違反", func(t *testing.T) {
 		t.Parallel()
 		got := find(t, "wf/"+lineVerifyFile, "on:\n  push:\njobs:\n  build:\n    name: B\n    uses: ./x.yaml\n")
-		assert.Len(t, got, 2)
+		require.Len(t, got, 2)
+		assert.Contains(t, got[0].Message, "reusable workflow を呼んでいます")
+		assert.Contains(t, got[1].Message, "name: を置かないでください")
 	})
 }
 
@@ -567,6 +633,22 @@ func Test_gateWorkflowFindings(t *testing.T) {
 			withoutJob(prGateSrc, "gate"),
 			[]string{"job `gate` は 1 件必要です（実際: 0）"},
 		},
+		"判定の job が2件": {
+			prGateSrc + jobOf(prGateSrc, "gate"),
+			[]string{"job `gate` は 1 件必要です（実際: 2）"},
+		},
+		"changes の job が無い": {
+			withoutJob(prGateSrc, "changes"),
+			[]string{"job `changes` は 1 件必要です（実際: 0）"},
+		},
+		"changes の job が2件": {
+			strings.Replace(prGateSrc, "  call-a:\n", jobOf(prGateSrc, "changes")+"  call-a:\n", 1),
+			[]string{"job `changes` は 1 件必要です（実際: 2）"},
+		},
+		"changes の step の run: が違う": {
+			strings.Replace(prGateSrc, "run: make ci-changes RUNNER_MODE=host", "run: make ci-changes RUNNER_MODE=host || true", 1),
+			[]string{"job `changes` の判定の step の run: は `make ci-changes RUNNER_MODE=host` にします"},
+		},
 	} {
 		t.Run(name+"なら違反", func(t *testing.T) {
 			t.Parallel()
@@ -597,15 +679,17 @@ func Test_gateWorkflowFindings(t *testing.T) {
 func Test_rulesetSet(t *testing.T) {
 	t.Parallel()
 
-	for file, want := range map[string]string{
-		"r/lines.json":           setGate,
-		"r/deploy-admin.json":    setDeployEnv,
-		"r/common.json":          setNone,
-		"branch-protection.json": setNone,
+	for name, c := range map[string]struct {
+		file, want string
+	}{
+		"線の ruleset は gate":              {"r/lines.json", setGate},
+		"デプロイブランチの ruleset は deploy-env": {"r/deploy-admin.json", setDeployEnv},
+		"common の ruleset は集合を持たない":      {"r/common.json", setNone},
+		"古い単一の ruleset は集合を持たない":         {"branch-protection.json", setNone},
 	} {
-		t.Run(file, func(t *testing.T) {
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, want, rulesetSet(file))
+			assert.Equal(t, c.want, rulesetSet(c.file))
 		})
 	}
 }
@@ -638,24 +722,36 @@ func Test_linesRulesetFindings(t *testing.T) {
 
 func Test_callerIf(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, "!cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'go-lint'))", callerIf("go-lint"))
+
+	t.Run("取り消しでなければ、changes が success でないか run に名前が在るときに走る式を返す", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, "!cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.run), 'go-lint'))", callerIf("go-lint"))
+	})
 }
 
 func Test_unwrapExpr(t *testing.T) {
 	t.Parallel()
 
-	for in, want := range map[string]string{
-		"  always()  ":         "always()",
-		"${{ always() }}":      "always()",
-		" ${{a}} ":             "a",
-		"${{ a }} && ${{ b }}": "a }} && ${{ b",
-		"":                     "",
+	for name, c := range map[string]struct {
+		in, want string
+	}{
+		"前後の空白を除く":         {"  always()  ", "always()"},
+		"全体を囲む ${{ }} を除く": {"${{ always() }}", "always()"},
+		"囲みの内側の空白が無くても除く":  {" ${{a}} ", "a"},
+		"空の値は空のまま":         {"", ""},
 	} {
-		t.Run(in, func(t *testing.T) {
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, want, unwrapExpr(in))
+			assert.Equal(t, c.want, unwrapExpr(c.in))
 		})
 	}
+
+	t.Run("2つの式を繋いだ値は、どちらか一方の式に縮めない", func(t *testing.T) {
+		t.Parallel()
+		got := unwrapExpr("${{ always() }} && ${{ failure() }}")
+		assert.NotEqual(t, "always()", got)
+		assert.NotEqual(t, "failure()", got)
+	})
 }
 
 func Test_callerFindings(t *testing.T) {
@@ -870,22 +966,25 @@ func Test_judgeFindings(t *testing.T) {
 func Test_isAlways(t *testing.T) {
 	t.Parallel()
 
-	for src, want := range map[string]bool{
-		"always()":                     true,
-		"' always() '":                 true,
-		"${{ always() }}":              true,
-		"${{always()}}":                true,
-		"success()":                    false,
-		"always() && true":             false,
-		"${{ always() }} && true":      false,
-		"[always()]":                   false,
-		"${{ !cancelled() }}":          false,
-		"\"${{ always() }} \"":         true,
-		"${{ always() || failure() }}": false,
+	for name, c := range map[string]struct {
+		src  string
+		want bool
+	}{
+		"always() そのもの":              {"always()", true},
+		"引用符の中の前後の空白は問わない":           {"' always() '", true},
+		"${{ }} で囲んだ always()":       {"${{ always() }}", true},
+		"空白の無い ${{ }} の always()":    {"${{always()}}", true},
+		"二重引用符の中の ${{ }} の always()": {"\"${{ always() }} \"", true},
+		"別の関数":                      {"success()", false},
+		"always() に条件を足す":           {"always() && true", false},
+		"${{ always() }} の後ろに条件を足す": {"${{ always() }} && true", false},
+		"${{ }} の中で条件を足す":           {"${{ always() || failure() }}", false},
+		"配列":                        {"[always()]", false},
+		"取り消しだけを除く式":                {"${{ !cancelled() }}", false},
 	} {
-		t.Run(src, func(t *testing.T) {
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, want, isAlways(yamlNode(t, "v: "+src).Content[1]))
+			assert.Equal(t, c.want, isAlways(yamlNode(t, "v: "+c.src).Content[1]))
 		})
 	}
 
@@ -930,6 +1029,7 @@ func Test_lineVerifyTriggerFindings(t *testing.T) {
 		"push だけ":        "on:\n  push:\n",
 		"印の付いた branches": "on:\n  push:\n    branches: # branch-set: lines\n      - 'main'\n",
 		"単一値の push":      "on: push\n",
+		"push の値が null":  "on:\n  push: ~\n",
 	} {
 		t.Run(name+"なら違反0件", func(t *testing.T) {
 			t.Parallel()
@@ -945,6 +1045,8 @@ func Test_lineVerifyTriggerFindings(t *testing.T) {
 		"push が無い":                {"on:\n  workflow_dispatch:\n", []string{"push のほかのイベント（workflow_dispatch）", "push トリガーがありません"}},
 		"push を paths で絞る":        {"on:\n  push:\n    paths:\n      - x\n", []string{"`paths` があります"}},
 		"push を paths-ignore で絞る": {"on:\n  push:\n    paths-ignore:\n      - x\n", []string{"`paths-ignore` があります"}},
+		"push の値が別名":              {"x-push: &p\n  paths: [x]\non:\n  push: *p\n", []string{"push の値を読めません"}},
+		"push の値が空でないスカラー":        {"on:\n  push: x\n", []string{"push の値を読めません"}},
 	} {
 		t.Run(name+"なら違反", func(t *testing.T) {
 			t.Parallel()
@@ -970,7 +1072,8 @@ func Test_calledFindings(t *testing.T) {
 	t.Run("同じ workflow を名指す検査が2つあっても1度だけ検査する", func(t *testing.T) {
 		t.Parallel()
 		got := calledFindings(in, map[string]wfDoc{"a.yaml": withPR}, nil)
-		assert.Len(t, got, 1)
+		require.Len(t, got, 1)
+		assert.Contains(t, got[0].Message, "pull_request で起動します")
 	})
 
 	t.Run("workflow が無ければ宣言の側へ報告する", func(t *testing.T) {

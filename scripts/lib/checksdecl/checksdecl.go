@@ -94,6 +94,8 @@ func Parse(raw []byte) (Decl, error) {
 			return Decl{}, at("plan_env の形が誤っています")
 		case (c.PlanEnv == "") != (len(c.Contexts) == 0):
 			return Decl{}, at("contexts は plan_env を持つ検査にだけ、1つ以上置きます")
+		case !validContexts(c.Contexts):
+			return Decl{}, at("contexts は空でない名前の重複の無い配列にします")
 		case c.Bases != nil && !validBases(c.Bases):
 			return Decl{}, at("bases は %q と %q の重複の無い空でない配列にします", BaseLine, BaseDeploy)
 		}
@@ -139,6 +141,17 @@ func (d Decl) TreeChecks() []string {
 
 // JoinNames は、名前を報告のために繋ぐ。
 func JoinNames(names []string) string { return strings.Join(names, ", ") }
+
+func validContexts(contexts []string) bool {
+	seen := map[string]bool{}
+	for _, c := range contexts {
+		if c == "" || seen[c] {
+			return false
+		}
+		seen[c] = true
+	}
+	return true
+}
 
 func validBases(bases []string) bool {
 	if len(bases) == 0 {

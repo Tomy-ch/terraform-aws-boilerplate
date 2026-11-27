@@ -20,14 +20,30 @@ var (
 	errDiffCount = xerrors.New("変更したファイルの件数が食い違います")
 )
 
-func git(args ...string) ([]byte, error) {
+// gitReader は、ci-gate が git から読むもの。show は rev の木の path の中身を、diff は `git diff` に args を
+// 渡した標準出力を返す。
+type gitReader struct {
+	show func(rev, path string) ([]byte, error)
+	diff func(args ...string) ([]byte, error)
+}
+
+// hostGit は、dir のリポジトリを実物の git で読む gitReader を返す。
+func hostGit(dir string) gitReader {
+	return gitReader{
+		show: func(rev, path string) ([]byte, error) { return git(dir, "show", rev+":"+path) },
+		diff: func(args ...string) ([]byte, error) { return git(dir, append([]string{"diff"}, args...)...) },
+	}
+}
+
+// git は、dir を作業ディレクトリとして git を起動し、標準出力を返す。
+func git(dir string, args ...string) ([]byte, error) {
 	env, err := gitenv.Env(os.Environ())
 	if err != nil {
 		return nil, xerrors.Wrapf(errGit, "%v", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", args...) //nolint:gosec // 引数はこの道具が組み立てる git の部分コマンド
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...) //nolint:gosec // 引数はこの道具が組み立てる git の部分コマンド
 	cmd.Env = env
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -41,13 +57,13 @@ func git(args ...string) ([]byte, error) {
 // changedFiles は、base と head の merge-base から head までに変わったファイルを返す（Pull Request の差分と同じ基点）。
 // rename は削除と追加に分ける —— 新しい名前だけを見ると、検査の入力から外へ動かした変更でその検査が走らない。
 // 件数は --name-only と --numstat の2つの経路で突き合わせる。
-func changedFiles(base, head string) ([]string, error) {
+func changedFiles(g gitReader, base, head string) ([]string, error) {
 	rng := base + "..." + head
-	names, err := git("diff", "--no-renames", "--name-only", "-z", rng)
+	names, err := g.diff("--no-renames", "--name-only", "-z", rng)
 	if err != nil {
 		return nil, err
 	}
-	stat, err := git("diff", "--no-renames", "--numstat", "-z", rng)
+	stat, err := g.diff("--no-renames", "--numstat", "-z", rng)
 	if err != nil {
 		return nil, err
 	}
@@ -66,8 +82,4 @@ func splitZ(b []byte) []string {
 		}
 	}
 	return out
-}
-
-func fileAt(rev, path string) ([]byte, error) {
-	return git("show", rev+":"+path)
 }

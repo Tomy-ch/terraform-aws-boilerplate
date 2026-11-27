@@ -31,11 +31,12 @@ import (
 var (
 	errUsage = xerrors.New("使い方が誤っています")
 	errEvent = xerrors.New("線の検証は線への push でだけ判定します")
+	errWrite = xerrors.New("出力先に書けません")
 )
 
 func main() {
 	log.SetFlags(0)
-	if err := run(os.Args[1:], os.Getenv, os.Stdout); err != nil {
+	if err := run(os.Args[1:], hostGit("."), os.Getenv, os.Stdout); err != nil {
 		log.Printf("❌ ci-gate: %v", err)
 		if xerrors.Is(err, checksdecl.ErrNoChecks) {
 			os.Exit(2)
@@ -55,7 +56,7 @@ type options struct {
 	summary string
 }
 
-func run(args []string, getenv func(string) string, out io.Writer) error {
+func run(args []string, g gitReader, getenv func(string) string, out io.Writer) error {
 	if len(args) == 0 {
 		return xerrors.Wrap(errUsage, "ci-gate <changes|judge|line> [flags]")
 	}
@@ -77,7 +78,7 @@ func run(args []string, getenv func(string) string, out io.Writer) error {
 	if o.declRev == "" {
 		return xerrors.Wrap(errUsage, "--decl-rev が要ります")
 	}
-	d, b, err := readDecls(o.declRev)
+	d, b, err := readDecls(g, o.declRev)
 	if err != nil {
 		return err
 	}
@@ -90,12 +91,12 @@ func run(args []string, getenv func(string) string, out io.Writer) error {
 		if sub == "changes" && o.output == "" {
 			return xerrors.Wrap(errUsage, "changes には --output が要ります")
 		}
-		head, err := readChecks(o.head)
+		head, err := readChecks(g, o.head)
 		if err != nil {
 			return xerrors.Wrap(err, "Pull Request の木の検査の宣言")
 		}
 		judged, removed := mergeDecls(d, head)
-		files, err := changedFiles(o.base, o.head)
+		files, err := changedFiles(g, o.base, o.head)
 		if err != nil {
 			return err
 		}
@@ -132,8 +133,8 @@ func run(args []string, getenv func(string) string, out io.Writer) error {
 }
 
 // readChecks は、rev の木から検査の宣言を読む。
-func readChecks(rev string) (checksdecl.Decl, error) {
-	raw, err := fileAt(rev, checksdecl.File)
+func readChecks(g gitReader, rev string) (checksdecl.Decl, error) {
+	raw, err := g.show(rev, checksdecl.File)
 	if err != nil {
 		return checksdecl.Decl{}, err
 	}
@@ -145,12 +146,12 @@ func readChecks(rev string) (checksdecl.Decl, error) {
 }
 
 // readDecls は、rev の木から検査の宣言と分岐の宣言を読む。
-func readDecls(rev string) (checksdecl.Decl, branchdecl.Branches, error) {
-	d, err := readChecks(rev)
+func readDecls(g gitReader, rev string) (checksdecl.Decl, branchdecl.Branches, error) {
+	d, err := readChecks(g, rev)
 	if err != nil {
 		return checksdecl.Decl{}, branchdecl.Branches{}, err
 	}
-	braw, err := fileAt(rev, branchdecl.File)
+	braw, err := g.show(rev, branchdecl.File)
 	if err != nil {
 		return checksdecl.Decl{}, branchdecl.Branches{}, err
 	}
@@ -188,11 +189,11 @@ func writeChanges(output string, should []string, nFiles int, out io.Writer) err
 	}
 	f, err := os.OpenFile(filepath.Clean(output), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		return xerrors.Wrapf(err, "%s", output)
+		return xerrors.Wrapf(errWrite, "%s: %v", output, err)
 	}
 	defer func() { _ = f.Close() }()
 	if _, err := fmt.Fprintf(f, "run=%s\n", enc); err != nil {
-		return xerrors.Wrapf(err, "%s", output)
+		return xerrors.Wrapf(errWrite, "%s: %v", output, err)
 	}
 	return nil
 }
@@ -217,11 +218,11 @@ func report(summary, title string, rows []row, verdict error, out io.Writer) err
 	if summary != "" {
 		f, err := os.OpenFile(filepath.Clean(summary), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 		if err != nil {
-			return xerrors.Wrapf(err, "%s", summary)
+			return xerrors.Wrapf(errWrite, "%s: %v", summary, err)
 		}
 		defer func() { _ = f.Close() }()
 		if _, err := fmt.Fprint(f, b.String()); err != nil {
-			return xerrors.Wrapf(err, "%s", summary)
+			return xerrors.Wrapf(errWrite, "%s: %v", summary, err)
 		}
 	}
 	return verdict

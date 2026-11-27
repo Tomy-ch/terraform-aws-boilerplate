@@ -172,7 +172,11 @@ func deployRulesets(root string, b branches, checks checksdecl.Decl) ([]rulesetD
 			continue
 		}
 		spec := specFor(rulesetsDir+"/"+deployRulesetStem+d.Branch+".json", roleDeploy)
-		rendered, err := renderDeployRuleset(spec.name, d.Branch, deployContexts(d.Env, checks))
+		contexts, err := deployContexts(d.Env, checks)
+		if err != nil {
+			return nil, xerrors.Wrapf(err, "%s", spec.path)
+		}
+		rendered, err := renderDeployRuleset(spec.name, d.Branch, contexts)
 		if err != nil {
 			return nil, xerrors.Wrapf(err, "%s", spec.path)
 		}
@@ -189,15 +193,29 @@ func deployRulesets(root string, b branches, checks checksdecl.Decl) ([]rulesetD
 }
 
 // deployContexts は、env のデプロイブランチの ruleset が required とする context を、決定31 の検査、checks.json の
-// 宣言の順のその env の plan、線の検証の順に返します（ADR-0603 決定12・35）。
-func deployContexts(env string, checks checksdecl.Decl) []string {
+// 宣言の順のその env の plan、線の検証の順に返します（ADR-0603 決定12・35）。plan の context が決定31 の検査か
+// 線の検証と同じ名前か、2つの plan の検査が同じ context を名指すときは失敗します —— 1つの check が2つの
+// required を満たし、片方の検査が走らなくても ruleset は通る。
+func deployContexts(env string, checks checksdecl.Decl) ([]string, error) {
+	owner := map[string]string{}
+	for _, c := range checks.Checks {
+		for _, ctx := range c.Contexts {
+			switch prev, ok := owner[ctx]; {
+			case ctx == contextDeploySource || ctx == contextLineGate:
+				return nil, xerrors.Wrapf(errDeployRuleset, "%s の %s の context %q は、デプロイブランチの ruleset が別に required とする名前です", checksdecl.File, c.Name, ctx)
+			case ok && prev != c.Name:
+				return nil, xerrors.Wrapf(errDeployRuleset, "%s の %s と %s が同じ context %q を名指しています", checksdecl.File, prev, c.Name, ctx)
+			}
+			owner[ctx] = c.Name
+		}
+	}
 	out := []string{contextDeploySource}
 	for _, c := range checks.Checks {
 		if c.PlanEnv == env {
 			out = append(out, c.Contexts...)
 		}
 	}
-	return append(out, contextLineGate)
+	return append(out, contextLineGate), nil
 }
 
 // deployRulesetBody は deploy-<branch>.json の形。キーの順は人が書く宣言と揃える。

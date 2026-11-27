@@ -113,6 +113,20 @@ func TestReadDir(t *testing.T) {
 		assert.Equal(t, []requiredchecks.Context{{Name: "gate", File: filepath.Join(dir, "lines.json")}}, got)
 	})
 
+	t.Run(".json で終わる名前のディレクトリと、.json の後ろに続きのあるファイルは読まない", func(t *testing.T) {
+		t.Parallel()
+
+		dir := build(t, map[string]string{
+			"lines.json":        required("gate"),
+			"x.json/other.json": required("other"),
+			"deploy.json.bak":   required("stale"),
+			"deploy.json~":      "nope",
+		})
+		got, err := requiredchecks.ReadDir(dir)
+		require.NoError(t, err)
+		assert.Equal(t, []requiredchecks.Context{{Name: "gate", File: filepath.Join(dir, "lines.json")}}, got)
+	})
+
 	for name, c := range map[string]struct {
 		files map[string]string
 		want  error

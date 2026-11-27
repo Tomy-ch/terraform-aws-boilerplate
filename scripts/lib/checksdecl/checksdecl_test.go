@@ -10,7 +10,8 @@ import (
 const validDecl = `{"checks": [
   {"name": "go-test", "workflow": "go-test.yaml", "paths": ["**/*.go"], "scope": "tree", "required": true},
   {"name": "commitlint", "workflow": "commitlint.yaml", "paths": [], "scope": "change", "required": true},
-  {"name": "trivy-fs", "workflow": "trivy-fs.yaml", "paths": [], "scope": "tree", "required": false}
+  {"name": "trivy-fs", "workflow": "trivy-fs.yaml", "paths": [], "scope": "tree", "required": false, "bases": ["deploy"]},
+  {"name": "plan-admin", "workflow": "plan.yaml", "paths": ["env/admin/**"], "scope": "tree", "required": true, "plan_env": "admin", "contexts": ["plan-admin-identity", "plan-admin-workload"]}
 ]}`
 
 func TestParse(t *testing.T) {
@@ -23,9 +24,16 @@ func TestParse(t *testing.T) {
 			t.Parallel()
 			d, err := Parse([]byte(validDecl))
 			require.NoError(t, err)
-			assert.Equal(t, []string{"go-test", "commitlint", "trivy-fs"}, d.Names())
-			assert.True(t, d.Checks[0].IsRequired())
-			assert.False(t, d.Checks[2].IsRequired())
+			yes, no := true, false
+			assert.Equal(t, []Check{
+				{Name: "go-test", Workflow: "go-test.yaml", Paths: []string{"**/*.go"}, Scope: ScopeTree, Required: &yes},
+				{Name: "commitlint", Workflow: "commitlint.yaml", Paths: []string{}, Scope: ScopeChange, Required: &yes},
+				{Name: "trivy-fs", Workflow: "trivy-fs.yaml", Paths: []string{}, Scope: ScopeTree, Required: &no, Bases: []string{BaseDeploy}},
+				{
+					Name: "plan-admin", Workflow: "plan.yaml", Paths: []string{"env/admin/**"}, Scope: ScopeTree, Required: &yes,
+					PlanEnv: "admin", Contexts: []string{"plan-admin-identity", "plan-admin-workload"},
+				},
+			}, d.Checks)
 		})
 	})
 
@@ -41,11 +49,14 @@ func TestParse(t *testing.T) {
 			"paths が無い":               `{"checks": [{"name": "a", "workflow": "a.yaml", "scope": "tree", "required": true}]}`,
 			"scope が未知":               `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "x", "required": true}]}`,
 			"required が無い":            `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree"}]}`,
-			"plan_env の形が誤り":          `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true, "plan_env": "A B"}]}`,
+			"plan_env の形が誤り":          `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true, "plan_env": "A B", "contexts": ["x"]}]}`,
 			"path を解釈できない":            `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": ["!x"], "scope": "tree", "required": true}]}`,
 			"plan_env に contexts が無い": `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true, "plan_env": "admin"}]}`,
 			"plan_env が無いのに contexts": `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true, "contexts": ["x"]}]}`,
 			"bases が未知":               `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true, "bases": ["x"]}]}`,
+			"bases が空配列":              `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true, "bases": []}]}`,
+			"contexts に空の名前":          `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true, "plan_env": "admin", "contexts": ["x", ""]}]}`,
+			"contexts の重複":            `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true, "plan_env": "admin", "contexts": ["x", "x"]}]}`,
 			"宣言のあとに値がある":              `{"checks": [{"name": "a", "workflow": "a.yaml", "paths": [], "scope": "tree", "required": true}]} {}`,
 		} {
 			t.Run(name+"なら誤りにする", func(t *testing.T) {
@@ -104,6 +115,34 @@ func TestJoinNames(t *testing.T) {
 			assert.Equal(t, "a, b", JoinNames([]string{"a", "b"}))
 			assert.Empty(t, JoinNames(nil))
 		})
+	})
+}
+
+func Test_validContexts(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("空でない名前の重複の無い配列を受け付ける", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, validContexts([]string{"a", "b"}))
+			assert.True(t, validContexts(nil))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		for name, contexts := range map[string][]string{
+			"空の名前を含む": {"a", ""},
+			"名前が重複する": {"a", "b", "a"},
+		} {
+			t.Run(name+"なら受け付けない", func(t *testing.T) {
+				t.Parallel()
+				assert.False(t, validContexts(contexts))
+			})
+		}
 	})
 }
 

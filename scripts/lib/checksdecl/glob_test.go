@@ -39,23 +39,29 @@ func TestMatchGlob(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		for _, tc := range []struct {
+		for name, tc := range map[string]struct {
 			pattern, file string
 			want          bool
 		}{
-			{"**/*.go", "main.go", true},
-			{"**/*.go", "scripts/a/b.go", true},
-			{"**/*.go", "scripts/a/b.go.txt", false},
-			{"scripts/**", "scripts", true},
-			{"scripts/**", "scripts/x", true},
-			{".github/workflows/**", ".github/workflows/a.yaml", true},
-			{"env/*/identity/**", "env/admin/identity/main.tf", true},
-			{"env/*/identity/**", "env/admin/main.tf", false},
-			{"mise.toml", "mise.toml", true},
-			{"mise.toml", "a/mise.toml", false},
-			{"**", "a/b/c", true},
+			"先頭の ** は直下のファイルにも当たる":        {"**/*.go", "main.go", true},
+			"先頭の ** は深いファイルにも当たる":         {"**/*.go", "scripts/a/b.go", true},
+			"拡張子の後ろに続きがあれば当たらない":          {"**/*.go", "scripts/a/b.go.txt", false},
+			"末尾の ** はディレクトリそのものにも当たる":     {"scripts/**", "scripts", true},
+			"末尾の ** は配下に当たる":              {"scripts/**", "scripts/x", true},
+			"ドットで始まる segment にも当たる":       {".github/workflows/**", ".github/workflows/a.yaml", true},
+			"途中の * は1つの segment に当たる":     {"env/*/identity/**", "env/admin/identity/main.tf", true},
+			"途中の * の後の segment が違えば当たらない": {"env/*/identity/**", "env/admin/main.tf", false},
+			"固定の path はそれ自身に当たる":          {"mise.toml", "mise.toml", true},
+			"固定の path は別のディレクトリの同名に当たらない": {"mise.toml", "a/mise.toml", false},
+			"固定の path はその下の path に当たらない":  {"mise.toml", "mise.toml/x", false},
+			"** だけはすべてに当たる":               {"**", "a/b/c", true},
+			"* は / をまたがない":                {"*.go", "a/b.go", false},
+			"途中の * は2つの segment に当たらない":   {"env/*/main.tf", "env/a/b/main.tf", false},
+			"末尾の * は配下の深いファイルに当たらない":      {"scripts/*", "scripts/a/b", false},
+			"末尾の ** は接頭辞が同じだけの名前に当たらない":   {"scripts/**", "scriptsx/a", false},
+			"固定の path は接頭辞が同じだけの名前に当たらない": {"scripts", "scripts-old", false},
 		} {
-			t.Run(tc.pattern+" と "+tc.file, func(t *testing.T) {
+			t.Run(name, func(t *testing.T) {
 				t.Parallel()
 				assert.Equal(t, tc.want, MatchGlob(tc.pattern, tc.file))
 			})

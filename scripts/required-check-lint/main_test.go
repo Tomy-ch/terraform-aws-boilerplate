@@ -352,6 +352,18 @@ func Test_check(t *testing.T) {
 		assert.Empty(t, check(nil, []Source{{File: "a.yaml", Source: ok}}, "r.json"))
 	})
 
+	// jobs: を読めない workflow を飛ばして黙ると、そこに在る報告 job を数えないまま0件と報告する。
+	t.Run("jobs: が見つからない workflow は違反にし、その job を数えない", func(t *testing.T) {
+		t.Parallel()
+		got := check([]string{"build"}, []Source{{File: "a.yaml", Source: "on:\n  pull_request:\n"}}, "r.json")
+		require.Len(t, got, 2)
+		assert.Equal(t, "a.yaml", got[0].File)
+		assert.Equal(t, 1, got[0].Line)
+		assert.Equal(t, "jobs: が見つかりません", got[0].Message)
+		assert.Equal(t, "r.json", got[1].File)
+		assert.Contains(t, got[1].Message, "required context `build` を報告する job は 1 件必要です（実際: 0）")
+	})
+
 	t.Run("違反の報告先は宣言側のパスにする", func(t *testing.T) {
 		t.Parallel()
 		got := check([]string{"missing"}, []Source{{File: "a.yaml", Source: ok}}, "custom/path.json")
