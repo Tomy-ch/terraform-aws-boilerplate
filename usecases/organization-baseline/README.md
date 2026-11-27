@@ -100,7 +100,7 @@ unsupported:
 | root の中央管理の有効化が、アカウントの作成より後になる | 既存のメンバーに root の資格情報が残る | `depends_on` と、人の確認（`aws iam list-organizations-features`） |
 | アカウントの作成が途中で失敗し、アカウントは在るが state に無い | 再実行がメールの重複で落ちる | 人が手順書の回復（`import` block の Pull Request）で取り込む |
 | 新しいアカウントへの break-glass の StackSet の自動展開が失敗する | 新しいアカウントへ break-glass で入れない | 昇格の後の人の確認（stack instance が `CURRENT`、引き受け） |
-| 立ち上げの読み取りの role の読み取りが、立ち上げの plan に足りない | 立ち上げの CI の plan が `AccessDenied` で落ちる（書き込みには広がらない） | `PLAN-BR-04`（plan の role の読みとの突き合わせ）と、最初の立ち上げの CI の plan |
+| 立ち上げの読み取りの role の読み取りが、立ち上げの plan に足りない | 立ち上げの CI の plan が `AccessDenied` で落ちる（書き込みには広がらない） | `PLAN-BR-04`（plan の role の読みとの突き合わせ）と `PLAN-BR-07`（reference のメンバーの形の instance の構成物の ARN ごとの、Action と Resource の組）と、最初の立ち上げの CI の plan |
 | `aws:PrincipalArn` の条件が、assumed-role のセッションや root のセッションに一致しない | SCP が拒まない、または回復の経路を拒む | Policy Test は文書の形までしか見ない。PolicyStaging での人の確認 |
 | 実 API が読み戻した policy の文書が宣言と違う | plan が毎回差分を出す | 昇格の後の plan |
 | RCP が想定しない AWS のサービスの経路を止める | 配送や連携が止まる | PolicyStaging での確認と、付けた直後の読み取りの確認 |
