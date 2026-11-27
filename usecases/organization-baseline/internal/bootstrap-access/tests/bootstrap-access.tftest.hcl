@@ -100,6 +100,7 @@ run "role" {
       ListKeyAliases          = "*"
       ReadGitHubProvider      = { "Fn::Sub" = "arn:$${AWS::Partition}:iam::$${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com" }
       ReadCiPolicies          = { "Fn::Sub" = "arn:$${AWS::Partition}:iam::$${AWS::AccountId}:policy/tabp-*-ci-*" }
+      ReadServiceLinkedRoles  = { "Fn::Sub" = "arn:$${AWS::Partition}:iam::$${AWS::AccountId}:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot" }
     }
     error_message = "読み取りの Resource を、置き先のアカウントの state-backend と deployment-identity の名前の形に限ってください（kms:ListAliases だけ Resource \"*\"）。"
   }
