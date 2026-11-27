@@ -21,7 +21,7 @@ func judgeDecl() checksdecl.Decl {
 func okNeeds(run string, results map[string]string) map[string]need {
 	n := map[string]need{changesJob: {Result: "success", Outputs: map[string]string{"run": run}}}
 	for k, v := range results {
-		n[k] = need{Result: v}
+		n[callerJob(k)] = need{Result: v}
 	}
 	return n
 }
@@ -152,7 +152,7 @@ func Test_judgePR(t *testing.T) {
 		t.Run("needs に宣言の検査が欠ければ誤りにする", func(t *testing.T) {
 			t.Parallel()
 			n := okNeeds(`["a","c","info"]`, all)
-			delete(n, "b")
+			delete(n, callerJob("b"))
 			_, err := judgePR(judgeDecl(), []string{"a", "c", "info"}, n)
 			require.ErrorIs(t, err, errNeeds)
 		})
@@ -180,7 +180,7 @@ func Test_judgeLine(t *testing.T) {
 
 		t.Run("木の検査がすべて success なら合格", func(t *testing.T) {
 			t.Parallel()
-			rows, err := judgeLine(judgeDecl(), map[string]need{"a": {Result: "success"}, "b": {Result: "success"}})
+			rows, err := judgeLine(judgeDecl(), map[string]need{"call-a": {Result: "success"}, "call-b": {Result: "success"}})
 			require.NoError(t, err)
 			assert.Len(t, rows, 2)
 		})
@@ -192,21 +192,48 @@ func Test_judgeLine(t *testing.T) {
 		// 線の検証は path で絞らないので、skipped は走らなかったことを表す。
 		t.Run("skipped があれば不合格", func(t *testing.T) {
 			t.Parallel()
-			_, err := judgeLine(judgeDecl(), map[string]need{"a": {Result: "success"}, "b": {Result: "skipped"}})
+			_, err := judgeLine(judgeDecl(), map[string]need{"call-a": {Result: "success"}, "call-b": {Result: "skipped"}})
 			require.ErrorIs(t, err, errFailed)
 		})
 
 		t.Run("needs が木の検査と合わなければ誤りにする", func(t *testing.T) {
 			t.Parallel()
-			_, err := judgeLine(judgeDecl(), map[string]need{"a": {Result: "success"}, "c": {Result: "success"}})
+			_, err := judgeLine(judgeDecl(), map[string]need{"call-a": {Result: "success"}, "call-c": {Result: "success"}})
 			require.ErrorIs(t, err, errNeeds)
 		})
 
 		t.Run("木の検査が宣言に無ければ合格と区別する", func(t *testing.T) {
 			t.Parallel()
 			d := checksdecl.Decl{Checks: []checksdecl.Check{{Name: "c", Paths: []string{}, Scope: checksdecl.ScopeChange, Required: boolp(true)}}}
-			_, err := judgeLine(d, map[string]need{"c": {Result: "success"}})
+			_, err := judgeLine(d, map[string]need{"call-c": {Result: "success"}})
 			require.ErrorIs(t, err, checksdecl.ErrNoChecks)
+		})
+	})
+}
+
+func Test_callerJob(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("検査の名前に接頭辞を付ける", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, "call-go-lint", callerJob("go-lint"))
+		})
+	})
+}
+
+func Test_callerJobs(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("順を保って接頭辞を付ける", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, []string{"call-b", "call-a"}, callerJobs([]string{"b", "a"}))
+			assert.Empty(t, callerJobs(nil))
 		})
 	})
 }

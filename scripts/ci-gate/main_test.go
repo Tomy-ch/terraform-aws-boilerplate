@@ -90,7 +90,7 @@ func Test_run(t *testing.T) {
 		t.Run("judge は needs が決め直した集合と合えば合格し、表を summary へ書く", func(t *testing.T) {
 			base, head := useRepo(t, repoDecl, map[string]string{"docs/a.md": "x\n"})
 			summary := filepath.Join(t.TempDir(), "summary")
-			needs := `{"changes": {"result": "success", "outputs": {"run": "[\"always\"]"}}, "always": {"result": "success"}, "go": {"result": "skipped"}}`
+			needs := `{"changes": {"result": "success", "outputs": {"run": "[\"always\"]"}}, "call-always": {"result": "success"}, "call-go": {"result": "skipped"}}`
 			var out bytes.Buffer
 			require.NoError(t, run([]string{"judge", "--decl-rev", base, "--base", base, "--head", head, "--base-ref", "release/v0.2.0", "--summary", summary}, envOf(map[string]string{"NEEDS": needs}), &out))
 			got, err := os.ReadFile(summary) //nolint:gosec // t.TempDir の下
@@ -101,7 +101,7 @@ func Test_run(t *testing.T) {
 		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
 		t.Run("line は線への push で木の検査が success なら合格", func(t *testing.T) {
 			_, head := useRepo(t, repoDecl, nil)
-			needs := `{"go": {"result": "success"}}`
+			needs := `{"call-go": {"result": "success"}}`
 			var out bytes.Buffer
 			require.NoError(t, run([]string{"line", "--decl-rev", head, "--event", "push", "--ref", "refs/heads/release/v0.2.0"}, envOf(map[string]string{"NEEDS": needs}), &out))
 		})
@@ -115,7 +115,7 @@ func Test_run(t *testing.T) {
 				"a/b.go":        "package b\n",
 				checksdecl.File: `{"checks": [{"name": "always", "workflow": "always.yaml", "paths": [], "scope": "change", "required": true}]}`,
 			})
-			needs := `{"changes": {"result": "success", "outputs": {"run": "[\"always\"]"}}, "always": {"result": "success"}}`
+			needs := `{"changes": {"result": "success", "outputs": {"run": "[\"always\"]"}}, "call-always": {"result": "success"}}`
 			var out bytes.Buffer
 			err := run([]string{"judge", "--decl-rev", base, "--base", base, "--head", head, "--base-ref", "release/v0.2.0"}, envOf(map[string]string{"NEEDS": needs}), &out)
 			require.ErrorIs(t, err, errNeeds)
@@ -124,7 +124,7 @@ func Test_run(t *testing.T) {
 		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
 		t.Run("judge は走るべき検査が skipped なら不合格", func(t *testing.T) {
 			base, head := useRepo(t, repoDecl, map[string]string{"a/b.go": "package b\n"})
-			needs := `{"changes": {"result": "success", "outputs": {"run": "[\"always\",\"go\"]"}}, "always": {"result": "success"}, "go": {"result": "skipped"}}`
+			needs := `{"changes": {"result": "success", "outputs": {"run": "[\"always\",\"go\"]"}}, "call-always": {"result": "success"}, "call-go": {"result": "skipped"}}`
 			var out bytes.Buffer
 			err := run([]string{"judge", "--decl-rev", base, "--base", base, "--head", head, "--base-ref", "release/v0.2.0"}, envOf(map[string]string{"NEEDS": needs}), &out)
 			require.ErrorIs(t, err, errFailed)
@@ -148,7 +148,7 @@ func Test_run(t *testing.T) {
 			t.Run("line は"+name+"なら誤りにする", func(t *testing.T) {
 				_, head := useRepo(t, repoDecl, nil)
 				var out bytes.Buffer
-				err := run(append([]string{"line", "--decl-rev", head}, args...), envOf(map[string]string{"NEEDS": `{"go": {"result": "success"}}`}), &out)
+				err := run(append([]string{"line", "--decl-rev", head}, args...), envOf(map[string]string{"NEEDS": `{"call-go": {"result": "success"}}`}), &out)
 				require.ErrorIs(t, err, errEvent)
 			})
 		}

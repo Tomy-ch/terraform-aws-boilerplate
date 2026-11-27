@@ -12,6 +12,21 @@ import (
 // changesJob は、gate の workflow で走るべき検査を決める job の id。
 const changesJob = "changes"
 
+// callerPrefix は、検査を呼ぶ caller の job の id の接頭辞。skip された caller の job は、その id を名前とする
+// check を作る。検査の job と同じ名前を持たせると、skipped（成功と数える）の check が同じ名前の required の
+// context に重なるので、名前を分ける（ADR-0603 決定38）。
+const callerPrefix = "call-"
+
+func callerJob(name string) string { return callerPrefix + name }
+
+func callerJobs(names []string) []string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		out = append(out, callerJob(n))
+	}
+	return out
+}
+
 var (
 	// errNeeds は、needs の JSON を解釈できないか、宣言と job の集合が食い違うことを表す。
 	errNeeds = xerrors.New("gate が受け取った job の集合が宣言と合いません")
@@ -77,7 +92,7 @@ func sameSet(want []string, got map[string]need) error {
 //
 // required でない検査は表に載せるが、合否に数えない。
 func judgePR(d checksdecl.Decl, should []string, needs map[string]need) ([]row, error) {
-	if err := sameSet(append([]string{changesJob}, d.Names()...), needs); err != nil {
+	if err := sameSet(append([]string{changesJob}, callerJobs(d.Names())...), needs); err != nil {
 		return nil, err
 	}
 	ch := needs[changesJob]
@@ -96,7 +111,7 @@ func judgePR(d checksdecl.Decl, should []string, needs map[string]need) ([]row, 
 		}
 	}
 	for _, c := range d.Checks {
-		r := row{Name: c.Name, Required: c.IsRequired(), Should: slices.Contains(should, c.Name), Result: needs[c.Name].Result}
+		r := row{Name: c.Name, Required: c.IsRequired(), Should: slices.Contains(should, c.Name), Result: needs[callerJob(c.Name)].Result}
 		switch {
 		case r.Should:
 			r.OK = r.Result == "success"
@@ -135,13 +150,13 @@ func judgeLine(d checksdecl.Decl, needs map[string]need) ([]row, error) {
 	if len(want) == 0 {
 		return nil, xerrors.Wrap(checksdecl.ErrNoChecks, "scope が tree の required の検査がありません")
 	}
-	if err := sameSet(want, needs); err != nil {
+	if err := sameSet(callerJobs(want), needs); err != nil {
 		return nil, err
 	}
 	var rows []row
 	failed := 0
 	for _, name := range want {
-		r := row{Name: name, Required: true, Should: true, Result: needs[name].Result}
+		r := row{Name: name, Required: true, Should: true, Result: needs[callerJob(name)].Result}
 		r.OK = r.Result == "success"
 		if !r.OK {
 			failed++
