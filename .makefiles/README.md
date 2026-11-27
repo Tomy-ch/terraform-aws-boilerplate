@@ -86,7 +86,8 @@ workflow と action の検査、commit message、egress の SSOT、action と ru
 
 ### `github/setting/`
 
-ブランチ保護・ラベル・リポジトリ設定の適用。判定と GitHub への書き込みは `scripts/repo-settings` が持つ。
+ブランチ保護・ラベル・リポジトリ設定の適用と、Pull Request の gate と線の検証の判定の入口（`ci-changes`・`ci-gate`・
+`ci-line-gate`）。保護設定の判定と GitHub への書き込みは `scripts/repo-settings` が、gate と線の検証の判定は `scripts/ci-gate` が持つ。
 
 ### `go/`
 

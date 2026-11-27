@@ -390,7 +390,7 @@ Billing and Cost Management コンソール →「Cost Explorer」→「Launch C
 
 10. 実行の記録を Pull Request の本文に書く: 実行者（一時 IAM user）、日時、対象アカウント、適用した commit、手順8・9 の出力。アカウント ID は伏せる
 
-11. Pull Request の CI の plan（`terraform-gates.yaml` の `plan-admin-identity`）が変更なしを示してから merge する。変更なしでなければ merge しない
+11. Pull Request の CI の plan（リリース線宛では、gate が `call-terraform-plan-admin` で呼ぶ `terraform-plan.yaml` の `admin-identity`）が変更なしを示してから merge する。変更なしでなければ merge しない
 
 ### 段5. CI の apply に移る
 
@@ -423,7 +423,7 @@ Billing and Cost Management コンソール →「Cost Explorer」→「Launch C
 
    3. 管理アカウントで Slack の workspace を認可し、team ID と channel ID を `env/admin/main.tf` に書いた変更をリリース線へ merge しておく。最初の run が workload root を apply するからである。手順は [`ops-notification.md`](ops-notification.md)
 
-2. リリース線から `admin` への最初の Pull Request を開き、`deploy-source-check` を含む必須検査が緑になってから merge する（[段5 の変更を適用する](#段5-の変更を適用する)の手順3 の 2 と同じ操作）。その merge の run を `admin` の最初の run とし、次をすべて確かめる。段4 の準備で `admin` を作った push の run（secret の不在で落ちたもの）はこれに当たらない。run の URL を issue に残す（アカウント ID を載せない）
+2. リリース線から `admin` への最初の Pull Request を開き、`deploy-source-check`・plan・`line-gate` を含む必須検査が緑になってから merge する（[段5 の変更を適用する](#段5-の変更を適用する)の手順3 の 2 と同じ操作）。その merge の run を `admin` の最初の run とし、次をすべて確かめる。段4 の準備で `admin` を作った push の run（secret の不在で落ちたもの）はこれに当たらない。run の URL を issue に残す（アカウント ID を載せない）
    - `apply-infra-code-gate`・`apply-resource-order-check`・`apply-layer-check`・`apply-root-check`・`apply-admin-identity`・`apply-admin-workload` が緑
    - `apply-admin-identity` のログの plan の要約が `No changes.`。`apply-admin-workload` は workload root の resource を作る
    - Policy の違反が無い
@@ -435,7 +435,7 @@ Billing and Cost Management コンソール →「Cost Explorer」→「Launch C
 
 3. 変更を1つずつ当てる。1つごとに次を行う
    1. 変更の Pull Request をリリース線へ merge する
-   2. リリース線から `admin` への Pull Request を開く。`deploy-source-check` を含む必須検査が緑になってから merge し、`admin` の CI の apply が緑になるのを待つ
+   2. リリース線から `admin` への Pull Request を開く。`deploy-source-check`・plan・`line-gate` を含む必須検査が緑になってから merge し、`admin` の CI の apply が緑になるのを待つ
 
       ```bash
       gh pr create --base admin --head release/vX.Y.Z --fill
