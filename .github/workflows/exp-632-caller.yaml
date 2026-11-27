@@ -1,0 +1,44 @@
+name: exp-632-caller
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions: {}
+
+concurrency:
+  group: exp-632-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  call-run:
+    uses: ./.github/workflows/exp-632-callee.yaml
+    with:
+      sleep: 90
+  call-skip-inside:
+    uses: ./.github/workflows/exp-632-callee.yaml
+    with:
+      skip: true
+  call-if-false:
+    if: ${{ false }}
+    uses: ./.github/workflows/exp-632-callee.yaml
+  call-fail:
+    uses: ./.github/workflows/exp-632-callee.yaml
+    with:
+      fail: true
+  native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: probe
+        run: echo native
+  gate:
+    if: ${{ always() }}
+    needs: [call-run, call-skip-inside, call-if-false, call-fail, native]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: needs
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: printf '%s\n' "${NEEDS}"

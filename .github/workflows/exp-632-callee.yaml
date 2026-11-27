@@ -1,0 +1,38 @@
+name: exp-632-callee
+
+on:
+  workflow_call:
+    inputs:
+      skip:
+        type: boolean
+        default: false
+      fail:
+        type: boolean
+        default: false
+      sleep:
+        type: number
+        default: 0
+
+permissions: {}
+
+jobs:
+  inner:
+    if: ${{ !inputs.skip }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: probe
+        env:
+          FAIL: ${{ inputs.fail }}
+          SLEEP: ${{ inputs.sleep }}
+        run: |
+          echo "workflow=${GITHUB_WORKFLOW} event=${GITHUB_EVENT_NAME} sha=${GITHUB_SHA} ref=${GITHUB_REF}"
+          sleep "${SLEEP}"
+          if [ "${FAIL}" = "true" ]; then exit 1; fi
+  inner-second:
+    if: ${{ !inputs.skip }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: probe
+        run: echo second
