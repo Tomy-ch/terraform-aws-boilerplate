@@ -126,6 +126,7 @@ apply を起動し、リリース線へ merge した commit はそのままそ�
     **検査を走らせるかどうかの条件は gate だけが持つ。** gate が呼ぶ検査は、自身の起動条件で job を skip
     しない。各検査の結果は、gate と同じ run の job の結果として受け取る。走るべき検査がすべて成功した
     ときだけ、gate は成功する。required が false の検査は gate の合否に数えず、判定の表にだけ載せる。
+    base の宣言に無く Pull Request の木の宣言にだけ在る検査は、Pull Request の木の宣言の値で走らせ、合否に数える。
 18. gate は次をいずれも失敗とする。
 
     - 走るべき検査の skipped・cancelled・failure
