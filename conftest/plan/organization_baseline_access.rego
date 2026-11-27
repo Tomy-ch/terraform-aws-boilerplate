@@ -218,9 +218,13 @@ admin_set_arns contains arn if {
 
 inline_policies := changes_of("aws_ssoadmin_permission_set_inline_policy")
 
-inline_statements(rc) := lib.statements(json.unmarshal(rc.change.after.inline_policy)) if {
+inline_statements(rc) := ss if {
 	is_string(rc.change.after.inline_policy)
 	json.is_valid(rc.change.after.inline_policy)
+	ss := lib.statements(json.unmarshal(rc.change.after.inline_policy))
+	every s in ss {
+		is_object(s)
+	}
 }
 
 # 03: AdministratorAccess の permission set だけが inline を持ち、それは Deny だけで、AssumeRoot と bootstrap の構成物の書き込みを拒む。
@@ -325,7 +329,22 @@ deny contains msg if {
 # 03: 管理アカウントの CI の role・policy・OIDC provider（deployment-identity の reference の plan）は、それぞれ protected_resources の
 # どれかに当たる。Deny は CI の role と policy を prefix の pattern で名指すので、pattern の外の名前を作ると Deny が外れる
 # （ADR-0301 決定11 の但し書きの検査。organization-baseline/ADR-0204 決定3）。account の部分は reference ごとに違うので比べない。
-ci_module := object.get(object.get(data.policy_plan, "deployment_identity", {}), "module", "")
+ci_decl := object.get(data.policy_plan, "deployment_identity", {})
+
+ci_module := object.get(ci_decl, "module", "")
+
+# 宣言の CI の role（index key を除いた address）と OIDC provider。それぞれが入力に1件以上あることを求め、一部だけ残る入力を通さない。
+ci_required := {a | some a in array.concat(lib.as_array(object.get(ci_decl, "roles", [])), [object.get(ci_decl, "oidc_provider", null)])}
+
+ci_decl_shape if {
+	is_object(ci_decl)
+	non_empty_string(ci_module)
+	is_array(ci_decl.roles)
+	count(ci_decl.roles) > 0
+	every a in ci_required {
+		non_empty_string(a)
+	}
+}
 
 ci_kinds := {"aws_iam_role": "role", "aws_iam_policy": "policy", "aws_iam_openid_connect_provider": "oidc-provider"}
 
@@ -339,6 +358,7 @@ ci_identities contains c.rc if {
 ci_resource(rc) := sprintf("%s%s%s", [ci_kinds[rc.type], ci_path(rc), rc.change.after.name]) if {
 	rc.type != "aws_iam_openid_connect_provider"
 	known(rc, "name")
+	not lib.unknown_value(object.get(object.get(rc.change, "after_unknown", {}), "path", false))
 }
 
 # path を書かない role と policy は "/" に置かれる。
@@ -362,6 +382,20 @@ deny contains msg if {
 	declaration_shape
 	count(ci_identities) == 0
 	msg := "[PLAN-IDC-00] 管理アカウントの CI の role・policy・OIDC provider（宣言 deployment_identity.module の下）が入力にありません"
+}
+
+deny contains msg if {
+	declaration_shape
+	not ci_decl_shape
+	msg := "[PLAN-IDC-00] 宣言 deployment_identity の module・roles・oidc_provider が、空でない文字列（roles は空でない配列）ではありません"
+}
+
+deny contains msg if {
+	declaration_shape
+	ci_decl_shape
+	some a in ci_required
+	count([rc | some rc in ci_identities; lib.strip_index(rc.address) == a]) == 0
+	msg := sprintf("[PLAN-IDC-00] 宣言した管理アカウントの CI の %s が入力にありません", [a])
 }
 
 deny contains msg if {
@@ -400,7 +434,7 @@ admin_assignment(rc) if {
 deny contains msg if {
 	some rc in assignments
 	rc.change.after.target_id == management_account_id
-	rc.change.after.principal_type != "USER"
+	object.get(rc.change.after, "principal_type", null) != "USER"
 	msg := sprintf("[PLAN-IDC-04] %s が、管理アカウントへ USER の外で割り当てます", [rc.address])
 }
 

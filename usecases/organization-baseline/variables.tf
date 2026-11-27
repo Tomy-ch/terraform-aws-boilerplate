@@ -58,9 +58,22 @@ variable "identity_center" {
     error_message = "organization_admin は管理アカウントの外へ割り当てられません。"
   }
 
-  # 最後の管理者の割当を消す plan を落とす。
   validation {
-    condition     = var.identity_center == null || anytrue([for a in coalesce(try(var.identity_center.management_assignments, null), []) : a.permission_set == "organization_admin"])
+    condition     = var.identity_center == null || try(var.identity_center.management_assignments, null) != null
+    error_message = "management_assignments を null にしないでください。"
+  }
+
+  validation {
+    condition     = var.identity_center == null || try(length(var.identity_center.management_assignments) > 0, true)
+    error_message = "management_assignments を空にしないでください。"
+  }
+
+  # 最後の管理者の割当を消す plan を落とす。null と空は上の2つが落とす。
+  validation {
+    condition = var.identity_center == null || try(
+      length(var.identity_center.management_assignments) == 0 || anytrue([for a in var.identity_center.management_assignments : a.permission_set == "organization_admin"]),
+      true
+    )
     error_message = "management_assignments に organization_admin の割当を1つ以上置いてください。"
   }
 

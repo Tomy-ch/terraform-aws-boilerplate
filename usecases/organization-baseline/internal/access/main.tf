@@ -80,8 +80,8 @@ data "aws_ssm_parameter" "principals" {
     postcondition {
       condition = (
         can(jsondecode(self.value))
-        && can(tomap(jsondecode(self.value).users))
-        && can(tomap(jsondecode(self.value).groups))
+        && can(keys(tomap(jsondecode(self.value).users)))
+        && can(keys(tomap(jsondecode(self.value).groups)))
         && try(toset(keys(jsondecode(self.value))) == toset(["groups", "users"]), false)
       )
       error_message = "parameter /<project>/organization-baseline/identity-center-principals が、users と groups だけを key に持つ JSON の object ではありません。"
