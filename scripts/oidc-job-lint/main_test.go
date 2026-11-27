@@ -5422,8 +5422,7 @@ func Test_checkCaller(t *testing.T) {
 		want string
 	}{
 		"with: を持つ":            {"    with:\n      env: admin\n", "with: を置かないでください"},
-		"secrets: inherit を持つ": {"    secrets: inherit\n", "secrets: を置かないでください"},
-		"secret を名指して渡す":       {"    secrets:\n      TOKEN: ${{ secrets.TOKEN }}\n", "secrets: を置かないでください"},
+		"secrets: inherit を持つ": {"    secrets: inherit\n", "1つずつ渡す mapping にしてください（inherit）"},
 		"引用符のキーの with: を持つ":    {"    \"with\":\n      env: admin\n", "with: を置かないでください"},
 	} {
 		t.Run("job が"+name+"なら違反", func(t *testing.T) {
@@ -5435,6 +5434,57 @@ func Test_checkCaller(t *testing.T) {
 			assert.Contains(t, f[0].Message, "job call-plan: ")
 			assert.Contains(t, f[0].Message, c.want)
 			assert.Equal(t, 12, f[0].Line)
+		})
+	}
+
+	t.Run("job が secret を同じ名前で名指して渡すなら違反0件", func(t *testing.T) {
+		t.Parallel()
+
+		src := replaced(t, callerWorkflow, "    uses: ./.github/workflows/plan.yaml\n", "    uses: ./.github/workflows/plan.yaml\n    secrets:\n      TOKEN: ${{ secrets.TOKEN }}\n")
+		f := check(t, src, planPerms)
+		assert.Empty(t, f, messages(f))
+	})
+}
+
+func Test_callerSecretFindings(t *testing.T) {
+	t.Parallel()
+
+	job := func(t *testing.T, body string) workflow.Job {
+		t.Helper()
+		jobs := workflow.SplitJobs("jobs:\n  call:\n    uses: ./.github/workflows/p.yaml\n" + body).Jobs
+		require.Len(t, jobs, 1)
+		return jobs[0]
+	}
+
+	for name, body := range map[string]string{
+		"secrets: が無い": "",
+		"同じ名前で1つ渡す":    "    secrets:\n      A: ${{ secrets.A }}\n",
+		"同じ名前で2つ渡す":    "    secrets:\n      A: ${{ secrets.A }}\n      B_2: ${{ secrets.B_2 }}\n",
+	} {
+		t.Run(name+"なら違反0件", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, callerSecretFindings("p.yaml", job(t, body)))
+		})
+	}
+
+	for name, c := range map[string]struct {
+		body string
+		line int
+		want string
+	}{
+		"inherit":        {"    secrets: inherit\n", 4, "（inherit）"},
+		"flow の mapping": {"    secrets: {A: x}\n", 4, "（{A: x}）"},
+		"別の名前の secret":   {"    secrets:\n      A: ${{ secrets.B }}\n", 5, "（A: ${{ secrets.B }}）"},
+		"式を足した値":         {"    secrets:\n      A: ${{ secrets.A || 'x' }}\n", 5, "secrets.A || 'x'"},
+		"渡す secret が無い":  {"    secrets:\n", 4, "渡す secret がありません"},
+	} {
+		t.Run(name+"なら違反", func(t *testing.T) {
+			t.Parallel()
+			got := callerSecretFindings("p.yaml", job(t, c.body))
+			require.Len(t, got, 1)
+			assert.Equal(t, "p.yaml", got[0].File)
+			assert.Equal(t, c.line, got[0].Line)
+			assert.Contains(t, got[0].Message, c.want)
 		})
 	}
 }

@@ -307,6 +307,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    secrets:
+      AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
 
   call-checkov:
     needs: changes

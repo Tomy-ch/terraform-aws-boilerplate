@@ -695,7 +695,8 @@ func reusableCall(job workflow.Job) (string, int, bool) {
 // permissions を contents: read と id-token: write に限ることを検査します。呼ばれた側の job はそれ自身として
 // この検査の対象になり、呼び出し先の起動は checkCallees が見る。呼ばれた側は workflow_call だけで起動するので、
 // 資格情報を取れるのは plan の job に限られる（checkPlan）。そのため caller の workflow w の起動も plan の種別の
-// 起動（pull_request）に限り、job が with: と secrets: で呼ばれた側の入力と secret を変えないことも課す。
+// 起動（pull_request）に限り、job が with: で呼ばれた側の入力を変えないことも課す。secrets: は、呼ばれた側の
+// environment の secret を同じ名前のまま1つずつ渡す形だけを許す（渡さなければ environment の secret も空になる）。
 func checkCaller(file string, job workflow.Job, permissions []string, w workflowInfo) []lintreport.Finding {
 	var findings []lintreport.Finding
 	callee, at, _ := reusableCall(job)
@@ -713,10 +714,42 @@ func checkCaller(file string, job workflow.Job, permissions []string, w workflow
 		findings = append(findings, lintreport.Finding{File: file, Line: w.onLine,
 			Message: fmt.Sprintf("job %s: id-token: write を渡して workflow を呼ぶ job を持つ workflow の起動は %s だけにしてください（%s）", job.ID, strings.Join(kindOf[cientry.Plan].Events, ", "), strings.Join(keys, ", "))})
 	}
-	for _, key := range []string{"with", "secrets"} {
-		if _, line, ok := jobKey(job, key); ok {
-			findings = append(findings, lintreport.Finding{File: file, Line: line,
-				Message: fmt.Sprintf("job %s: id-token: write を渡して workflow を呼ぶ job に %s: を置かないでください。呼ばれた側の入力と secret は、呼ぶ側ごとに変えません", job.ID, key)})
+	if _, line, ok := jobKey(job, "with"); ok {
+		findings = append(findings, lintreport.Finding{File: file, Line: line,
+			Message: fmt.Sprintf("job %s: id-token: write を渡して workflow を呼ぶ job に with: を置かないでください。呼ばれた側の入力は、呼ぶ側ごとに変えません", job.ID)})
+	}
+	return append(findings, callerSecretFindings(file, job)...)
+}
+
+// callerSecretFindings は、job の secrets: が、各 secret を同じ名前の `${{ secrets.<名前> }}` で渡す mapping で
+// あることを検査します。inherit や別の名前・式は、呼ばれた側へ呼ぶ側ごとに違う secret を渡す。
+func callerSecretFindings(file string, job workflow.Job) []lintreport.Finding {
+	var findings []lintreport.Finding
+	for i, l := range job.Lines {
+		m := jobKeyAt.FindStringSubmatch(l.Text)
+		if m == nil || m[1] != "secrets" {
+			continue
+		}
+		if strings.TrimSpace(m[2]) != "" {
+			findings = append(findings, lintreport.Finding{File: file, Line: l.Number,
+				Message: fmt.Sprintf("job %s: secrets: は、secret を同じ名前の ${{ secrets.<名前> }} で1つずつ渡す mapping にしてください（%s）", job.ID, strings.TrimSpace(m[2]))})
+			continue
+		}
+		n := 0
+		for _, next := range job.Lines[i+1:] {
+			if !strings.HasPrefix(next.Text, "      ") {
+				break
+			}
+			n++
+			e := callerSecret.FindStringSubmatch(next.Text)
+			if e == nil || e[1] != e[2] {
+				findings = append(findings, lintreport.Finding{File: file, Line: next.Number,
+					Message: fmt.Sprintf("job %s: secrets: の項目は `<名前>: ${{ secrets.<同じ名前> }}` にしてください（%s）", job.ID, strings.TrimSpace(next.Text))})
+			}
+		}
+		if n == 0 {
+			findings = append(findings, lintreport.Finding{File: file, Line: l.Number,
+				Message: fmt.Sprintf("job %s: secrets: に渡す secret がありません", job.ID)})
 		}
 	}
 	return findings
@@ -1860,6 +1893,7 @@ var (
 	revertWorkflow   = regexp.MustCompile(`^\s+APPLY_REVERT_WORKFLOW:[ \t]*(\S+)[ \t]*(?:#.*)?$`)
 	revertResultsKey = regexp.MustCompile(`^(\s+)APPLY_REVERT_RESULTS:`)
 	jobIf            = regexp.MustCompile(`^ {4}if:(.*)$`)
+	callerSecret     = regexp.MustCompile(`^ {6}([A-Za-z_][A-Za-z0-9_]*):[ \t]+\$\{\{ secrets\.([A-Za-z_][A-Za-z0-9_]*) \}\}[ \t]*$`)
 	jobName          = regexp.MustCompile(`^ {4}name:`)
 )
 
