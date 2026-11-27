@@ -1695,6 +1695,14 @@ func Test_checkGateJob(t *testing.T) {
 		assert.Len(t, got, 5)
 	})
 
+	// 除外は行の単位なので、三つ組が在っても、ほかの step の run: は今までどおり見る。
+	t.Run("生成した三つ組の後ろの許可の外の run: は違反", func(t *testing.T) {
+		t.Parallel()
+
+		got := checkGateJob(orderJob(t, orderStep, pair+orderStep+"      - run: make other\n"), orderGate, formatted)
+		assert.Contains(t, messages(got), "の run: は")
+	})
+
 	t.Run("回復の run: を変えた三つ組は、run: も違反にする", func(t *testing.T) {
 		t.Parallel()
 
@@ -1874,6 +1882,13 @@ func Test_checkHidden(t *testing.T) {
 
 		j, aw := applyWith(t, firstStep, triple+firstStep)
 		assert.Empty(t, hiddenOf(t, j, aw, formatted))
+	})
+
+	t.Run("生成した三つ組の後ろの許可の外の run: は違反", func(t *testing.T) {
+		t.Parallel()
+
+		j, aw := applyWith(t, firstStep, triple+"      - name: Other\n        run: make other\n"+firstStep)
+		assert.Contains(t, messages(hiddenOf(t, j, aw, formatted)), "資格情報を取る job の run: は")
 	})
 
 	t.Run("回復の run: を変えた三つ組は違反", func(t *testing.T) {

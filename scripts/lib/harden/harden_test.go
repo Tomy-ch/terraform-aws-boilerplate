@@ -29,6 +29,35 @@ func TestHead(t *testing.T) {
 	})
 }
 
+// Guard の字面を記号で組むテストは、式の意味を変えても緑のまま残るので、ここでだけ字面を固定する。
+func TestGuard(t *testing.T) {
+	t.Parallel()
+
+	t.Run("本体か再試行のどちらかが success のときだけ真になる式", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, "(steps.harden-runner.outcome == 'success' || steps.harden-runner-retry.outcome == 'success')", Guard)
+	})
+}
+
+func TestStatusFunc(t *testing.T) {
+	t.Parallel()
+
+	for text, want := range map[string]bool{
+		"always()":        true,
+		"Always()":        true,
+		"!CANCELLED()":    true,
+		"failure ()":      true,
+		"success()":       false,
+		"not_always()":    false,
+		"steps.x.outcome": false,
+	} {
+		t.Run(text+" の判定", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, want, StatusFunc.MatchString(text))
+		})
+	}
+}
+
 func TestRecovery(t *testing.T) {
 	t.Parallel()
 

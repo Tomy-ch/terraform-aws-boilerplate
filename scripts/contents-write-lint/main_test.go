@@ -308,6 +308,14 @@ func Test_checkSteps(t *testing.T) {
 		assert.Contains(t, got, "make ci-revert-push RUNNER_MODE=host だけ")
 		assert.Contains(t, got, "run: を持つ step をちょうど1つにしてください")
 	})
+	// 除外は行の単位なので、三つ組が在っても、ほかの step の run: は数に入り、入口の検査も受ける。
+	t.Run("生成した三つ組の後ろの別の run: は、run: の数と入口の違反にする", func(t *testing.T) {
+		t.Parallel()
+		src := strings.Replace(goodWorkflow, head, pair+"      - name: Other\n        run: git push\n", 1)
+		got := messages(checkSteps(workflow.SplitJobs(src).Jobs[1], finding))
+		assert.Contains(t, got, "make ci-revert-push RUNNER_MODE=host だけ")
+		assert.Contains(t, got, "run: を持つ step をちょうど1つにしてください")
+	})
 	t.Run("三つ組の後ろの step の if: は違反にする", func(t *testing.T) {
 		t.Parallel()
 		src := strings.Replace(goodWorkflow, head, pair, 1)

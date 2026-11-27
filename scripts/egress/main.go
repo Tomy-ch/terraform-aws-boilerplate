@@ -60,10 +60,8 @@ var (
 	stepUsesRe   = regexp.MustCompile(`^ {8}uses: ` + regexp.QuoteMeta(bullfrogAction) + `@[0-9A-Za-z._-]+(?: # \S+)?$`)
 	stepWithRe   = regexp.MustCompile(`^ {8}with:$`)
 	stepIfRe     = regexp.MustCompile(`^ {8}if:(.*)$`)
-	// blockScalarRe は if: の値が block scalar の指示子だけの形。
-	blockScalarRe = regexp.MustCompile(`^[|>][+-]?$`)
-	// statusFuncRe は、暗黙の success() を外す status の関数の呼び出し。
-	statusFuncRe = regexp.MustCompile(`\b(?:always|failure|cancelled)\s*\(`)
+	// blockScalarRe は if: の値が block scalar の指示子（字下げと chomping の指示を含む）だけの形。
+	blockScalarRe = regexp.MustCompile(`^[|>][1-9+-]*$`)
 	// stepKeyRe は、bullfrog の step のうち生成器が書き直してよいキーの行。ほかのキーは apply が黙って消すので拒む。
 	stepKeyRe = regexp.MustCompile(`^ {8}(?:id|continue-on-error|if):`)
 	commentRe = regexp.MustCompile(`^\s*#`)
@@ -175,7 +173,7 @@ type orderedHosts struct {
 	seen map[string]bool
 }
 
-// target は 1 ジョブの bullfrog の step（本体と、在れば再試行）のうち、生成器が書き直す範囲。
+// target は 1 ジョブの bullfrog の三つ組（本体・回復・再試行。回復と再試行が無ければ在る分）のうち、生成器が書き直す範囲。
 type target struct {
 	jobKey string
 	// start / end は差し替える行の範囲（0 起点・end は排他）。本体の `- name:` から、再試行の step の
@@ -664,6 +662,9 @@ func scanJobs(name, data string) ([]target, error) {
 			}
 		case len(found) == 2:
 			return nil, xerrors.Wrap(errStepNotFirst, fmt.Sprintf("%s %d 行目", key, steps[found[1]].Number))
+		case len(found) == 1 && len(steps) > 1 && steps[1].Lines[0].Text == harden.Recovery()[0]:
+			// 再試行の無い回復の step は書き直す範囲の外に残り、apply の後に回復の step が2つになる。
+			return nil, xerrors.Wrap(errStepMalformed, fmt.Sprintf("%s %d 行目: 再試行の無い回復の step です", key, steps[1].Number))
 		}
 		bullfrogs := make([]workflow.Step, 0, len(found))
 		for _, i := range found {
@@ -728,14 +729,21 @@ func mentionsBullfrog(lines []workflow.Line) int {
 	return n
 }
 
-// checkGuards は、三つ組の後ろの step のうち if: が status の関数（always()・failure()・cancelled()）を持つものが、
+// checkGuards は、三つ組の後ろの step のうち if: が status の関数（harden.StatusFunc）を持つものが、
 // harden.Guard と ` && ` で始まり、残りに括弧の外の `||` を持たないことを確かめる。status の関数は暗黙の
 // success() を外すので、bullfrog が2つとも落ちた job で、通信の制限の無いまま step が走る。括弧の外の `||` は
 // `&&` より弱く結ぶので、Guard を迂回する。
+// status の関数を名指す行（コメントを除く）は、step の行として別に数え、読めた if: の式の外に1つでもあれば落とす
+// （ADR-0702 決定15）。読めない書き方（`- if:`、引用符で囲んだキー、フロースタイル、run: の中）を検査の外へ逃がさない。
 func checkGuards(steps []workflow.Step) error {
 	for _, st := range steps {
-		l, cond, ok := stepIf(st)
-		if !ok || !statusFuncRe.MatchString(cond) {
+		l, cond, covered, ok := stepIf(st)
+		for _, sl := range st.Lines {
+			if !commentRe.MatchString(sl.Text) && harden.StatusFunc.MatchString(sl.Text) && !covered[sl.Number] {
+				return xerrors.Wrap(errStepGuard, fmt.Sprintf("%d 行目: %q（status の関数は、step の `if:` の式の中にだけ書けます）", sl.Number, sl.Text))
+			}
+		}
+		if !ok || !harden.StatusFunc.MatchString(cond) {
 			continue
 		}
 		rest, found := strings.CutPrefix(cond, harden.Guard+" && ")
@@ -746,41 +754,65 @@ func checkGuards(steps []workflow.Step) error {
 	return nil
 }
 
-// stepIf は step の if: の行と、`${{ }}` を外した式を返す。block scalar（`|`・`>`）の続きの行は1つの式に繋ぐ。
-func stepIf(st workflow.Step) (workflow.Line, string, bool) {
+// stepIf は step の if: の行、`${{ }}` を外した式、式が占める行の番号を返す。if: より深く字下げした続きの行
+// （block scalar の本文と、plain scalar の折り返し）は、空行を挟んでも1つの式に繋ぐ。`${{` が閉じていなければ外さない。
+func stepIf(st workflow.Step) (workflow.Line, string, map[int]bool, bool) {
 	for i, l := range st.Lines {
 		m := stepIfRe.FindStringSubmatch(l.Text)
 		if m == nil {
 			continue
 		}
-		cond := strings.TrimSpace(m[1])
-		if blockScalarRe.MatchString(cond) {
-			var parts []string
-			for _, c := range st.Lines[i+1:] {
-				if !strings.HasPrefix(c.Text, keyIndent) {
-					break
-				}
-				parts = append(parts, strings.TrimSpace(c.Text))
-			}
-			cond = strings.Join(parts, " ")
+		covered := map[int]bool{l.Number: true}
+		parts := []string{strings.TrimSpace(m[1])}
+		if blockScalarRe.MatchString(parts[0]) {
+			parts = parts[:0]
 		}
-		cond = strings.TrimSpace(cond)
-		if inner, ok := strings.CutPrefix(cond, "${{"); ok {
+		for _, c := range st.Lines[i+1:] {
+			if strings.TrimSpace(c.Text) != "" && !strings.HasPrefix(c.Text, withIndent+" ") {
+				break
+			}
+			covered[c.Number] = true
+			if t := strings.TrimSpace(c.Text); t != "" {
+				parts = append(parts, t)
+			}
+		}
+		cond := strings.Join(parts, " ")
+		if inner, ok := strings.CutPrefix(cond, "${{"); ok && strings.HasSuffix(inner, "}}") {
 			cond = strings.TrimSpace(strings.TrimSuffix(inner, "}}"))
 		}
-		return l, cond, true
+		return l, cond, covered, true
 	}
-	return workflow.Line{}, "", false
+	return workflow.Line{}, "", nil, false
 }
 
+// orOutsideParens は、式の括弧の外に `||` があるかを返す。単一引用符の文字列（`”` は引用符そのもの）の中は
+// 数えない。閉じていない文字列と、開いていない閉じ括弧は、括弧の外を読めないので真を返す（落とす側へ倒す）。
 func orOutsideParens(expr string) bool {
 	depth := 0
 	for i := 0; i < len(expr); i++ {
 		switch expr[i] {
+		case '\'':
+			j := i + 1
+			for ; j < len(expr); j++ {
+				if expr[j] == '\'' {
+					if j+1 < len(expr) && expr[j+1] == '\'' {
+						j++
+						continue
+					}
+					break
+				}
+			}
+			if j >= len(expr) {
+				return true
+			}
+			i = j
 		case '(':
 			depth++
 		case ')':
 			depth--
+			if depth < 0 {
+				return true
+			}
 		case '|':
 			if depth == 0 && i+1 < len(expr) && expr[i+1] == '|' {
 				return true

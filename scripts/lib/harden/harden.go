@@ -6,6 +6,7 @@
 package harden
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
@@ -27,6 +28,9 @@ const (
 	// （ADR-0702 決定20）。
 	Guard = "(steps." + ID + ".outcome == 'success' || steps." + RetryID + ".outcome == 'success')"
 )
+
+// StatusFunc は、暗黙の success() を外す status の関数の呼び出し。式の関数名は大小を区別しないので、大小を問わない。
+var StatusFunc = regexp.MustCompile(`(?i)\b(?:always|failure|cancelled)\s*\(`)
 
 // Head は本体の step の、uses: の前の行です。
 func Head() []string {
