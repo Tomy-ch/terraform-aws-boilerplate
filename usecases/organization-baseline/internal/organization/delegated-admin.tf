@@ -1,0 +1,41 @@
+# kics-scan disable=e592a0c5-5bdb-414c-9066-5dba7cdea370
+# e592a0c5（IAM Access Analyzer）: KICS はファイルごとに analyzer の宣言を求める。analyzer はアカウント単位の統制で account-baseline が持つ（docs/v1.0-plan/scope.md 第7節）。撤回: KICS がファイルの外の宣言を数えるようになったとき。
+
+# セキュリティのサービスの委任管理者は security のアカウント（repository-wide/ADR-0602 決定1）。
+# 信頼アクセスの有効化は、GuardDuty・Inspector・Security Hub では指定の API が呼び手の権限で行い、CloudTrail・Config・
+# Access Analyzer では人の手順が先に行う（organization-baseline/ADR-0001 決定5）。
+
+# GuardDuty・Inspector・Security Hub の指定はリージョンごとで、委任管理者はすべてのリージョンで同じアカウントでなければならない。
+resource "aws_guardduty_organization_admin_account" "this" {
+  for_each = var.delegated_admin_regions
+
+  region           = each.key
+  admin_account_id = aws_organizations_account.this["security"].id
+}
+
+resource "aws_inspector2_delegated_admin_account" "this" {
+  for_each = var.delegated_admin_regions
+
+  region     = each.key
+  account_id = aws_organizations_account.this["security"].id
+}
+
+# Organizations の API で指定すると Security Hub の側に反映されないので、Security Hub の API で指定する。
+resource "aws_securityhub_organization_admin_account" "this" {
+  for_each = var.delegated_admin_regions
+
+  region           = each.key
+  admin_account_id = aws_organizations_account.this["security"].id
+}
+
+# Organizations の API で登録すると CloudTrail の service-linked role が作られないので、CloudTrail の API で登録する。
+resource "aws_cloudtrail_organization_delegated_admin_account" "this" {
+  account_id = aws_organizations_account.this["security"].id
+}
+
+resource "aws_organizations_delegated_administrator" "this" {
+  for_each = toset(["access-analyzer.amazonaws.com", "config.amazonaws.com"])
+
+  account_id        = aws_organizations_account.this["security"].id
+  service_principal = each.key
+}

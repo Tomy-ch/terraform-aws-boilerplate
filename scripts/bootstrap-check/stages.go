@@ -201,7 +201,7 @@ func beforeApplySteps(n names) []step {
 	bootstrapRead := n.project + "-bootstrap-read"
 	steps = append(steps, checkStep(expectError("StackSet "+bootstrapRead+" がまだ無い", "StackSetNotFoundException", "cloudformation", "describe-stack-set", "--stack-set-name", bootstrapRead)))
 
-	for _, p := range []string{n.applyIdentity + "-governance", n.applyIdentity + "-members", n.applyIdentity + "-manage", n.apply + "-workload", n.apply + "-workload-read", "boundary-ops-notification"} {
+	for _, p := range []string{n.applyIdentity + "-governance", n.applyIdentity + "-governance-2", n.applyIdentity + "-members", n.applyIdentity + "-manage", n.apply + "-workload", n.apply + "-workload-read", "boundary-ops-notification"} {
 		steps = append(steps, checkStep(expectError("policy "+n.roleName(p)+" がまだ無い", "NoSuchEntity", "iam", "get-policy", "--policy-arn", n.policyARN(p))))
 	}
 
@@ -395,8 +395,8 @@ func stage4Steps(n names, readFile func(string) ([]byte, error)) []step {
 
 		switch r {
 		case n.applyIdentity:
-			desc = "role " + n.roleName(r) + " に付く managed policy が、統制の policy と manage の policy とメンバーの role の policy だけ"
-			want = []string{n.roleName(n.applyIdentity + "-governance"), n.roleName(n.applyIdentity + "-manage"), n.roleName(n.applyIdentity + "-members")}
+			desc = "role " + n.roleName(r) + " に付く managed policy が、統制の policy と委任管理者の policy と manage の policy とメンバーの role の policy だけ"
+			want = []string{n.roleName(n.applyIdentity + "-governance"), n.roleName(n.applyIdentity + "-governance-2"), n.roleName(n.applyIdentity + "-manage"), n.roleName(n.applyIdentity + "-members")}
 		case n.apply:
 			desc = "role " + n.roleName(r) + " に付く managed policy が、workload の3つの policy だけ"
 			want = []string{n.roleName(n.apply + "-workload"), n.roleName(n.apply + "-workload-2"), n.roleName(n.apply + "-workload-read")}

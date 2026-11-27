@@ -9,6 +9,10 @@ mock_provider "aws" {
       roots             = [{ id = "r-exam", arn = "arn:aws:organizations::111111111111:root/o-exampleorg1/r-exam", name = "Root", policy_types = [] }]
     }
   }
+  # 委任管理者の指定は、Provider がアカウントの ID を12桁の数字として検査する。
+  mock_resource "aws_organizations_account" {
+    defaults = { id = "111111111111" }
+  }
 }
 
 variables {
@@ -18,6 +22,7 @@ variables {
   bootstrap_read_role_name = "tabp-bootstrap-read"
   bootstrap_read_role_path = "/bootstrap/"
   bootstrapping            = ["security", "log-archive"]
+  delegated_admin_regions  = ["ap-northeast-1"]
 }
 
 override_resource {
@@ -430,4 +435,46 @@ run "emails_must_be_addresses" {
   }
 
   expect_failures = [aws_organizations_account.this["log-archive"]]
+}
+
+run "delegated_admin" {
+  command = apply
+
+  variables {
+    delegated_admin_regions = ["ap-northeast-1", "us-east-1", "us-west-2"]
+  }
+
+  assert {
+    condition = alltrue(concat(
+      [for k, a in aws_guardduty_organization_admin_account.this : a.region == k && a.admin_account_id == aws_organizations_account.this["security"].id],
+      [for k, a in aws_inspector2_delegated_admin_account.this : a.region == k && a.account_id == aws_organizations_account.this["security"].id],
+      [for k, a in aws_securityhub_organization_admin_account.this : a.region == k && a.admin_account_id == aws_organizations_account.this["security"].id],
+    )) && toset(keys(aws_guardduty_organization_admin_account.this)) == var.delegated_admin_regions && toset(keys(aws_inspector2_delegated_admin_account.this)) == var.delegated_admin_regions && toset(keys(aws_securityhub_organization_admin_account.this)) == var.delegated_admin_regions
+    error_message = "GuardDuty・Inspector・Security Hub の委任管理者が、各リージョンで security のアカウントに指定されていません。"
+  }
+
+  assert {
+    condition     = aws_cloudtrail_organization_delegated_admin_account.this.account_id == aws_organizations_account.this["security"].id
+    error_message = "CloudTrail の委任管理者が、CloudTrail の API で security のアカウントに登録されていません。"
+  }
+
+  assert {
+    condition     = { for k, a in aws_organizations_delegated_administrator.this : k => a.account_id } == { for k in ["access-analyzer.amazonaws.com", "config.amazonaws.com"] : k => aws_organizations_account.this["security"].id }
+    error_message = "AWS Config と IAM Access Analyzer の委任管理者が、Organizations の API で security のアカウントに登録されていません。"
+  }
+
+  assert {
+    condition     = jsonencode(output.delegated_admin.service_principals) == jsonencode(["access-analyzer.amazonaws.com", "cloudtrail.amazonaws.com", "config.amazonaws.com", "guardduty.amazonaws.com", "inspector2.amazonaws.com", "securityhub.amazonaws.com"])
+    error_message = "委任管理者を指定したサービスが、6つのサービスになっていません。"
+  }
+}
+
+run "delegated_admin_regions_not_empty" {
+  command = plan
+
+  variables {
+    delegated_admin_regions = []
+  }
+
+  expect_failures = [var.delegated_admin_regions]
 }
